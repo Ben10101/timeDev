@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+*.pyc
+__pycache__/
+*.egg-info/
+.env
+.env.local
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+outputs/projects/
+.python-version
+*.log
+npm-debug.log*
