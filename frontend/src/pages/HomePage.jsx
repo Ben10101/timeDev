@@ -8,7 +8,7 @@ export default function HomePage() {
   const [error, setError] = useState(null)
   const navigate = useNavigate()
 
-  const handleGenerateProject = (idea) => {
+  const handleGenerateProject = ({ idea, answers }) => {
     setError(null)
     if (!idea.trim()) {
       setError("Por favor, descreva a ideia do seu projeto.");
@@ -16,7 +16,7 @@ export default function HomePage() {
     }
     // Navega para a nova página de pipeline, passando a ideia no estado.
     setLoading(true); // Mostra o spinner enquanto a página carrega
-    navigate('/pipeline', { state: { idea: idea } });
+    navigate('/pipeline', { state: { idea, answers } });
   }
 
   return (

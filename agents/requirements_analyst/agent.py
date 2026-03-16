@@ -3,11 +3,14 @@ import sys
 import os
 from datetime import datetime
 
-# Garantir UTF-8 para saída de caracteres acentuados
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf8', buffering=1)
-if sys.stderr.encoding != 'utf-8':
-    sys.stderr = open(sys.stderr.fileno(), mode='w', encoding='utf8', buffering=1)
+# Garantir UTF-8 para saída (evitar reabrir handles no Windows, o que pode causar crash em processos com pipes)
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 """
 Requirements Analyst Agent

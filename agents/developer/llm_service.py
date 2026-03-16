@@ -3,11 +3,14 @@ import os
 import sys
 import json
 
-# Garantir UTF-8 para saída de caracteres acentuados
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf8', buffering=1)
-if sys.stderr.encoding != 'utf-8':
-    sys.stderr = open(sys.stderr.fileno(), mode='w', encoding='utf8', buffering=1)
+# Garantir UTF-8 para saída (evitar reabrir handles no Windows, o que pode causar crash em processos com pipes)
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 try:
     import google.generativeai as genai # Usando a biblioteca oficial do Google
@@ -47,12 +50,11 @@ def generate_attributes_fallback(idea: str, error_message: str = "") -> list:
     Fallback inteligente para gerar atributos sem chamar LLM.
     Usa análise de texto para extrair campos mencionados na ideia.
     """
+    if error_message:
+        print(f"[LLM Service Fallback] Motivo do fallback: {error_message}", file=sys.stderr)
     attributes = [
         {"name": "title", "type": "string", "sql_type": "VARCHAR(255) NOT NULL"},
         {"name": "description", "type": "text", "sql_type": "TEXT"},
-    ]
-    if error_message:
-        print(f"[LLM Service Fallback] Motivo do fallback: {error_message}", file=sys.stderr)
     ]
     
     idea_lower = idea.lower()
@@ -88,6 +90,8 @@ def generate_text_fallback(prompt: str, error_message: str = "") -> str:
     Fallback para geração de texto. Retorna um template estruturado.
     """
     print(f"[LLM Service Fallback] Usando template para texto livre", file=sys.stderr)
+    if error_message:
+        print(f"[LLM Service Fallback] Motivo do fallback: {error_message}", file=sys.stderr)
     return """
 # Documentação Gerada
 
@@ -107,15 +111,14 @@ O projeto foi estruturado com:
 3. Adicionar testes automatizados
 4. Fazer deploy na infraestrutura desejada
 """
-    if error_message:
-        print(f"[LLM Service Fallback] Motivo do fallback: {error_message}", file=sys.stderr)
 
 def get_attributes_from_llm(idea: str) -> list:
     """
     Chama um LLM para extrair atributos de uma entidade a partir de uma ideia.
     """
     # Determina o provedor e modelo em tempo de execução para maior robustez
-    llm_provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+    # Prioridade: local (Ollama) quando possível.
+    llm_provider = os.getenv("LLM_PROVIDER", "auto").lower()
     # OLLAMA_MODEL agora é definido no .env ou no script de teste
     ollama_model = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 
@@ -157,15 +160,16 @@ def get_attributes_from_llm(idea: str) -> list:
     # ✅ CACHE CHECK: Verificar cache antes de qualquer chamada ao LLM
     if CACHE_ENABLED:
         try:
-            cached_response = CACHE.get(prompt, model=llm_provider, provider="gemini")
+            cached_response = CACHE.get(prompt, model=llm_provider, provider=llm_provider)
             if cached_response:
                 print("[LLM Service] ✅ CACHE HIT! Usando resposta cacheada para atributos.", file=sys.stderr)
                 return json.loads(cached_response)
         except Exception as e:
             print(f"[LLM Service] ⚠️ Erro ao acessar cache: {e}", file=sys.stderr)
 
-    # Tentar com Ollama se configurado e disponível
-    if llm_provider == "ollama" and OLLAMA_AVAILABLE:
+    # Tentar com Ollama (local) primeiro quando disponível, exceto se forçado gemini
+    should_try_ollama = OLLAMA_AVAILABLE and llm_provider in ("auto", "ollama")
+    if should_try_ollama:
         try:
             result = generate_with_ollama(prompt, model=ollama_model, is_json=True)
             # ✅ CACHE STORE: Guardar resultado após sucesso
@@ -180,6 +184,10 @@ def get_attributes_from_llm(idea: str) -> list:
                 print(f"[LLM Service] Ollama retornou vazio ou com erro. Usando Gemini como fallback...", file=sys.stderr)
         except Exception as e:
             print(f"[LLM Service] ❌ Erro ao chamar Ollama: {e}. Usando Gemini como fallback...", file=sys.stderr)
+
+    # Se forçado a usar apenas Ollama e falhou, usar fallback local (sem Gemini)
+    if llm_provider == "ollama":
+        return generate_attributes_fallback(idea, "Ollama falhou ou não retornou JSON válido.")
 
     # Tentar com Gemini se configurado e disponível
     # Lista de modelos para tentar, em ordem de preferência.
@@ -247,22 +255,24 @@ def generate_text_from_llm(prompt: str) -> str:
     """
     Função genérica para gerar texto livre (Documentação, Backlog, etc) usando o Gemini.
     """
-    llm_provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+    # Prioridade: local (Ollama) quando possível.
+    llm_provider = os.getenv("LLM_PROVIDER", "auto").lower()
     ollama_model = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 
 
     # ✅ CACHE CHECK: Verificar cache antes de qualquer chamada ao LLM
     if CACHE_ENABLED:
         try:
-            cached_response = CACHE.get(prompt, model=llm_provider, provider="gemini")
+            cached_response = CACHE.get(prompt, model=llm_provider, provider=llm_provider)
             if cached_response:
                 print("[LLM Service] ✅ CACHE HIT! Usando resposta cacheada.", file=sys.stderr)
                 return cached_response
         except Exception as e:
             print(f"[LLM Service] ⚠️ Erro ao acessar cache: {e}", file=sys.stderr)
 
-    # Tentar com Ollama se configurado e disponível
-    if llm_provider == "ollama" and OLLAMA_AVAILABLE:
+    # Tentar com Ollama (local) primeiro quando disponível, exceto se forçado gemini
+    should_try_ollama = OLLAMA_AVAILABLE and llm_provider in ("auto", "ollama")
+    if should_try_ollama:
         try:
             result = generate_with_ollama(prompt, model=ollama_model, is_json=False)
             if result and not result.startswith("❌ ERRO:"): # Se o Ollama retornou algo válido
@@ -277,6 +287,10 @@ def generate_text_from_llm(prompt: str) -> str:
         except Exception as e:
             print(f"[LLM Service] ❌ Erro ao chamar Ollama: {e}. Usando Gemini como fallback...", file=sys.stderr)
 
+    # Se forçado a usar apenas Ollama e falhou, usar fallback local (sem Gemini)
+    if llm_provider == "ollama":
+        return generate_text_fallback(prompt, "Ollama falhou ou não retornou resposta válida.")
+
     # Tentar com Gemini se configurado e disponível
 
     if not GEMINI_API_KEY:
@@ -290,8 +304,6 @@ def generate_text_from_llm(prompt: str) -> str:
     if not genai.configure: # Verifica se a configuração do Gemini foi bem-sucedida
         print("[LLM Service] ⚠️ Configuração do Gemini falhou. Usando fallback...", file=sys.stderr)
         return generate_text_fallback(prompt, "Configuração do Gemini falhou.")
-        'gemini-1.5-pro',
-    ]
 
     for model_name in models_to_try:
         try:

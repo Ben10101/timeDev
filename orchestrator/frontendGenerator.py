@@ -406,6 +406,22 @@ export default function RegisterPage({ onRegister }) {
           </div>
         </div>"""
 
+        # Helpers condicionais para estilização
+        priority_helpers = """
+  const getPriorityColor = (priority) => {
+    const colors = {
+      low: 'bg-green-100 text-green-800',
+      medium: 'bg-yellow-100 text-yellow-800',
+      high: 'bg-red-100 text-red-800'
+    }
+    return colors[priority] || 'bg-gray-100'
+  }""" if has_priority else ""
+
+        status_helpers = """
+  const getStatusColor = (status) => {
+    return status === 'completed' ? 'line-through text-gray-500' : ''
+  }""" if has_status else "  const getStatusColor = () => '';"
+
         page_content = f"""import {{ useState, useEffect }} from 'react'
 import axios from 'axios'
 
@@ -470,19 +486,8 @@ export default function {self.page_name}({{ user, onLogout }}) {{
       console.error('Erro ao deletar:', err)
     }}
   }}
-{"""
-  const getPriorityColor = (priority) => {{
-    const colors = {{
-      low: 'bg-green-100 text-green-800',
-      medium: 'bg-yellow-100 text-yellow-800',
-      high: 'bg-red-100 text-red-800'
-    }}
-    return colors[priority] || 'bg-gray-100'
-  }}""" if has_priority else ""}
-{"""
-  const getStatusColor = (status) => {{
-    return status === 'completed' ? 'line-through text-gray-500' : ''
-  }}""" if has_status else "  const getStatusColor = () => '';"}
+{priority_helpers}
+{status_helpers}
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50">
       {{/* Header */}}
