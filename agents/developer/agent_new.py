@@ -4,6 +4,12 @@ Developer Agent
 Gera código real, estrutura funcional e implementação técnica específica
 """
 
+import sys
+import os
+
+# Importação do serviço de LLM usando caminho absoluto do pacote
+from agents.developer.llm_service import get_attributes_from_llm
+
 class Developer:
     def __init__(self, project_id):
         self.project_id = project_id
@@ -32,20 +38,48 @@ class Developer:
         if any(w in lower_idea for w in ['relatório', 'report', 'análise', 'analytics']):
             entities.append('Report')
         
-        return entities if entities else ['User', 'Task']
+        if not entities:
+            return ['Item']
+            
+        # Prioritize non-user entities as the primary one
+        if 'User' in entities and len(entities) > 1:
+            user_index = entities.index('User')
+            # Move User to the end if it's not the only entity
+            if user_index == 0:
+                entities.append(entities.pop(0))
 
-    def generate_code_structure(self, idea, architecture):
+        return entities
+
+    def extract_entity_attributes(self, idea):
+        """
+        Extrai atributos da entidade a partir da ideia usando um LLM.
+        """
+        print("[Developer] Chamando LLM para extrair atributos...", file=sys.stderr)
+        attributes = get_attributes_from_llm(idea)
+        if attributes:
+            print(f"[Developer] Atributos extraídos com sucesso: {[attr['name'] for attr in attributes]}", file=sys.stderr)
+            return attributes
+        else:
+            # Reverte para um fallback para permitir que o processo complete, com um aviso claro.
+            print("[Developer] ⚠️ AVISO: Falha ao extrair atributos do LLM. Usando fallback (title, description).", file=sys.stderr)
+            print("[Developer] ⚠️ Verifique sua chave de API, conexão e os logs do 'LLM Service'.", file=sys.stderr)
+            return [{'name': 'title', 'type': 'string', 'sql_type': 'VARCHAR(255) NOT NULL'}, {'name': 'description', 'type': 'text', 'sql_type': 'TEXT'}]
+
+    def generate_code_structure(self, idea, architecture, primary_entity, attributes):
         """
         Gera estrutura de código funcional e específica
         """
         entities = self.extract_domain_entities(idea)
         entity_list = ', '.join(entities)
-        primary_entity = entities[0] if entities else 'Item'
         
         # Variáveis auxiliares para uso nos templates f-string
         primary_entity_lower = primary_entity.lower()
         primary_entity_lower_plural = f"{primary_entity_lower}s"
         
+        # Geração dinâmica para o schema e API
+        sql_columns = "\n".join([f"    {attr['name']} {attr['sql_type']}," for attr in attributes])
+        api_body_fields = ", ".join([attr['name'] for attr in attributes])
+
         code = f"""# 💻 PROJETO E ESTRUTURA DE CÓDIGO
 **Projeto ID:** {self.project_id}
 
@@ -177,13 +211,8 @@ CREATE TABLE users (
 CREATE TABLE {primary_entity.lower()}s (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    status VARCHAR(50) DEFAULT 'active', -- 'active', 'completed', 'archived'
-    priority VARCHAR(50) DEFAULT 'medium', -- 'low', 'medium', 'high'
-    due_date DATE,
-    tags VARCHAR(255)[],
-    metadata JSONB,
+{sql_columns}
+    status VARCHAR(50) DEFAULT 'active', -- 'active', 'completed', 'archived',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP,
@@ -246,15 +275,15 @@ GET    /api/v1/{primary_entity.lower()}s?page=1&limit=20&sort=created_at
   Response: {{ data: [], total, page, limit }}
 
 GET    /api/v1/{primary_entity.lower()}s/:id
-  Response: {{ id, title, description, status, ... }}
+  Response: {{ id, {api_body_fields}, status, ... }}
 
 POST   /api/v1/{primary_entity.lower()}s
-  Body: {{ title, description, priority, due_date, tags }}
-  Response: {{ id, title, ... }} (201 Created)
+  Body: {{ {api_body_fields} }}
+  Response: {{ id, {api_body_fields}, ... }} (201 Created)
 
 PUT    /api/v1/{primary_entity.lower()}s/:id
-  Body: {{ title, description, status, priority }}
-  Response: {{ id, title, ... }}
+  Body: {{ {api_body_fields}, status }}
+  Response: {{ id, {api_body_fields}, ... }}
 
 DELETE /api/v1/{primary_entity.lower()}s/:id
   Response: {{ success }} (soft-delete)
@@ -402,21 +431,15 @@ export const get{primary_entity}ById = async (req, res) => {{
 
 export const create{primary_entity} = async (req, res) => {{
   try {{
-    const {{ title, description, priority, due_date, tags }} = req.body
+    const {{ {api_body_fields} }} = req.body
     const userId = req.user.id
 
     // Validação
-    if (!title || title.trim() === '') {{
-      return errorResponse(res, 'Title is required', 400)
-    }}
+    // TODO: Adicionar validação dinâmica baseada nos atributos 'required'
 
     const {primary_entity_lower} = await {primary_entity}Service.create({{
       userId,
-      title: title.trim(),
-      description: description?.trim() || null,
-      priority: priority || 'medium',
-      due_date: due_date || null,
-      tags: tags || []
+      ...req.body
     }})
 
     return successResponse(res, {primary_entity_lower}, 201)
@@ -428,7 +451,7 @@ export const create{primary_entity} = async (req, res) => {{
 export const update{primary_entity} = async (req, res) => {{
   try {{
     const {{ id }} = req.params
-    const {{ title, description, status, priority }} = req.body
+    const {{ {api_body_fields}, status }} = req.body
     const userId = req.user.id
 
     // Verificar propriedade
@@ -438,10 +461,7 @@ export const update{primary_entity} = async (req, res) => {{
     }}
 
     const updated = await {primary_entity}Service.update(id, {{
-      title: title?.trim(),
-      description: description?.trim(),
-      status,
-      priority
+      ...req.body
     }})
 
     return successResponse(res, updated, 200)
@@ -754,7 +774,10 @@ npm run test:coverage
 
     def process(self, idea, architecture):
         """Processa e retorna estrutura de código funcional"""
-        code = self.generate_code_structure(idea, architecture)
         entities = self.extract_domain_entities(idea)
         primary_entity = entities[0] if entities else 'Item'
-        return {'code': code, 'primary_entity': primary_entity}
+        attributes = self.extract_entity_attributes(idea)
+        
+        code = self.generate_code_structure(idea, architecture, primary_entity, attributes)
+
+        return {'code': code, 'primary_entity': primary_entity, 'attributes': attributes}

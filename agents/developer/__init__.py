@@ -1,3 +1,1 @@
-"""
-Inicializador para agentes individuais
-"""
+# Init services package

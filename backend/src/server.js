@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import projectRoutes from './routes/projectRoutes.js'
+import agentRoutes from './routes/agentRoutes.js'
 
 dotenv.config()
 
@@ -14,6 +15,7 @@ app.use(express.json())
 
 // Routes
 app.use('/api', projectRoutes)
+app.use('/api', agentRoutes)
 
 // Health check
 app.get('/health', (req, res) => {

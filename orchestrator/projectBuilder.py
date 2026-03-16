@@ -13,8 +13,8 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 
 # Importar geradores
-from backendGenerator import BackendGenerator
-from frontendGenerator import FrontendGenerator
+from orchestrator.backendGenerator import BackendGenerator
+from orchestrator.frontendGenerator import FrontendGenerator
 
 class ProjectBuilder:
     """Constrói um projeto real com estrutura de arquivos"""
@@ -343,7 +343,7 @@ DATABASE_URL=
         with open(f'{self.project_path}/backend/.gitignore', 'w', encoding='utf-8') as f:
             f.write(gitignore)
     
-    def create_documentation(self, idea, backlog, requirements, architecture):
+    def create_documentation(self, idea, backlog, requirements, architecture, code, tests):
         """Cria arquivos de documentação"""
         
         # README.md
@@ -422,22 +422,29 @@ Gerado por [AI Software Factory](https://github.com/seu-usuario/ai-software-fact
             f.write(readme)
         print("[CREATE] README.md", file=__import__('sys').stderr)
         
-        # docs/BACKLOG.md
-        with open(f'{self.project_path}/docs/BACKLOG.md', 'w', encoding='utf-8') as f:
-            f.write(backlog)
-        print("[CREATE] docs/BACKLOG.md", file=__import__('sys').stderr)
+        # Salva todos os artefatos gerados pela IA na pasta /docs
+        docs_path = os.path.join(self.project_path, 'docs')
+        os.makedirs(docs_path, exist_ok=True)
+
+        artifacts_to_save = {
+            "BACKLOG.md": backlog,
+            "REQUIREMENTS.md": requirements,
+            "ARCHITECTURE.md": architecture,
+            "CODE_STRUCTURE.md": code,
+            "TESTS.md": tests
+        }
         
-        # docs/REQUIREMENTS.md
-        with open(f'{self.project_path}/docs/REQUIREMENTS.md', 'w', encoding='utf-8') as f:
-            f.write(requirements)
-        print("[CREATE] docs/REQUIREMENTS.md", file=__import__('sys').stderr)
-        
-        # docs/ARCHITECTURE.md
-        with open(f'{self.project_path}/docs/ARCHITECTURE.md', 'w', encoding='utf-8') as f:
-            f.write(architecture)
-        print("[CREATE] docs/ARCHITECTURE.md", file=__import__('sys').stderr)
+        for filename, content in artifacts_to_save.items():
+            filepath = os.path.join(docs_path, filename)
+            try:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(content or f"# Conteúdo para {filename} não foi gerado.\n")
+                print(f"[CREATE] docs/{filename}", file=__import__('sys').stderr)
+            except Exception as e:
+                print(f"[ERROR] Falha ao escrever docs/{filename}: {e}", file=__import__('sys').stderr)
+
     
-    def create_project(self, idea, backlog, requirements, architecture, primary_entity="Task"):
+    def create_project(self, idea, backlog, requirements, architecture, code, tests, primary_entity="Task", attributes=None):
         """Cria o projeto completo com código funcional"""
         
         print(f"[BUILD] Criando projeto: {self.project_id}", file=sys.stderr)
@@ -446,17 +453,17 @@ Gerado por [AI Software Factory](https://github.com/seu-usuario/ai-software-fact
         self.create_directories()
         
         # Gerar backend funcional
-        print("[BACKEND] Gerando servidor Express funcional...", file=sys.stderr)
-        backend_gen = BackendGenerator(self.project_path, primary_entity)
+        print(f"[BACKEND] Gerando servidor Express para entidade: {primary_entity}...", file=sys.stderr)
+        backend_gen = BackendGenerator(self.project_path, primary_entity, attributes)
         backend_gen.generate()
         
         # Gerar frontend funcional
-        print("[FRONTEND] Gerando aplicação React funcional...", file=sys.stderr)
-        frontend_gen = FrontendGenerator(self.project_path, primary_entity)
+        print(f"[FRONTEND] Gerando aplicação React para entidade: {primary_entity}...", file=sys.stderr)
+        frontend_gen = FrontendGenerator(self.project_path, primary_entity, attributes)
         frontend_gen.generate()
         
         # Criar documentação
-        self.create_documentation(idea, backlog, requirements, architecture)
+        self.create_documentation(idea, backlog, requirements, architecture, code, tests)
         
         print(f"[SUCCESS] Projeto criado em: {self.project_path}", file=sys.stderr)
         

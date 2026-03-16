@@ -9,13 +9,17 @@ import json
 class FrontendGenerator:
     """Gera um frontend React funcional"""
     
-    def __init__(self, project_path, primary_entity="Task"):
+    def __init__(self, project_path, primary_entity="Task", attributes=None):
         self.project_path = project_path
         self.frontend_path = os.path.join(project_path, 'frontend')
         self.entity = primary_entity
         self.entity_lower = primary_entity.lower()
         self.entity_plural = f"{self.entity_lower}s"
         self.page_name = f"{self.entity}sPage"
+        self.attributes = attributes if attributes else [
+            {'name': 'title', 'type': 'string'}, 
+            {'name': 'description', 'type': 'text'}
+        ]
     
     def create_app_jsx(self):
         """Cria App.jsx funcional"""
@@ -283,14 +287,133 @@ export default function RegisterPage({ onRegister }) {
 
     def create_entity_page(self):
         """Cria página da entidade principal"""
+        # Gera o estado inicial do formulário com base nos atributos
+        initial_state_fields = ", ".join([f"{attr['name']}: ''" for attr in self.attributes])
+        initial_state = f"{{ {initial_state_fields}, priority: 'medium' }}"
+
+        # Gera os inputs do formulário dinamicamente
+        form_inputs = ""
+        for i, attr in enumerate(self.attributes):
+            placeholder = attr['name'].replace('_', ' ').title()
+            input_type = "text"
+            if attr['type'] in ['decimal', 'integer', 'number']:
+                input_type = 'number'
+            
+            # Define o primeiro campo como obrigatório
+            is_required = "required" if i == 0 else ""
+
+            if attr['type'] == 'text':
+                form_inputs += f"""
+            <div>
+              <textarea
+                placeholder="{placeholder}"
+                value={{newItem.{attr['name']}}}
+                onChange={{(e) => setNewItem({{ ...newItem, {attr['name']}: e.target.value }})}}
+                className="w-full rounded border border-gray-300 px-4 py-2"
+                rows="3"
+              />
+            </div>"""
+            else:
+                form_inputs += f"""
+            <div>
+              <input
+                type="{input_type}"
+                placeholder="{placeholder}"
+                value={{newItem.{attr['name']}}}
+                onChange={{(e) => setNewItem({{ ...newItem, {attr['name']}: e.target.value }})}}
+                className="w-full rounded border border-gray-300 px-4 py-2"
+                {is_required}
+              />
+            </div>"""
+            
+        # --- Conditional UI Generation ---
+        has_priority = any(attr['name'] == 'priority' for attr in self.attributes)
+        has_status = any(attr['name'] == 'status' for attr in self.attributes)
+
+        priority_select_jsx = ""
+        if has_priority:
+            priority_select_jsx = f"""
+              <select
+                value={{newItem.priority}}
+                onChange={{(e) => setNewItem({{ ...newItem, priority: e.target.value }})}}
+                className="rounded border border-gray-300 px-4 py-2"
+              >
+                <option value="low">Baixa</option>
+                <option value="medium">Média</option>
+                <option value="high">Alta</option>
+              </select>
+            """
+
+        status_badge_jsx = ""
+        status_button_jsx = ""
+        if has_status:
+            status_badge_jsx = f"""
+                      <span className="rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-800">
+                        {{item.status === 'completed' ? '✅ Completa' : '⏳ Ativa'}}
+                      </span>
+            """
+            status_button_jsx = f"""
+                    <button
+                      onClick={{() => handleUpdateItem(item.id, {{ status: item.status === 'completed' ? 'active' : 'completed' }})}}
+                      className="w-full rounded bg-green-500 px-3 py-1 text-sm text-white hover:bg-green-600"
+                    >
+                      {{item.status === 'completed' ? 'Reabrir' : 'Completar'}}
+                    </button>
+            """
+
+        priority_badge_jsx = ""
+        if has_priority:
+            priority_badge_jsx = f"""
+                      <span className={{`rounded-full px-3 py-1 text-sm font-medium ${{getPriorityColor(item.priority)}}`}}>
+                        {{item.priority === 'low' ? '🟢 Baixa' : item.priority === 'medium' ? '🟡 Média' : '🔴 Alta'}}
+                      </span>
+            """
+
+        # Identificar campos para exibição na lista (Dinâmico)
+        main_field = self.attributes[0]['name']
+        sub_field = self.attributes[1]['name'] if len(self.attributes) > 1 else None
+        sub_field_jsx = ""
+        
+        if sub_field:
+            sub_field_jsx = f"""{{item.{sub_field} && (
+                      <p className="mt-2 text-gray-600">{{item.{sub_field}}}</p>
+                    )}}"""
+                    
+        # --- Geração de UI Condicional para Stats ---
+        stats_jsx = ""
+        if has_status:
+            stats_jsx = f"""
+        <div className="mt-8 grid grid-cols-3 gap-4">
+          <div className="rounded-lg bg-white p-6 shadow text-center">
+            <p className="text-3xl font-bold text-blue-500">{{items.length}}</p>
+            <p className="text-gray-600">Total</p>
+          </div>
+          <div className="rounded-lg bg-white p-6 shadow text-center">
+            <p className="text-3xl font-bold text-green-500">{{items.filter(t => t.status === 'completed').length}}</p>
+            <p className="text-gray-600">Completas</p>
+          </div>
+          <div className="rounded-lg bg-white p-6 shadow text-center">
+            <p className="text-3xl font-bold text-yellow-500">{{items.filter(t => t.status !== 'completed').length}}</p>
+            <p className="text-gray-600">Ativas</p>
+          </div>
+        </div>"""
+        else:
+            stats_jsx = f"""
+        <div className="mt-8 grid grid-cols-1 gap-4">
+          <div className="rounded-lg bg-white p-6 shadow text-center">
+            <p className="text-3xl font-bold text-blue-500">{{items.length}}</p>
+            <p className="text-gray-600">Total de Itens</p>
+          </div>
+        </div>"""
+
         page_content = f"""import {{ useState, useEffect }} from 'react'
 import axios from 'axios'
 
 const API_URL = 'http://localhost:3001/api'
 
 export default function {self.page_name}({{ user, onLogout }}) {{
-  const [tasks, setTasks] = useState([])
-  const [newTask, setNewTask] = useState({{ title: '', description: '', priority: 'medium' }})
+  const [items, setItems] = useState([])
+  const [newItem, setNewItem] = useState({initial_state})
   const [loading, setLoading] = useState(false)
   const token = localStorage.getItem('token')
 
@@ -299,27 +422,27 @@ export default function {self.page_name}({{ user, onLogout }}) {{
   }}
 
   useEffect(() => {{
-    fetchTasks()
+    fetchItems()
   }}, [])
 
-  const fetchTasks = async () => {{
+  const fetchItems = async () => {{
     try {{
       const response = await axios.get(`${{API_URL}}/{self.entity_plural}`, axiosConfig)
-      setTasks(response.data.data || [])
+      setItems(response.data.data || [])
     }} catch (err) {{
       console.error('Erro ao carregar dados:', err)
     }}
   }}
 
-  const handleCreateTask = async (e) => {{
+  const handleCreateItem = async (e) => {{
     e.preventDefault()
-    if (!newTask.title.trim()) return
+    if (!newItem.{main_field}) return
 
     setLoading(true)
     try {{
-      const response = await axios.post(`${{API_URL}}/{self.entity_plural}`, newTask, axiosConfig)
-      setTasks([response.data.{self.entity_lower}, ...tasks])
-      setNewTask({{ title: '', description: '', priority: 'medium' }})
+      const response = await axios.post(`${{API_URL}}/{self.entity_plural}`, newItem, axiosConfig)
+      setItems([response.data.{self.entity_lower}, ...items])
+      setNewItem({initial_state})
     }} catch (err) {{
       console.error('Erro ao criar:', err)
     }} finally {{
@@ -327,27 +450,27 @@ export default function {self.page_name}({{ user, onLogout }}) {{
     }}
   }}
 
-  const handleUpdateTask = async (id, updates) => {{
+  const handleUpdateItem = async (id, updates) => {{
     try {{
-      const task = tasks.find(t => t.id === id)
-      await axios.put(`${{API_URL}}/{self.entity_plural}/${{id}}`, {{ ...task, ...updates }}, axiosConfig)
-      setTasks(tasks.map(t => t.id === id ? {{ ...t, ...updates }} : t))
+      const itemToUpdate = items.find(t => t.id === id)
+      await axios.put(`${{API_URL}}/{self.entity_plural}/${{id}}`, {{ ...itemToUpdate, ...updates }}, axiosConfig)
+      setItems(items.map(t => t.id === id ? {{ ...t, ...updates }} : t))
     }} catch (err) {{
       console.error('Erro ao atualizar:', err)
     }}
   }}
 
-  const handleDeleteTask = async (id) => {{
+  const handleDeleteItem = async (id) => {{
     if (!window.confirm('Tem certeza?')) return
 
     try {{
       await axios.delete(`${{API_URL}}/{self.entity_plural}/${{id}}`, axiosConfig)
-      setTasks(tasks.filter(t => t.id !== id))
+      setItems(items.filter(t => t.id !== id))
     }} catch (err) {{
       console.error('Erro ao deletar:', err)
     }}
   }}
-
+{"""
   const getPriorityColor = (priority) => {{
     const colors = {{
       low: 'bg-green-100 text-green-800',
@@ -355,12 +478,11 @@ export default function {self.page_name}({{ user, onLogout }}) {{
       high: 'bg-red-100 text-red-800'
     }}
     return colors[priority] || 'bg-gray-100'
-  }}
-
+  }}""" if has_priority else ""}
+{"""
   const getStatusColor = (status) => {{
     return status === 'completed' ? 'line-through text-gray-500' : ''
-  }}
-
+  }}""" if has_status else "  const getStatusColor = () => '';"}
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50">
       {{/* Header */}}
@@ -383,37 +505,11 @@ export default function {self.page_name}({{ user, onLogout }}) {{
       <main className="mx-auto max-w-6xl px-6 py-8">
         {{/* Create task form */}}
         <div className="mb-8 rounded-lg bg-white p-6 shadow">
-          <h2 className="mb-4 text-xl font-bold text-gray-900">Novo {self.entity}</h2>
-          <form onSubmit={{handleCreateTask}} className="space-y-4">
-            <div>
-              <input
-                type="text"
-                placeholder="Título / Nome"
-                value={{newTask.title}}
-                onChange={{(e) => setNewTask({{ ...newTask, title: e.target.value }})}}
-                className="w-full rounded border border-gray-300 px-4 py-2"
-                required
-              />
-            </div>
-            <div>
-              <textarea
-                placeholder="Descrição (opcional)"
-                value={{newTask.description}}
-                onChange={{(e) => setNewTask({{ ...newTask, description: e.target.value }})}}
-                className="w-full rounded border border-gray-300 px-4 py-2"
-                rows="3"
-              />
-            </div>
-            <div className="flex gap-4">
-              <select
-                value={{newTask.priority}}
-                onChange={{(e) => setNewTask({{ ...newTask, priority: e.target.value }})}}
-                className="rounded border border-gray-300 px-4 py-2"
-              >
-                <option value="low">Baixa</option>
-                <option value="medium">Média</option>
-                <option value="high">Alta</option>
-              </select>
+          <h2 className="mb-4 text-xl font-bold text-gray-900">Novo(a) {self.entity}</h2>
+          <form onSubmit={{handleCreateItem}} className="space-y-4">
+            {form_inputs}
+            <div className="flex items-center gap-4">
+              {priority_select_jsx}
               <button
                 type="submit"
                 disabled={{loading}}
@@ -427,43 +523,30 @@ export default function {self.page_name}({{ user, onLogout }}) {{
 
         {{/* Tasks list */}}
         <div className="space-y-4">
-          {{tasks.length === 0 ? (
+          {{items.length === 0 ? (
             <div className="rounded-lg bg-white p-12 text-center shadow">
               <p className="text-gray-500">Nenhum item ainda. Crie um para começar! 🚀</p>
             </div>
           ) : (
-            tasks.map(task => (
-              <div key={{task.id}} className="rounded-lg bg-white p-6 shadow hover:shadow-lg transition">
+            items.map(item => (
+              <div key={{item.id}} className="rounded-lg bg-white p-6 shadow hover:shadow-lg transition">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <h3 className={{`text-lg font-semibold text-gray-900 ${{getStatusColor(task.status)}}`}}>
-                      {{task.title}}
+                    <h3 className={{`text-lg font-semibold text-gray-900 ${{getStatusColor(item.status)}}`}}>
+                      {{item.{main_field}}}
                     </h3>
-                    {{task.description && (
-                      <p className="mt-2 text-gray-600">{{task.description}}</p>
-                    )}}
-                    <div className="mt-4 flex gap-2">
-                      <span className={{`rounded-full px-3 py-1 text-sm font-medium ${{getPriorityColor(task.priority)}}`}}>
-                        {{task.priority === 'low' ? '🟢 Baixa' : task.priority === 'medium' ? '🟡 Média' : '🔴 Alta'}}
-                      </span>
-                      <span className="rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-800">
-                        {{task.status === 'completed' ? '✅ Completa' : '⏳ Ativa'}}
-                      </span>
+                    {sub_field_jsx}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {priority_badge_jsx}
+                      {status_badge_jsx}
                     </div>
                   </div>
 
                   {{/* Actions */}}
-                  <div className="ml-4 space-y-2">
+                  <div className="ml-4 flex flex-col space-y-2">
+                    {status_button_jsx}
                     <button
-                      onClick={{() => handleUpdateTask(task.id, {{
-                        status: task.status === 'completed' ? 'active' : 'completed'
-                      }})}}
-                      className="w-full rounded bg-green-500 px-3 py-1 text-sm text-white hover:bg-green-600"
-                    >
-                      {{task.status === 'completed' ? 'Reabrir' : 'Completar'}}
-                    </button>
-                    <button
-                      onClick={{() => handleDeleteTask(task.id)}}
+                      onClick={{() => handleDeleteItem(item.id)}}
                       className="w-full rounded bg-red-500 px-3 py-1 text-sm text-white hover:bg-red-600"
                     >
                       Deletar
@@ -475,21 +558,8 @@ export default function {self.page_name}({{ user, onLogout }}) {{
           )}}
         </div>
 
-        {{/* Stats */}}
-        <div className="mt-8 grid grid-cols-3 gap-4">
-          <div className="rounded-lg bg-white p-6 shadow text-center">
-            <p className="text-3xl font-bold text-blue-500">{{tasks.length}}</p>
-            <p className="text-gray-600">Total</p>
-          </div>
-          <div className="rounded-lg bg-white p-6 shadow text-center">
-            <p className="text-3xl font-bold text-green-500">{{tasks.filter(t => t.status === 'completed').length}}</p>
-            <p className="text-gray-600">Completas</p>
-          </div>
-          <div className="rounded-lg bg-white p-6 shadow text-center">
-            <p className="text-3xl font-bold text-yellow-500">{{tasks.filter(t => t.status === 'active').length}}</p>
-            <p className="text-gray-600">Ativas</p>
-          </div>
-        </div>
+        {{/* Stats Condicionais */}}
+        {stats_jsx}
       </main>
     </div>
   )

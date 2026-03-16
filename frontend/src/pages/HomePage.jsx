@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { generateProject } from '../services/api'
 import IdeasForm from '../components/IdeasForm'
 import LoadingSpinner from '../components/LoadingSpinner'
 
@@ -9,18 +8,15 @@ export default function HomePage() {
   const [error, setError] = useState(null)
   const navigate = useNavigate()
 
-  const handleGenerateProject = async (idea) => {
-    setLoading(true)
+  const handleGenerateProject = (idea) => {
     setError(null)
-
-    try {
-      const response = await generateProject(idea)
-      // Redireciona para a página de resultados com o ID do projeto
-      navigate(`/results/${response.projectId}`, { state: { data: response } })
-    } catch (err) {
-      setError(err.message || 'Erro ao gerar projeto. Tente novamente.')
-      setLoading(false)
+    if (!idea.trim()) {
+      setError("Por favor, descreva a ideia do seu projeto.");
+      return;
     }
+    // Navega para a nova página de pipeline, passando a ideia no estado.
+    setLoading(true); // Mostra o spinner enquanto a página carrega
+    navigate('/pipeline', { state: { idea: idea } });
   }
 
   return (

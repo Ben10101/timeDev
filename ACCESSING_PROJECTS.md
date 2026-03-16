@@ -12,7 +12,7 @@ c:\Users\bleao\ai-software-factory\outputs\generated_projects\[project-id]
 ### Opção 1: Pelo Terminal
 ```bash
 # Windows PowerShell
-cd c:\Users\bleao\ai-software-factory\outputs\generated_projects
+cd c:\Users\bleao\ai-software-factory\outputs\projects
 
 # Listar todos os projetos
 dir
@@ -22,7 +22,7 @@ cd seu-projeto-[id]
 ```
 
 ### Opção 2: Pelo Explorer (Windows)
-1. Abra: `C:\Users\bleao\ai-software-factory\outputs\generated_projects`
+1. Abra: `C:\Users\bleao\ai-software-factory\outputs\projects`
 2. Procure pela pasta com o ID do seu projeto
 3. Veja os arquivos:
    - `frontend/` - App React
@@ -56,7 +56,7 @@ seu-projeto-abc123/
 
 **Backend (Terminal 1):**
 ```bash
-cd outputs\generated_projects\seu-projeto-abc123\backend
+cd outputs\projects\seu-projeto-abc123\backend
 npm install
 npm start
 ```

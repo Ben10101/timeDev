@@ -30,7 +30,7 @@ from agents.requirements_analyst.agent import RequirementsAnalyst
 from agents.architect.agent import Architect
 from agents.developer.agent_new import Developer
 from agents.qa_engineer.agent import QAEngineer
-from projectBuilder import ProjectBuilder
+from orchestrator.projectBuilder import ProjectBuilder
 
 
 class Factory:
@@ -49,53 +49,66 @@ class Factory:
         print("-" * 60, file=sys.stderr)
 
         try:
-            # 1. Project Manager - Gera backlog
-            print("\n[1/5] Project Manager - Gerando backlog...", file=sys.stderr)
-            pm = ProjectManager(self.project_id)
-            backlog = pm.process(self.idea)
-            self.results['backlog'] = backlog
-            print("[OK] Backlog gerado com sucesso!", file=sys.stderr)
+            # Definição da fila de execução (Pipeline de Agentes)
+            # Cada item é uma etapa sequencial que depende da anterior
+            execution_queue = [
+                {
+                    "name": "Project Manager",
+                    "action": "Gerando backlog",
+                    "execute": lambda: ProjectManager(self.project_id).process(self.idea),
+                    "save": lambda res: self.results.update({'backlog': res})
+                },
+                {
+                    "name": "Requirements Analyst",
+                    "action": "Analisando requisitos",
+                    "execute": lambda: RequirementsAnalyst(self.project_id).process(self.idea, self.results['backlog']),
+                    "save": lambda res: self.results.update({'requirements': res})
+                },
+                {
+                    "name": "Architect",
+                    "action": "Definindo arquitetura",
+                    "execute": lambda: Architect(self.project_id).process(self.idea, self.results['requirements']),
+                    "save": lambda res: self.results.update({'architecture': res})
+                },
+                {
+                    "name": "Developer",
+                    "action": "Gerando código",
+                    "execute": lambda: Developer(self.project_id).process(self.idea, self.results['architecture']),
+                    "save": lambda res: self.results.update({
+                        'code': res['code'],
+                        'primary_entity': res['primary_entity'],
+                        'attributes': res.get('attributes', [])
+                    })
+                },
+                {
+                    "name": "QA Engineer",
+                    "action": "Gerando testes",
+                    "execute": lambda: QAEngineer(self.project_id).process(self.idea, self.results['code']),
+                    "save": lambda res: self.results.update({'tests': res})
+                }
+            ]
 
-            # 2. Requirements Analyst - Gera requisitos
-            print("\n[2/5] Requirements Analyst - Analisando requisitos...", file=sys.stderr)
-            ra = RequirementsAnalyst(self.project_id)
-            requirements = ra.process(self.idea, backlog)
-            self.results['requirements'] = requirements
-            print("[OK] Requisitos analisados com sucesso!", file=sys.stderr)
+            total_steps = len(execution_queue) + 1  # +1 para o ProjectBuilder
 
-            # 3. Architect - Define arquitetura
-            print("\n[3/5] Architect - Definindo arquitetura...", file=sys.stderr)
-            arc = Architect(self.project_id)
-            architecture = arc.process(self.idea, requirements)
-            self.results['architecture'] = architecture
-            print("[OK] Arquitetura definida com sucesso!", file=sys.stderr)
-
-            # 4. Developer - Gera código
-            print("\n[4/5] Developer - Gerando código...", file=sys.stderr)
-            dev = Developer(self.project_id)
-            dev_result = dev.process(self.idea, architecture)
-            code = dev_result['code']
-            primary_entity = dev_result['primary_entity']
-            self.results['code'] = code
-            self.results['primary_entity'] = primary_entity
-            print("[OK] Código gerado com sucesso!", file=sys.stderr)
-
-            # 5. QA Engineer - Gera testes
-            print("\n[5/5] QA Engineer - Gerando testes...", file=sys.stderr)
-            qa = QAEngineer(self.project_id)
-            tests = qa.process(self.idea, code)
-            self.results['tests'] = tests
-            print("[OK] Testes gerados com sucesso!", file=sys.stderr)
+            # Executar a fila de agentes sequencialmente
+            for i, task in enumerate(execution_queue, 1):
+                print(f"\n[{i}/{total_steps}] {task['name']} - {task['action']}...", file=sys.stderr)
+                result = task['execute']()
+                task['save'](result)
+                print(f"[OK] {task['name']} concluído com sucesso!", file=sys.stderr)
 
             # 6. ProjectBuilder - Cria arquivos reais
-            print("\n[6/6] ProjectBuilder - Criando projeto real...", file=sys.stderr)
+            print(f"\n[{total_steps}/{total_steps}] ProjectBuilder - Criando projeto real...", file=sys.stderr)
             builder = ProjectBuilder(self.project_id)
             project_path = builder.create_project(
                 self.idea,
-                backlog,
-                requirements,
-                architecture,
-                primary_entity
+                self.results['backlog'],
+                self.results['requirements'],
+                self.results['architecture'],
+                self.results['code'],
+                self.results['tests'],
+                self.results.get('primary_entity', 'Task'),
+                self.results.get('attributes', [])
             )
             self.results['project_path'] = project_path
             print("[OK] Projeto real criado com sucesso!", file=sys.stderr)

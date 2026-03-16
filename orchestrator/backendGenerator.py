@@ -9,16 +9,44 @@ import json
 class BackendGenerator:
     """Gera um backend Express funcional"""
     
-    def __init__(self, project_path, primary_entity="Task"):
+    def __init__(self, project_path, primary_entity="Task", attributes=None):
         self.project_path = project_path
         self.backend_path = os.path.join(project_path, 'backend')
         self.entity = primary_entity
         self.entity_lower = primary_entity.lower()
         self.entity_plural = f"{self.entity_lower}s"
         self.table_name = self.entity_plural
+        self.attributes = attributes if attributes else [
+            {'name': 'title', 'sql_type': 'VARCHAR(255) NOT NULL'}, 
+            {'name': 'description', 'sql_type': 'TEXT'}
+        ]
     
     def create_server(self):
         """Cria server.js funcional"""
+        # Geração de código dinâmico para SQL e API
+        sql_columns = ",\n      ".join([f"{attr['name']} {attr['sql_type']}" for attr in self.attributes])
+        api_body_fields = ", ".join([attr['name'] for attr in self.attributes])
+        insert_fields = ", ".join([attr['name'] for attr in self.attributes])
+        insert_placeholders = ", ".join(['?'] * len(self.attributes))
+        insert_params_js = ", ".join([f"req.body.{attr['name']} || null" for attr in self.attributes])
+        update_set_clause = ", ".join([f"{attr['name']} = ?" for attr in self.attributes])
+        update_params_js = ", ".join([f"req.body.{attr['name']}" for attr in self.attributes])
+
+        # Geração de lógica de filtro dinâmica
+        filter_logic = ""
+        if any(attr['name'] == 'status' for attr in self.attributes):
+            filter_logic += """
+  if (status) {{
+    query += ' AND status = ?';
+    params.push(status);
+  }}"""
+        if any(attr['name'] == 'priority' for attr in self.attributes):
+            filter_logic += """
+  if (priority) {{
+    query += ' AND priority = ?';
+    params.push(priority);
+  }}"""
+
         server_js = f"""import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
@@ -68,10 +96,7 @@ function initializeDatabase() {{
     CREATE TABLE IF NOT EXISTS {self.table_name} (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT,
-      status TEXT DEFAULT 'active',
-      priority TEXT DEFAULT 'medium',
+      {sql_columns},
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id)
@@ -202,16 +227,7 @@ app.get('/api/{self.entity_plural}', verifyToken, (req, res) => {{
   let query = 'SELECT * FROM {self.table_name} WHERE user_id = ?'
   const params = [req.user.id]
 
-  if (status) {{
-    query += ' AND status = ?'
-    params.push(status)
-  }}
-
-  if (priority) {{
-    query += ' AND priority = ?'
-    params.push(priority)
-  }}
-
+  {filter_logic}
   query += ' ORDER BY created_at DESC'
 
   db.all(query, params, (err, tasks) => {{
@@ -242,30 +258,30 @@ app.get('/api/{self.entity_plural}/:id', verifyToken, (req, res) => {{
 // Create task
 app.post('/api/{self.entity_plural}', verifyToken, (req, res) => {{
   try {{
-    const {{ title, description, priority }} = req.body
+    const {{ {api_body_fields} }} = req.body
 
-    if (!title) {{
-      return res.status(400).json({{ error: 'Title is required' }})
+    const mainField = `{self.attributes[0]['name']}`
+    // Validação simples para o primeiro atributo
+    if (!req.body[mainField]) {{
+      return res.status(400).json({{ error: `${{mainField.charAt(0).toUpperCase() + mainField.slice(1)}} is required` }})
     }}
 
-    const taskId = generateId()
+    const newId = generateId()
     const now = new Date().toISOString()
+    const params = [newId, req.user.id, {insert_params_js}, now, now]
 
     db.run(
-      'INSERT INTO {self.table_name} (id, user_id, title, description, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [taskId, req.user.id, title, description || '', priority || 'medium', now, now],
+      'INSERT INTO {self.table_name} (id, user_id, {insert_fields}, created_at, updated_at) VALUES (?, ?, {insert_placeholders}, ?, ?)',
+      params,
       function(err) {{
         if (err) {{
           return res.status(500).json({{ error: 'Error creating {self.entity_lower}' }})
         }}
         res.status(201).json({{
           {self.entity_lower}: {{
-            id: taskId,
+            id: newId,
             user_id: req.user.id,
-            title,
-            description: description || '',
-            status: 'active',
-            priority: priority || 'medium',
+            ...req.body,
             created_at: now,
             updated_at: now
           }}
@@ -280,12 +296,13 @@ app.post('/api/{self.entity_plural}', verifyToken, (req, res) => {{
 // Update task
 app.put('/api/{self.entity_plural}/:id', verifyToken, (req, res) => {{
   try {{
-    const {{ title, description, status, priority }} = req.body
+    const {{ {api_body_fields} }} = req.body
     const now = new Date().toISOString()
+    const params = [{update_params_js}, now, req.params.id, req.user.id]
 
     db.run(
-      'UPDATE {self.table_name} SET title = ?, description = ?, status = ?, priority = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-      [title, description || '', status, priority, now, req.params.id, req.user.id],
+      'UPDATE {self.table_name} SET {update_set_clause}, updated_at = ? WHERE id = ? AND user_id = ?',
+      params,
       function(err) {{
         if (err) {{
           return res.status(500).json({{ error: 'Error updating {self.entity_lower}' }})
@@ -298,10 +315,7 @@ app.put('/api/{self.entity_plural}/:id', verifyToken, (req, res) => {{
         res.json({{
           {self.entity_lower}: {{
             id: req.params.id,
-            title,
-            description,
-            status,
-            priority,
+            ...req.body,
             updated_at: now
           }}
         }})

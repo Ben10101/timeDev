@@ -1,71 +1,81 @@
-import { spawn } from 'child_process'
-import path from 'path'
-import { fileURLToPath } from 'url'
-import { dirname } from 'path'
+import { spawn } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Caminho até a raiz do projeto (3 níveis acima de src/services)
-const projectRoot = path.resolve(__dirname, '../../..')
-
-export async function orchestrateProject(projectId, idea) {
+/**
+ * Executa o pipeline completo de geração de projetos (funcionalidade antiga).
+ */
+export function orchestrateProject(projectId, idea) {
   return new Promise((resolve, reject) => {
-    // Caminho para o orchestrator Python (na raiz do projeto)
-    const orchestratorPath = path.join(projectRoot, 'orchestrator', 'factory.py')
+    const orchestratorPath = path.join(__dirname, '..', '..', '..', 'orchestrator', 'factory.py');
+    const pythonProcess = spawn('python', [orchestratorPath, projectId, idea]);
 
-    console.log(`📍 Caminho do orchestrator: ${orchestratorPath}`)
-    console.log(`🔍 Projeto Root: ${projectRoot}`)
-
-    // Executa o orchestrator Python
-    const pythonProcess = spawn('python', [orchestratorPath, projectId, idea])
-
-    let outputData = ''
-    let errorData = ''
+    let stdoutData = '';
+    let stderrData = '';
 
     pythonProcess.stdout.on('data', (data) => {
-      outputData += data.toString()
-    })
+      stdoutData += data.toString();
+    });
 
     pythonProcess.stderr.on('data', (data) => {
-      errorData += data.toString()
-    })
+      stderrData += data.toString();
+      console.error(`[Python STDERR] ${data}`);
+    });
 
     pythonProcess.on('close', (code) => {
-      console.log(`\n[ORCHESTRATOR LOGS]:\n${errorData}`)
-      console.log(`[OUTPUT LENGTH]: ${outputData.length} caracteres`)
-      
-      if (code === 0) {
-        try {
-          // Tenta fazer parse do JSON retornado pelo orchestrator
-          const result = JSON.parse(outputData)
-          console.log('[SUCCESS] JSON parseado com sucesso')
-          resolve(result)
-        } catch (err) {
-          // Se não conseguir fazer parse, retorna os dados como texto
-          console.error(`[ERROR] Falha ao parser JSON: ${err.message}`)
-          console.log(`[RAW OUTPUT]: ${outputData.substring(0, 500)}...`)
-          resolve({
-            backlog: outputData || 'Backlog gerado pelo orchestrator',
-            requirements: 'Requisitos gerados',
-            architecture: 'Arquitetura definida',
-            code: 'Código base gerado',
-            tests: 'Testes planejados'
-          })
-        }
-      } else {
-        console.error(`❌ Python Error (code ${code}):`, errorData)
-        reject(new Error(`Erro ao executar orchestrator: ${errorData}`))
+      if (code !== 0) {
+        return reject(new Error(`Erro ao executar orchestrator: ${stderrData}`));
       }
-    })
-
-    pythonProcess.on('error', (err) => {
-      console.error('❌ Erro ao spawnar processo Python:', err)
-      reject(new Error(`Não foi possível executar Python. Mensagem: ${err.message}`))
-    })
-  })
+      try {
+        const result = JSON.parse(stdoutData);
+        resolve(result);
+      } catch (e) {
+        reject(new Error(`Falha ao analisar JSON do orchestrator: ${e.message}. Output: ${stdoutData}`));
+      }
+    });
+  });
 }
 
-export default {
-  orchestrateProject
+/**
+ * Executa um único agente de IA.
+ */
+export function runSingleAgent(agent, payload) {
+  return new Promise((resolve, reject) => {
+    const agentRunnerPath = path.join(__dirname, '..', '..', '..', 'orchestrator', 'run_single_agent.py');
+    const pythonProcess = spawn('python', [agentRunnerPath]);
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdoutData += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderrData += data.toString();
+      console.error(`[Python STDERR] ${data}`);
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(`Erro ao executar agente ${agent}: ${stderrData}`));
+      }
+      try {
+        const result = JSON.parse(stdoutData);
+        if (result.success) {
+          resolve(result.data);
+        } else {
+          reject(new Error(`Erro no script do agente ${agent}: ${result.error}`));
+        }
+      } catch (e) {
+        reject(new Error(`Falha ao analisar JSON do agente ${agent}: ${e.message}. Output: ${stdoutData}`));
+      }
+    });
+
+    // Envia o payload para o script Python via stdin
+    pythonProcess.stdin.write(JSON.stringify({ agent, payload }));
+    pythonProcess.stdin.end();
+  });
 }
