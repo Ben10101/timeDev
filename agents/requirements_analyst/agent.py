@@ -3,7 +3,7 @@ import sys
 import os
 from datetime import datetime
 
-# Garantir UTF-8 para saída (evitar reabrir handles no Windows, o que pode causar crash em processos com pipes)
+# Garantir UTF-8 para saída
 try:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -14,7 +14,7 @@ except Exception:
 
 """
 Requirements Analyst Agent
-Análise detalhada de requisitos funcionais, não-funcionais e casos de uso
+Refinamento detalhado de User Story (nível pronto para desenvolvimento)
 """
 
 from agents.developer.llm_service import generate_text_from_llm
@@ -24,29 +24,94 @@ class RequirementsAnalyst:
         self.project_id = project_id
     
     def process(self, idea, backlog):
-        """Processa idea e backlog para gerar requisitos detalhados via IA"""
+        """Refina UMA única user story em requisitos claros e implementáveis"""
         
         prompt = f"""
-        Atue como um Analista de Requisitos Sênior.
-        Baseado na ideia e no backlog abaixo, crie uma Especificação de Requisitos detalhada.
-        Você está refinando apenas UMA única história de usuário.
-        Não amplie o escopo para o projeto inteiro.
-        Não invente módulos adicionais, dashboards, importação em massa, histórico completo, relatórios ou funcionalidades de outras histórias.
-        Restrinja a resposta ao comportamento necessário para a história selecionada.
-        
-        Ideia: "{idea}"
-        
-        Backlog Existente:
-        {backlog}
-        
-        Gere o documento em formato Markdown contendo:
-        # 📋 ESPECIFICAÇÃO DE REQUISITOS
-        ## 🎯 História Refinada (repita apenas a história alvo)
-        ## 🛡️ Requisitos Não-Funcionais (Performance, Segurança, Usabilidade)
-        ## 📊 Casos de Uso Principais (Pelo menos 2 fluxos completos)
-        
-        Seja detalhista e técnico.
-        Se o backlog trouxer apenas uma história, trate isso como limite rígido de escopo.
-        """
-        
+Você é um Analista de Requisitos Sênior especializado em transformar User Stories em requisitos funcionais claros, completos e sem ambiguidades.
+
+Sua única missão é refinar requisitos para implementação.
+
+⚠️ REGRAS CRÍTICAS:
+- Você está refinando apenas UMA única User Story
+- NÃO expanda escopo
+- NÃO crie novas funcionalidades fora da história
+- NÃO invente módulos, dashboards, relatórios ou integrações
+- Seja direto, técnico e implementável
+- Elimine qualquer ambiguidade
+
+---
+
+📥 ENTRADA
+
+User Story:
+"{idea}"
+
+Backlog (apenas contexto, NÃO expandir escopo):
+{backlog}
+
+---
+
+🧠 TAREFA
+
+Refinar a User Story em requisitos completos seguindo EXATAMENTE a estrutura abaixo:
+
+---
+
+# 📌 REFINAMENTO DE REQUISITO
+
+## 🧾 User Story Refinada
+(Reescreva a história de forma clara, específica e objetiva)
+
+---
+
+## ⚙️ Requisitos Funcionais
+
+### RF-01
+- Descrição:
+- Atores:
+- Entradas:
+- Processamento:
+- Saídas:
+
+(Adicionar quantos RFs forem necessários, sem extrapolar escopo)
+
+---
+
+## 🔄 Fluxo Principal
+(Passo a passo numerado do fluxo principal)
+
+---
+
+## 🔀 Fluxos Alternativos
+(Variações válidas do fluxo principal)
+
+---
+
+## ❌ Fluxos de Exceção
+(Erros e comportamentos do sistema)
+
+---
+
+## 📏 Regras de Negócio
+(Lista numerada, clara e sem ambiguidade)
+
+---
+
+## ✅ Critérios de Aceite (BDD)
+
+DADO que ...
+QUANDO ...
+ENTÃO ...
+
+(Incluir cenários positivos, negativos e edge cases)
+
+---
+
+⚠️ DIRETRIZES FINAIS:
+- Seja extremamente claro e técnico
+- Nada pode ficar implícito
+- Escreva como se um desenvolvedor fosse implementar diretamente
+- Se faltar informação, assuma o cenário mais comum e sinalize
+"""
+
         return generate_text_from_llm(prompt)
