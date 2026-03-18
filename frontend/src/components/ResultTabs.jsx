@@ -21,6 +21,13 @@ export default function ResultTabs({ data }) {
       description: 'Requisitos funcionais e não-funcionais do sistema',
       icon: '✅'
     },
+    tests: {
+      id: 'tests',
+      label: 'Testes',
+      content: data.tests,
+      description: 'Plano de testes TDD, cenários Gherkin e critérios de aceite',
+      icon: '🧪'
+    },
     architecture: {
       id: 'architecture',
       label: 'Arquitetura',
@@ -35,13 +42,6 @@ export default function ResultTabs({ data }) {
       description: 'Estrutura de código base e exemplos de implementação',
       icon: '💻'
     },
-    tests: {
-      id: 'tests',
-      label: 'Testes',
-      content: data.tests,
-      description: 'Plano de testes, cenários e estratégia de QA',
-      icon: '🧪'
-    }
   }
 
   const tabs = Object.values(tabsInfo)

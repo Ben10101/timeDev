@@ -251,13 +251,13 @@ def get_attributes_from_llm(idea: str) -> list:
     print("[LLM Service] ❌ Nenhum LLM (Ollama ou Gemini) funcionou. Usando fallback de análise de texto...", file=sys.stderr)
     return generate_attributes_fallback(idea, "Nenhum LLM funcionou.")
 
-def generate_text_from_llm(prompt: str) -> str:
+def generate_text_from_llm(prompt: str, model: str = None) -> str:
     """
     Função genérica para gerar texto livre (Documentação, Backlog, etc) usando o Gemini.
     """
     # Prioridade: local (Ollama) quando possível.
     llm_provider = os.getenv("LLM_PROVIDER", "auto").lower()
-    ollama_model = os.getenv("OLLAMA_MODEL", "gemma3:4b")
+    ollama_model = model or os.getenv("OLLAMA_MODEL", "gemma3:4b")
 
 
     # ✅ CACHE CHECK: Verificar cache antes de qualquer chamada ao LLM

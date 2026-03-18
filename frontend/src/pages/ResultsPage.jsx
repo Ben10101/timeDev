@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import ResultTabs from '../components/ResultTabs'
+import BacklogKanban from './BacklogKanban' // 1. Importa o novo componente
 
 export default function ResultsPage() {
   const { projectId } = useParams()
@@ -117,6 +118,11 @@ export default function ResultsPage() {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-8">
         <ResultTabs data={data} />
+
+        {/* 2. Renderiza o Kanban Board aqui, passando os dados necessários */}
+        <div className="mt-12 bg-white p-6 rounded-lg shadow">
+          <BacklogKanban backlogMarkdown={data.backlog} projectId={projectId} stageName="results" />
+        </div>
         
         {/* Footer Info */}
         <div className="mt-8 p-6 bg-white rounded-lg shadow text-center text-gray-600">
