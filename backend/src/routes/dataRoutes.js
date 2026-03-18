@@ -1,0 +1,35 @@
+import { Router } from 'express';
+import {
+  bootstrapController,
+  createTaskArtifactController,
+  createProjectController,
+  createTaskCommentController,
+  createTaskController,
+  ensurePipelineProjectController,
+  generateProjectBacklogController,
+  getProjectController,
+  getTaskController,
+  importBacklogTasksController,
+  listProjectsController,
+  listProjectTasksController,
+  updateTaskController,
+} from '../controllers/projectDataController.js';
+
+const router = Router();
+
+router.post('/bootstrap', bootstrapController);
+router.post('/pipeline-project', ensurePipelineProjectController);
+router.get('/projects', listProjectsController);
+router.post('/projects', createProjectController);
+router.get('/projects/:projectUuid', getProjectController);
+router.get('/projects/:projectUuid/tasks', listProjectTasksController);
+router.post('/projects/:projectUuid/generate-backlog', generateProjectBacklogController);
+router.post('/projects/:projectUuid/import-backlog', importBacklogTasksController);
+router.post('/projects/:projectUuid/tasks', createTaskController);
+router.get('/tasks/:taskUuid', getTaskController);
+router.patch('/tasks/:taskUuid', updateTaskController);
+router.patch('/tasks/:taskUuid/status', updateTaskController);
+router.post('/tasks/:taskUuid/comments', createTaskCommentController);
+router.post('/tasks/:taskUuid/artifacts', createTaskArtifactController);
+
+export default router;

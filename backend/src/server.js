@@ -3,6 +3,7 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import projectRoutes from './routes/projectRoutes.js'
 import agentRoutes from './routes/agentRoutes.js'
+import dataRoutes from './routes/dataRoutes.js'
 
 dotenv.config()
 
@@ -16,6 +17,7 @@ app.use(express.json())
 // Routes
 app.use('/api', projectRoutes)
 app.use('/api', agentRoutes)
+app.use('/api', dataRoutes)
 
 // Health check
 app.get('/health', (req, res) => {
@@ -25,7 +27,12 @@ app.get('/health', (req, res) => {
 // Error handling
 app.use((err, req, res, next) => {
   console.error(err.stack)
-  res.status(500).json({ message: 'Erro interno do servidor', error: err.message })
+  const statusCode =
+    err.message?.includes('não encontrado') ? 404 :
+    err.message?.includes('obrigatório') ? 400 :
+    500
+
+  res.status(statusCode).json({ message: 'Erro interno do servidor', error: err.message })
 })
 
 app.listen(PORT, () => {

@@ -1,94 +1,130 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
+import { createTaskArtifact, ensurePipelineProject, importBacklogTasks, listProjectTasks } from '../services/api';
 
 const MOCK_STORIES = [
-  "Como um cliente, eu quero adicionar um produto ao carrinho de compras, para que possa continuar com a compra.",
-  "Como um cliente, eu quero atualizar a quantidade de um produto no carrinho de compras, para que possa fazer alterações caso necessário.",
-  "Como um cliente, eu quero remover um produto do carrinho de compras, para que possa excluir itens que não necessito mais.",
-  "Como um cliente, eu quero aplicar descontos e promoções, para que possa tirar vantagem de ofertas e promoções disponíveis.",
-  "Como um cliente, eu quero receber notificações sobre o status de minha compra, para que possa acompanhar o progresso do pedido.",
-  "Como administrador, eu quero gerenciar o catálogo de produtos, adicionando, editando e removendo itens.",
-  "Como administrador, eu quero visualizar os pedidos realizados na plataforma para poder processá-los."
+  'Como um cliente, eu quero adicionar um produto ao carrinho de compras, para que possa continuar com a compra.',
+  'Como um cliente, eu quero atualizar a quantidade de um produto no carrinho de compras, para que possa fazer alterações caso necessário.',
+  'Como um cliente, eu quero remover um produto do carrinho de compras, para que possa excluir itens que não necessito mais.',
 ];
 
 const EMPTY_ARRAY = [];
 
-export default function BacklogKanban({ 
-  backlogMarkdown, 
+function parseBacklogLines(backlogMarkdown) {
+  const storyLines = backlogMarkdown
+    ? backlogMarkdown.split('\n').filter((line) => line.trim().match(/^[-*]?\s*\d*\.?\s*(?:\*\*)?Como\b/i))
+    : MOCK_STORIES;
+
+  return storyLines.map((text, index) => ({
+    id: `story-${index}`,
+    text: text.replace(/^[-*]?\s*\d*\.?\s*(?:\*\*)?/, '').replace(/\*\*/g, '').trim(),
+    status: 'todo',
+    requirement: null,
+    isReady: true,
+  }));
+}
+
+function mapTasksToStories(tasks, stageName) {
+  return tasks
+    .map((task) => {
+      const requirementsArtifact = task.artifacts?.find((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent);
+      const qaArtifact = task.artifacts?.find((artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent);
+
+      if (stageName === 'qa' && !requirementsArtifact) {
+        return null;
+      }
+
+      return {
+        id: task.uuid,
+        text: task.title,
+        status: stageName === 'requirements' ? (requirementsArtifact ? 'done' : 'todo') : qaArtifact ? 'done' : 'todo',
+        requirement: stageName === 'requirements' ? requirementsArtifact?.content || null : qaArtifact?.content || null,
+        predecessorRequirement: requirementsArtifact?.content || null,
+        isReady: stageName !== 'qa' || Boolean(requirementsArtifact),
+        task,
+      };
+    })
+    .filter(Boolean);
+}
+
+export default function BacklogKanban({
+  backlogMarkdown,
   projectId: propProjectId,
-  // Novas props para customização do agente e textos
-  stageName = 'requirements', // 'requirements' ou 'qa'
+  stageName = 'requirements',
   agent = 'requirements_analyst',
-  title = '🗂️ Kanban de Histórias',
-  subtitle = 'Arraste uma História de Usuário para a área do Agente de Requisitos para gerar requisitos específicos.',
-  agentColumnTitle = '🤖 Agente de Requisitos',
-  processingMessage = 'Gerando requisitos técnicos...',
-  promptInstruction = "Atue como um Analista de Requisitos Sênior. Refine esta história de usuário gerando uma especificação técnica detalhada. Inclua: 1. Critérios de Aceite (formato Gherkin: Dado/Quando/Então), 2. Regras de Negócio Importantes, 3. Cenários de Exceção/Erros e 4. Sugestão de Modelo de Dados.",
-  predecessorStories = EMPTY_ARRAY, // Dados da etapa anterior (opcional)
-  onAllStoriesDone = () => {}, // Callback para avançar quando tudo estiver pronto
-  onAdvance = () => {} // Callback para avançar imediatamente (forçado)
+  title = 'Kanban de Histórias',
+  subtitle = 'Arraste uma História de Usuário para a área do agente para gerar o artefato específico.',
+  agentColumnTitle = 'Agente de Requisitos',
+  processingMessage = 'Gerando artefato...',
+  promptInstruction = 'Atue como um Analista de Requisitos Sênior. Refine esta história de usuário gerando uma especificação técnica detalhada.',
+  predecessorStories = EMPTY_ARRAY,
+  onAllStoriesDone = () => {},
+  onAdvance = () => {},
 }) {
   const { projectId: paramProjectId } = useParams();
-  const projectId = propProjectId || paramProjectId; // Aceita ID via props ou URL
+  const projectId = propProjectId || paramProjectId;
   const [stories, setStories] = useState([]);
   const [draggedStory, setDraggedStory] = useState(null);
-  const [processing, setProcessing] = useState(false);
-  // Estados para o modal de visualização de requisitos
+  const [processingStoryId, setProcessingStoryId] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState({ title: '', content: '' });
+  const [syncError, setSyncError] = useState(null);
 
-  // Chave única para salvar no localStorage dependendo do estágio (req ou qa)
-  const storageKey = `kanban_stories_${projectId}_${stageName}`;
+  const isMockMode = projectId?.startsWith('mock-proj-');
+  const isPersistentStage = !isMockMode && (stageName === 'requirements' || stageName === 'qa');
 
-  // Analisa o Markdown para extrair User Stories ao carregar
+  async function loadStoriesFromApi() {
+    if (!projectId) return;
+
+    await ensurePipelineProject({ projectUuid: projectId, idea: backlogMarkdown || title });
+    await importBacklogTasks(projectId, backlogMarkdown || '');
+    const tasks = await listProjectTasks(projectId);
+    setStories(mapTasksToStories(tasks, stageName));
+  }
+
   useEffect(() => {
-    // 1. Tenta recuperar estado salvo (persistência) para não perder progresso
-    if (projectId) {
-      const savedState = localStorage.getItem(storageKey);
-      if (savedState) {
-        setStories(JSON.parse(savedState));
+    let active = true;
+
+    async function initializeStories() {
+      setSyncError(null);
+
+      if (!isPersistentStage) {
+        let extractedStories = parseBacklogLines(backlogMarkdown);
+        if (stageName === 'qa' && predecessorStories?.length > 0) {
+          extractedStories = extractedStories
+            .map((story) => {
+              const match = predecessorStories.find((item) => item.id === story.id || item.text.trim() === story.text.trim());
+              return {
+                ...story,
+                isReady: !!(match && match.status === 'done' && match.requirement),
+                predecessorRequirement: match?.requirement || null,
+              };
+            })
+            .filter((story) => story.isReady);
+        }
+        if (active) setStories(extractedStories);
         return;
+      }
+
+      try {
+        await loadStoriesFromApi();
+      } catch (error) {
+        if (!active) return;
+        setSyncError(error.response?.data?.error || error.message || 'Não foi possível carregar o kanban do banco.');
+        setStories([]);
       }
     }
 
-    let storyLines = [];
+    initializeStories();
 
-    if (backlogMarkdown) {
-      // 2. Extrai histórias do markdown (Melhorado para aceitar **Como**, 1. Como, - Como)
-      storyLines = backlogMarkdown.split('\n').filter(line => line.trim().match(/^[-*]?\s*\d*\.?\s*(?:\*\*)?Como\b/i));
-    } else {
-      // Usa dados mockados se nenhum markdown for fornecido
-      storyLines = MOCK_STORIES;
-    }
-    let extractedStories = storyLines
-      .map((text, index) => ({
-        id: `story-${index}`,
-        text: text.replace(/^[-*]?\s*\d*\.?\s*(?:\*\*)?/, '').replace(/\*\*/g, '').trim(), // Limpa formatação (numeros, bullets, bold)
-        status: 'todo', // todo, processing, done
-        requirement: null,
-        isReady: stageName !== 'qa' // Por padrão, as histórias estão prontas, a menos que seja a etapa de QA
-      }));
+    return () => {
+      active = false;
+    };
+  }, [backlogMarkdown, projectId, stageName, isPersistentStage]);
 
-    // QA: Em vez de filtrar, marca as histórias como prontas ou não para esta etapa.
-    if (stageName === 'qa' && predecessorStories && predecessorStories.length > 0) {
-        extractedStories.forEach(story => {
-            const match = predecessorStories.find(p => (p.id === story.id || p.text.trim() === story.text.trim()));
-            // Uma história está pronta para QA se foi marcada como 'done' na etapa anterior.
-            story.isReady = !!(match && match.status === 'done' && match.requirement);
-        });
-    }
-
-    setStories(extractedStories);
-  }, [backlogMarkdown, projectId, storageKey, stageName, predecessorStories]);
-
-  // 3. Salva o estado no localStorage sempre que houver mudanças (drag & drop ou requisitos gerados)
-  useEffect(() => {
-    if (projectId && stories.length > 0) {
-      localStorage.setItem(storageKey, JSON.stringify(stories));
-    }
-  }, [stories, projectId, storageKey]);
+  const processing = Boolean(processingStoryId);
 
   const handleDragStart = (e, story) => {
     setDraggedStory(story);
@@ -106,143 +142,128 @@ export default function BacklogKanban({
     if (!draggedStory || processing) return;
 
     const storyId = draggedStory.id;
-    
-    // Atualiza UI para processando
-    setStories(prev => prev.map(s => 
-      s.id === storyId ? { ...s, status: 'processing' } : s
-    ));
-    setProcessing(true);
+    setProcessingStoryId(storyId);
     setDraggedStory(null);
+    setStories((prev) => prev.map((story) => (story.id === storyId ? { ...story, status: 'processing' } : story)));
 
     try {
-      // Prepara o payload. Se houver dados da etapa anterior (ex: requisitos para o QA), inclui no contexto.
       let backlogPayload = `História de Usuário:\n${draggedStory.text}`;
-      
-      if (predecessorStories.length > 0) {
-        // Tenta encontrar por ID (mais confiável) ou Texto
-        const match = predecessorStories.find(s => s.id === draggedStory.id) || 
-                      predecessorStories.find(s => s.text.trim() === draggedStory.text.trim());
-                      
-        if (match && match.requirement) {
-          backlogPayload += `\n\n📋 REQUISITOS TÉCNICOS ESTRUTURADOS:\n${match.requirement}`;
-        }
+      const inheritedRequirement = draggedStory.predecessorRequirement;
+      if (inheritedRequirement) {
+        backlogPayload += `\n\nREQUISITOS TÉCNICOS ESTRUTURADOS:\n${inheritedRequirement}`;
       }
 
-      // Monta o payload dinamicamente
       const payloadData = {
-          project_id: projectId,
-          idea: promptInstruction, // Prompt dinâmico
-          backlog: backlogPayload
+        project_id: projectId,
+        idea: promptInstruction,
+        backlog: backlogPayload,
       };
 
-      // FIX: Backend valida presença de 'code' para QA.
-      // Em TDD, injetamos o contexto (história+requisitos) como 'code' para passar na validação.
-      if (agent === 'qa_engineer') {
-          payloadData.code = backlogPayload;
-          payloadData.developer_output = { code: backlogPayload };
+      if (isPersistentStage) {
+        payloadData.task_uuid = storyId;
       }
 
-      // Chama o Agente de Requisitos apenas para esta história
-      // Isso economiza tokens pois não envia o backlog inteiro
+      if (agent === 'qa_engineer') {
+        payloadData.code = backlogPayload;
+        payloadData.developer_output = { code: backlogPayload };
+      }
+
       const response = await axios.post('/api/agents/run', {
-        agent: agent, // Agente dinâmico (requirements ou qa)
-        payload: payloadData
+        agent,
+        payload: payloadData,
       });
 
       const result = response.data.data || response.data;
+      const content = typeof result === 'string' ? result : JSON.stringify(result);
 
-      // Atualiza o card com o resultado
-      setStories(prev => prev.map(s => 
-        s.id === storyId ? { 
-          ...s, 
-          status: 'done', 
-          requirement: typeof result === 'string' ? result : JSON.stringify(result) 
-        } : s
-      ));
-
+      if (isPersistentStage) {
+        await createTaskArtifact(storyId, {
+          artifactType: stageName === 'requirements' ? 'requirements' : 'test_plan',
+          title: stageName === 'requirements' ? `Requisitos - ${draggedStory.text}` : `Plano de Testes - ${draggedStory.text}`,
+          content,
+          createdByAgentName: agent,
+          contentFormat: 'markdown',
+        });
+        await loadStoriesFromApi();
+      } else {
+        setStories((prev) =>
+          prev.map((story) =>
+            story.id === storyId
+              ? { ...story, status: 'done', requirement: content }
+              : story
+          )
+        );
+      }
     } catch (error) {
-      console.error("Erro ao processar história:", error);
-      setStories(prev => prev.map(s => 
-        s.id === storyId ? { ...s, status: 'todo' } : s // Volta para 'todo' em caso de erro
-      ));
-      alert("Erro ao processar a história com o agente.");
+      setStories((prev) => prev.map((story) => (story.id === storyId ? { ...story, status: 'todo' } : story)));
+      setSyncError(error.response?.data?.error || error.message || 'Erro ao processar a história com o agente.');
     } finally {
-      setProcessing(false);
+      setProcessingStoryId(null);
     }
   };
 
-  // Funções para controlar o modal
   const handleOpenModal = (story) => {
-    setModalContent({ title: story.text, content: story.requirement });
+    setModalContent({ title: story.text, content: story.requirement || story.predecessorRequirement || '' });
     setIsModalOpen(true);
   };
 
-  const handleCloseModal = () => {
-    setIsModalOpen(false);
-  };
-
-  // Função manual para garantir o envio para o QA
   const handleSyncToQA = (story) => {
-    localStorage.setItem(storageKey, JSON.stringify(stories));
-    // Confirmação rápida para o usuário entender que vai pular as outras histórias
-    if(window.confirm(`Deseja avançar IMEDIATAMENTE para o QA Engineer com este requisito?\n\n"${story.text.substring(0, 40)}..."\n\n(As outras histórias pendentes ficarão para depois)`)) {
-        onAdvance();
+    if (window.confirm(`Deseja avançar imediatamente para o QA com este requisito?\n\n"${story.text.substring(0, 40)}..."\n\nAs outras histórias pendentes ficarão para depois.`)) {
+      onAdvance(story);
     }
   };
 
-  const todoStories = stories.filter(s => s.status === 'todo');
+  const todoStories = stories.filter((story) => story.status === 'todo');
+  const processedStories = stories.filter((story) => story.status === 'done' || story.status === 'processing');
   const allStoriesProcessed = stories.length > 0 && todoStories.length === 0;
 
   return (
     <div className="mt-8">
-      <h2 className="text-2xl font-bold text-gray-800 mb-4">{title}</h2>
-      <p className="text-sm text-gray-600 mb-6">
-        {subtitle}
-      </p>
+      <h2 className="mb-4 text-2xl font-bold text-gray-800">{title}</h2>
+      <p className="mb-6 text-sm text-gray-600">{subtitle}</p>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-[600px]">
-        
-        {/* Coluna 1: Backlog (Cards) */}
-        <div className="bg-gray-100 p-4 rounded-xl border border-gray-200 overflow-y-auto">
-          <h3 className="font-bold text-gray-700 mb-4 sticky top-0 bg-gray-100 py-2">
-            📝 Histórias ({todoStories.length})
-          </h3>
+      {syncError && (
+        <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{syncError}</div>
+      )}
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <div className="max-h-[420px] overflow-y-auto rounded-xl border border-gray-200 bg-gray-100 p-4 md:max-h-[600px]">
+          <h3 className="sticky top-0 mb-4 bg-gray-100 py-2 font-bold text-gray-700">Histórias ({todoStories.length})</h3>
           {allStoriesProcessed ? (
-            <div className="text-center p-6 bg-green-50 border border-green-200 rounded-lg">
-              <h4 className="text-lg font-bold text-green-800">🎉 Tudo Pronto!</h4>
-              <p className="text-green-700 my-2">Todas as histórias foram processadas.</p>
-              <button 
-                onClick={onAllStoriesDone}
-                className="mt-2 w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition duration-300"
-              >
-                Avançar para a Próxima Etapa
+            <div className="rounded-lg border border-green-200 bg-green-50 p-6 text-center">
+              <h4 className="text-lg font-bold text-green-800">Tudo pronto</h4>
+              <p className="my-2 text-green-700">Todas as histórias foram processadas.</p>
+              <button onClick={onAllStoriesDone} className="mt-2 w-full rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700">
+                Avançar para a próxima etapa
               </button>
             </div>
           ) : (
             <div className="space-y-3">
-              {todoStories.map(story => {
-                const predecessor = predecessorStories.find(p => (p.id === story.id || p.text.trim() === story.text.trim()) && p.requirement);
+              {todoStories.map((story) => {
                 const isReadyForDrag = !processing && story.isReady;
-
                 return (
-                  <div 
-                    key={story.id} 
-                    draggable={isReadyForDrag} 
-                    onDragStart={(e) => isReadyForDrag && handleDragStart(e, story)} 
-                    className={`bg-white p-4 rounded shadow-sm border border-gray-200 transition-all group ${
-                      isReadyForDrag 
-                        ? 'cursor-move hover:shadow-md active:scale-95' 
-                        : 'opacity-50 bg-gray-50 cursor-not-allowed'
+                  <div
+                    key={story.id}
+                    draggable={isReadyForDrag}
+                    onDragStart={(e) => isReadyForDrag && handleDragStart(e, story)}
+                    className={`group rounded border border-gray-200 bg-white p-4 shadow-sm transition-all ${
+                      isReadyForDrag ? 'cursor-move hover:shadow-md active:scale-95' : 'cursor-not-allowed bg-gray-50 opacity-50'
                     }`}
-                    title={!isReadyForDrag && stageName === 'qa' ? 'Esta história ainda não foi processada na etapa de Requisitos.' : ''}
+                    title={!isReadyForDrag && stageName === 'qa' ? 'Esta história ainda não foi processada na etapa de requisitos.' : ''}
                   >
-                    <div className="flex justify-between items-start">
-                      <span className="text-gray-800 text-sm">{story.text}</span>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-sm text-gray-800">{story.text}</span>
                       {isReadyForDrag && <span className="text-gray-400 group-hover:text-blue-500">⋮⋮</span>}
                     </div>
-                    {predecessor && (
-                      <div className="mt-2 text-xs text-indigo-600 bg-indigo-50 px-2 py-1 rounded inline-flex items-center gap-1 border border-indigo-100 cursor-pointer hover:bg-indigo-100 hover:text-indigo-800 transition-colors" onClick={(e) => { e.stopPropagation(); handleOpenModal({ text: `Requisito Anexado: ${story.text}`, requirement: predecessor.requirement }); }} title="Clique para visualizar o requisito herdado da etapa anterior">
-                        <span>📎</span> Requisito Anexado
+                    {story.predecessorRequirement && (
+                      <div
+                        className="mt-2 inline-flex cursor-pointer items-center gap-1 rounded border border-indigo-100 bg-indigo-50 px-2 py-1 text-xs text-indigo-600 transition-colors hover:bg-indigo-100 hover:text-indigo-800"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenModal({ ...story, requirement: story.predecessorRequirement });
+                        }}
+                      >
+                        <span>📎</span> Requisito anexado
                       </div>
                     )}
                   </div>
@@ -252,49 +273,42 @@ export default function BacklogKanban({
           )}
         </div>
 
-        {/* Coluna 2: Área do Agente (Drop Zone + Resultados) */}
-        <div 
+        <div
           onDragOver={handleDragOver}
           onDrop={handleDrop}
-          className={`flex flex-col p-4 rounded-xl border-2 transition-colors overflow-y-auto ${
-            processing 
-              ? 'bg-blue-50 border-blue-300 border-solid' 
-              : 'bg-white border-dashed border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+          className={`flex min-h-[320px] max-h-[420px] flex-col overflow-y-auto rounded-xl border-2 p-4 transition-colors md:max-h-[600px] ${
+            processing ? 'border-solid border-blue-300 bg-blue-50' : 'border-dashed border-gray-300 bg-white hover:border-blue-400 hover:bg-gray-50'
           }`}
         >
-          <h3 className="font-bold text-blue-800 mb-4 sticky top-0 bg-inherit py-2 flex items-center gap-2">
-            {agentColumnTitle} 
-            {processing && <span className="text-xs font-normal animate-pulse">(Processando...)</span>}
+          <h3 className="sticky top-0 mb-4 flex items-center gap-2 bg-inherit py-2 font-bold text-blue-800">
+            {agentColumnTitle}
+            {processing && <span className="animate-pulse text-xs font-normal">(Processando...)</span>}
           </h3>
 
-          {/* Lista de Processados */}
           <div className="flex-1 space-y-4">
-            {stories.filter(s => s.status === 'done' || s.status === 'processing').map(story => (
-              <div key={story.id} className="bg-green-50 border border-green-200 rounded p-4">
-                <div className="font-semibold text-green-800 text-xs uppercase mb-2">
-                  História Processada
-                </div>
-                <p className="text-gray-700 text-sm mb-3 italic">"{story.text}"</p>
-                
-                <div className="bg-white p-3 rounded border border-green-100 text-sm">
+            {processedStories.map((story) => (
+              <div key={story.id} className="rounded border border-green-200 bg-green-50 p-4">
+                <div className="mb-2 text-xs font-semibold uppercase text-green-800">História processada</div>
+                <p className="mb-3 text-sm italic text-gray-700">"{story.text}"</p>
+                <div className="rounded border border-green-100 bg-white p-3 text-sm">
                   {story.status === 'processing' ? (
-                     <div className="flex items-center gap-2 text-blue-600">
-                       <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                       </svg>
-                       {processingMessage}
-                     </div>
+                    <div className="flex items-center gap-2 text-blue-600">
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      {processingMessage}
+                    </div>
                   ) : (
                     <div>
-                      <p className="text-gray-600 text-xs mb-3">Gerado com sucesso.</p>
-                      <div className="flex flex-col gap-2">
-                        <button onClick={() => handleOpenModal(story)} className="w-full text-center px-3 py-1.5 bg-blue-500 text-white text-xs font-semibold rounded hover:bg-blue-600 transition">
-                          Ver Detalhes
+                      <p className="mb-3 text-xs text-gray-600">Gerado com sucesso.</p>
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <button onClick={() => handleOpenModal(story)} className="w-full rounded bg-blue-500 px-3 py-1.5 text-center text-xs font-semibold text-white hover:bg-blue-600">
+                          Ver detalhes
                         </button>
                         {stageName === 'requirements' && (
-                          <button onClick={() => handleSyncToQA(story)} className="w-full text-center px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded hover:bg-indigo-700 transition flex items-center justify-center gap-2" title="Avançar imediatamente para a próxima etapa apenas com este requisito">
-                            <span>🚀</span> Salvar e Ir para QA
+                          <button onClick={() => handleSyncToQA(story)} className="flex w-full items-center justify-center gap-2 rounded bg-indigo-600 px-3 py-1.5 text-center text-xs font-semibold text-white hover:bg-indigo-700">
+                            <span>🚀</span> Salvar e ir para QA
                           </button>
                         )}
                       </div>
@@ -303,10 +317,10 @@ export default function BacklogKanban({
                 </div>
               </div>
             ))}
-            
-            {stories.filter(s => s.status === 'done' || s.status === 'processing').length === 0 && (
-              <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
-                <p className="text-4xl mb-2">📥</p>
+
+            {processedStories.length === 0 && (
+              <div className="flex h-full flex-col items-center justify-center text-center text-gray-400 opacity-50">
+                <p className="mb-2 text-4xl">📥</p>
                 <p>Arraste cards aqui para processar</p>
               </div>
             )}
@@ -314,21 +328,20 @@ export default function BacklogKanban({
         </div>
       </div>
 
-      {/* Modal para visualizar o requisito completo */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4" onClick={handleCloseModal}>
-          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-white">
-              <h3 className="text-lg font-semibold text-gray-800">{modalContent.title}</h3>
-              <button onClick={handleCloseModal} className="text-gray-500 hover:text-gray-800 text-3xl font-light leading-none">&times;</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-3 sm:p-4" onClick={() => setIsModalOpen(false)}>
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
+              <h3 className="pr-4 text-base font-semibold text-gray-800 sm:text-lg">{modalContent.title}</h3>
+              <button onClick={() => setIsModalOpen(false)} className="text-3xl font-light leading-none text-gray-500 hover:text-gray-800">&times;</button>
             </div>
-            <div className="p-6 overflow-y-auto">
+            <div className="overflow-y-auto p-4 sm:p-6">
               <div className="prose prose-sm max-w-none">
                 <ReactMarkdown>{modalContent.content}</ReactMarkdown>
               </div>
             </div>
-            <div className="p-4 border-t bg-gray-50 text-right sticky bottom-0">
-              <button onClick={handleCloseModal} className="px-5 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition font-semibold">Fechar</button>
+            <div className="sticky bottom-0 border-t bg-gray-50 p-4 text-right">
+              <button onClick={() => setIsModalOpen(false)} className="rounded-lg bg-gray-200 px-5 py-2 font-semibold text-gray-800 hover:bg-gray-300">Fechar</button>
             </div>
           </div>
         </div>

@@ -29,6 +29,10 @@ class RequirementsAnalyst:
         prompt = f"""
         Atue como um Analista de Requisitos Sênior.
         Baseado na ideia e no backlog abaixo, crie uma Especificação de Requisitos detalhada.
+        Você está refinando apenas UMA única história de usuário.
+        Não amplie o escopo para o projeto inteiro.
+        Não invente módulos adicionais, dashboards, importação em massa, histórico completo, relatórios ou funcionalidades de outras histórias.
+        Restrinja a resposta ao comportamento necessário para a história selecionada.
         
         Ideia: "{idea}"
         
@@ -37,11 +41,12 @@ class RequirementsAnalyst:
         
         Gere o documento em formato Markdown contendo:
         # 📋 ESPECIFICAÇÃO DE REQUISITOS
-        ## ✅ Requisitos Funcionais (Liste os módulos e funcionalidades detalhadas)
+        ## 🎯 História Refinada (repita apenas a história alvo)
         ## 🛡️ Requisitos Não-Funcionais (Performance, Segurança, Usabilidade)
         ## 📊 Casos de Uso Principais (Pelo menos 2 fluxos completos)
         
         Seja detalhista e técnico.
+        Se o backlog trouxer apenas uma história, trate isso como limite rígido de escopo.
         """
         
         return generate_text_from_llm(prompt)

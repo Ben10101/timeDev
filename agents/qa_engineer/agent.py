@@ -27,17 +27,42 @@ class QAEngineer:
         
         prompt = f"""
         Atue como um Engenheiro de QA (Quality Assurance) Sênior.
-        Crie um Plano de Testes completo para o seguinte projeto:
-        
+        Crie um Plano de Testes completo, profissional, crítico e detalhista para o seguinte projeto:
+
         Ideia: "{idea}"
         Estrutura de Código: "{code_structure}"
-        
-        Gere um documento Markdown contendo:
-        # PLANO DE TESTES E QA
-        ## Estratégia de Testes (Unitários, Integração, E2E)
-        ## Cenários de Teste (Test Cases) detalhados
-        ## Dados de Teste Sugeridos
-        ## Métricas de Qualidade
+
+        Gere um documento Markdown em português contendo obrigatoriamente:
+
+        1. **Estratégia de Testes**
+        Inclua abordagem para testes unitários, integração, API, UI e E2E.
+
+        2. **Dados de Teste Sugeridos**
+        Liste dados válidos, inválidos, limites, massa para erro e cenários de conectividade.
+
+        3. **Métricas de Qualidade**
+        Inclua cobertura, criticidade, rastreabilidade, severidade e riscos.
+
+        4. **Cenários de Testes (Test Scenarios)**
+        Descreva situações de uso ponta a ponta. Inclua obrigatoriamente:
+        - 5 Cenários de "Caminho Feliz" (Fluxo ideal).
+        - 5 Cenários de "Caminho de Exceção" (Mensagens de erro, falta de conectividade ou inputs inválidos).
+
+        5. **Casos de Teste Funcionais**
+        Seja técnico. Para cada item, estruture em:
+        - Ação: O que o usuário faz.
+        - Resultado Esperado: O comportamento exato do sistema, como mudança de cor, carregamento de API, redirecionamento, mensagem de erro, persistência ou bloqueio da ação.
+
+        6. **Análise de Usabilidade e Acessibilidade (Heurísticas)**
+        Divida obrigatoriamente em três pilares:
+        - Heurísticas de Nielsen: visibilidade do status, prevenção de erros e eficiência de uso.
+        - Leis de UX: Lei de Fitts, Lei de Miller e Lei de Jakob.
+        - Acessibilidade (WCAG): contraste de cores com relação mínima 4.5:1, tamanho das fontes para legibilidade e áreas de toque com mínimo de 44x44px.
+
+        Formatação da resposta:
+        - Use listas numeradas com títulos em negrito para os itens.
+        - Mantenha um tom profissional, crítico e detalhista.
+        - Não omita nenhum dos itens 4, 5 e 6.
         """
         
         return generate_text_from_llm(prompt)

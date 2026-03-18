@@ -1,0 +1,394 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  owner
+  admin
+  member
+  viewer
+}
+
+enum UserStatus {
+  active
+  inactive
+  invited
+}
+
+enum ProjectStatus {
+  draft
+  active
+  on_hold
+  completed
+  archived
+}
+
+enum ProjectMemberRole {
+  owner
+  manager
+  editor
+  viewer
+}
+
+enum TaskType {
+  epic
+  story
+  task
+  subtask
+  bug
+  test_case
+  agent_job
+}
+
+enum TaskStatus {
+  backlog
+  todo
+  in_progress
+  in_review
+  qa
+  done
+  blocked
+  archived
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum AssigneeType {
+  human
+  agent
+  unassigned
+}
+
+enum DependencyType {
+  blocks
+  relates_to
+  duplicates
+  child_of
+}
+
+enum AgentTriggerType {
+  manual
+  workflow
+  scheduled
+  api
+}
+
+enum AgentRunStatus {
+  queued
+  running
+  completed
+  failed
+  cancelled
+}
+
+enum ArtifactType {
+  idea
+  backlog
+  requirements
+  test_plan
+  test_case
+  architecture
+  code
+  review
+  deployment_notes
+  commentary
+  custom
+}
+
+enum ContentFormat {
+  markdown
+  json
+  text
+  html
+}
+
+model User {
+  id                           BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid                         String              @unique @db.Char(36)
+  name                         String              @db.VarChar(120)
+  email                        String              @unique @db.VarChar(190)
+  passwordHash                 String?             @map("password_hash") @db.VarChar(255)
+  avatarUrl                    String?             @map("avatar_url") @db.VarChar(500)
+  role                         UserRole            @default(member)
+  status                       UserStatus          @default(active)
+  createdAt                    DateTime            @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt                    DateTime            @updatedAt @map("updated_at") @db.DateTime(0)
+  ownedWorkspaces              Workspace[]         @relation("WorkspaceOwner")
+  createdProjects              Project[]           @relation("ProjectCreator")
+  projectMemberships           ProjectMember[]
+  assignedTasks                Task[]              @relation("TaskAssigneeUser")
+  reportedTasks                Task[]              @relation("TaskReporterUser")
+  createdTasks                 Task[]              @relation("TaskCreatorUser")
+  commentAuthored              TaskComment[]
+  startedAgentRuns             AgentRun[]
+  approvedArtifacts            TaskArtifact[]      @relation("ArtifactApprovedBy")
+  createdArtifacts             TaskArtifact[]      @relation("ArtifactCreatedByUser")
+  statusHistoryChanges         TaskStatusHistory[]
+  uploadedAttachments          TaskAttachment[]
+  completedChecklistItems      TaskChecklist[]
+
+  @@map("users")
+}
+
+model Workspace {
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid          String    @unique @db.Char(36)
+  name          String    @db.VarChar(150)
+  slug          String    @unique @db.VarChar(150)
+  description   String?   @db.Text
+  ownerUserId   BigInt    @map("owner_user_id") @db.UnsignedBigInt
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+  ownerUser     User      @relation("WorkspaceOwner", fields: [ownerUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  projects      Project[]
+
+  @@map("workspaces")
+}
+
+model Project {
+  id            BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid          String            @unique @db.Char(36)
+  workspaceId   BigInt            @map("workspace_id") @db.UnsignedBigInt
+  name          String            @db.VarChar(180)
+  slug          String            @db.VarChar(180)
+  description   String?           @db.Text
+  vision        String?           @db.Text
+  startMode     String?           @map("start_mode") @db.VarChar(50)
+  templateKey   String?           @map("template_key") @db.VarChar(100)
+  intakeConfig  Json?             @map("intake_config")
+  boardConfig   Json?             @map("board_config")
+  agentsConfig  Json?             @map("agents_config")
+  automationConfig Json?          @map("automation_config")
+  status        ProjectStatus     @default(draft)
+  createdBy     BigInt            @map("created_by") @db.UnsignedBigInt
+  createdAt     DateTime          @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.DateTime(0)
+  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  creator       User              @relation("ProjectCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  members       ProjectMember[]
+  tasks         Task[]
+  agentRuns     AgentRun[]
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
+  @@index([createdBy])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id           BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  projectId    BigInt            @map("project_id") @db.UnsignedBigInt
+  userId       BigInt            @map("user_id") @db.UnsignedBigInt
+  projectRole  ProjectMemberRole @default(editor) @map("project_role")
+  joinedAt     DateTime          @default(now()) @map("joined_at") @db.DateTime(0)
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+model Task {
+  id                     BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid                   String                @unique @db.Char(36)
+  projectId              BigInt                @map("project_id") @db.UnsignedBigInt
+  parentTaskId           BigInt?               @map("parent_task_id") @db.UnsignedBigInt
+  title                  String                @db.VarChar(255)
+  description            String?               @db.LongText
+  taskType               TaskType              @default(task) @map("task_type")
+  status                 TaskStatus            @default(backlog)
+  priority               TaskPriority          @default(medium)
+  assigneeType           AssigneeType          @default(unassigned) @map("assignee_type")
+  assigneeUserId         BigInt?               @map("assignee_user_id") @db.UnsignedBigInt
+  assigneeAgentName      String?               @map("assignee_agent_name") @db.VarChar(100)
+  reporterUserId         BigInt?               @map("reporter_user_id") @db.UnsignedBigInt
+  position               Decimal               @default(0) @db.Decimal(18, 6)
+  storyPoints            Decimal?              @map("story_points") @db.Decimal(5, 2)
+  dueDate                DateTime?             @map("due_date") @db.DateTime(0)
+  startedAt              DateTime?             @map("started_at") @db.DateTime(0)
+  completedAt            DateTime?             @map("completed_at") @db.DateTime(0)
+  currentArtifactSummary String?               @map("current_artifact_summary") @db.Text
+  createdBy              BigInt                @map("created_by") @db.UnsignedBigInt
+  createdAt              DateTime              @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt              DateTime              @updatedAt @map("updated_at") @db.DateTime(0)
+  project                Project               @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  parentTask             Task?                 @relation("TaskHierarchy", fields: [parentTaskId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  subtasks               Task[]                @relation("TaskHierarchy")
+  assigneeUser           User?                 @relation("TaskAssigneeUser", fields: [assigneeUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  reporterUser           User?                 @relation("TaskReporterUser", fields: [reporterUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  creator                User                  @relation("TaskCreatorUser", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  comments               TaskComment[]
+  agentRuns              AgentRun[]
+  artifacts              TaskArtifact[]
+  statusHistory          TaskStatusHistory[]
+  attachments            TaskAttachment[]
+  checklistItems         TaskChecklist[]
+  dependencies           TaskDependency[]      @relation("TaskDependencies")
+  dependedOnBy           TaskDependency[]      @relation("TaskDependents")
+
+  @@index([projectId, status])
+  @@index([projectId, parentTaskId])
+  @@index([assigneeUserId])
+  @@index([reporterUserId])
+  @@index([createdBy])
+  @@index([assigneeAgentName])
+  @@map("tasks")
+}
+
+model TaskDependency {
+  id               BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
+  taskId           BigInt         @map("task_id") @db.UnsignedBigInt
+  dependsOnTaskId  BigInt         @map("depends_on_task_id") @db.UnsignedBigInt
+  dependencyType   DependencyType @default(blocks) @map("dependency_type")
+  createdAt        DateTime       @default(now()) @map("created_at") @db.DateTime(0)
+  task             Task           @relation("TaskDependencies", fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  dependsOnTask    Task           @relation("TaskDependents", fields: [dependsOnTaskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([taskId, dependsOnTaskId, dependencyType])
+  @@index([dependsOnTaskId])
+  @@map("task_dependencies")
+}
+
+model TaskComment {
+  id               BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  taskId           BigInt    @map("task_id") @db.UnsignedBigInt
+  authorUserId     BigInt?   @map("author_user_id") @db.UnsignedBigInt
+  authorAgentName  String?   @map("author_agent_name") @db.VarChar(100)
+  body             String    @db.LongText
+  createdAt        DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+  task             Task      @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  authorUser       User?     @relation(fields: [authorUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([taskId])
+  @@index([authorUserId])
+  @@index([authorAgentName])
+  @@map("task_comments")
+}
+
+model AgentRun {
+  id               BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid             String           @unique @db.Char(36)
+  projectId        BigInt           @map("project_id") @db.UnsignedBigInt
+  taskId           BigInt?          @map("task_id") @db.UnsignedBigInt
+  agentName        String           @map("agent_name") @db.VarChar(100)
+  triggerType      AgentTriggerType @default(manual) @map("trigger_type")
+  inputPayload     String           @map("input_payload") @db.LongText
+  outputText       String?          @map("output_text") @db.LongText
+  outputFormat     ContentFormat    @default(markdown) @map("output_format")
+  status           AgentRunStatus   @default(queued)
+  startedByUserId  BigInt?          @map("started_by_user_id") @db.UnsignedBigInt
+  errorMessage     String?          @map("error_message") @db.LongText
+  tokensInput      Int?             @map("tokens_input") @db.UnsignedInt
+  tokensOutput     Int?             @map("tokens_output") @db.UnsignedInt
+  costUsd          Decimal?         @map("cost_usd") @db.Decimal(12, 6)
+  startedAt        DateTime?        @map("started_at") @db.DateTime(0)
+  finishedAt       DateTime?        @map("finished_at") @db.DateTime(0)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.DateTime(0)
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  task             Task?            @relation(fields: [taskId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  startedByUser    User?            @relation(fields: [startedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  artifacts        TaskArtifact[]
+
+  @@index([projectId])
+  @@index([taskId])
+  @@index([agentName])
+  @@index([status])
+  @@index([startedByUserId])
+  @@map("agent_runs")
+}
+
+model TaskArtifact {
+  id                BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid              String         @unique @db.Char(36)
+  taskId            BigInt         @map("task_id") @db.UnsignedBigInt
+  agentRunId        BigInt?        @map("agent_run_id") @db.UnsignedBigInt
+  artifactType      ArtifactType   @default(custom) @map("artifact_type")
+  title             String         @db.VarChar(255)
+  content           String         @db.LongText
+  contentFormat     ContentFormat  @default(markdown) @map("content_format")
+  version           Int            @default(1) @db.UnsignedInt
+  isCurrent         Boolean        @default(true) @map("is_current")
+  isApproved        Boolean        @default(false) @map("is_approved")
+  approvedBy        BigInt?        @map("approved_by") @db.UnsignedBigInt
+  approvedAt        DateTime?      @map("approved_at") @db.DateTime(0)
+  createdByUserId   BigInt?        @map("created_by_user_id") @db.UnsignedBigInt
+  createdByAgentName String?       @map("created_by_agent_name") @db.VarChar(100)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.DateTime(0)
+  task              Task           @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  agentRun          AgentRun?      @relation(fields: [agentRunId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  approvedByUser    User?          @relation("ArtifactApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdByUser     User?          @relation("ArtifactCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([taskId])
+  @@index([agentRunId])
+  @@index([artifactType])
+  @@index([taskId, artifactType, isCurrent])
+  @@index([approvedBy])
+  @@index([createdByUserId])
+  @@map("task_artifacts")
+}
+
+model TaskStatusHistory {
+  id                BigInt      @id @default(autoincrement()) @db.UnsignedBigInt
+  taskId            BigInt      @map("task_id") @db.UnsignedBigInt
+  fromStatus        TaskStatus? @map("from_status")
+  toStatus          TaskStatus  @map("to_status")
+  changedByUserId   BigInt?     @map("changed_by_user_id") @db.UnsignedBigInt
+  changedByAgentName String?    @map("changed_by_agent_name") @db.VarChar(100)
+  note              String?     @db.VarChar(500)
+  changedAt         DateTime    @default(now()) @map("changed_at") @db.DateTime(0)
+  task              Task        @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  changedByUser     User?       @relation(fields: [changedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([taskId])
+  @@index([changedByUserId])
+  @@index([changedAt])
+  @@map("task_status_history")
+}
+
+model TaskAttachment {
+  id                BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  taskId            BigInt    @map("task_id") @db.UnsignedBigInt
+  uploadedByUserId  BigInt?   @map("uploaded_by_user_id") @db.UnsignedBigInt
+  fileName          String    @map("file_name") @db.VarChar(255)
+  filePath          String    @map("file_path") @db.VarChar(500)
+  mimeType          String?   @map("mime_type") @db.VarChar(120)
+  fileSizeBytes     BigInt?   @map("file_size_bytes") @db.UnsignedBigInt
+  createdAt         DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  task              Task      @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  uploadedByUser    User?     @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([taskId])
+  @@index([uploadedByUserId])
+  @@map("task_attachments")
+}
+
+model TaskChecklist {
+  id                BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  taskId            BigInt    @map("task_id") @db.UnsignedBigInt
+  title             String    @db.VarChar(255)
+  isCompleted       Boolean   @default(false) @map("is_completed")
+  completedByUserId BigInt?   @map("completed_by_user_id") @db.UnsignedBigInt
+  completedAt       DateTime? @map("completed_at") @db.DateTime(0)
+  position          Decimal   @default(0) @db.Decimal(18, 6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+  task              Task      @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  completedByUser   User?     @relation(fields: [completedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([taskId])
+  @@index([completedByUserId])
+  @@map("task_checklists")
+}
