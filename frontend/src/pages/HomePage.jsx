@@ -1,107 +1,222 @@
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import AppShell from '../components/AppShell';
+import {
+  BarChart3,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  ArrowUpRight,
+  Plus,
+  Zap,
+  Cpu,
+  Shield,
+  Layout,
+  TrendingUp,
+  Activity,
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { listAllTasks } from '../services/api';
+
+/* ─── helpers ─── */
+const fade = (delay = 0) => ({
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.35, delay, ease: 'easeOut' },
+});
+
+/* ─── sub-components ─── */
+
+function StatCard({ label, value, icon: Icon, color, bg, delay }) {
+  return (
+    <motion.div {...fade(delay)} className="group rounded-2xl border border-slate-200 bg-white p-6 shadow-sm hover:shadow-md hover:border-slate-300 transition-all">
+      <div className="flex items-start justify-between">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ backgroundColor: bg, color }}>
+          <Icon className="h-5 w-5" strokeWidth={2} />
+        </div>
+        <ArrowUpRight className="h-4 w-4 text-slate-300 group-hover:text-slate-500 transition-colors" />
+      </div>
+      <div className="mt-4">
+        <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">{label}</p>
+        <div className="mt-1 flex items-baseline gap-2">
+          <span className="text-3xl font-bold text-slate-900">{value}</span>
+          <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md">+0%</span>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+const STATUS_CONFIG = {
+  SUCCESS: { dot: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-700', label: 'Concluído', row: 'border-l-emerald-400' },
+  ACTIVE:  { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700', label: 'Ativo', row: 'border-l-blue-400' },
+  ALERT:   { dot: 'bg-amber-500', badge: 'bg-amber-50 text-amber-700', label: 'Alerta', row: 'border-l-amber-400' },
+};
+
+function AgentRow({ agent, task, time, type, icon: Icon, idx }) {
+  const cfg = STATUS_CONFIG[type];
+  return (
+    <motion.div {...fade(0.3 + idx * 0.08)} className={`flex items-center gap-4 rounded-xl border border-slate-100 bg-white px-4 py-3.5 shadow-sm border-l-2 ${cfg.row}`}>
+      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+        type === 'SUCCESS' ? 'bg-emerald-50 text-emerald-600' :
+        type === 'ACTIVE'  ? 'bg-blue-50 text-[#102a72]' :
+        'bg-amber-50 text-amber-600'
+      }`}>
+        <Icon className="h-4.5 w-4.5" strokeWidth={2} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-slate-800">{agent}</span>
+          <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${cfg.badge}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+            {cfg.label}
+          </span>
+        </div>
+        <p className="mt-0.5 text-xs text-slate-500 truncate">{task}</p>
+      </div>
+      <span className="shrink-0 text-[11px] text-slate-400">{time}</span>
+    </motion.div>
+  );
+}
+
+function ToolButton({ label, icon: Icon, to, navigate, delay }) {
+  return (
+    <motion.button
+      {...fade(delay)}
+      onClick={() => navigate(to)}
+      className="group flex flex-col items-center justify-center gap-2.5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:border-[#102a72]/30 hover:shadow-md hover:-translate-y-0.5"
+    >
+      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-50 text-slate-500 group-hover:bg-[#102a72]/10 group-hover:text-[#102a72] transition-all">
+        <Icon className="h-4.5 w-4.5" strokeWidth={2} />
+      </div>
+      <span className="text-xs font-semibold text-slate-600 group-hover:text-slate-900 transition-colors">{label}</span>
+    </motion.button>
+  );
+}
+
+/* ─── page ─── */
+
+const AGENTS = [
+  { agent: 'Architect v1', task: 'Atualização de Esquema do Banco',  time: '2m atrás',  type: 'SUCCESS', icon: Layout },
+  { agent: 'DevBot',       task: 'Refactoring Core Logic',           time: '15m atrás', type: 'ACTIVE',  icon: Cpu },
+  { agent: 'Security Sentinel', task: 'Scan de Vulnerabilidades',   time: '1h atrás',  type: 'ALERT',   icon: Shield },
+];
+
+const TOOLS = [
+  { label: 'Backlog',    to: '/global-backlog', icon: Layout },
+  { label: 'Pipeline',   to: '/pipeline',        icon: Zap },
+  { label: 'Analytics',  to: '/results',         icon: BarChart3 },
+  { label: 'Equipe',     to: '/team',            icon: Shield },
+];
 
 export default function HomePage() {
   const navigate = useNavigate();
+  const [stats, setStats] = useState({ total: 0, todo: 0, inProgress: 0, done: 0, urgent: 0 });
+
+  useEffect(() => {
+    listAllTasks()
+      .then((tasks) =>
+        setStats({
+          total:      tasks.length,
+          todo:       tasks.filter((t) => t.status === 'TODO').length,
+          inProgress: tasks.filter((t) => t.status === 'IN_PROGRESS').length,
+          done:       tasks.filter((t) => t.status === 'DONE').length,
+          urgent:     tasks.filter((t) => t.priority === 'HIGH' || t.priority === 'URGENT').length,
+        })
+      )
+      .catch(console.error);
+  }, []);
+
+  const STAT_CARDS = [
+    { label: 'Total de Tasks',  value: stats.total,      icon: BarChart3,    color: '#102a72', bg: '#102a7215', delay: 0 },
+    { label: 'Em Progresso',    value: stats.inProgress, icon: Activity,     color: '#7c3aed', bg: '#7c3aed15', delay: 0.05 },
+    { label: 'Concluídas',      value: stats.done,       icon: CheckCircle2, color: '#059669', bg: '#05966915', delay: 0.1 },
+    { label: 'Urgentes',        value: stats.urgent,     icon: AlertCircle,  color: '#dc2626', bg: '#dc262615', delay: 0.15 },
+  ];
 
   return (
     <AppShell
-      eyebrow="Workspace"
-      title="Comece pelo workspace, depois pelo projeto"
-      description="A nova jornada do produto parte da estrutura certa: crie o workspace, abra um projeto, descreva a iniciativa e só então acione os agentes para montar o board."
+      eyebrow="Visão Geral"
+      title="Dashboard"
+      description="Acompanhe o status dos seus projetos e agentes em tempo real."
       actions={
         <button
           onClick={() => navigate('/projects')}
-          className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] sm:w-auto"
+          className="inline-flex items-center gap-2 rounded-xl bg-[#102a72] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0c205a] hover:shadow-md transition-all"
         >
-          Abrir workspace
+          <Plus className="h-4 w-4" strokeWidth={2.5} />
+          Novo Projeto
         </button>
       }
-      sidebar={
-        <>
-          <section className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Fluxo recomendado</p>
-            <ol className="mt-4 space-y-4 text-sm text-slate-600">
-              <li>1. Crie o workspace que vai agrupar projetos, tarefas e histórico.</li>
-              <li>2. Abra um projeto com nome, descrição curta e visão inicial.</li>
-              <li>3. Use o Project Overview para conversar com o PM Agent e gerar o backlog.</li>
-            </ol>
-          </section>
-
-          <section className="rounded-[28px] border border-slate-200 bg-[#17322b] p-5 text-emerald-50 shadow-[0_20px_60px_rgba(23,50,43,0.14)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-emerald-100/60">Agentes em foco</p>
-            <div className="mt-4 space-y-3 text-sm text-emerald-50/82">
-              <p><strong>PM:</strong> cria o backlog inicial do board.</p>
-              <p><strong>Requirements:</strong> detalha critérios e regras por task.</p>
-              <p><strong>QA:</strong> valida cenários, riscos e qualidade da entrega.</p>
-            </div>
-          </section>
-        </>
-      }
     >
-      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <div className="rounded-[32px] border border-slate-200 bg-white/85 p-6 shadow-[0_30px_80px_rgba(23,50,43,0.08)] sm:p-8">
-          <div className="max-w-3xl">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Nova operação</p>
-            <h3 className="mt-3 font-serif text-3xl font-semibold leading-tight text-slate-900 sm:text-4xl">
-              Estruture primeiro o ambiente de trabalho. Os agentes entram depois, já com contexto.
-            </h3>
-            <p className="mt-4 text-base leading-7 text-slate-600">
-              Em vez de jogar a ideia direto em um pipeline, o sistema agora parte de um workspace com projetos reais.
-              Cada projeto ganha um overview próprio, um board persistido e um briefing que pode ser enriquecido pelo PM Agent.
-            </p>
-          </div>
+      <div className="space-y-8">
 
-          <div className="mt-8 grid gap-4 md:grid-cols-3">
-            {[
-              ['1', 'Crie o workspace', 'Defina o espaço onde seu time, projetos e dados vão viver.'],
-              ['2', 'Abra o projeto', 'Dê nome, visão inicial e contexto básico para a iniciativa.'],
-              ['3', 'Gere o backlog', 'Use o PM Agent para transformar a ideia em tasks no board.'],
-            ].map(([step, title, text]) => (
-              <div key={title} className="rounded-[28px] border border-slate-200 bg-[#faf8f2] p-5">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#17322b] text-sm font-semibold text-white">
-                  {step}
-                </div>
-                <h4 className="mt-4 text-lg font-semibold text-slate-900">{title}</h4>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p>
-              </div>
-            ))}
-          </div>
+        {/* ── Stat cards ── */}
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {STAT_CARDS.map((s) => (
+            <StatCard key={s.label} {...s} />
+          ))}
         </div>
 
-        <div className="space-y-6">
-          <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_70px_rgba(23,50,43,0.07)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Sequência ideal</p>
-            <div className="mt-5 space-y-4">
-              {[
-                ['Workspace', 'Crie a base de colaboração e persistência.'],
-                ['Project Overview', 'Descreva o produto ou operação dentro do projeto certo.'],
-                ['PM Agent', 'Gere backlog inicial e envie as tasks para o board.'],
-                ['Board', 'Refine, priorize e avance cada task com Requirements e QA.'],
-              ].map(([title, text], index) => (
-                <div
-                  key={title}
-                  className={`rounded-3xl border p-4 ${
-                    index === 1 ? 'border-[#b8d58b] bg-[#f4f9e8]' : 'border-slate-200 bg-slate-50'
-                  }`}
-                >
-                  <h4 className="font-semibold text-slate-900">{title}</h4>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p>
-                </div>
+        {/* ── Main grid ── */}
+        <div className="grid gap-6 lg:grid-cols-3">
+
+          {/* Agent feed — 2 cols */}
+          <motion.div {...fade(0.25)} className="lg:col-span-2 flex flex-col rounded-2xl border border-slate-200 bg-slate-50 shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">Fluxo de Agentes</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Monitoramento em tempo real</p>
+              </div>
+              <button className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#102a72] hover:underline">
+                <TrendingUp className="h-3.5 w-3.5" />
+                Ver relatórios
+              </button>
+            </div>
+
+            <div className="flex-1 space-y-2 p-4">
+              {AGENTS.map((a, i) => (
+                <AgentRow key={i} {...a} idx={i} />
               ))}
             </div>
-          </section>
 
-          <section className="rounded-[32px] bg-[linear-gradient(135deg,_#214c3f,_#4c7a49)] p-6 text-white shadow-[0_24px_70px_rgba(23,50,43,0.18)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-white/60">Resultado esperado</p>
-            <div className="mt-4 space-y-3 text-sm leading-6 text-white/85">
-              <p>Projetos reais como centro da operação.</p>
-              <p>Board populado pelo PM Agent a partir do briefing do projeto.</p>
-              <p>Requirements e QA atuando depois, por task, sem perder contexto.</p>
+            <div className="border-t border-slate-200 bg-white px-6 py-3">
+              <button className="text-xs font-semibold text-[#102a72] hover:underline">
+                Ver todo o histórico →
+              </button>
             </div>
-          </section>
+          </motion.div>
+
+          {/* Right column — 1 col */}
+          <div className="flex flex-col gap-4">
+
+            {/* Tools */}
+            <motion.div {...fade(0.3)} className="rounded-2xl border border-slate-200 bg-slate-50 shadow-sm overflow-hidden">
+              <div className="border-b border-slate-200 bg-white px-5 py-4">
+                <h2 className="text-sm font-bold text-slate-900">Ferramentas</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Acesso rápido aos módulos</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 p-4">
+                {TOOLS.map((t, i) => (
+                  <ToolButton key={t.label} {...t} navigate={navigate} delay={0.35 + i * 0.05} />
+                ))}
+              </div>
+            </motion.div>
+
+            {/* System status */}
+            <motion.div {...fade(0.5)} className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 shadow-sm">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600">
+                <Zap className="h-4 w-4" strokeWidth={2} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-emerald-900">Sistema Operacional</p>
+                <p className="text-xs text-emerald-600 mt-0.5">Todos os serviços ativos · 100%</p>
+              </div>
+            </motion.div>
+
+          </div>
         </div>
-      </section>
+      </div>
     </AppShell>
   );
 }

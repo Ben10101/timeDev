@@ -3,21 +3,118 @@
 @tailwind utilities;
 
 :root {
-  color: #0f172a;
-  background: #edf2ea;
+  /* Premium HSL Palette */
+  --primary-h: 226;
+  --primary-s: 75%;
+  --primary-l: 26%;
+  
+  --primary: hsl(var(--primary-h), var(--primary-s), var(--primary-l)); /* #102a72-ish */
+  --primary-glow: hsla(var(--primary-h), var(--primary-s), 50%, 0.5);
+  
+  --brand-primary: 226 75% 26%;
+  --brand-secondary: 263 70% 50%;
+  --brand-accent: 217 91% 60%;
+  
+  --accent-h: 217;
+  --accent-s: 91%;
+  --accent-l: 60%;
+  --accent: hsl(var(--accent-h), var(--accent-s), var(--accent-l));
+  
+  --accent-secondary-h: 263;
+  --accent-secondary-s: 70%;
+  --accent-secondary-l: 50%;
+  --accent-secondary: hsl(var(--accent-secondary-h), var(--accent-secondary-s), var(--accent-secondary-l));
+
+  --bg-main: #020617;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  
+  /* Glassmorphism Tokens */
+  --glass-bg: rgba(15, 23, 42, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+  --glass-inner-glow: inset 0 0 1px 1px rgba(255, 255, 255, 0.05);
+
+  color: var(--text-main);
+  background: var(--bg-main);
 }
 
-html {
-  scroll-behavior: smooth;
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: #f8fafc;
+    color: #0f172a;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
 }
 
-body {
-  margin: 0;
-  font-family: "Segoe UI", "Avenir Next", "Helvetica Neue", sans-serif;
-  background: linear-gradient(180deg, #f4f1e8 0%, #edf2ea 48%, #e4ebe3 100%);
-  color: #0f172a;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer components {
+  .glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), var(--glass-inner-glow);
+    border-radius: 1.5rem; /* rounded-3xl */
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glass-card-hover:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+    background: rgba(15, 23, 42, 0.8);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.6), var(--glass-inner-glow);
+  }
+
+  .premium-gradient-text {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-secondary) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .premium-button {
+    background: linear-gradient(135deg, var(--accent) 0%, hsl(var(--accent-h), var(--accent-s), 50%) 100%);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 14px 0 rgba(var(--accent-h), var(--accent-s), var(--accent-l), 0.3);
+    border-radius: 0.75rem; /* rounded-xl */
+    font-weight: 600;
+  }
+
+  .premium-button:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
+    filter: brightness(1.1);
+  }
+
+  .premium-button:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  .kanban-column {
+    background: rgba(15, 23, 42, 0.3);
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(8px);
+  }
+
+  /* Animations */
+  @keyframes float {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+    100% { transform: translateY(0px); }
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
 }
 
 #root {
@@ -25,6 +122,24 @@ body {
 }
 
 ::selection {
-  background: #d7ff7d;
-  color: #17322b;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+/* Custom Scrollbar for Premium Feel */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }

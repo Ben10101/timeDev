@@ -42,6 +42,7 @@ export default function TaskDetailsPage() {
   const navigate = useNavigate();
   const [task, setTask] = useState(null);
   const [implementationStatus, setImplementationStatus] = useState(null);
+  const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -200,6 +201,13 @@ export default function TaskDetailsPage() {
     }
   }
 
+  const tabs = [
+    { id: 'overview', label: 'Resumo' },
+    { id: 'refinement', label: 'Refinamento' },
+    { id: 'development', label: 'Desenvolvimento' },
+    { id: 'history', label: 'Histórico' },
+  ];
+
   return (
     <AppShell
       eyebrow="Task Detail"
@@ -291,48 +299,102 @@ export default function TaskDetailsPage() {
               <p className="mt-4 text-sm leading-7 text-slate-600">{task.description || 'Sem descrição cadastrada.'}</p>
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-2">
-              <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
-                <div className="flex items-center justify-between">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Comentários</p>
-                  <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
-                    {task.comments?.length || 0}
-                  </span>
-                </div>
+            <section className="rounded-[32px] border border-slate-200 bg-white/88 p-3 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+              <div className="flex flex-wrap gap-2">
+                {tabs.map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                        isActive
+                          ? 'bg-[#17322b] text-white shadow-[0_12px_28px_rgba(23,50,43,0.18)]'
+                          : 'bg-[#faf8f2] text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
 
-                <form className="mt-5 space-y-3" onSubmit={handleCommentSubmit}>
-                  <textarea
-                    value={commentBody}
-                    onChange={(e) => setCommentBody(e.target.value)}
-                    rows="4"
-                    placeholder="Registrar contexto, alinhamentos ou feedback sobre a task..."
-                    className="w-full rounded-[22px] border border-slate-200 bg-[#faf8f2] px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-[#8aac55] focus:ring-4 focus:ring-[#dff0b8]"
-                  />
-                  <button disabled={saving || !commentBody.trim()} className="w-full rounded-2xl bg-[#17322b] px-4 py-3 text-sm font-semibold text-white hover:bg-[#214338] disabled:opacity-50 sm:w-auto">
-                    Adicionar comentário
-                  </button>
-                </form>
-
-                <div className="mt-6 space-y-3">
-                  {task.comments?.map((comment) => (
-                    <article key={comment.id} className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <p className="text-sm font-semibold text-slate-900">
-                          {comment.authorUser?.name || comment.authorAgentName || 'Sistema'}
-                        </p>
-                        <span className="text-xs text-slate-500">{formatDate(comment.createdAt)}</span>
-                      </div>
-                      <p className="mt-3 text-sm leading-6 text-slate-600">{comment.body}</p>
+            {activeTab === 'overview' && (
+              <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+                <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Status atual</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{task.status}</p>
                     </article>
-                  ))}
-                  {!task.comments?.length && (
-                    <div className="rounded-[22px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
-                      Nenhum comentário ainda.
-                    </div>
-                  )}
-                </div>
-              </section>
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Requisitos</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{taskHasRequirements ? 'Disponível' : 'Pendente'}</p>
+                    </article>
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Desenvolvimento</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{implementationStatus?.status || 'Não iniciado'}</p>
+                    </article>
+                  </div>
 
+                  <div className="mt-6 rounded-[24px] border border-slate-200 bg-[#faf8f2] p-5">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#2f6c58]">Próximo passo recomendado</p>
+                    <p className="mt-3 text-sm leading-7 text-slate-600">
+                      {task.status !== 'done'
+                        ? 'Finalize refinamento e QA antes de iniciar a implementação.'
+                        : implementationStatus
+                          ? 'Acompanhe a execução técnica, os relatórios de validação e os arquivos alterados.'
+                          : 'Clique em Gerar código para iniciar a integração da task no projeto full stack.'}
+                    </p>
+                  </div>
+                </section>
+
+                <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Comentários</p>
+                    <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
+                      {task.comments?.length || 0}
+                    </span>
+                  </div>
+
+                  <form className="mt-5 space-y-3" onSubmit={handleCommentSubmit}>
+                    <textarea
+                      value={commentBody}
+                      onChange={(e) => setCommentBody(e.target.value)}
+                      rows="4"
+                      placeholder="Registrar contexto, alinhamentos ou feedback sobre a task..."
+                      className="w-full rounded-[22px] border border-slate-200 bg-[#faf8f2] px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-[#8aac55] focus:ring-4 focus:ring-[#dff0b8]"
+                    />
+                    <button disabled={saving || !commentBody.trim()} className="w-full rounded-2xl bg-[#17322b] px-4 py-3 text-sm font-semibold text-white hover:bg-[#214338] disabled:opacity-50 sm:w-auto">
+                      Adicionar comentário
+                    </button>
+                  </form>
+
+                  <div className="mt-6 space-y-3">
+                    {task.comments?.map((comment) => (
+                      <article key={comment.id} className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-sm font-semibold text-slate-900">
+                            {comment.authorUser?.name || comment.authorAgentName || 'Sistema'}
+                          </p>
+                          <span className="text-xs text-slate-500">{formatDate(comment.createdAt)}</span>
+                        </div>
+                        <p className="mt-3 text-sm leading-6 text-slate-600">{comment.body}</p>
+                      </article>
+                    ))}
+                    {!task.comments?.length && (
+                      <div className="rounded-[22px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
+                        Nenhum comentário ainda.
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            )}
+
+            {activeTab === 'refinement' && (
               <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
                 <div className="flex items-center justify-between">
                   <div>
@@ -410,8 +472,9 @@ export default function TaskDetailsPage() {
                   )}
                 </div>
               </section>
-            </div>
+            )}
 
+            {activeTab === 'development' && (
             <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
               <div className="flex items-center justify-between">
                 <div>
@@ -551,6 +614,57 @@ export default function TaskDetailsPage() {
 
                   <div className="grid gap-6 xl:grid-cols-2">
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Implementation Fix Plan</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {implementationStatus.fixPlanArtifact?.title || 'Nenhum plano de correção gerado'}
+                      </p>
+                      {fixPlanReport?.actions?.length ? (
+                        <div className="mt-4 space-y-3">
+                          {fixPlanReport.actions.map((action, index) => (
+                            <div key={`${action.filePath}-${index}`} className="rounded-2xl bg-white p-3">
+                              <p className="text-sm font-medium text-slate-900">{action.category} • {action.priority}</p>
+                              <p className="mt-1 text-xs text-slate-600">{action.filePath}</p>
+                              <p className="mt-2 text-sm text-slate-700">{action.action}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-4 rounded-2xl bg-white p-4 text-sm text-slate-600">
+                          Nenhuma ação corretiva necessária na versão atual.
+                        </div>
+                      )}
+                    </article>
+
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Validação automática</p>
+                      <div className="mt-4 space-y-3">
+                        <div className="rounded-2xl bg-white p-3">
+                          <p className="text-sm font-medium text-slate-900">Lint</p>
+                          <p className="mt-1 text-xs text-slate-600">{lintReport?.status || 'n/a'}</p>
+                          {lintReport?.report?.errorMessage && <p className="mt-2 text-xs text-rose-600">{lintReport.report.errorMessage}</p>}
+                        </div>
+                        <div className="rounded-2xl bg-white p-3">
+                          <p className="text-sm font-medium text-slate-900">Test</p>
+                          <p className="mt-1 text-xs text-slate-600">{testReport?.status || 'n/a'}</p>
+                          {testReport?.report?.errorMessage && <p className="mt-2 text-xs text-rose-600">{testReport.report.errorMessage}</p>}
+                        </div>
+                        <div className="rounded-2xl bg-white p-3">
+                          <p className="text-sm font-medium text-slate-900">Build</p>
+                          <p className="mt-1 text-xs text-slate-600">{buildReport?.status || 'n/a'}</p>
+                          {buildReport?.reports?.map((report) => (
+                            <div key={report.scriptName} className="mt-3 rounded-xl border border-slate-200 p-3">
+                              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{report.scriptName}</p>
+                              <p className="mt-1 text-xs text-slate-600">{report.status}</p>
+                              {report.errorMessage && <p className="mt-2 text-xs text-rose-600">{report.errorMessage}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </article>
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
                       <div className="flex items-center justify-between">
                         <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Arquivos tocados</p>
                         <span className="text-xs text-slate-500">{implementationStatus.generatedFiles?.length || 0}</span>
@@ -598,7 +712,10 @@ export default function TaskDetailsPage() {
                 </div>
               )}
             </section>
+            )}
 
+            {activeTab === 'history' && (
+            <>
             <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Execuções de agentes</p>
@@ -660,6 +777,8 @@ export default function TaskDetailsPage() {
                 )}
               </div>
             </section>
+            </>
+            )}
           </>
         ) : null}
       </section>

@@ -1,56 +1,49 @@
 import {
-  bootstrapWorkspaceAndUser,
-  createTaskArtifact,
+  assertProjectAccess,
+  assertTaskAccess,
+  assertWorkspaceAccess,
   createAgentRunStart,
   createProject,
-  createTaskComment,
   createTask,
+  createTaskArtifact,
+  createTaskComment,
   ensurePipelineProject,
   finishAgentRun,
+  getDefaultWorkspaceForUserUuid,
   getProjectByUuid,
   getTaskByUuid,
   importBacklogTasks,
   listProjects,
   listProjectTasks,
+  listAllTasks,
   persistAgentResult,
-  updateTask,
   updateProjectBrief,
+  updateTask,
 } from '../services/projectDataService.js';
 import { runSingleAgent } from '../services/orchestratorService.js';
 import { serializeBigInts } from '../utils/serialize.js';
 
 export async function listProjectsController(req, res, next) {
   try {
-    const projects = await listProjects();
+    const projects = await listProjects(req.authUser.uuid);
     res.json(serializeBigInts(projects));
   } catch (error) {
     next(error);
   }
 }
 
-export async function bootstrapController(req, res, next) {
-  try {
-    const { userName, email, workspaceName } = req.body;
-
-    if (!userName?.trim() || !email?.trim() || !workspaceName?.trim()) {
-      return res.status(400).json({
-        message: 'userName, email e workspaceName são obrigatórios.',
-      });
-    }
-
-    const result = await bootstrapWorkspaceAndUser({ userName, email, workspaceName });
-    res.status(201).json(serializeBigInts(result));
-  } catch (error) {
-    next(error);
-  }
+export async function bootstrapController(_req, res) {
+  res.status(410).json({
+    message: 'Bootstrap publico desativado. Use /api/auth/register para criar sua conta com seguranca.',
+  });
 }
 
 export async function getProjectController(req, res, next) {
   try {
-    const project = await getProjectByUuid(req.params.projectUuid);
+    const project = await getProjectByUuid(req.params.projectUuid, req.authUser.uuid);
 
     if (!project) {
-      return res.status(404).json({ message: 'Projeto não encontrado.' });
+      return res.status(404).json({ message: 'Projeto nao encontrado.' });
     }
 
     res.json(serializeBigInts(project));
@@ -63,7 +56,6 @@ export async function createProjectController(req, res, next) {
   try {
     const {
       workspaceUuid,
-      createdByUuid,
       name,
       description,
       vision,
@@ -76,15 +68,26 @@ export async function createProjectController(req, res, next) {
       status,
     } = req.body;
 
-    if (!workspaceUuid || !createdByUuid || !name?.trim()) {
+    if (!name?.trim()) {
       return res.status(400).json({
-        message: 'workspaceUuid, createdByUuid e name são obrigatórios.',
+        message: 'name e obrigatorio.',
+      });
+    }
+
+    const workspace =
+      workspaceUuid
+        ? await assertWorkspaceAccess(workspaceUuid, req.authUser.uuid)
+        : await getDefaultWorkspaceForUserUuid(req.authUser.uuid);
+
+    if (!workspace?.uuid) {
+      return res.status(400).json({
+        message: 'Nenhum workspace disponivel para este usuario.',
       });
     }
 
     const project = await createProject({
-      workspaceUuid,
-      createdByUuid,
+      workspaceUuid: workspace.uuid,
+      createdByUuid: req.authUser.uuid,
       name,
       description,
       vision,
@@ -105,10 +108,29 @@ export async function createProjectController(req, res, next) {
 
 export async function listProjectTasksController(req, res, next) {
   try {
-    const tasks = await listProjectTasks(req.params.projectUuid, {
-      status: req.query.status,
-      parentTaskUuid: req.query.parentTaskUuid,
-    });
+    const tasks = await listProjectTasks(
+      req.params.projectUuid,
+      {
+        status: req.query.status,
+        parentTaskUuid: req.query.parentTaskUuid,
+      },
+      req.authUser.uuid
+    );
+
+    res.json(serializeBigInts(tasks));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listAllTasksController(req, res, next) {
+  try {
+    const tasks = await listAllTasks(
+      {
+        status: req.query.status,
+      },
+      req.authUser.uuid
+    );
 
     res.json(serializeBigInts(tasks));
   } catch (error) {
@@ -118,15 +140,22 @@ export async function listProjectTasksController(req, res, next) {
 
 export async function createTaskController(req, res, next) {
   try {
-    const { title, createdByUuid } = req.body;
+    const { title } = req.body;
 
-    if (!title?.trim() || !createdByUuid) {
+    if (!title?.trim()) {
       return res.status(400).json({
-        message: 'title e createdByUuid são obrigatórios.',
+        message: 'title e obrigatorio.',
       });
     }
 
-    const task = await createTask(req.params.projectUuid, req.body);
+    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+
+    const task = await createTask(req.params.projectUuid, {
+      ...req.body,
+      createdByUuid: req.authUser.uuid,
+      reporterUserUuid: req.body.reporterUserUuid || req.authUser.uuid,
+    });
+
     res.status(201).json(serializeBigInts(task));
   } catch (error) {
     next(error);
@@ -135,7 +164,12 @@ export async function createTaskController(req, res, next) {
 
 export async function updateTaskController(req, res, next) {
   try {
-    const task = await updateTask(req.params.taskUuid, req.body);
+    await assertTaskAccess(req.params.taskUuid, req.authUser.uuid);
+
+    const task = await updateTask(req.params.taskUuid, {
+      ...req.body,
+      changedByUserUuid: req.authUser.uuid,
+    });
     res.json(serializeBigInts(task));
   } catch (error) {
     next(error);
@@ -144,10 +178,10 @@ export async function updateTaskController(req, res, next) {
 
 export async function getTaskController(req, res, next) {
   try {
-    const task = await getTaskByUuid(req.params.taskUuid);
+    const task = await getTaskByUuid(req.params.taskUuid, req.authUser.uuid);
 
     if (!task) {
-      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+      return res.status(404).json({ message: 'Tarefa nao encontrada.' });
     }
 
     res.json(serializeBigInts(task));
@@ -161,10 +195,15 @@ export async function createTaskCommentController(req, res, next) {
     const { body } = req.body;
 
     if (!body?.trim()) {
-      return res.status(400).json({ message: 'body é obrigatório.' });
+      return res.status(400).json({ message: 'body e obrigatorio.' });
     }
 
-    const comment = await createTaskComment(req.params.taskUuid, req.body);
+    await assertTaskAccess(req.params.taskUuid, req.authUser.uuid);
+
+    const comment = await createTaskComment(req.params.taskUuid, {
+      ...req.body,
+      authorUserUuid: req.authUser.uuid,
+    });
     res.status(201).json(serializeBigInts(comment));
   } catch (error) {
     next(error);
@@ -176,10 +215,10 @@ export async function ensurePipelineProjectController(req, res, next) {
     const { projectUuid, idea } = req.body;
 
     if (!projectUuid?.trim()) {
-      return res.status(400).json({ message: 'projectUuid é obrigatório.' });
+      return res.status(400).json({ message: 'projectUuid e obrigatorio.' });
     }
 
-    const project = await ensurePipelineProject(projectUuid, idea);
+    const project = await ensurePipelineProject(projectUuid, idea, req.authUser.uuid);
     res.status(201).json(serializeBigInts(project));
   } catch (error) {
     next(error);
@@ -189,6 +228,7 @@ export async function ensurePipelineProjectController(req, res, next) {
 export async function importBacklogTasksController(req, res, next) {
   try {
     const { backlogMarkdown } = req.body;
+    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
 
     const tasks = await importBacklogTasks(req.params.projectUuid, backlogMarkdown);
     res.status(201).json(serializeBigInts(tasks));
@@ -205,8 +245,10 @@ export async function generateProjectBacklogController(req, res, next) {
     const { idea, answers, description, vision } = req.body;
 
     if (!idea?.trim()) {
-      return res.status(400).json({ message: 'idea é obrigatório.' });
+      return res.status(400).json({ message: 'idea e obrigatorio.' });
     }
+
+    await assertProjectAccess(projectUuid, req.authUser.uuid);
 
     await updateProjectBrief(projectUuid, {
       description,
@@ -234,7 +276,10 @@ export async function generateProjectBacklogController(req, res, next) {
 
     await persistAgentResult(projectUuid, 'project_manager', payload, result);
 
-    const [project, tasks] = await Promise.all([getProjectByUuid(projectUuid), listProjectTasks(projectUuid)]);
+    const [project, tasks] = await Promise.all([
+      getProjectByUuid(projectUuid, req.authUser.uuid),
+      listProjectTasks(projectUuid, {}, req.authUser.uuid),
+    ]);
 
     res.status(201).json(
       serializeBigInts({
@@ -260,10 +305,16 @@ export async function createTaskArtifactController(req, res, next) {
     const { artifactType, title, content } = req.body;
 
     if (!artifactType || !title?.trim() || !content?.trim()) {
-      return res.status(400).json({ message: 'artifactType, title e content são obrigatórios.' });
+      return res.status(400).json({ message: 'artifactType, title e content sao obrigatorios.' });
     }
 
-    const artifact = await createTaskArtifact(req.params.taskUuid, req.body);
+    await assertTaskAccess(req.params.taskUuid, req.authUser.uuid);
+
+    const artifact = await createTaskArtifact(req.params.taskUuid, {
+      ...req.body,
+      createdByUserUuid: req.authUser.uuid,
+      createdByUserId: req.authUser.id,
+    });
     res.status(201).json(serializeBigInts(artifact));
   } catch (error) {
     next(error);

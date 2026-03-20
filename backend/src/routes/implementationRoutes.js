@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireAuth } from '../middleware/authMiddleware.js';
 import {
   bootstrapGeneratedAppController,
   getGeneratedAppController,
@@ -10,6 +11,7 @@ import {
 } from '../controllers/implementationController.js';
 
 const router = Router();
+router.use(requireAuth);
 
 router.post('/projects/:projectUuid/generated-app/bootstrap', bootstrapGeneratedAppController);
 router.get('/projects/:projectUuid/generated-app', getGeneratedAppController);

@@ -1,6 +1,7 @@
 import { runSingleAgent } from '../services/orchestratorService.js';
 import { v4 as uuidv4 } from 'uuid';
 import {
+  assertTaskAccess,
   createAgentRunStart,
   createTaskArtifact,
   ensurePipelineProject,
@@ -17,14 +18,14 @@ export async function runAgentController(req, res) {
     const { agent, payload } = req.body;
 
     if (!agent || !payload || !payload.idea) {
-      return res.status(400).json({ message: 'Nome do agente e payload com a ideia são obrigatórios.' });
+      return res.status(400).json({ message: 'Nome do agente e payload com a ideia sao obrigatorios.' });
     }
 
     if (!payload.project_id) {
       payload.project_id = uuidv4();
     }
 
-    await ensurePipelineProject(payload.project_id, payload.idea);
+    await ensurePipelineProject(payload.project_id, payload.idea, req.authUser.uuid);
     agentRun = await createAgentRunStart(payload.project_id, agent, payload);
 
     const result = await runSingleAgent(agent, payload);
@@ -50,11 +51,11 @@ export async function runRequirementsForTaskController(req, res) {
 
   try {
     const { taskUuid } = req.params;
-    const { changedByUserUuid } = req.body || {};
-    const task = await getTaskContextByUuid(taskUuid);
+    await assertTaskAccess(taskUuid, req.authUser.uuid);
+    const task = await getTaskContextByUuid(taskUuid, req.authUser.uuid);
 
     if (!task) {
-      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+      return res.status(404).json({ message: 'Tarefa nao encontrada.' });
     }
 
     const latestRequirements = task.artifacts.find(
@@ -65,7 +66,7 @@ export async function runRequirementsForTaskController(req, res) {
       status: 'in_progress',
       assigneeType: 'agent',
       assigneeAgentName: 'requirements_analyst',
-      changedByUserUuid,
+      changedByUserUuid: req.authUser.uuid,
       statusNote: latestRequirements
         ? 'Refinamento de requisitos reiniciado'
         : 'Task enviada para o Analista de Requisitos',
@@ -74,10 +75,10 @@ export async function runRequirementsForTaskController(req, res) {
     const payload = {
       project_id: task.project.uuid,
       task_uuid: task.uuid,
-      idea: `Refine somente esta história de usuário: ${task.title}${
+      idea: `Refine somente esta historia de usuario: ${task.title}${
         task.description ? `\n\nContexto complementar da tarefa: ${task.description}` : ''
       }`,
-      backlog: [`História: ${task.title}`, task.description ? `Contexto: ${task.description}` : null]
+      backlog: [`Historia: ${task.title}`, task.description ? `Contexto: ${task.description}` : null]
         .filter(Boolean)
         .join('\n'),
       project_name: task.project.name,
@@ -108,8 +109,8 @@ export async function runRequirementsForTaskController(req, res) {
       status: 'in_review',
       assigneeType: 'agent',
       assigneeAgentName: 'requirements_analyst',
-      changedByUserUuid,
-      statusNote: 'Refinamento de requisitos concluído',
+      changedByUserUuid: req.authUser.uuid,
+      statusNote: 'Refinamento de requisitos concluido',
     });
 
     res.status(200).json(
@@ -133,11 +134,11 @@ export async function runQaForTaskController(req, res) {
 
   try {
     const { taskUuid } = req.params;
-    const { changedByUserUuid } = req.body || {};
-    const task = await getTaskContextByUuid(taskUuid);
+    await assertTaskAccess(taskUuid, req.authUser.uuid);
+    const task = await getTaskContextByUuid(taskUuid, req.authUser.uuid);
 
     if (!task) {
-      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+      return res.status(404).json({ message: 'Tarefa nao encontrada.' });
     }
 
     const latestRequirements = task.artifacts.find(
@@ -158,7 +159,7 @@ export async function runQaForTaskController(req, res) {
       status: 'qa',
       assigneeType: 'agent',
       assigneeAgentName: 'qa_engineer',
-      changedByUserUuid,
+      changedByUserUuid: req.authUser.uuid,
       statusNote: latestTestPlan ? 'Plano de testes reiniciado' : 'Task enviada para QA',
     });
 
@@ -166,7 +167,7 @@ export async function runQaForTaskController(req, res) {
       project_id: task.project.uuid,
       task_uuid: task.uuid,
       idea: `Crie o plano de testes apenas para esta tarefa: ${task.title}${
-        task.description ? `\n\nContexto específico da tarefa: ${task.description}` : ''
+        task.description ? `\n\nContexto especifico da tarefa: ${task.description}` : ''
       }`,
       code_structure: latestRequirements.content,
       developer_output: {
@@ -201,8 +202,8 @@ export async function runQaForTaskController(req, res) {
       status: 'done',
       assigneeType: 'agent',
       assigneeAgentName: 'qa_engineer',
-      changedByUserUuid,
-      statusNote: 'Plano de testes concluído',
+      changedByUserUuid: req.authUser.uuid,
+      statusNote: 'Plano de testes concluido',
     });
 
     res.status(200).json(

@@ -1,9 +1,109 @@
 import axios from 'axios'
 
-export const API_URL = 'http://localhost:3001/api'
+export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+
+let accessToken = null
+let refreshPromise = null
+
+export function setApiAccessToken(nextToken) {
+  accessToken = nextToken || null
+}
+
+export function clearApiAccessToken() {
+  accessToken = null
+}
+
+async function refreshAuthSession() {
+  if (!refreshPromise) {
+    refreshPromise = axios
+      .post(
+        `${API_URL}/auth/refresh`,
+        {},
+        {
+          withCredentials: true,
+        }
+      )
+      .then((response) => {
+        setApiAccessToken(response.data.accessToken)
+        return response.data
+      })
+      .finally(() => {
+        refreshPromise = null
+      })
+  }
+
+  return refreshPromise
+}
+
 const apiClient = axios.create({
   baseURL: API_URL,
+  withCredentials: true,
 })
+
+apiClient.interceptors.request.use((config) => {
+  if (accessToken) {
+    config.headers = config.headers || {}
+    config.headers.Authorization = `Bearer ${accessToken}`
+  }
+  return config
+})
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config
+    const status = error.response?.status
+
+    if (!originalRequest || originalRequest._retry || status !== 401) {
+      return Promise.reject(error)
+    }
+
+    if (originalRequest.url?.includes('/auth/login') || originalRequest.url?.includes('/auth/register') || originalRequest.url?.includes('/auth/refresh')) {
+      return Promise.reject(error)
+    }
+
+    originalRequest._retry = true
+
+    try {
+      const session = await refreshAuthSession()
+      originalRequest.headers = originalRequest.headers || {}
+      originalRequest.headers.Authorization = `Bearer ${session.accessToken}`
+      return apiClient(originalRequest)
+    } catch (refreshError) {
+      clearApiAccessToken()
+      return Promise.reject(refreshError)
+    }
+  }
+)
+
+export async function registerAuth(payload) {
+  const response = await apiClient.post('/auth/register', payload)
+  setApiAccessToken(response.data.accessToken)
+  return response.data
+}
+
+export async function loginAuth(payload) {
+  const response = await apiClient.post('/auth/login', payload)
+  setApiAccessToken(response.data.accessToken)
+  return response.data
+}
+
+export async function refreshSession() {
+  return refreshAuthSession()
+}
+
+export async function getMe() {
+  const response = await apiClient.get('/auth/me')
+  return response.data
+}
+
+export async function logoutAuth() {
+  try {
+    await apiClient.post('/auth/logout')
+  } finally {
+    clearApiAccessToken()
+  }
+}
 
 export const generateProject = async (idea) => {
   try {
@@ -33,6 +133,11 @@ export const getProject = async (projectUuid) => {
 
 export const listProjectTasks = async (projectUuid, params = {}) => {
   const response = await apiClient.get(`/projects/${projectUuid}/tasks`, { params })
+  return response.data
+}
+
+export const listAllTasks = async (params = {}) => {
+  const response = await apiClient.get('/tasks', { params })
   return response.data
 }
 
@@ -106,7 +211,14 @@ export const createTaskArtifact = async (taskUuid, payload) => {
   return response.data
 }
 
+export { apiClient }
+
 export default {
+  registerAuth,
+  loginAuth,
+  refreshSession,
+  getMe,
+  logoutAuth,
   generateProject,
   bootstrapWorkspace,
   listProjects,
@@ -126,4 +238,5 @@ export default {
   ensurePipelineProject,
   importBacklogTasks,
   createTaskArtifact,
+  listAllTasks,
 }

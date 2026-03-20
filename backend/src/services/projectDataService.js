@@ -111,8 +111,149 @@ function validateTaskStatusTransition(existingTask, nextStatus) {
   }
 }
 
-export async function listProjects() {
+function buildProjectAccessFilter(userUuid) {
+  if (!userUuid) return {};
+
+  return {
+    OR: [
+      { creator: { is: { uuid: userUuid } } },
+      {
+        workspace: {
+          is: {
+            ownerUser: {
+              is: {
+                uuid: userUuid,
+              },
+            },
+          },
+        },
+      },
+      {
+        members: {
+          some: {
+            user: {
+              is: {
+                uuid: userUuid,
+              },
+            },
+          },
+        },
+      },
+    ],
+  };
+}
+
+export async function getDefaultWorkspaceForUserUuid(userUuid) {
+  if (!userUuid) return null;
+
+  const user = await prisma.user.findUnique({
+    where: { uuid: userUuid },
+    select: { id: true },
+  });
+
+  if (!user) return null;
+
+  const ownedWorkspace = await prisma.workspace.findFirst({
+    where: { ownerUserId: user.id },
+    select: { id: true, uuid: true, name: true, slug: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (ownedWorkspace) return ownedWorkspace;
+
+  const membership = await prisma.projectMember.findFirst({
+    where: { userId: user.id },
+    include: {
+      project: {
+        include: {
+          workspace: {
+            select: { id: true, uuid: true, name: true, slug: true },
+          },
+        },
+      },
+    },
+    orderBy: { joinedAt: 'asc' },
+  });
+
+  return membership?.project?.workspace || null;
+}
+
+export async function assertWorkspaceAccess(workspaceUuid, userUuid) {
+  const workspace = await prisma.workspace.findFirst({
+    where: {
+      uuid: workspaceUuid,
+      OR: [
+        {
+          ownerUser: {
+            is: {
+              uuid: userUuid,
+            },
+          },
+        },
+        {
+          projects: {
+            some: {
+              members: {
+                some: {
+                  user: {
+                    is: {
+                      uuid: userUuid,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true, uuid: true, name: true, slug: true },
+  });
+
+  if (!workspace) {
+    throw new Error('Workspace nao encontrado ou sem permissao de acesso.');
+  }
+
+  return workspace;
+}
+
+export async function assertProjectAccess(projectUuid, userUuid) {
+  const project = await prisma.project.findFirst({
+    where: {
+      uuid: projectUuid,
+      ...buildProjectAccessFilter(userUuid),
+    },
+    select: { id: true, uuid: true, workspaceId: true, createdBy: true },
+  });
+
+  if (!project) {
+    throw new Error('Projeto nao encontrado ou sem permissao de acesso.');
+  }
+
+  return project;
+}
+
+export async function assertTaskAccess(taskUuid, userUuid) {
+  const task = await prisma.task.findFirst({
+    where: {
+      uuid: taskUuid,
+      project: {
+        is: buildProjectAccessFilter(userUuid),
+      },
+    },
+    select: { id: true, uuid: true, projectId: true },
+  });
+
+  if (!task) {
+    throw new Error('Tarefa nao encontrada ou sem permissao de acesso.');
+  }
+
+  return task;
+}
+
+export async function listProjects(userUuid = null) {
   return prisma.project.findMany({
+    where: buildProjectAccessFilter(userUuid),
     orderBy: { createdAt: 'desc' },
     include: {
       workspace: {
@@ -128,7 +269,7 @@ export async function listProjects() {
   });
 }
 
-export async function bootstrapWorkspaceAndUser({ userName, email, workspaceName }) {
+export async function bootstrapWorkspaceAndUser({ userName, email, workspaceName, passwordHash = null, failIfUserExists = false }) {
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedWorkspaceName = workspaceName.trim();
   const workspaceSlug =
@@ -151,10 +292,22 @@ export async function bootstrapWorkspaceAndUser({ userName, email, workspaceName
           uuid: randomUUID(),
           name: userName.trim(),
           email: normalizedEmail,
+          passwordHash,
           role: 'owner',
           status: 'active',
         },
       });
+    } else {
+      if (failIfUserExists) {
+        throw new Error('Já existe um usuário com este e-mail.');
+      }
+
+      if (!user.passwordHash && passwordHash) {
+        user = await tx.user.update({
+          where: { id: user.id },
+          data: { passwordHash },
+        });
+      }
     }
 
     let workspace = await tx.workspace.findFirst({
@@ -192,9 +345,12 @@ export async function bootstrapWorkspaceAndUser({ userName, email, workspaceName
   });
 }
 
-export async function getProjectByUuid(projectUuid) {
-  return prisma.project.findUnique({
-    where: { uuid: projectUuid },
+export async function getProjectByUuid(projectUuid, userUuid = null) {
+  return prisma.project.findFirst({
+    where: {
+      uuid: projectUuid,
+      ...buildProjectAccessFilter(userUuid),
+    },
     include: {
       workspace: {
         select: { uuid: true, name: true, slug: true },
@@ -332,9 +488,12 @@ export async function createProject({
   });
 }
 
-export async function listProjectTasks(projectUuid, { status, parentTaskUuid } = {}) {
-  const project = await prisma.project.findUnique({
-    where: { uuid: projectUuid },
+export async function listProjectTasks(projectUuid, { status, parentTaskUuid } = {}, userUuid = null) {
+  const project = await prisma.project.findFirst({
+    where: {
+      uuid: projectUuid,
+      ...buildProjectAccessFilter(userUuid),
+    },
     select: { id: true },
   });
 
@@ -373,9 +532,41 @@ export async function listProjectTasks(projectUuid, { status, parentTaskUuid } =
   return tasks.map(enrichTask);
 }
 
-export async function getTaskByUuid(taskUuid) {
-  const task = await prisma.task.findUnique({
-    where: { uuid: taskUuid },
+export async function listAllTasks({ status } = {}, userUuid = null) {
+  const tasks = await prisma.task.findMany({
+    where: {
+      ...(status ? { status } : {}),
+      project: {
+        is: buildProjectAccessFilter(userUuid),
+      },
+    },
+    orderBy: [{ status: 'asc' }, { position: 'asc' }, { createdAt: 'asc' }],
+    include: {
+      ...taskListInclude,
+      project: {
+        select: { uuid: true, name: true, slug: true },
+      },
+      agentRuns: {
+        orderBy: { createdAt: 'desc' },
+      },
+    },
+  });
+
+  return tasks.map(enrichTask);
+}
+
+export async function getTaskByUuid(taskUuid, userUuid = null) {
+  const task = await prisma.task.findFirst({
+    where: {
+      uuid: taskUuid,
+      ...(userUuid
+        ? {
+            project: {
+              is: buildProjectAccessFilter(userUuid),
+            },
+          }
+        : {}),
+    },
     include: taskDetailInclude,
   });
 
@@ -637,17 +828,43 @@ async function ensureSystemWorkspaceAndUser() {
   return result;
 }
 
-export async function ensurePipelineProject(projectUuid, idea = 'Pipeline Project') {
+export async function ensurePipelineProject(projectUuid, idea = 'Pipeline Project', userUuid = null) {
   const existingProject = await prisma.project.findUnique({
     where: { uuid: projectUuid },
     select: { id: true, uuid: true },
   });
 
   if (existingProject) {
+    if (userUuid) {
+      await assertProjectAccess(projectUuid, userUuid);
+    }
     return existingProject;
   }
 
-  const { user, workspace } = await ensureSystemWorkspaceAndUser();
+  let user = null;
+  let workspace = null;
+
+  if (userUuid) {
+    const authUser = await prisma.user.findUnique({
+      where: { uuid: userUuid },
+      select: { uuid: true },
+    });
+
+    if (!authUser) {
+      throw new Error('Usuario autenticado nao encontrado.');
+    }
+
+    workspace = await getDefaultWorkspaceForUserUuid(userUuid);
+    if (!workspace?.uuid) {
+      throw new Error('Nenhum workspace disponivel para criar o projeto de pipeline.');
+    }
+
+    user = authUser;
+  } else {
+    const systemContext = await ensureSystemWorkspaceAndUser();
+    user = systemContext.user;
+    workspace = systemContext.workspace;
+  }
 
   return createProject({
     workspaceUuid: workspace.uuid,
@@ -774,9 +991,18 @@ export async function createTaskArtifact(taskUuid, input) {
   });
 }
 
-export async function getTaskContextByUuid(taskUuid) {
-  return prisma.task.findUnique({
-    where: { uuid: taskUuid },
+export async function getTaskContextByUuid(taskUuid, userUuid = null) {
+  return prisma.task.findFirst({
+    where: {
+      uuid: taskUuid,
+      ...(userUuid
+        ? {
+            project: {
+              is: buildProjectAccessFilter(userUuid),
+            },
+          }
+        : {}),
+    },
     include: {
       project: {
         select: {
