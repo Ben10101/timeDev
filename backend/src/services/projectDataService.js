@@ -6,7 +6,7 @@ const taskListInclude = {
   reporterUser: { select: { uuid: true, name: true, email: true } },
   creator: { select: { uuid: true, name: true, email: true } },
   artifacts: {
-    where: { isCurrent: true },
+    where: { isCurrent: true, artifactScope: 'refinement' },
     orderBy: { createdAt: 'desc' },
   },
   _count: { select: { artifacts: true, comments: true, checklistItems: true } },
@@ -24,6 +24,7 @@ const taskDetailInclude = {
     },
   },
   artifacts: {
+    where: { artifactScope: 'refinement' },
     orderBy: [{ createdAt: 'desc' }, { version: 'desc' }],
   },
   statusHistory: {
@@ -274,14 +275,15 @@ export async function createProject({
     throw new Error('Usuário criador não encontrado.');
   }
 
-  const slugBase = name
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 150) || `projeto-${randomUUID().slice(0, 8)}`;
+  const slugBase =
+    name
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 150) || `projeto-${randomUUID().slice(0, 8)}`;
 
   let slug = slugBase;
   let suffix = 1;
@@ -538,44 +540,53 @@ export async function updateTask(taskUuid, input) {
     validateTaskStatusTransition(existingTask, nextStatus);
   }
 
-  return prisma.$transaction(async (tx) => {
-    const updatedTask = await tx.task.update({
-      where: { id: existingTask.id },
-      data: {
-        ...data,
-        ...(statusChanged
-          ? {
-              status: nextStatus,
-              startedAt:
-                nextStatus === 'in_progress' && !['in_progress', 'done'].includes(existingTask.status)
-                  ? new Date()
-                  : undefined,
-              completedAt: nextStatus === 'done' ? new Date() : nextStatus !== 'done' ? null : undefined,
-            }
-          : {}),
-      },
-      include: {
-        ...taskListInclude,
-        agentRuns: {
-          orderBy: { createdAt: 'desc' },
-        },
-      },
-    });
-
-    if (statusChanged) {
-      await tx.taskStatusHistory.create({
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.task.update({
+        where: { id: existingTask.id },
         data: {
-          taskId: existingTask.id,
-          fromStatus: existingTask.status,
-          toStatus: nextStatus,
-          changedByUserId: changedByUser?.id || null,
-          note: input.statusNote || 'Status atualizado via API',
+          ...data,
+          ...(statusChanged
+            ? {
+                status: nextStatus,
+                startedAt:
+                  nextStatus === 'in_progress' && !['in_progress', 'done'].includes(existingTask.status)
+                    ? new Date()
+                    : undefined,
+                completedAt: nextStatus === 'done' ? new Date() : nextStatus !== 'done' ? null : undefined,
+              }
+            : {}),
         },
       });
-    }
 
-    return enrichTask(updatedTask);
+      if (statusChanged) {
+        await tx.taskStatusHistory.create({
+          data: {
+            taskId: existingTask.id,
+            fromStatus: existingTask.status,
+            toStatus: nextStatus,
+            changedByUserId: changedByUser?.id || null,
+            note: input.statusNote || 'Status atualizado via API',
+          },
+        });
+      }
+    },
+    {
+      timeout: 15000,
+    }
+  );
+
+  const updatedTask = await prisma.task.findUnique({
+    where: { id: existingTask.id },
+    include: {
+      ...taskListInclude,
+      agentRuns: {
+        orderBy: { createdAt: 'desc' },
+      },
+    },
   });
+
+  return enrichTask(updatedTask);
 }
 
 export async function createTaskComment(taskUuid, input) {
@@ -725,6 +736,7 @@ export async function createTaskArtifact(taskUuid, input) {
     where: {
       taskId: task.id,
       artifactType: input.artifactType,
+      artifactScope: input.artifactScope || 'refinement',
       isCurrent: true,
     },
     data: {
@@ -736,6 +748,7 @@ export async function createTaskArtifact(taskUuid, input) {
     where: {
       taskId: task.id,
       artifactType: input.artifactType,
+      artifactScope: input.artifactScope || 'refinement',
     },
     orderBy: { version: 'desc' },
     select: { version: true },
@@ -745,15 +758,17 @@ export async function createTaskArtifact(taskUuid, input) {
     data: {
       uuid: randomUUID(),
       taskId: task.id,
+      taskImplementationId: input.taskImplementationId || null,
       agentRunId: input.agentRunId || null,
       artifactType: input.artifactType,
+      artifactScope: input.artifactScope || 'refinement',
       title: input.title,
       content: input.content,
       contentFormat: input.contentFormat || 'markdown',
       version: (latestArtifact?.version || 0) + 1,
       isCurrent: true,
       isApproved: input.isApproved || false,
-      createdByUserId,
+      createdByUserId: input.createdByUserId || null,
       createdByAgentName: input.createdByAgentName || null,
     },
   });
@@ -776,7 +791,7 @@ export async function getTaskContextByUuid(taskUuid) {
         select: { id: true, uuid: true, name: true, email: true },
       },
       artifacts: {
-        where: { isCurrent: true },
+        where: { isCurrent: true, artifactScope: 'refinement' },
         orderBy: { createdAt: 'desc' },
       },
       agentRuns: {

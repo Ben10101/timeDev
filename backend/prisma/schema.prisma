@@ -112,6 +112,47 @@ enum ContentFormat {
   html
 }
 
+enum ArtifactScope {
+  refinement
+  implementation
+}
+
+enum GeneratedAppStatus {
+  draft
+  bootstrapping
+  ready
+  failed
+  archived
+}
+
+enum TaskImplementationStatus {
+  planned
+  in_progress
+  integrated
+  failed
+  cancelled
+}
+
+enum GeneratedRunType {
+  bootstrap
+  implementation_plan
+  implementation_apply
+  validation
+}
+
+enum GeneratedRunStatus {
+  queued
+  running
+  completed
+  failed
+}
+
+enum GeneratedFileChangeType {
+  created
+  updated
+  deleted
+}
+
 model User {
   id                           BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
   uuid                         String              @unique @db.Char(36)
@@ -178,6 +219,7 @@ model Project {
   members       ProjectMember[]
   tasks         Task[]
   agentRuns     AgentRun[]
+  generatedApps GeneratedApp[]
 
   @@unique([workspaceId, slug])
   @@index([workspaceId])
@@ -236,6 +278,7 @@ model Task {
   checklistItems         TaskChecklist[]
   dependencies           TaskDependency[]      @relation("TaskDependencies")
   dependedOnBy           TaskDependency[]      @relation("TaskDependents")
+  implementations        TaskImplementation[]
 
   @@index([projectId, status])
   @@index([projectId, parentTaskId])
@@ -313,8 +356,10 @@ model TaskArtifact {
   id                BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
   uuid              String         @unique @db.Char(36)
   taskId            BigInt         @map("task_id") @db.UnsignedBigInt
+  taskImplementationId BigInt?     @map("task_implementation_id") @db.UnsignedBigInt
   agentRunId        BigInt?        @map("agent_run_id") @db.UnsignedBigInt
   artifactType      ArtifactType   @default(custom) @map("artifact_type")
+  artifactScope     ArtifactScope  @default(refinement) @map("artifact_scope")
   title             String         @db.VarChar(255)
   content           String         @db.LongText
   contentFormat     ContentFormat  @default(markdown) @map("content_format")
@@ -327,14 +372,20 @@ model TaskArtifact {
   createdByAgentName String?       @map("created_by_agent_name") @db.VarChar(100)
   createdAt         DateTime       @default(now()) @map("created_at") @db.DateTime(0)
   task              Task           @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  taskImplementation TaskImplementation? @relation(fields: [taskImplementationId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   agentRun          AgentRun?      @relation(fields: [agentRunId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   approvedByUser    User?          @relation("ArtifactApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
   createdByUser     User?          @relation("ArtifactCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  technicalSpecForImplementations TaskImplementation[] @relation("ImplementationTechnicalSpec")
+  implementationPlanForImplementations TaskImplementation[] @relation("ImplementationPlanArtifact")
 
   @@index([taskId])
+  @@index([taskImplementationId])
   @@index([agentRunId])
   @@index([artifactType])
+  @@index([artifactScope])
   @@index([taskId, artifactType, isCurrent])
+  @@index([taskId, artifactScope, isCurrent])
   @@index([approvedBy])
   @@index([createdByUserId])
   @@map("task_artifacts")
@@ -391,4 +442,111 @@ model TaskChecklist {
   @@index([taskId])
   @@index([completedByUserId])
   @@map("task_checklists")
+}
+
+model GeneratedApp {
+  id               BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid             String               @unique @db.Char(36)
+  projectId        BigInt               @map("project_id") @db.UnsignedBigInt
+  name             String               @db.VarChar(180)
+  slug             String               @db.VarChar(180)
+  rootPath         String               @map("root_path") @db.VarChar(500)
+  stackPreset      String               @map("stack_preset") @db.VarChar(120)
+  status           GeneratedAppStatus   @default(draft)
+  currentVersion   Int                  @default(1) @map("current_version") @db.UnsignedInt
+  createdAt        DateTime             @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt        DateTime             @updatedAt @map("updated_at") @db.DateTime(0)
+  project          Project              @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  modules          GeneratedAppModule[]
+  implementations  TaskImplementation[]
+  runs             GeneratedAppRun[]
+  files            GeneratedFile[]
+
+  @@unique([projectId, slug])
+  @@index([projectId])
+  @@index([status])
+  @@map("generated_apps")
+}
+
+model GeneratedAppModule {
+  id              BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  generatedAppId  BigInt             @map("generated_app_id") @db.UnsignedBigInt
+  name            String             @db.VarChar(120)
+  moduleType      String             @map("module_type") @db.VarChar(80)
+  path            String             @db.VarChar(500)
+  status          GeneratedAppStatus @default(ready)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.DateTime(0)
+  generatedApp    GeneratedApp       @relation(fields: [generatedAppId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([generatedAppId])
+  @@index([moduleType])
+  @@map("generated_app_modules")
+}
+
+model TaskImplementation {
+  id                        BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid                      String                   @unique @db.Char(36)
+  taskId                    BigInt                   @map("task_id") @db.UnsignedBigInt
+  generatedAppId            BigInt                   @map("generated_app_id") @db.UnsignedBigInt
+  technicalSpecArtifactId   BigInt?                  @map("technical_spec_artifact_id") @db.UnsignedBigInt
+  implementationPlanArtifactId BigInt?               @map("implementation_plan_artifact_id") @db.UnsignedBigInt
+  status                    TaskImplementationStatus @default(planned)
+  implementationType        String                   @map("implementation_type") @db.VarChar(80)
+  targetBranch              String?                  @map("target_branch") @db.VarChar(120)
+  targetPath                String?                  @map("target_path") @db.VarChar(500)
+  buildStatus               GeneratedRunStatus?      @map("build_status")
+  testStatus                GeneratedRunStatus?      @map("test_status")
+  summary                   String?                  @db.Text
+  createdAt                 DateTime                 @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt                 DateTime                 @updatedAt @map("updated_at") @db.DateTime(0)
+  task                      Task                     @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  generatedApp              GeneratedApp             @relation(fields: [generatedAppId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  technicalSpecArtifact     TaskArtifact?            @relation("ImplementationTechnicalSpec", fields: [technicalSpecArtifactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  implementationPlanArtifact TaskArtifact?           @relation("ImplementationPlanArtifact", fields: [implementationPlanArtifactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  artifacts                 TaskArtifact[]
+  generatedFiles            GeneratedFile[]
+  runs                      GeneratedAppRun[]
+
+  @@index([taskId])
+  @@index([generatedAppId])
+  @@index([status])
+  @@map("task_implementations")
+}
+
+model GeneratedFile {
+  id                    BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  generatedAppId        BigInt                  @map("generated_app_id") @db.UnsignedBigInt
+  taskImplementationId  BigInt?                 @map("task_implementation_id") @db.UnsignedBigInt
+  filePath              String                  @map("file_path") @db.VarChar(500)
+  fileType              String                  @map("file_type") @db.VarChar(80)
+  changeType            GeneratedFileChangeType @map("change_type")
+  checksum              String?                 @db.VarChar(128)
+  createdAt             DateTime                @default(now()) @map("created_at") @db.DateTime(0)
+  generatedApp          GeneratedApp            @relation(fields: [generatedAppId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  taskImplementation    TaskImplementation?     @relation(fields: [taskImplementationId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([generatedAppId])
+  @@index([taskImplementationId])
+  @@map("generated_files")
+}
+
+model GeneratedAppRun {
+  id                    BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid                  String             @unique @db.Char(36)
+  generatedAppId        BigInt             @map("generated_app_id") @db.UnsignedBigInt
+  taskImplementationId  BigInt?            @map("task_implementation_id") @db.UnsignedBigInt
+  runType               GeneratedRunType   @map("run_type")
+  status                GeneratedRunStatus @default(queued)
+  logSummary            String?            @map("log_summary") @db.LongText
+  startedAt             DateTime?          @map("started_at") @db.DateTime(0)
+  finishedAt            DateTime?          @map("finished_at") @db.DateTime(0)
+  createdAt             DateTime           @default(now()) @map("created_at") @db.DateTime(0)
+  generatedApp          GeneratedApp       @relation(fields: [generatedAppId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  taskImplementation    TaskImplementation? @relation(fields: [taskImplementationId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([generatedAppId])
+  @@index([taskImplementationId])
+  @@index([status])
+  @@map("generated_app_runs")
 }

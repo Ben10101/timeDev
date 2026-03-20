@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import AppShell from '../components/AppShell';
 import {
+  bootstrapGeneratedApp,
   bootstrapWorkspace,
   createProject,
   createTask,
   listProjects,
   listProjectTasks,
+  runTaskImplementation,
   runTaskQa,
   runTaskRequirements,
 } from '../services/api';
@@ -101,7 +103,7 @@ function exportTaskArtifacts(task) {
   URL.revokeObjectURL(url);
 }
 
-function TaskCard({ task, onRequirements, onQa, onOpenDetail, onExportArtifacts, busy }) {
+function TaskCard({ task, onRequirements, onQa, onGenerateCode, onOpenDetail, onExportArtifacts, busy }) {
   const hasRequirements = hasCurrentArtifact(task, 'requirements');
   const hasQa = hasCurrentArtifact(task, 'test_plan');
   const isDone = task.status === 'done';
@@ -121,7 +123,7 @@ function TaskCard({ task, onRequirements, onQa, onOpenDetail, onExportArtifacts,
 
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
         <span className="truncate">{task.assigneeAgentName || task.assigneeUser?.name || 'Sem dono'}</span>
-        <span>{formatElapsed(task.timing?.leadTimeSeconds)}</span>
+        <span title="Tempo de execução do agente">{formatElapsed(task.timing?.cycleTimeSeconds)}</span>
         <span>REQ {hasRequirements ? 'OK' : '?'}</span>
         <span>QA {hasQa ? 'OK' : '?'}</span>
       </div>
@@ -143,6 +145,14 @@ function TaskCard({ task, onRequirements, onQa, onOpenDetail, onExportArtifacts,
               className="rounded-2xl border border-[#2f6c58] bg-[#eef5ef] px-3 py-2 text-xs font-semibold text-[#2f6c58] transition hover:bg-[#e4f0e5] disabled:opacity-50"
             >
               Exportar artefatos
+            </button>
+            <button
+              type="button"
+              onClick={() => onGenerateCode(task.uuid)}
+              disabled={busy}
+              className="rounded-2xl border border-[#17322b] bg-[#17322b] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#214338] disabled:opacity-50"
+            >
+              Gerar cÃ³digo
             </button>
           </div>
         ) : (
@@ -359,6 +369,28 @@ export default function ProjectsPage() {
     }
   }
 
+  async function handleGenerateCode(taskUuid) {
+    if (!activeProjectUuid) return;
+
+    setSaving(true);
+    setError(null);
+    try {
+      await bootstrapGeneratedApp(activeProjectUuid);
+      await runTaskImplementation(taskUuid);
+      await loadTasks(activeProjectUuid);
+      await loadProjects(activeProjectUuid, { silent: true });
+    } catch (submitError) {
+      setError(
+        submitError.response?.data?.error ||
+          submitError.response?.data?.message ||
+          submitError.message ||
+          'NÃ£o foi possÃ­vel gerar o cÃ³digo da task.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <AppShell
       eyebrow="Projects"
@@ -542,6 +574,7 @@ export default function ProjectsPage() {
                           busy={saving}
                           onRequirements={handleRunRequirements}
                           onQa={handleRunQa}
+                          onGenerateCode={handleGenerateCode}
                           onExportArtifacts={exportTaskArtifacts}
                           onOpenDetail={(taskUuid) => navigate(`/projects/${activeProjectUuid}/tasks/${taskUuid}`)}
                         />

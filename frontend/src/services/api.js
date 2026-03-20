@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_URL = 'http://localhost:3001/api'
+export const API_URL = 'http://localhost:3001/api'
 const apiClient = axios.create({
   baseURL: API_URL,
 })
@@ -61,6 +61,21 @@ export const runTaskQa = async (taskUuid, payload = {}) => {
   return response.data
 }
 
+export const bootstrapGeneratedApp = async (projectUuid, payload = {}) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/generated-app/bootstrap`, payload)
+  return response.data
+}
+
+export const runTaskImplementation = async (taskUuid) => {
+  const response = await apiClient.post(`/tasks/${taskUuid}/implementation/run`)
+  return response.data
+}
+
+export const getTaskImplementationStatus = async (taskUuid) => {
+  const response = await apiClient.get(`/tasks/${taskUuid}/implementation/status`)
+  return response.data
+}
+
 export const updateTask = async (taskUuid, payload) => {
   const response = await apiClient.patch(`/tasks/${taskUuid}`, payload)
   return response.data
@@ -102,6 +117,9 @@ export default {
   createTask,
   runTaskRequirements,
   runTaskQa,
+  bootstrapGeneratedApp,
+  runTaskImplementation,
+  getTaskImplementationStatus,
   updateTask,
   getTask,
   createTaskComment,

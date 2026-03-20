@@ -234,10 +234,7 @@ export async function generateProjectBacklogController(req, res, next) {
 
     await persistAgentResult(projectUuid, 'project_manager', payload, result);
 
-    const [project, tasks] = await Promise.all([
-      getProjectByUuid(projectUuid),
-      listProjectTasks(projectUuid),
-    ]);
+    const [project, tasks] = await Promise.all([getProjectByUuid(projectUuid), listProjectTasks(projectUuid)]);
 
     res.status(201).json(
       serializeBigInts({

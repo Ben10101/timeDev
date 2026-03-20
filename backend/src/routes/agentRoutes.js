@@ -1,5 +1,9 @@
 import { Router } from 'express';
-import { runAgentController, runQaForTaskController, runRequirementsForTaskController } from '../controllers/agentController.js';
+import {
+  runAgentController,
+  runQaForTaskController,
+  runRequirementsForTaskController,
+} from '../controllers/agentController.js';
 
 const router = Router();
 

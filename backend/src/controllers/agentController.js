@@ -9,6 +9,7 @@ import {
   persistAgentResult,
   updateTask,
 } from '../services/projectDataService.js';
+import { serializeBigInts } from '../utils/serialize.js';
 
 export async function runAgentController(req, res) {
   let agentRun = null;
@@ -18,10 +19,9 @@ export async function runAgentController(req, res) {
     if (!agent || !payload || !payload.idea) {
       return res.status(400).json({ message: 'Nome do agente e payload com a ideia são obrigatórios.' });
     }
-    
-    // Garante que um project_id exista para a sessão de geração
+
     if (!payload.project_id) {
-        payload.project_id = uuidv4();
+      payload.project_id = uuidv4();
     }
 
     await ensurePipelineProject(payload.project_id, payload.idea);
@@ -30,13 +30,12 @@ export async function runAgentController(req, res) {
     const result = await runSingleAgent(agent, payload);
     await finishAgentRun(agentRun.id, { status: 'completed', result });
     await persistAgentResult(payload.project_id, agent, payload, result);
-    
+
     res.status(200).json({
       success: true,
       project_id: payload.project_id,
-      data: result
+      data: result,
     });
-
   } catch (error) {
     if (agentRun?.id) {
       await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message });
@@ -58,7 +57,9 @@ export async function runRequirementsForTaskController(req, res) {
       return res.status(404).json({ message: 'Tarefa não encontrada.' });
     }
 
-    const latestRequirements = task.artifacts.find((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent);
+    const latestRequirements = task.artifacts.find(
+      (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent
+    );
 
     await updateTask(taskUuid, {
       status: 'in_progress',
@@ -73,7 +74,7 @@ export async function runRequirementsForTaskController(req, res) {
     const payload = {
       project_id: task.project.uuid,
       task_uuid: task.uuid,
-      idea: `Refine somente esta hist?ria de usu?rio: ${task.title}${
+      idea: `Refine somente esta história de usuário: ${task.title}${
         task.description ? `\n\nContexto complementar da tarefa: ${task.description}` : ''
       }`,
       backlog: [`História: ${task.title}`, task.description ? `Contexto: ${task.description}` : null]
@@ -111,11 +112,13 @@ export async function runRequirementsForTaskController(req, res) {
       statusNote: 'Refinamento de requisitos concluído',
     });
 
-    res.status(200).json({
-      success: true,
-      task: updatedTask,
-      data: result,
-    });
+    res.status(200).json(
+      serializeBigInts({
+        success: true,
+        task: updatedTask,
+        data: result,
+      })
+    );
   } catch (error) {
     if (agentRun?.id) {
       await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);
@@ -162,7 +165,9 @@ export async function runQaForTaskController(req, res) {
     const payload = {
       project_id: task.project.uuid,
       task_uuid: task.uuid,
-      idea: `Crie o plano de testes apenas para esta tarefa: ${task.title}${task.description ? `\n\nContexto espec?fico da tarefa: ${task.description}` : ''}`,
+      idea: `Crie o plano de testes apenas para esta tarefa: ${task.title}${
+        task.description ? `\n\nContexto específico da tarefa: ${task.description}` : ''
+      }`,
       code_structure: latestRequirements.content,
       developer_output: {
         code: latestRequirements.content,
@@ -200,11 +205,13 @@ export async function runQaForTaskController(req, res) {
       statusNote: 'Plano de testes concluído',
     });
 
-    res.status(200).json({
-      success: true,
-      task: updatedTask,
-      data: result,
-    });
+    res.status(200).json(
+      serializeBigInts({
+        success: true,
+        task: updatedTask,
+        data: result,
+      })
+    );
   } catch (error) {
     if (agentRun?.id) {
       await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);

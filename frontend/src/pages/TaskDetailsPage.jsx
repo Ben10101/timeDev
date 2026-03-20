@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import AppShell from '../components/AppShell';
-import { createTaskArtifact, createTaskComment, getTask, runTaskQa, runTaskRequirements } from '../services/api';
+import {
+  bootstrapGeneratedApp,
+  createTaskArtifact,
+  createTaskComment,
+  getTask,
+  getTaskImplementationStatus,
+  runTaskImplementation,
+  runTaskQa,
+  runTaskRequirements,
+} from '../services/api';
 
 function formatDate(value) {
   if (!value) return 'Sem data';
@@ -19,10 +28,20 @@ function hasCurrentArtifact(task, artifactType) {
   return (task?.artifacts || []).some((artifact) => artifact.artifactType === artifactType && artifact.isCurrent);
 }
 
+function parseJsonContent(rawContent) {
+  if (!rawContent) return null;
+  try {
+    return JSON.parse(rawContent);
+  } catch (_error) {
+    return null;
+  }
+}
+
 export default function TaskDetailsPage() {
   const { projectUuid, taskUuid } = useParams();
   const navigate = useNavigate();
   const [task, setTask] = useState(null);
+  const [implementationStatus, setImplementationStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -31,6 +50,13 @@ export default function TaskDetailsPage() {
   const [artifactDraft, setArtifactDraft] = useState('');
   const bootstrapContext = JSON.parse(localStorage.getItem('factory_bootstrap_context') || 'null');
   const taskHasRequirements = hasCurrentArtifact(task, 'requirements');
+  const taskIsDone = task?.status === 'done';
+  const reviewReport = parseJsonContent(implementationStatus?.reviewArtifact?.content);
+  const fixPlanReport = parseJsonContent(implementationStatus?.fixPlanArtifact?.content);
+  const buildReport = parseJsonContent(implementationStatus?.buildReportArtifact?.content);
+  const testReport = parseJsonContent(implementationStatus?.testReportArtifact?.content);
+  const lintReport = parseJsonContent(implementationStatus?.lintReportArtifact?.content);
+  const implementationSummary = reviewReport?.summary || null;
 
   async function loadTask() {
     setLoading(true);
@@ -38,6 +64,17 @@ export default function TaskDetailsPage() {
     try {
       const result = await getTask(taskUuid);
       setTask(result);
+
+      try {
+        const implementation = await getTaskImplementationStatus(taskUuid);
+        setImplementationStatus(implementation);
+      } catch (implementationError) {
+        if (implementationError.response?.status === 404) {
+          setImplementationStatus(null);
+        } else {
+          throw implementationError;
+        }
+      }
     } catch (loadError) {
       setError(loadError.response?.data?.error || loadError.message || 'Não foi possível carregar a task.');
     } finally {
@@ -109,6 +146,25 @@ export default function TaskDetailsPage() {
     }
   }
 
+  async function handleGenerateCode() {
+    setSaving(true);
+    setError(null);
+    try {
+      await bootstrapGeneratedApp(projectUuid);
+      await runTaskImplementation(taskUuid);
+      await loadTask();
+    } catch (submitError) {
+      setError(
+        submitError.response?.data?.error ||
+          submitError.response?.data?.message ||
+          submitError.message ||
+          'Não foi possível gerar o código da task.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function handleStartArtifactEdit(artifact) {
     setEditingArtifactId(artifact.id);
     setArtifactDraft(artifact.content || '');
@@ -148,7 +204,7 @@ export default function TaskDetailsPage() {
     <AppShell
       eyebrow="Task Detail"
       title={task?.title || 'Detalhe da task'}
-      description="Acompanhe contexto, artefatos, histórico, execuções de agentes e o tempo consumido em cada etapa da tarefa."
+      description="Acompanhe contexto, refinamento, desenvolvimento, histórico e execuções da tarefa."
       actions={
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
@@ -165,6 +221,15 @@ export default function TaskDetailsPage() {
           >
             Executar QA
           </button>
+          {taskIsDone && (
+            <button
+              onClick={handleGenerateCode}
+              disabled={saving || loading}
+              className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
+            >
+              Gerar código
+            </button>
+          )}
           <button
             onClick={() => navigate(`/projects?project=${projectUuid}`)}
             className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 sm:w-auto"
@@ -180,13 +245,15 @@ export default function TaskDetailsPage() {
             {task ? (
               <div className="mt-4 space-y-3 text-sm text-slate-700">
                 <p><strong>Projeto:</strong> {task.project?.name}</p>
+                <p><strong>Task UUID:</strong> {task.uuid}</p>
                 <p><strong>Status:</strong> {task.status}</p>
                 <p><strong>Prioridade:</strong> {task.priority}</p>
                 <p><strong>Responsável:</strong> {task.assigneeAgentName || task.assigneeUser?.name || 'Sem responsável'}</p>
                 <p><strong>Criada em:</strong> {formatDate(task.createdAt)}</p>
-                <p><strong>Tempo total:</strong> {formatElapsed(task.timing?.leadTimeSeconds)}</p>
+                <p><strong>Tempo em execução:</strong> {formatElapsed(task.timing?.cycleTimeSeconds)}</p>
                 <p><strong>Tempo em requisitos:</strong> {formatElapsed(task.timing?.requirementsTimeSeconds)}</p>
                 <p><strong>Tempo em QA:</strong> {formatElapsed(task.timing?.qaTimeSeconds)}</p>
+                <p><strong>Implementação:</strong> {implementationStatus?.status || 'Não iniciada'}</p>
               </div>
             ) : (
               <p className="mt-4 text-sm text-slate-500">Carregando...</p>
@@ -268,7 +335,10 @@ export default function TaskDetailsPage() {
 
               <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
                 <div className="flex items-center justify-between">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Artefatos</p>
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Artefatos</p>
+                    <p className="mt-2 text-sm text-slate-500">Aqui ficam apenas os artefatos de refinamento.</p>
+                  </div>
                   <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
                     {task.artifacts?.length || 0}
                   </span>
@@ -335,12 +405,199 @@ export default function TaskDetailsPage() {
                   ))}
                   {!task.artifacts?.length && (
                     <div className="rounded-[22px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
-                      Nenhum artefato associado a esta task.
+                      Nenhum artefato de refinamento associado a esta task.
                     </div>
                   )}
                 </div>
               </section>
             </div>
+
+            <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Desenvolvimento</p>
+                  <h3 className="mt-2 text-lg font-semibold text-slate-900">Status técnico e artefatos de implementação</h3>
+                </div>
+                <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
+                  {implementationStatus?.status || 'Não iniciado'}
+                </span>
+              </div>
+
+              {implementationStatus ? (
+                <div className="mt-6 space-y-6">
+                  <div className="grid gap-4 lg:grid-cols-4">
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Implementação</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{implementationStatus.status}</p>
+                    </article>
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Build</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{buildReport?.status || implementationStatus.buildStatus || 'n/a'}</p>
+                    </article>
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Review</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {implementationSummary?.status || (implementationStatus.reviewArtifact ? 'disponível' : 'não executado')}
+                      </p>
+                    </article>
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Testes / Lint</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {testReport?.status || implementationStatus.testStatus || 'n/a'} / {lintReport?.status || 'n/a'}
+                      </p>
+                    </article>
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">App gerado</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{implementationStatus.generatedApp?.name || 'App full stack'}</p>
+                      <p className="mt-3 break-all text-xs leading-6 text-slate-600">
+                        {implementationStatus.generatedApp?.rootPath || 'Projeto ainda não materializado em disco.'}
+                      </p>
+                    </article>
+
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Review automático</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {implementationStatus.reviewArtifact?.title || 'Nenhum review gerado ainda'}
+                      </p>
+                      {implementationSummary && (
+                        <div className="mt-3 space-y-2 text-sm text-slate-600">
+                          <p><strong>Score:</strong> {implementationSummary.score}</p>
+                          <p><strong>Status:</strong> {implementationSummary.status}</p>
+                          <p><strong>Resumo:</strong> {implementationSummary.verdict}</p>
+                        </div>
+                      )}
+                    </article>
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Technical Spec</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {implementationStatus.technicalSpecArtifact?.title || 'Ainda não gerado'}
+                      </p>
+                      {implementationStatus.technicalSpecArtifact?.content && (
+                        <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap rounded-2xl bg-white p-4 text-xs leading-6 text-slate-600">
+                          {implementationStatus.technicalSpecArtifact.content}
+                        </pre>
+                      )}
+                    </article>
+
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Implementation Plan</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {implementationStatus.implementationPlanArtifact?.title || 'Ainda não gerado'}
+                      </p>
+                      {implementationStatus.implementationPlanArtifact?.content && (
+                        <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap rounded-2xl bg-white p-4 text-xs leading-6 text-slate-600">
+                          {implementationStatus.implementationPlanArtifact.content}
+                        </pre>
+                      )}
+                    </article>
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Implementation Fix Plan</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {implementationStatus.fixPlanArtifact?.title || 'Nenhum plano de correção gerado'}
+                      </p>
+                      {fixPlanReport?.actions?.length ? (
+                        <div className="mt-4 space-y-3">
+                          {fixPlanReport.actions.map((action, index) => (
+                            <div key={`${action.filePath}-${index}`} className="rounded-2xl bg-white p-3">
+                              <p className="text-sm font-medium text-slate-900">{action.category} • {action.priority}</p>
+                              <p className="mt-1 text-xs text-slate-600">{action.filePath}</p>
+                              <p className="mt-2 text-sm text-slate-700">{action.action}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-4 rounded-2xl bg-white p-4 text-sm text-slate-600">
+                          Nenhuma ação corretiva necessária na versão atual.
+                        </div>
+                      )}
+                    </article>
+
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Validação automática</p>
+                      <div className="mt-4 space-y-3">
+                        <div className="rounded-2xl bg-white p-3">
+                          <p className="text-sm font-medium text-slate-900">Lint</p>
+                          <p className="mt-1 text-xs text-slate-600">{lintReport?.status || 'n/a'}</p>
+                          {lintReport?.report?.errorMessage && <p className="mt-2 text-xs text-rose-600">{lintReport.report.errorMessage}</p>}
+                        </div>
+                        <div className="rounded-2xl bg-white p-3">
+                          <p className="text-sm font-medium text-slate-900">Test</p>
+                          <p className="mt-1 text-xs text-slate-600">{testReport?.status || 'n/a'}</p>
+                          {testReport?.report?.errorMessage && <p className="mt-2 text-xs text-rose-600">{testReport.report.errorMessage}</p>}
+                        </div>
+                        <div className="rounded-2xl bg-white p-3">
+                          <p className="text-sm font-medium text-slate-900">Build</p>
+                          <p className="mt-1 text-xs text-slate-600">{buildReport?.status || 'n/a'}</p>
+                          {buildReport?.reports?.map((report) => (
+                            <div key={report.scriptName} className="mt-3 rounded-xl border border-slate-200 p-3">
+                              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{report.scriptName}</p>
+                              <p className="mt-1 text-xs text-slate-600">{report.status}</p>
+                              {report.errorMessage && <p className="mt-2 text-xs text-rose-600">{report.errorMessage}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </article>
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Arquivos tocados</p>
+                        <span className="text-xs text-slate-500">{implementationStatus.generatedFiles?.length || 0}</span>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {implementationStatus.generatedFiles?.slice(0, 8).map((file) => (
+                          <div key={file.id} className="rounded-2xl bg-white p-3">
+                            <p className="text-sm font-medium text-slate-900">{file.changeType || 'update'}</p>
+                            <p className="mt-1 break-all text-xs text-slate-600">{file.filePath}</p>
+                          </div>
+                        ))}
+                        {!implementationStatus.generatedFiles?.length && (
+                          <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
+                            Nenhum arquivo registrado ainda.
+                          </div>
+                        )}
+                      </div>
+                    </article>
+
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Runs técnicos</p>
+                        <span className="text-xs text-slate-500">{implementationStatus.runs?.length || 0}</span>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {implementationStatus.runs?.slice(0, 8).map((run) => (
+                          <div key={run.id} className="rounded-2xl bg-white p-3">
+                            <p className="text-sm font-medium text-slate-900">{run.runType}</p>
+                            <p className="mt-1 text-xs text-slate-600">{run.status}</p>
+                            <p className="mt-1 text-xs text-slate-500">{formatDate(run.createdAt || run.startedAt)}</p>
+                          </div>
+                        ))}
+                        {!implementationStatus.runs?.length && (
+                          <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
+                            Nenhum run técnico registrado ainda.
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-6 rounded-[22px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
+                  A implementação ainda não foi iniciada para esta task. Quando você clicar em <strong>Gerar código</strong>, o acompanhamento técnico aparecerá aqui.
+                </div>
+              )}
+            </section>
 
             <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
               <div className="flex items-center justify-between">
