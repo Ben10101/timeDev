@@ -8,6 +8,8 @@ import { prisma } from '../lib/prisma.js';
 import { resolveDomainTemplate } from '../templates/domains/index.js';
 import { materializeFullstackTemplate } from './generatedAppTemplateService.js';
 import { generateImplementationUi } from './implementationAiService.js';
+import { buildRuntimeAiEnvForUser } from './aiSettingsService.js';
+import { getProjectArchitectureStatus } from './projectDataService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
@@ -447,7 +449,7 @@ function getDomainTemplate(technicalSpec) {
   return resolveDomainTemplate(domainKey, technicalSpec);
 }
 
-async function enrichFrontendWithAi(task, technicalSpec) {
+async function enrichFrontendWithAi(task, technicalSpec, userUuid = null) {
   const domainTemplate = getDomainTemplate(technicalSpec);
   const fallback = {
     navigationLabel: technicalSpec.frontend.navigationLabel,
@@ -468,6 +470,7 @@ async function enrichFrontendWithAi(task, technicalSpec) {
   };
 
   try {
+    const envOverrides = userUuid ? await buildRuntimeAiEnvForUser(userUuid) : {};
     const aiResult = await generateImplementationUi({
       taskTitle: task.title,
       summary: technicalSpec.summary,
@@ -479,7 +482,7 @@ async function enrichFrontendWithAi(task, technicalSpec) {
       fields: technicalSpec.domain.fields,
       businessRules: technicalSpec.businessRules,
       qaScenarios: technicalSpec.qaScenarios,
-    });
+    }, { envOverrides });
 
     return {
       ...technicalSpec,
@@ -717,12 +720,31 @@ function buildStructuredSpec(task, actionSpec, fields, businessRules, qaScenario
   };
 }
 
-function buildTechnicalSpec(task) {
+async function getProjectArchitectureSource(projectUuid) {
+  const architectureStatus = await getProjectArchitectureStatus(projectUuid);
+
+  if (!architectureStatus.allStoriesRefined) {
+    throw new Error('A implementacao so pode comecar quando todas as historias do projeto estiverem refinadas.');
+  }
+
+  if (!architectureStatus.hasArchitecture || !architectureStatus.architectureArtifact?.content) {
+    throw new Error('A arquitetura do projeto precisa ser gerada antes de liberar implementacao.');
+  }
+
+  if (architectureStatus.architectureNeedsRefresh) {
+    throw new Error('A arquitetura do projeto esta desatualizada. Gere a arquitetura novamente antes de implementar.');
+  }
+
+  return architectureStatus.architectureArtifact.content;
+}
+
+function buildTechnicalSpec(task, projectArchitectureSource = '') {
   const requirements = task.artifacts.find((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent);
   const testPlan = task.artifacts.find((artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent);
   const requirementsSource = requirements?.content || '';
   const qaSource = testPlan?.content || '';
-  const sourceText = `${task.title}\n${requirementsSource}\n${qaSource}`;
+  const architectureSource = projectArchitectureSource || '';
+  const sourceText = `${task.title}\n${requirementsSource}\n${qaSource}\n${architectureSource}`;
   const actionSpec = inferActionSpec(task, sourceText);
   const featureKey = slugify(actionSpec.domainKey, task.uuid);
   const entityName = actionSpec.entityName;
@@ -805,6 +827,7 @@ function buildTechnicalSpec(task) {
     ),
     requirementsSource,
     qaSource,
+    architectureSource,
   };
 }
 
@@ -1339,6 +1362,67 @@ async function updateApiServer(generatedAppRoot, routeSpecs, appSlug = 'generate
   };
 }
 
+async function updateApiPackageJson(generatedAppRoot) {
+  const rootPackagePath = path.join(generatedAppRoot, 'package.json');
+  const packagePath = path.join(generatedAppRoot, 'apps/api/package.json');
+  const rootPackageRaw = await readText(rootPackagePath, '{}');
+  const rootPackage = JSON.parse(rootPackageRaw || '{}');
+  const rootName = slugify(rootPackage.name || path.basename(generatedAppRoot), 'generated-app');
+  const raw = await readText(packagePath, '{}');
+  const parsed = JSON.parse(raw || '{}');
+
+  parsed.name = parsed.name || `@${rootName}/api`;
+  parsed.private = parsed.private ?? true;
+  parsed.version = parsed.version || '1.0.0';
+  parsed.type = parsed.type || 'module';
+  parsed.scripts = {
+    dev: 'tsx watch src/server.ts',
+    build: 'tsc -p tsconfig.json',
+    ...(parsed.scripts || {}),
+  };
+  parsed.dependencies = parsed.dependencies || {};
+  parsed.dependencies.cors = parsed.dependencies.cors || '^2.8.5';
+  parsed.dependencies.express = parsed.dependencies.express || '^4.18.2';
+  parsed.devDependencies = parsed.devDependencies || {};
+  parsed.devDependencies['@types/cors'] = parsed.devDependencies['@types/cors'] || '^2.8.17';
+  parsed.devDependencies['@types/express'] = parsed.devDependencies['@types/express'] || '^5.0.1';
+  parsed.devDependencies['@types/node'] = parsed.devDependencies['@types/node'] || '^22.10.2';
+  parsed.devDependencies.tsx = parsed.devDependencies.tsx || '^4.19.0';
+  parsed.devDependencies.typescript = parsed.devDependencies.typescript || '^5.6.0';
+
+  const content = `${JSON.stringify(parsed, null, 2)}\n`;
+  await writeText(packagePath, content);
+
+  return {
+    relativePath: 'apps/api/package.json',
+    content,
+    fileType: 'json',
+  };
+}
+
+async function updateApiTsconfig(generatedAppRoot) {
+  const tsconfigPath = path.join(generatedAppRoot, 'apps/api/tsconfig.json');
+  const raw = await readText(tsconfigPath, '{}');
+  const parsed = JSON.parse(raw || '{}');
+
+  parsed.extends = parsed.extends || '../../tsconfig.base.json';
+  parsed.compilerOptions = {
+    outDir: 'dist',
+    types: ['node'],
+    ...(parsed.compilerOptions || {}),
+  };
+  parsed.include = Array.isArray(parsed.include) && parsed.include.length ? parsed.include : ['src'];
+
+  const content = `${JSON.stringify(parsed, null, 2)}\n`;
+  await writeText(tsconfigPath, content);
+
+  return {
+    relativePath: 'apps/api/tsconfig.json',
+    content,
+    fileType: 'json',
+  };
+}
+
 async function updateWebPackageJson(generatedAppRoot) {
   const rootPackagePath = path.join(generatedAppRoot, 'package.json');
   const packagePath = path.join(generatedAppRoot, 'apps/web/package.json');
@@ -1380,6 +1464,74 @@ async function updateWebPackageJson(generatedAppRoot) {
   };
 }
 
+async function updateWebIndexHtml(generatedAppRoot, projectName) {
+  const indexPath = path.join(generatedAppRoot, 'apps/web/index.html');
+  const safeProjectName = String(projectName || path.basename(generatedAppRoot) || 'Generated App');
+  const content = `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${safeProjectName}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+`;
+  await writeText(indexPath, content);
+
+  return {
+    relativePath: 'apps/web/index.html',
+    content,
+    fileType: 'html',
+  };
+}
+
+async function updateWebMainEntry(generatedAppRoot) {
+  const mainPath = path.join(generatedAppRoot, 'apps/web/src/main.tsx');
+  const content = `import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+`;
+  await writeText(mainPath, content);
+
+  return {
+    relativePath: 'apps/web/src/main.tsx',
+    content,
+    fileType: 'tsx',
+  };
+}
+
+async function updateWebTsconfig(generatedAppRoot) {
+  const tsconfigPath = path.join(generatedAppRoot, 'apps/web/tsconfig.json');
+  const raw = await readText(tsconfigPath, '{}');
+  const parsed = JSON.parse(raw || '{}');
+
+  parsed.extends = parsed.extends || '../../tsconfig.base.json';
+  parsed.compilerOptions = {
+    jsx: 'react-jsx',
+    ...(parsed.compilerOptions || {}),
+  };
+  parsed.include = Array.isArray(parsed.include) && parsed.include.length ? parsed.include : ['src'];
+
+  const content = `${JSON.stringify(parsed, null, 2)}\n`;
+  await writeText(tsconfigPath, content);
+
+  return {
+    relativePath: 'apps/web/tsconfig.json',
+    content,
+    fileType: 'json',
+  };
+}
+
 async function updateRootPackageJson(generatedAppRoot) {
   const packagePath = path.join(generatedAppRoot, 'package.json');
   const raw = await readText(packagePath, '{}');
@@ -1407,6 +1559,51 @@ async function updateRootPackageJson(generatedAppRoot) {
     relativePath: 'package.json',
     content,
     fileType: 'json',
+  };
+}
+
+async function updateRootTsconfigBase(generatedAppRoot) {
+  const tsconfigPath = path.join(generatedAppRoot, 'tsconfig.base.json');
+  const raw = await readText(tsconfigPath, '{}');
+  const parsed = JSON.parse(raw || '{}');
+
+  parsed.compilerOptions = {
+    target: 'ES2022',
+    module: 'ESNext',
+    moduleResolution: 'Bundler',
+    lib: ['ES2022', 'DOM', 'DOM.Iterable'],
+    strict: true,
+    skipLibCheck: true,
+    ...(parsed.compilerOptions || {}),
+  };
+
+  const content = `${JSON.stringify(parsed, null, 2)}\n`;
+  await writeText(tsconfigPath, content);
+
+  return {
+    relativePath: 'tsconfig.base.json',
+    content,
+    fileType: 'json',
+  };
+}
+
+async function ensureWorkspaceFoundationFiles(generatedAppRoot, projectName) {
+  return [
+    await updateRootPackageJson(generatedAppRoot),
+    await updateRootTsconfigBase(generatedAppRoot),
+    await updateApiPackageJson(generatedAppRoot),
+    await updateApiTsconfig(generatedAppRoot),
+    await updateWebPackageJson(generatedAppRoot),
+    await updateWebIndexHtml(generatedAppRoot, projectName),
+    await updateWebMainEntry(generatedAppRoot),
+    await updateWebTsconfig(generatedAppRoot),
+  ];
+}
+
+function buildSyntheticTaskFromSpec(technicalSpec) {
+  return {
+    title: technicalSpec.taskTitle || technicalSpec.frontend?.pageTitle || technicalSpec.entityName || 'Feature gerada',
+    uuid: technicalSpec.taskUuid || technicalSpec.featureKey || randomUUID(),
   };
 }
 
@@ -1512,6 +1709,8 @@ async function runGeneratedProjectValidationSuite({ task, implementation, genera
   const hasNodeModules = await pathExists(path.join(generatedApp.rootPath, 'node_modules'));
 
   if (!hasNodeModules) {
+    reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, 'install'));
+  } else {
     reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, 'install'));
   }
 
@@ -1990,19 +2189,21 @@ export async function bootstrapGeneratedApp(projectUuid, options = {}) {
   return getGeneratedAppByProjectUuid(projectUuid);
 }
 
-export async function planTaskImplementation(taskUuid) {
+export async function planTaskImplementation(taskUuid, userUuid = null) {
   const task = await getTaskWithArtifactsOrThrow(taskUuid);
 
   if (task.status !== 'done') {
     throw new Error('A implementacao so pode comecar apos o refinamento completo da task.');
   }
 
+  const projectArchitectureSource = await getProjectArchitectureSource(task.project.uuid);
+
   const generatedApp = await getGeneratedAppByProjectUuid(task.project.uuid);
   if (!generatedApp) {
     throw new Error('O projeto ainda nao possui um app full stack gerado. Faca o bootstrap primeiro.');
   }
 
-  const technicalSpec = await enrichFrontendWithAi(task, buildTechnicalSpec(task));
+  const technicalSpec = await enrichFrontendWithAi(task, buildTechnicalSpec(task, projectArchitectureSource), userUuid);
   const technicalSpecArtifact = await createCurrentArtifact(
     task.id,
     `Technical Spec - ${task.title}`,
@@ -2091,7 +2292,7 @@ export async function planTaskImplementation(taskUuid) {
   return implementation;
 }
 
-export async function runTaskImplementation(taskUuid) {
+export async function runTaskImplementation(taskUuid, userUuid = null) {
   const task = await getTaskWithArtifactsOrThrow(taskUuid);
   const generatedApp = await getGeneratedAppByProjectUuid(task.project.uuid);
 
@@ -2099,7 +2300,7 @@ export async function runTaskImplementation(taskUuid) {
     throw new Error('O projeto ainda não possui um app full stack gerado. Faça o bootstrap primeiro.');
   }
 
-  let implementation = await planTaskImplementation(taskUuid);
+  let implementation = await planTaskImplementation(taskUuid, userUuid);
 
   implementation = await prisma.taskImplementation.update({
     where: { id: implementation.id },
@@ -2128,18 +2329,29 @@ export async function runTaskImplementation(taskUuid) {
 
     const technicalSpec = normalizeTechnicalSpec(JSON.parse(implementation.technicalSpecArtifact.content), task);
     const routeSpecs = await getIntegratedTechnicalSpecs(generatedApp.id, technicalSpec);
+    const featureFiles = Array.from(
+      new Map(
+        routeSpecs
+          .flatMap((spec) => {
+            const syntheticTask = buildSyntheticTaskFromSpec(spec);
+            return [
+              ...buildBackendModuleFilesFromTemplate(syntheticTask, spec),
+              ...buildFrontendFeatureFilesFromTemplate(syntheticTask, spec),
+            ];
+          })
+          .map((file) => [file.relativePath.replace(/\\/g, '/'), file])
+      ).values()
+    );
     const generatedFiles = [
-      ...buildBackendModuleFilesFromTemplate(task, technicalSpec),
-      ...buildFrontendFeatureFilesFromTemplate(task, technicalSpec),
+      ...featureFiles,
       ...(await ensureValidationScripts(generatedApp.rootPath)),
+      ...(await ensureWorkspaceFoundationFiles(generatedApp.rootPath, task.project.name)),
       {
         relativePath: `docs/implementations/${technicalSpec.featureKey}.md`,
         content: `# ${task.title}\n\nTask UUID: ${task.uuid}\n\n## Resumo\nFeature integrada no baseline full stack pós-refinamento.\n\n## Rotas\n- Frontend: ${technicalSpec.frontend.suggestedRoute}\n- Backend: ${technicalSpec.backend.routeBase}\n`,
         fileType: 'md',
       },
-      await updateRootPackageJson(generatedApp.rootPath),
       await updateApiServer(generatedApp.rootPath, routeSpecs, generatedApp.slug),
-      await updateWebPackageJson(generatedApp.rootPath),
       await updateWebApp(generatedApp.rootPath, routeSpecs, task.project.name),
       await updatePrismaSchema(generatedApp.rootPath, technicalSpec),
     ];

@@ -9,20 +9,21 @@ function getPythonCmd() {
   return process.env.PYTHON_CMD || 'python';
 }
 
-function getPythonEnv() {
+function getPythonEnv(envOverrides = {}) {
   return {
     ...process.env,
+    ...envOverrides,
     PYTHONUTF8: process.env.PYTHONUTF8 || '1',
     PYTHONIOENCODING: process.env.PYTHONIOENCODING || 'utf-8',
   };
 }
 
-export function generateImplementationUi(payload) {
+export function generateImplementationUi(payload, options = {}) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(__dirname, '..', '..', '..', 'orchestrator', 'generate_implementation_ui.py');
     const pythonCmd = getPythonCmd();
     const pythonProcess = spawn(pythonCmd, [...PYTHON_ARGS_PREFIX, scriptPath], {
-      env: getPythonEnv(),
+      env: getPythonEnv(options.envOverrides || {}),
     });
 
     let stdoutData = '';

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-import sys
 import os
+import sys
 
-# Garantir UTF-8 para saída (evitar reabrir handles no Windows, o que pode causar crash em processos com pipes)
 try:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -13,35 +12,64 @@ except Exception:
 
 """
 Project Manager Agent
-Responsável por gerar o backlog e épicos do projeto
-Análise inteligente da ideia para criar backlog contextualizado
+Responsavel por transformar o briefing do projeto em backlog inicial coerente
 """
 
-from agents.developer.llm_service import generate_text_from_llm
+from agents.developer.response_validation import generate_complete_text, validate_backlog_output
+
 
 class ProjectManager:
-
     def __init__(self, project_id):
         self.project_id = project_id
 
     def process(self, idea):
-        """Processa a ideia e retorna o backlog usando a IA"""
-        
         prompt = f"""
-        Atue como um Gerente de Projetos Agile Sênior (Project Manager).
-        Crie um Product Backlog detalhado e profissional para o seguinte projeto:
-        
-        ID do Projeto: {self.project_id}
-        Descrição da Ideia: "{idea}"
-        
-        Estrutura da Resposta (Markdown):
-        # 📋 BACKLOG DO PROJETO: [Nome do Projeto]
-        ## 🎯 Visão Geral
-        ## 📦 Épicos (Pelo menos 9 épicos relevantes para o negócio)
-        ## 👤 Histórias de Usuário (Pelo menos 15 User Stories detalhadas)
-        ## ✅ Tarefas Técnicas Iniciais
-        
-        Seja criativo e especifique funcionalidades que façam sentido para este tipo de software.
-        """
+Voce e um Project Manager Senior especializado em discovery e definicao de backlog.
 
-        return generate_text_from_llm(prompt)
+Sua tarefa e gerar o backlog inicial do projeto abaixo.
+
+PROJETO
+ID: {self.project_id}
+
+BRIEFING
+{idea}
+
+REGRAS CRITICAS
+- Pense como produto, nao como desenvolvedor isolado
+- Gere backlog coerente com o briefing recebido
+- Priorize o que realmente faz sentido para uma primeira versao robusta
+- Nao invente modulos desconectados do problema descrito
+- As historias devem estar prontas para refinamento posterior
+
+RESPONDA EM MARKDOWN USANDO EXATAMENTE ESTA ESTRUTURA
+
+# BACKLOG DO PROJETO
+
+## Visao Geral
+
+## Epicos
+- EP-01 ...
+
+## Historias de Usuario
+- Como ...
+
+## Tarefas Tecnicas Iniciais
+- ...
+
+REGRAS FINAIS
+- Gere pelo menos 9 epicos coerentes
+- Gere pelo menos 15 historias de usuario claras
+- Use historias no formato "Como ..., eu quero ..., para ..."
+- Encerre OBRIGATORIAMENTE a resposta com a linha exata: FIM_DO_BACKLOG
+"""
+
+        return generate_complete_text(
+            prompt,
+            agent_label="project_manager",
+            validator=validate_backlog_output,
+            options_override={
+                "temperature": 0.1,
+                "num_predict": int(os.getenv("PROJECT_MANAGER_LLM_NUM_PREDICT", "2200")),
+            },
+            max_retries=int(os.getenv("PROJECT_MANAGER_MAX_RETRIES", "3")),
+        )

@@ -1,4 +1,5 @@
 import { runSingleAgent } from '../services/orchestratorService.js';
+import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
 import { v4 as uuidv4 } from 'uuid';
 import {
   assertTaskAccess,
@@ -8,9 +9,75 @@ import {
   finishAgentRun,
   getTaskContextByUuid,
   persistAgentResult,
+  restoreTaskAfterAgentFailure,
   updateTask,
 } from '../services/projectDataService.js';
 import { serializeBigInts } from '../utils/serialize.js';
+
+function hasBrokenEnding(content = '') {
+  const text = (content || '').trimEnd();
+  if (!text) return true;
+  if (text.endsWith('```') || text.endsWith('**')) return true;
+  return /[:|*_\-\/(\[{,;]$/.test(text);
+}
+
+function assertArtifactCompleteness(agentName, content) {
+  const normalized = (content || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  if (!content?.trim()) {
+    throw new Error(`O agente ${agentName} retornou um artefato vazio.`);
+  }
+
+  if (agentName === 'requirements_analyst') {
+    const requiredSections = [
+      'user story refinada',
+      'requisitos funcionais',
+      'fluxo principal',
+      'fluxos alternativos',
+      'fluxos de excecao',
+      'regras de negocio',
+      'criterios de aceite',
+    ];
+
+    for (const section of requiredSections) {
+      if (!normalized.includes(section)) {
+        throw new Error(`O artefato de requisitos foi retornado de forma incompleta: secao ausente (${section}).`);
+      }
+    }
+
+    if (!normalized.includes('dado') || !normalized.includes('quando') || !normalized.includes('entao')) {
+      throw new Error('O artefato de requisitos foi retornado sem criterios de aceite BDD completos.');
+    }
+  }
+
+  if (agentName === 'qa_engineer') {
+    const requiredSections = [
+      'estrategia de testes',
+      'dados de teste',
+      'riscos e metricas',
+      'cenarios de teste',
+      'casos de teste funcionais',
+      'usabilidade e acessibilidade',
+    ];
+
+    for (const section of requiredSections) {
+      if (!normalized.includes(section)) {
+        throw new Error(`O plano de testes foi retornado de forma incompleta: secao ausente (${section}).`);
+      }
+    }
+
+    if (!normalized.includes('ct01')) {
+      throw new Error('O plano de testes foi retornado sem casos de teste funcionais completos.');
+    }
+  }
+
+  if (hasBrokenEnding(content)) {
+    throw new Error(`O agente ${agentName} retornou um texto aparentemente truncado no final.`);
+  }
+}
 
 export async function runAgentController(req, res) {
   let agentRun = null;
@@ -27,8 +94,9 @@ export async function runAgentController(req, res) {
 
     await ensurePipelineProject(payload.project_id, payload.idea, req.authUser.uuid);
     agentRun = await createAgentRunStart(payload.project_id, agent, payload);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
 
-    const result = await runSingleAgent(agent, payload);
+    const result = await runSingleAgent(agent, payload, { envOverrides });
     await finishAgentRun(agentRun.id, { status: 'completed', result });
     await persistAgentResult(payload.project_id, agent, payload, result);
 
@@ -48,6 +116,7 @@ export async function runAgentController(req, res) {
 
 export async function runRequirementsForTaskController(req, res) {
   let agentRun = null;
+  let previousTaskState = null;
 
   try {
     const { taskUuid } = req.params;
@@ -58,18 +127,32 @@ export async function runRequirementsForTaskController(req, res) {
       return res.status(404).json({ message: 'Tarefa nao encontrada.' });
     }
 
+    previousTaskState = {
+      status: task.status,
+      assigneeType: task.assigneeType,
+      assigneeUserId: task.assigneeUserId,
+      assigneeAgentName: task.assigneeAgentName,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
+      currentArtifactSummary: task.currentArtifactSummary,
+    };
+
     const latestRequirements = task.artifacts.find(
       (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent
     );
+
+    if (latestRequirements) {
+      return res.status(400).json({
+        message: 'A etapa de requisitos desta task ja foi concluida e nao pode ser executada novamente.',
+      });
+    }
 
     await updateTask(taskUuid, {
       status: 'in_progress',
       assigneeType: 'agent',
       assigneeAgentName: 'requirements_analyst',
       changedByUserUuid: req.authUser.uuid,
-      statusNote: latestRequirements
-        ? 'Refinamento de requisitos reiniciado'
-        : 'Task enviada para o Analista de Requisitos',
+      statusNote: 'Task enviada para o Analista de Requisitos',
     });
 
     const payload = {
@@ -90,11 +173,12 @@ export async function runRequirementsForTaskController(req, res) {
     };
 
     agentRun = await createAgentRunStart(task.project.uuid, 'requirements_analyst', payload);
-    const result = await runSingleAgent('requirements_analyst', payload);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const result = await runSingleAgent('requirements_analyst', payload, { envOverrides });
+    const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    assertArtifactCompleteness('requirements_analyst', content);
 
     await finishAgentRun(agentRun.id, { status: 'completed', result });
-
-    const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
 
     await createTaskArtifact(task.uuid, {
       artifactType: 'requirements',
@@ -124,6 +208,13 @@ export async function runRequirementsForTaskController(req, res) {
     if (agentRun?.id) {
       await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);
     }
+    if (previousTaskState) {
+      await restoreTaskAfterAgentFailure(req.params.taskUuid, previousTaskState, {
+        changedByUserUuid: req.authUser.uuid,
+        failedAgentName: 'requirements_analyst',
+        errorMessage: error.message,
+      }).catch(() => null);
+    }
     console.error(`[AgentController] Error running requirements for task: ${error.message}`);
     res.status(500).json({ message: 'Erro ao executar o Analista de Requisitos', error: error.message });
   }
@@ -131,6 +222,7 @@ export async function runRequirementsForTaskController(req, res) {
 
 export async function runQaForTaskController(req, res) {
   let agentRun = null;
+  let previousTaskState = null;
 
   try {
     const { taskUuid } = req.params;
@@ -140,6 +232,16 @@ export async function runQaForTaskController(req, res) {
     if (!task) {
       return res.status(404).json({ message: 'Tarefa nao encontrada.' });
     }
+
+    previousTaskState = {
+      status: task.status,
+      assigneeType: task.assigneeType,
+      assigneeUserId: task.assigneeUserId,
+      assigneeAgentName: task.assigneeAgentName,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
+      currentArtifactSummary: task.currentArtifactSummary,
+    };
 
     const latestRequirements = task.artifacts.find(
       (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent
@@ -155,12 +257,18 @@ export async function runQaForTaskController(req, res) {
       (artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent
     );
 
+    if (latestTestPlan) {
+      return res.status(400).json({
+        message: 'A etapa de QA desta task ja foi concluida e nao pode ser executada novamente.',
+      });
+    }
+
     await updateTask(taskUuid, {
       status: 'qa',
       assigneeType: 'agent',
       assigneeAgentName: 'qa_engineer',
       changedByUserUuid: req.authUser.uuid,
-      statusNote: latestTestPlan ? 'Plano de testes reiniciado' : 'Task enviada para QA',
+      statusNote: 'Task enviada para QA',
     });
 
     const payload = {
@@ -183,11 +291,12 @@ export async function runQaForTaskController(req, res) {
     };
 
     agentRun = await createAgentRunStart(task.project.uuid, 'qa_engineer', payload);
-    const result = await runSingleAgent('qa_engineer', payload);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const result = await runSingleAgent('qa_engineer', payload, { envOverrides });
+    const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    assertArtifactCompleteness('qa_engineer', content);
 
     await finishAgentRun(agentRun.id, { status: 'completed', result });
-
-    const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
 
     await createTaskArtifact(task.uuid, {
       artifactType: 'test_plan',
@@ -216,6 +325,13 @@ export async function runQaForTaskController(req, res) {
   } catch (error) {
     if (agentRun?.id) {
       await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);
+    }
+    if (previousTaskState) {
+      await restoreTaskAfterAgentFailure(req.params.taskUuid, previousTaskState, {
+        changedByUserUuid: req.authUser.uuid,
+        failedAgentName: 'qa_engineer',
+        errorMessage: error.message,
+      }).catch(() => null);
     }
     console.error(`[AgentController] Error running QA for task: ${error.message}`);
     res.status(500).json({ message: 'Erro ao executar o QA Engineer', error: error.message });

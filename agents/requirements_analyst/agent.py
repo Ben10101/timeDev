@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
-import sys
 import os
-from datetime import datetime
+import sys
 
-# Garantir UTF-8 para saída
 try:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -14,104 +12,113 @@ except Exception:
 
 """
 Requirements Analyst Agent
-Refinamento detalhado de User Story (nível pronto para desenvolvimento)
+Refinamento detalhado de User Story em nivel pronto para desenvolvimento
 """
 
-from agents.developer.llm_service import generate_text_from_llm
+from agents.developer.response_validation import generate_complete_text, validate_requirements_output
+
 
 class RequirementsAnalyst:
     def __init__(self, project_id):
         self.project_id = project_id
-    
+
     def process(self, idea, backlog):
-        """Refina UMA única user story em requisitos claros e implementáveis"""
-        
         prompt = f"""
-Você é um Analista de Requisitos Sênior especializado em transformar User Stories em requisitos funcionais claros, completos e sem ambiguidades.
+Voce e um Analista de Requisitos Senior especializado em transformar User Stories em requisitos funcionais claros, completos e sem ambiguidades.
 
-Sua única missão é refinar requisitos para implementação.
+Sua unica missao e refinar requisitos para implementacao.
 
-⚠️ REGRAS CRÍTICAS:
-- Você está refinando apenas UMA única User Story
-- NÃO expanda escopo
-- NÃO crie novas funcionalidades fora da história
-- NÃO invente módulos, dashboards, relatórios ou integrações
-- Seja direto, técnico e implementável
+REGRAS CRITICAS:
+- Voce esta refinando apenas UMA unica User Story
+- NAO expanda escopo
+- NAO crie novas funcionalidades fora da historia
+- NAO invente modulos, dashboards, relatorios ou integracoes
+- Seja direto, tecnico e implementavel
 - Elimine qualquer ambiguidade
 
 ---
 
-📥 ENTRADA
+ENTRADA
 
 User Story:
 "{idea}"
 
-Backlog (apenas contexto, NÃO expandir escopo):
+Backlog (apenas contexto, NAO expandir escopo):
 {backlog}
 
 ---
 
-🧠 TAREFA
+TAREFA
 
 Refinar a User Story em requisitos completos seguindo EXATAMENTE a estrutura abaixo:
 
 ---
 
-# 📌 REFINAMENTO DE REQUISITO
+# REFINAMENTO DE REQUISITO
 
-## 🧾 User Story Refinada
-(Reescreva a história de forma clara, específica e objetiva)
+## User Story Refinada
+(Reescreva a historia de forma clara, especifica e objetiva)
 
 ---
 
-## ⚙️ Requisitos Funcionais
+## Requisitos Funcionais
 
 ### RF-01
-- Descrição:
+- Descricao:
 - Atores:
 - Entradas:
 - Processamento:
-- Saídas:
+- Saidas:
 
-(Adicionar quantos RFs forem necessários, sem extrapolar escopo)
+(Adicionar quantos RFs forem necessarios, sem extrapolar escopo)
 
 ---
 
-## 🔄 Fluxo Principal
+## Fluxo Principal
 (Passo a passo numerado do fluxo principal)
 
 ---
 
-## 🔀 Fluxos Alternativos
-(Variações válidas do fluxo principal)
+## Fluxos Alternativos
+(Variacoes validas do fluxo principal)
 
 ---
 
-## ❌ Fluxos de Exceção
+## Fluxos de Excecao
 (Erros e comportamentos do sistema)
 
 ---
 
-## 📏 Regras de Negócio
+## Regras de Negocio
 (Lista numerada, clara e sem ambiguidade)
 
 ---
 
-## ✅ Critérios de Aceite (BDD)
+## Criterios de Aceite (BDD)
 
 DADO que ...
 QUANDO ...
-ENTÃO ...
+ENTAO ...
 
-(Incluir cenários positivos, negativos e edge cases)
+(Incluir cenarios positivos, negativos e edge cases)
 
 ---
 
-⚠️ DIRETRIZES FINAIS:
-- Seja extremamente claro e técnico
-- Nada pode ficar implícito
+DIRETRIZES FINAIS:
+- Seja extremamente claro e tecnico
+- Nada pode ficar implicito
 - Escreva como se um desenvolvedor fosse implementar diretamente
-- Se faltar informação, assuma o cenário mais comum e sinalize
+- Se faltar informacao, assuma o cenario mais comum e sinalize
+- Encerre OBRIGATORIAMENTE a resposta com a linha exata: FIM_DO_REFINAMENTO
 """
 
-        return generate_text_from_llm(prompt)
+        return generate_complete_text(
+            prompt,
+            agent_label="requirements_analyst",
+            validator=validate_requirements_output,
+            options_override={
+                "temperature": 0.1,
+                "num_predict": int(os.getenv("REQUIREMENTS_LLM_NUM_PREDICT", "2200")),
+            },
+            max_retries=int(os.getenv("REQUIREMENTS_MAX_RETRIES", "3")),
+        )

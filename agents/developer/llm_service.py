@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
+import json
 import os
 import sys
-import json
+import urllib.error
+import urllib.request
 
-# Garantir UTF-8 para saída (evitar reabrir handles no Windows, o que pode causar crash em processos com pipes)
 try:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -13,337 +14,392 @@ except Exception:
     pass
 
 try:
-    import google.generativeai as genai # Usando a biblioteca oficial do Google
+    import google.generativeai as genai
 except ImportError:
-    # Levanta um erro claro se a biblioteca não estiver instalada.
-    raise ImportError("A biblioteca do Google Gemini (google-generativeai) não está instalada. Por favor, rode: pip install -r requirements.txt")
+    raise ImportError(
+        "A biblioteca do Google Gemini (google-generativeai) nao esta instalada. Rode: pip install -r requirements.txt"
+    )
+
 from dotenv import load_dotenv
 
-# Importação opcional do serviço Ollama
 try:
     from .ollama_service import generate_with_ollama
+
     OLLAMA_AVAILABLE = True
 except ImportError:
     OLLAMA_AVAILABLE = False
-    def generate_with_ollama(*args, **kwargs):
-        raise RuntimeError("Ollama não está instalado. Use pip install ollama")
 
-# Importação do cache service
+    def generate_with_ollama(*args, **kwargs):
+        raise RuntimeError("Ollama nao esta instalado. Use pip install ollama")
+
 try:
     from .cache_service import get_cache
+
     CACHE = get_cache()
     CACHE_ENABLED = True
 except Exception as e:
-    print(f"[LLM Service] ⚠️  Cache não disponível: {e}", file=sys.stderr)
+    print(f"[LLM Service] Cache nao disponivel: {e}", file=sys.stderr)
     CACHE = None
-    CACHE_ENABLED = False # Desabilitar cache se houver erro na inicialização
+    CACHE_ENABLED = False
 
-# Carrega as variáveis de ambiente do arquivo .env na raiz do projeto
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
+SUPPORTED_PROVIDERS = ("gemini", "openai", "anthropic", "groq", "openrouter", "ollama")
+
+
+def is_error_text_response(result: str) -> bool:
+    if not isinstance(result, str):
+        return False
+
+    normalized = result.strip().lower()
+    return (
+        normalized.startswith("erro:")
+        or normalized.startswith("❌ erro:")
+        or normalized.startswith("⚠️ erro:")
+        or "falha ao comunicar com o ollama" in normalized
+        or normalized.startswith("modelo nao disponivel")
+        or normalized.startswith("modelo não disponível")
+    )
+
+
+def get_provider_order():
+    configured_order = [
+        item.strip().lower()
+        for item in os.getenv("AI_PROVIDER_ORDER", "").split(",")
+        if item.strip()
+    ]
+
+    if configured_order:
+        seen = set()
+        ordered = []
+        for provider in configured_order:
+            if provider in SUPPORTED_PROVIDERS and provider not in seen:
+                seen.add(provider)
+                ordered.append(provider)
+        if ordered:
+            return ordered
+
+    llm_provider = os.getenv("LLM_PROVIDER", "auto").lower()
+    if llm_provider in SUPPORTED_PROVIDERS and llm_provider != "auto":
+        others = [provider for provider in SUPPORTED_PROVIDERS if provider not in (llm_provider, "ollama")]
+        return [llm_provider, *others, "ollama"] if llm_provider != "ollama" else ["ollama"]
+
+    return ["gemini", "openai", "anthropic", "groq", "openrouter", "ollama"]
+
+
+def get_cache_provider_key():
+    return ",".join(get_provider_order())
+
+
+def http_post_json(url, payload, headers=None, timeout=120):
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", **(headers or {})},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+            return response.status, json.loads(body) if body else {}
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(body) if body else {}
+        except Exception:
+            parsed = {"raw": body}
+        return error.code, parsed
+
+
+def extract_error_message(data):
+    if not isinstance(data, dict):
+        return str(data)
+
+    metadata_raw = data.get("error", {}).get("metadata", {}).get("raw")
+    if isinstance(metadata_raw, str):
+        try:
+            parsed = json.loads(metadata_raw)
+            return parsed.get("error", {}).get("message") or metadata_raw
+        except Exception:
+            return metadata_raw
+
+    return (
+        data.get("error", {}).get("message")
+        or data.get("message")
+        or data.get("raw")
+        or json.dumps(data)
+    )
+
+
 def generate_attributes_fallback(idea: str, error_message: str = "") -> list:
-    """
-    Fallback inteligente para gerar atributos sem chamar LLM.
-    Usa análise de texto para extrair campos mencionados na ideia.
-    """
     if error_message:
         print(f"[LLM Service Fallback] Motivo do fallback: {error_message}", file=sys.stderr)
+
     attributes = [
         {"name": "title", "type": "string", "sql_type": "VARCHAR(255) NOT NULL"},
         {"name": "description", "type": "text", "sql_type": "TEXT"},
     ]
-    
+
     idea_lower = idea.lower()
-    
-    # Mapear palavras-chave para atributos
     patterns = {
-        'name': {"name": "name", "type": "string", "sql_type": "VARCHAR(255)"},
-        'email': {"name": "email", "type": "string", "sql_type": "VARCHAR(255) UNIQUE"},
-        'phone|telefone': {"name": "phone", "type": "string", "sql_type": "VARCHAR(20)"},
-        'price|preço|valor': {"name": "price", "type": "number", "sql_type": "DECIMAL(10, 2)"},
-        'quantity|quantidade|estoque': {"name": "quantity", "type": "number", "sql_type": "INTEGER"},
-        'status': {"name": "status", "type": "string", "sql_type": "VARCHAR(50) DEFAULT 'active'"},
-        'priority|prioridade': {"name": "priority", "type": "string", "sql_type": "VARCHAR(50) DEFAULT 'medium'"},
-        'date|data': {"name": "date", "type": "date", "sql_type": "DATE"},
-        'time|hora': {"name": "time", "type": "string", "sql_type": "TIME"},
-        'category|categoria': {"name": "category", "type": "string", "sql_type": "VARCHAR(100)"},
-        'tags': {"name": "tags", "type": "string", "sql_type": "VARCHAR(500)"},
-        'rating|avaliação|nota': {"name": "rating", "type": "number", "sql_type": "DECIMAL(3, 1)"},
+        "name": {"name": "name", "type": "string", "sql_type": "VARCHAR(255)"},
+        "email": {"name": "email", "type": "string", "sql_type": "VARCHAR(255) UNIQUE"},
+        "phone|telefone": {"name": "phone", "type": "string", "sql_type": "VARCHAR(20)"},
+        "price|preco|preço|valor": {"name": "price", "type": "number", "sql_type": "DECIMAL(10, 2)"},
+        "quantity|quantidade|estoque": {"name": "quantity", "type": "number", "sql_type": "INTEGER"},
+        "status": {"name": "status", "type": "string", "sql_type": "VARCHAR(50) DEFAULT 'active'"},
+        "priority|prioridade": {"name": "priority", "type": "string", "sql_type": "VARCHAR(50) DEFAULT 'medium'"},
+        "date|data": {"name": "date", "type": "date", "sql_type": "DATE"},
+        "time|hora": {"name": "time", "type": "string", "sql_type": "TIME"},
+        "category|categoria": {"name": "category", "type": "string", "sql_type": "VARCHAR(100)"},
+        "tags": {"name": "tags", "type": "string", "sql_type": "VARCHAR(500)"},
+        "rating|avaliacao|avaliação|nota": {"name": "rating", "type": "number", "sql_type": "DECIMAL(3, 1)"},
     }
-    
+
     import re
+
     for pattern, attr in patterns.items():
         if re.search(pattern, idea_lower):
-            # Verificar se o atributo já existe
-            if not any(a['name'] == attr['name'] for a in attributes):
+            if not any(a["name"] == attr["name"] for a in attributes):
                 attributes.append(attr)
-    
-    print(f"[LLM Service Fallback] Gerados {len(attributes)} atributos a partir da análise de texto", file=sys.stderr)
+
+    print(f"[LLM Service Fallback] Gerados {len(attributes)} atributos a partir da analise de texto", file=sys.stderr)
     return attributes
 
-def generate_text_fallback(prompt: str, error_message: str = "") -> str:
-    """
-    Fallback para geração de texto. Retorna um template estruturado.
-    """
-    print(f"[LLM Service Fallback] Usando template para texto livre", file=sys.stderr)
-    if error_message:
-        print(f"[LLM Service Fallback] Motivo do fallback: {error_message}", file=sys.stderr)
-    return """
-# Documentação Gerada
 
-## Resumo
-Este é um documento gerado automaticamente a partir dos requisitos do projeto.
+def generate_text_with_gemini(prompt, model):
+    if not os.getenv("GEMINI_API_KEY"):
+        raise RuntimeError("GEMINI_API_KEY nao configurada.")
 
-## Estrutura
-O projeto foi estruturado com:
-- Frontend responsivo com componentes reutilizáveis
-- Backend com APIs RESTful
-- Banco de dados relacional estruturado
-- Autenticação e controle de acesso
+    generation_config = {"temperature": 0.7}
+    model_instance = genai.GenerativeModel(model, generation_config=generation_config)
+    response = model_instance.generate_content(prompt)
 
-## Próximos Passos
-1. Personalizar os componentes conforme necessário
-2. Implementar lógica de negócios específica
-3. Adicionar testes automatizados
-4. Fazer deploy na infraestrutura desejada
-"""
+    if response.prompt_feedback.block_reason:
+        raise RuntimeError(f"Prompt bloqueado: {response.prompt_feedback.block_reason.name}")
+
+    if response.candidates and response.candidates[0].content.parts:
+        return response.text
+
+    raise RuntimeError("Resposta vazia do Gemini.")
+
+
+def extract_text_from_openai_like(data):
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
+
+def generate_text_with_openai_compatible(provider, prompt, model, api_key, options_override=None):
+    base_urls = {
+        "openai": "https://api.openai.com/v1/chat/completions",
+        "groq": "https://api.groq.com/openai/v1/chat/completions",
+        "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+    }
+    if provider == "openrouter":
+        headers["HTTP-Referer"] = os.getenv("OPENROUTER_APP_URL") or os.getenv("VITE_FRONTEND_URL") or "http://localhost:5173"
+        headers["X-Title"] = os.getenv("OPENROUTER_APP_TITLE") or "Factory OS"
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": (options_override or {}).get("temperature", 0.7),
+        "max_tokens": max(64, int((options_override or {}).get("num_predict", 800))),
+    }
+
+    status, data = http_post_json(base_urls[provider], payload, headers=headers, timeout=120)
+    if status >= 400:
+        raise RuntimeError(extract_error_message(data))
+
+    return extract_text_from_openai_like(data)
+
+
+def extract_text_from_anthropic(data):
+    return " ".join(
+        item.get("text", "").strip()
+        for item in data.get("content", [])
+        if item.get("type") == "text"
+    ).strip()
+
+
+def generate_text_with_anthropic(prompt, model, api_key, options_override=None):
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": (options_override or {}).get("temperature", 0.7),
+        "max_tokens": max(64, int((options_override or {}).get("num_predict", 800))),
+    }
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+    }
+    status, data = http_post_json("https://api.anthropic.com/v1/messages", payload, headers=headers, timeout=120)
+    if status >= 400:
+        raise RuntimeError(extract_error_message(data))
+
+    return extract_text_from_anthropic(data)
+
+
+def generate_text_from_provider(provider, prompt, options_override=None, model_override=None):
+    if provider == "ollama":
+        if not OLLAMA_AVAILABLE:
+            raise RuntimeError("Ollama nao esta disponivel.")
+        return generate_with_ollama(
+            prompt,
+            model=model_override or os.getenv("OLLAMA_MODEL", "gemma3:4b"),
+            is_json=False,
+            options_override=options_override,
+        )
+
+    if provider == "gemini":
+        return generate_text_with_gemini(prompt, os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+
+    if provider == "openai":
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY nao configurada.")
+        return generate_text_with_openai_compatible("openai", prompt, os.getenv("OPENAI_MODEL", "gpt-4.1-mini"), api_key, options_override)
+
+    if provider == "anthropic":
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY nao configurada.")
+        return generate_text_with_anthropic(prompt, os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"), api_key, options_override)
+
+    if provider == "groq":
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError("GROQ_API_KEY nao configurada.")
+        return generate_text_with_openai_compatible("groq", prompt, os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"), api_key, options_override)
+
+    if provider == "openrouter":
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENROUTER_API_KEY nao configurada.")
+        return generate_text_with_openai_compatible("openrouter", prompt, os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini"), api_key, options_override)
+
+    raise RuntimeError(f"Provider nao suportado: {provider}")
+
+
+def extract_json_from_text(content):
+    if isinstance(content, list):
+        return {"attributes": content}
+    if isinstance(content, dict):
+        return content
+
+    text = str(content).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    candidate = text[start:end + 1] if start != -1 and end != -1 and end > start else text
+    return json.loads(candidate)
+
+
+def generate_attributes_with_provider(provider, prompt):
+    if provider == "ollama":
+        if not OLLAMA_AVAILABLE:
+            raise RuntimeError("Ollama nao esta disponivel.")
+        return generate_with_ollama(prompt, model=os.getenv("OLLAMA_MODEL", "gemma3:4b"), is_json=True)
+
+    content = generate_text_from_provider(
+        provider,
+        prompt + "\n\nResponda APENAS com JSON valido no formato {\"attributes\": [...]}",
+        options_override={"temperature": 0.2, "num_predict": 600},
+    )
+    data = extract_json_from_text(content)
+    attributes = data.get("attributes", [])
+    if not isinstance(attributes, list) or not attributes:
+        raise RuntimeError("Resposta JSON sem lista de atributos.")
+    return attributes
+
 
 def get_attributes_from_llm(idea: str) -> list:
-    """
-    Chama um LLM para extrair atributos de uma entidade a partir de uma ideia.
-    """
-    # Determina o provedor e modelo em tempo de execução para maior robustez
-    # Prioridade: local (Ollama) quando possível.
-    llm_provider = os.getenv("LLM_PROVIDER", "auto").lower()
-    # OLLAMA_MODEL agora é definido no .env ou no script de teste
-    ollama_model = os.getenv("OLLAMA_MODEL", "gemma3:4b")
-
+    provider_key = get_cache_provider_key()
     prompt = f"""
-    Você é um engenheiro de software sênior especialista em modelagem de dados.
-    Sua tarefa é analisar a ideia de um projeto de software e extrair os atributos da entidade de negócio principal.
+    Voce e um engenheiro de software senior especialista em modelagem de dados.
+    Sua tarefa e analisar a ideia de um projeto de software e extrair os atributos da entidade de negocio principal.
 
     Ideia do Projeto: "{idea}"
 
-    Instruções:
-    1.  Identifique a entidade principal (ex: "Produto", "Carro", "Cliente").
-    2.  Extraia os atributos relevantes para essa entidade com base na descrição.
-    3.  Para cada atributo, determine um tipo de dado JavaScript ('string', 'text', 'number', 'boolean', 'date') e um tipo de dado SQL apropriado (ex: 'VARCHAR(255) NOT NULL', 'TEXT', 'INTEGER', 'DECIMAL(10, 2)', 'BOOLEAN', 'DATE').
-    4.  Se a ideia mencionar "status" ou "prioridade", inclua-os como atributos.
-    5.  Não inclua os campos 'id', 'user_id', 'created_at', 'updated_at', pois eles são adicionados automaticamente.
-    6.  Responda **APENAS** com um objeto JSON válido, sem nenhum texto ou explicação adicional.
-
-    O formato do JSON de saída deve ser o seguinte:
-    {{
-      "attributes": [
-        {{
-          "name": "nome_do_atributo_em_snake_case",
-          "type": "tipo_javascript",
-          "sql_type": "TIPO_SQL"
-        }}
-      ]
-    }}
-
-    Exemplo para a ideia "Sistema de gestão de estoque de sapatos com nome, preço e quantidade":
-    {{
-      "attributes": [
-        {{ "name": "name", "type": "string", "sql_type": "VARCHAR(255) NOT NULL" }},
-        {{ "name": "price", "type": "number", "sql_type": "DECIMAL(10, 2)" }},
-        {{ "name": "stock", "type": "number", "sql_type": "INTEGER" }}
-      ]
-    }}
+    Instrucoes:
+    1. Identifique a entidade principal.
+    2. Extraia os atributos relevantes.
+    3. Para cada atributo, determine um tipo JavaScript e um tipo SQL.
+    4. Nao inclua id, user_id, created_at e updated_at.
+    5. Responda APENAS com JSON valido no formato {{"attributes":[...]}}.
     """
 
-    # ✅ CACHE CHECK: Verificar cache antes de qualquer chamada ao LLM
     if CACHE_ENABLED:
         try:
-            cached_response = CACHE.get(prompt, model=llm_provider, provider=llm_provider)
+            cached_response = CACHE.get(prompt, model=provider_key, provider="provider-chain")
             if cached_response:
-                print("[LLM Service] ✅ CACHE HIT! Usando resposta cacheada para atributos.", file=sys.stderr)
+                print("[LLM Service] CACHE HIT para atributos.", file=sys.stderr)
                 return json.loads(cached_response)
         except Exception as e:
-            print(f"[LLM Service] ⚠️ Erro ao acessar cache: {e}", file=sys.stderr)
+            print(f"[LLM Service] Erro ao acessar cache: {e}", file=sys.stderr)
 
-    # Tentar com Ollama (local) primeiro quando disponível, exceto se forçado gemini
-    should_try_ollama = OLLAMA_AVAILABLE and llm_provider in ("auto", "ollama")
-    if should_try_ollama:
+    errors = []
+    for provider in get_provider_order():
         try:
-            result = generate_with_ollama(prompt, model=ollama_model, is_json=True)
-            # ✅ CACHE STORE: Guardar resultado após sucesso
-            if result: # Se o Ollama retornou algo válido
+            print(f"[LLM Service] Tentando atributos com {provider}...", file=sys.stderr)
+            result = generate_attributes_with_provider(provider, prompt)
+            if result:
                 if CACHE_ENABLED:
                     try:
-                        CACHE.set(prompt, json.dumps(result), model=ollama_model, provider="ollama", is_json=True)
+                        CACHE.set(prompt, json.dumps(result), model=provider_key, provider="provider-chain", is_json=True)
                     except Exception as e:
-                        print(f"[LLM Service] ⚠️ Erro ao guardar cache: {e}", file=sys.stderr)
+                        print(f"[LLM Service] Erro ao guardar cache: {e}", file=sys.stderr)
                 return result
-            else: # Ollama retornou vazio ou com erro interno
-                print(f"[LLM Service] Ollama retornou vazio ou com erro. Usando Gemini como fallback...", file=sys.stderr)
         except Exception as e:
-            print(f"[LLM Service] ❌ Erro ao chamar Ollama: {e}. Usando Gemini como fallback...", file=sys.stderr)
+            errors.append(f"{provider}: {e}")
+            print(f"[LLM Service] Falha em atributos com {provider}: {e}", file=sys.stderr)
 
-    # Se forçado a usar apenas Ollama e falhou, usar fallback local (sem Gemini)
-    if llm_provider == "ollama":
-        return generate_attributes_fallback(idea, "Ollama falhou ou não retornou JSON válido.")
-
-    # Tentar com Gemini se configurado e disponível
-    # Lista de modelos para tentar, em ordem de preferência.
-    models_to_try = [
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-1.5-pro',
-    ]
-
-    if not GEMINI_API_KEY:
-        print("[LLM Service] ⚠️ GEMINI_API_KEY não configurada. Não é possível usar Gemini. Usando fallback...", file=sys.stderr)
-        return generate_attributes_fallback(idea, "GEMINI_API_KEY não configurada.")
-
-    if not genai.configure: # Verifica se a configuração do Gemini foi bem-sucedida
-        print("[LLM Service] ⚠️ Configuração do Gemini falhou. Usando fallback...", file=sys.stderr)
-        return generate_attributes_fallback(idea, "Configuração do Gemini falhou.")
+    print("[LLM Service] Nenhum modelo de IA funcionou para atributos. Usando fallback analitico.", file=sys.stderr)
+    return generate_attributes_fallback(idea, " | ".join(errors[:5]))
 
 
-    for model_name in models_to_try:
+def generate_text_from_llm(prompt: str, model: str = None, options_override: dict | None = None, use_cache: bool = True) -> str:
+    provider_key = get_cache_provider_key()
+
+    if CACHE_ENABLED and use_cache:
         try:
-            print(f"[LLM Service] Tentando com o modelo: {model_name}...", file=sys.stderr)
-            generation_config = {
-              "temperature": 0.2,
-              "response_mime_type": "application/json",
-            }
-            model = genai.GenerativeModel(
-                model_name,
-                generation_config=generation_config
-            )
-            print("[LLM Service] Enviando prompt para o Gemini...", file=sys.stderr)
-            response = model.generate_content(prompt)
-
-            # Verificação de segurança e conteúdo da resposta
-            if response.prompt_feedback.block_reason:
-                print(f"[LLM Service] ⚠️ Prompt bloqueado pelo modelo '{model_name}'. Razão: {response.prompt_feedback.block_reason.name}", file=sys.stderr)
-                continue
-
-            content = response.text
-            print(f"[LLM Service] Resposta bruta recebida do modelo '{model_name}':", file=sys.stderr)
-            print(content, file=sys.stderr)
-
-            data = json.loads(content)
-            
-            if 'attributes' in data and isinstance(data['attributes'], list):
-                print(f"[LLM Service] ✅ Modelo '{model_name}' funcionou!", file=sys.stderr)
-                # ✅ CACHE STORE: Guardar resultado após sucesso
-                if CACHE_ENABLED:
-                    try:
-                        CACHE.set(prompt, json.dumps(data['attributes']), model=model_name, provider="gemini", is_json=True)
-                    except Exception as e:
-                        print(f"[LLM Service] ⚠️ Erro ao guardar cache: {e}", file=sys.stderr)
-                return data['attributes']
-            else:
-                print(f"[LLM Service] ⚠️ Resposta JSON do modelo '{model_name}' não tem o formato esperado.", file=sys.stderr)
-                continue
-
-        except Exception as e:
-            print(f"[LLM Service] ⚠️ Falha ao usar o modelo '{model_name}': {e}", file=sys.stderr)
-            continue # Tenta o próximo modelo da lista
-
-    print("[LLM Service] ❌ Nenhum LLM (Ollama ou Gemini) funcionou. Usando fallback de análise de texto...", file=sys.stderr)
-    return generate_attributes_fallback(idea, "Nenhum LLM funcionou.")
-
-def generate_text_from_llm(prompt: str, model: str = None) -> str:
-    """
-    Função genérica para gerar texto livre (Documentação, Backlog, etc) usando o Gemini.
-    """
-    # Prioridade: local (Ollama) quando possível.
-    llm_provider = os.getenv("LLM_PROVIDER", "auto").lower()
-    ollama_model = model or os.getenv("OLLAMA_MODEL", "gemma3:4b")
-
-
-    # ✅ CACHE CHECK: Verificar cache antes de qualquer chamada ao LLM
-    if CACHE_ENABLED:
-        try:
-            cached_response = CACHE.get(prompt, model=llm_provider, provider=llm_provider)
+            cached_response = CACHE.get(prompt, model=provider_key, provider="provider-chain")
             if cached_response:
-                print("[LLM Service] ✅ CACHE HIT! Usando resposta cacheada.", file=sys.stderr)
+                print("[LLM Service] CACHE HIT para texto.", file=sys.stderr)
                 return cached_response
         except Exception as e:
-            print(f"[LLM Service] ⚠️ Erro ao acessar cache: {e}", file=sys.stderr)
+            print(f"[LLM Service] Erro ao acessar cache: {e}", file=sys.stderr)
 
-    # Tentar com Ollama (local) primeiro quando disponível, exceto se forçado gemini
-    should_try_ollama = OLLAMA_AVAILABLE and llm_provider in ("auto", "ollama")
-    if should_try_ollama:
+    provider_order = get_provider_order()
+
+    errors = []
+    for provider in provider_order:
         try:
-            result = generate_with_ollama(prompt, model=ollama_model, is_json=False)
-            if result and not result.startswith("❌ ERRO:"): # Se o Ollama retornou algo válido
-                if CACHE_ENABLED:
-                    try:
-                        CACHE.set(prompt, result, model=ollama_model, provider="ollama", is_json=False)
-                    except Exception as e:
-                        print(f"[LLM Service] ⚠️ Erro ao guardar cache: {e}", file=sys.stderr)
-                return result
-            else: # Ollama retornou vazio ou com erro interno
-                print(f"[LLM Service] Ollama retornou vazio ou com erro. Usando Gemini como fallback...", file=sys.stderr)
-        except Exception as e:
-            print(f"[LLM Service] ❌ Erro ao chamar Ollama: {e}. Usando Gemini como fallback...", file=sys.stderr)
-
-    # Se forçado a usar apenas Ollama e falhou, usar fallback local (sem Gemini)
-    if llm_provider == "ollama":
-        return generate_text_fallback(prompt, "Ollama falhou ou não retornou resposta válida.")
-
-    # Tentar com Gemini se configurado e disponível
-
-    if not GEMINI_API_KEY:
-        return "⚠️ ERRO: Chave API do Gemini não configurada. O agente não pôde gerar o conteúdo."
-
-    models_to_try = [ # A lista é a mesma da função de atributos para consistência
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-1.5-pro',
-    ]
-    if not genai.configure: # Verifica se a configuração do Gemini foi bem-sucedida
-        print("[LLM Service] ⚠️ Configuração do Gemini falhou. Usando fallback...", file=sys.stderr)
-        return generate_text_fallback(prompt, "Configuração do Gemini falhou.")
-
-    for model_name in models_to_try:
-        try:
-            print(f"[LLM Service] Gerando texto com modelo: {model_name}...", file=sys.stderr)
-            
-            # Configuração para texto livre (criatividade moderada)
-            generation_config = {
-              "temperature": 0.7, 
-            }
-            
-            model = genai.GenerativeModel(
-                model_name,
-                generation_config=generation_config
+            print(f"[LLM Service] Tentando gerar texto com {provider}...", file=sys.stderr)
+            result = generate_text_from_provider(
+                provider,
+                prompt,
+                options_override=options_override,
+                model_override=model if provider == "ollama" else None,
             )
-            
-            response = model.generate_content(prompt)
-            
-            # Verificação de segurança e conteúdo da resposta
-            if response.prompt_feedback.block_reason:
-                print(f"[LLM Service] ⚠️ Prompt bloqueado pelo modelo '{model_name}'. Razão: {response.prompt_feedback.block_reason.name}", file=sys.stderr)
-                continue
-
-            if response.candidates and response.candidates[0].content.parts:
-                print(f"[LLM Service] ✅ Texto gerado com sucesso pelo modelo '{model_name}'!", file=sys.stderr)
-                result = response.text
-                # ✅ CACHE STORE: Guardar resultado após sucesso
-                if CACHE_ENABLED:
+            if result and not is_error_text_response(result):
+                if CACHE_ENABLED and use_cache:
                     try:
-                        CACHE.set(prompt, result, model=model_name, provider="gemini", is_json=False)
+                        CACHE.set(prompt, result, model=provider_key, provider="provider-chain", is_json=False)
                     except Exception as e:
-                        print(f"[LLM Service] ⚠️ Erro ao guardar cache: {e}", file=sys.stderr)
+                        print(f"[LLM Service] Erro ao guardar cache: {e}", file=sys.stderr)
                 return result
-            else:
-                finish_reason = response.candidates[0].finish_reason.name if response.candidates else "UNKNOWN"
-                print(f"[LLM Service] ⚠️ Resposta vazia do modelo '{model_name}'. Razão de finalização: {finish_reason}", file=sys.stderr)
-                continue
-            
+
+            raise RuntimeError("Resposta vazia ou invalida.")
         except Exception as e:
-            print(f"[LLM Service] ⚠️ Falha ao gerar texto com '{model_name}': {e}", file=sys.stderr)
-            continue
-            
-    print("[LLM Service] ❌ Nenhum LLM (Ollama ou Gemini) funcionou. Usando fallback de template...", file=sys.stderr)
-    return generate_text_fallback(prompt, "Nenhum LLM funcionou.")
+            errors.append(f"{provider}: {e}")
+            print(f"[LLM Service] Falha ao gerar texto com {provider}: {e}", file=sys.stderr)
+
+    raise RuntimeError(
+        "Nenhum modelo de IA conseguiu gerar o texto solicitado. Tentativas: " + " | ".join(errors[:5])
+    )

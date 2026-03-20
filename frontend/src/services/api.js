@@ -105,6 +105,26 @@ export async function logoutAuth() {
   }
 }
 
+export async function getAiSettings() {
+  const response = await apiClient.get('/auth/ai-settings')
+  return response.data
+}
+
+export async function updateAiSettings(payload) {
+  const response = await apiClient.put('/auth/ai-settings', payload)
+  return response.data
+}
+
+export async function getAiRuntimeSummary() {
+  const response = await apiClient.get('/auth/ai-runtime')
+  return response.data
+}
+
+export async function testAiProvider(payload) {
+  const response = await apiClient.post('/auth/ai-settings/test', payload)
+  return response.data
+}
+
 export const generateProject = async (idea) => {
   try {
     const response = await apiClient.post('/generate-project', {
@@ -151,6 +171,16 @@ export const generateProjectBacklog = async (projectUuid, payload) => {
   return response.data
 }
 
+export const getProjectArchitectureStatus = async (projectUuid) => {
+  const response = await apiClient.get(`/projects/${projectUuid}/architecture/status`)
+  return response.data
+}
+
+export const generateProjectArchitecture = async (projectUuid) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/generate-architecture`)
+  return response.data
+}
+
 export const createTask = async (projectUuid, payload) => {
   const response = await apiClient.post(`/projects/${projectUuid}/tasks`, payload)
   return response.data
@@ -168,6 +198,11 @@ export const runTaskQa = async (taskUuid, payload = {}) => {
 
 export const bootstrapGeneratedApp = async (projectUuid, payload = {}) => {
   const response = await apiClient.post(`/projects/${projectUuid}/generated-app/bootstrap`, payload)
+  return response.data
+}
+
+export const getGeneratedApp = async (projectUuid) => {
+  const response = await apiClient.get(`/projects/${projectUuid}/generated-app`)
   return response.data
 }
 
@@ -219,6 +254,10 @@ export default {
   refreshSession,
   getMe,
   logoutAuth,
+  getAiSettings,
+  updateAiSettings,
+  getAiRuntimeSummary,
+  testAiProvider,
   generateProject,
   bootstrapWorkspace,
   listProjects,
@@ -226,10 +265,13 @@ export default {
   listProjectTasks,
   createProject,
   generateProjectBacklog,
+  getProjectArchitectureStatus,
+  generateProjectArchitecture,
   createTask,
   runTaskRequirements,
   runTaskQa,
   bootstrapGeneratedApp,
+  getGeneratedApp,
   runTaskImplementation,
   getTaskImplementationStatus,
   updateTask,

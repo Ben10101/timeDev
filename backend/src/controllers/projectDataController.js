@@ -10,6 +10,7 @@ import {
   ensurePipelineProject,
   finishAgentRun,
   getDefaultWorkspaceForUserUuid,
+  getProjectArchitectureStatus,
   getProjectByUuid,
   getTaskByUuid,
   importBacklogTasks,
@@ -21,7 +22,49 @@ import {
   updateTask,
 } from '../services/projectDataService.js';
 import { runSingleAgent } from '../services/orchestratorService.js';
+import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
+import { bootstrapGeneratedApp } from '../services/implementationService.js';
 import { serializeBigInts } from '../utils/serialize.js';
+
+function compactWhitespace(value = '') {
+  return String(value || '')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function extractMarkdownSection(content, sectionTitle) {
+  const normalized = compactWhitespace(content);
+  if (!normalized) return '';
+
+  const escaped = sectionTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`##+\\s+${escaped}\\s*([\\s\\S]*?)(?=\\n##+\\s+|$)`, 'i');
+  const match = normalized.match(regex);
+  return match ? compactWhitespace(match[1]) : '';
+}
+
+function clampText(value, maxLength = 420) {
+  const text = compactWhitespace(value);
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}...`;
+}
+
+function compactRequirementArtifact(content) {
+  const userStory = clampText(extractMarkdownSection(content, 'User Story Refinada'), 260);
+  const functional = clampText(extractMarkdownSection(content, 'Requisitos Funcionais'), 900);
+  const rules = clampText(extractMarkdownSection(content, 'Regras de Negocio'), 500);
+  const acceptance = clampText(extractMarkdownSection(content, 'Criterios de Aceite (BDD)'), 700);
+
+  return [
+    userStory ? `User Story Refinada:\n${userStory}` : null,
+    functional ? `Requisitos Funcionais:\n${functional}` : null,
+    rules ? `Regras de Negocio:\n${rules}` : null,
+    acceptance ? `Criterios de Aceite:\n${acceptance}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
 
 export async function listProjectsController(req, res, next) {
   try {
@@ -267,7 +310,8 @@ export async function generateProjectBacklogController(req, res, next) {
     };
 
     agentRun = await createAgentRunStart(projectUuid, 'project_manager', payload);
-    const result = await runSingleAgent('project_manager', payload);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const result = await runSingleAgent('project_manager', payload, { envOverrides });
 
     await finishAgentRun(agentRun.id, {
       status: 'completed',
@@ -286,6 +330,115 @@ export async function generateProjectBacklogController(req, res, next) {
         project,
         tasks,
         result,
+      })
+    );
+  } catch (error) {
+    if (agentRun?.id) {
+      await finishAgentRun(agentRun.id, {
+        status: 'failed',
+        errorMessage: error.message,
+      }).catch(() => null);
+    }
+
+    next(error);
+  }
+}
+
+export async function getProjectArchitectureStatusController(req, res, next) {
+  try {
+    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    const status = await getProjectArchitectureStatus(req.params.projectUuid, req.authUser.uuid);
+    res.json(serializeBigInts(status));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function generateProjectArchitectureController(req, res, next) {
+  let agentRun = null;
+
+  try {
+    const { projectUuid } = req.params;
+    await assertProjectAccess(projectUuid, req.authUser.uuid);
+
+    const [project, tasks, architectureStatus] = await Promise.all([
+      getProjectByUuid(projectUuid, req.authUser.uuid),
+      listProjectTasks(projectUuid, {}, req.authUser.uuid),
+      getProjectArchitectureStatus(projectUuid, req.authUser.uuid),
+    ]);
+
+    if (!architectureStatus.allStoriesRefined) {
+      return res.status(400).json({
+        message: 'A arquitetura so pode ser gerada quando todas as historias estiverem refinadas.',
+        architectureStatus: serializeBigInts(architectureStatus),
+      });
+    }
+
+      const refinedStories = tasks
+        .filter((task) => task.taskType !== 'agent_job')
+        .map((task) => {
+          const requirementsArtifact = (task.artifacts || []).find(
+            (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent
+          );
+
+          return {
+            taskUuid: task.uuid,
+            title: task.title,
+            description: clampText(task.description || '', 220),
+            requirements: compactRequirementArtifact(requirementsArtifact?.content || ''),
+          };
+        });
+
+      const requirementsBundle = refinedStories
+        .map(
+          (story, index) =>
+            `## Historia ${index + 1}: ${story.title}\n\nUUID: ${story.taskUuid}\n\n${
+              story.description ? `Contexto: ${story.description}\n\n` : ''
+            }${story.requirements}`
+        )
+        .join('\n\n---\n\n');
+
+    const payload = {
+      project_id: projectUuid,
+      idea: [
+        `Projeto: ${project?.name || projectUuid}`,
+        project?.description ? `Descricao: ${project.description}` : null,
+        project?.vision ? `Visao: ${project.vision}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      requirements: requirementsBundle,
+      project_name: project?.name || 'Projeto',
+      project_context: {
+        description: project?.description || '',
+        vision: project?.vision || '',
+        intake: project?.intakeConfig || {},
+        stories: refinedStories.map((story) => ({
+          taskUuid: story.taskUuid,
+          title: story.title,
+        })),
+      },
+    };
+
+    agentRun = await createAgentRunStart(projectUuid, 'architect', payload);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const result = await runSingleAgent('architect', payload, { envOverrides });
+
+    await finishAgentRun(agentRun.id, {
+      status: 'completed',
+      result,
+    });
+
+    await persistAgentResult(projectUuid, 'architect', payload, result);
+    const generatedApp = await bootstrapGeneratedApp(projectUuid);
+    const updatedArchitectureStatus = await getProjectArchitectureStatus(projectUuid, req.authUser.uuid);
+
+    res.status(201).json(
+      serializeBigInts({
+        success: true,
+        architectureStatus: updatedArchitectureStatus,
+        generatedApp,
+        data: result,
       })
     );
   } catch (error) {

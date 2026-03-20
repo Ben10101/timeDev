@@ -7,9 +7,9 @@ import { listProjectTasks } from '../services/api';
 import BacklogKanban from '../pages/BacklogKanban';
 
 const PIPELINE_STAGES = [
-  { name: 'Project Manager', agent: 'project_manager', outputKey: 'backlog', dependsOn: [] },
-  { name: 'Requirements Analyst', agent: 'requirements_analyst', outputKey: 'requirements', dependsOn: ['backlog'] },
-  { name: 'QA Engineer', agent: 'qa_engineer', outputKey: 'tests', dependsOn: ['requirements'] },
+  { name: 'Gerente de Produto', agent: 'project_manager', outputKey: 'backlog', dependsOn: [] },
+  { name: 'Analista de Requisitos', agent: 'requirements_analyst', outputKey: 'requirements', dependsOn: ['backlog'] },
+  { name: 'Engenheiro de QA', agent: 'qa_engineer', outputKey: 'tests', dependsOn: ['requirements'] },
 ];
 
 export default function PipelineExecutor({ idea, answers }) {
@@ -18,7 +18,6 @@ export default function PipelineExecutor({ idea, answers }) {
   const [projectId, setProjectId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [kanbanReady, setKanbanReady] = useState(false);
   const [runMode, setRunMode] = useState(null);
   const [stagePendingCounts, setStagePendingCounts] = useState({ requirements: 0, qa: 0 });
   const [persistedTasks, setPersistedTasks] = useState([]);
@@ -52,7 +51,7 @@ export default function PipelineExecutor({ idea, answers }) {
         id: `story-${index}`,
         text: storyText.replace(/^[-*]?\s*\d*\.?\s*(?:\*\*)?/, '').replace(/\*\*/g, '').trim(),
         status: 'done',
-        requirement: `## Requisitos para "${storyText.replace(/^[-*]?\s*\d*\.?\s*/, '').trim()}"\n\n- **Critério de aceite:** O sistema deve permitir a ação descrita na história.\n- **Regra de negócio:** A ação só é válida para usuários autenticados.\n- **Exceção:** Se o item estiver fora de estoque, o sistema deve informar o impedimento.`,
+        requirement: `## Requisitos para "${storyText.replace(/^[-*]?\s*\d*\.?\s*/, '').trim()}"\n\n- **Criterio de aceite:** O sistema deve permitir a acao descrita na historia.\n- **Regra de negocio:** A acao so e valida para usuarios autenticados.\n- **Excecao:** Se o item estiver fora de estoque, o sistema deve informar o impedimento.`,
       }));
 
       const reqStorageKey = `kanban_stories_${mockProjectId}_requirements`;
@@ -77,7 +76,6 @@ export default function PipelineExecutor({ idea, answers }) {
     if (!projectId) {
       setStagePendingCounts({ requirements: 0, qa: 0 });
       setPersistedTasks([]);
-      setKanbanReady(false);
       return;
     }
 
@@ -99,18 +97,8 @@ export default function PipelineExecutor({ idea, answers }) {
         ).length;
 
         setStagePendingCounts({ requirements: requirementsPending, qa: qaPending });
-
-        const currentStage = PIPELINE_STAGES[currentStep];
-        if (currentStage && isInteractiveStage(currentStage.agent)) {
-          const pendingForCurrentStage = currentStage.agent === 'qa_engineer' ? qaPending : requirementsPending;
-          const totalForCurrentStage = currentStage.agent === 'qa_engineer' ? qaEligibleTasks.length : tasks.length;
-          setKanbanReady(totalForCurrentStage > 0 && pendingForCurrentStage === 0);
-          return;
-        }
-
-        setKanbanReady(false);
       } catch {
-        setKanbanReady(false);
+        setStagePendingCounts({ requirements: 0, qa: 0 });
       }
     };
 
@@ -183,7 +171,7 @@ export default function PipelineExecutor({ idea, answers }) {
     if (!isReady && !bypassValidation) {
       const pendingCount = relevantTasks.length - completedTasks.length;
       setError(
-        `Você ainda tem ${pendingCount > 0 ? pendingCount : 'algumas'} histórias pendentes na coluna "A Fazer". Processe todas antes de avançar.`
+        `Voce ainda tem ${pendingCount > 0 ? pendingCount : 'algumas'} historias pendentes na coluna "A Fazer". Processe todas antes de avancar.`
       );
       return;
     }
@@ -242,11 +230,11 @@ export default function PipelineExecutor({ idea, answers }) {
         stageName: 'qa',
         agent: 'qa_engineer',
         title: 'Kanban de Qualidade (QA)',
-        subtitle: 'Arraste as histórias para o Engenheiro de QA gerar cenários de teste, riscos e validações.',
+        subtitle: 'Arraste as historias para o Engenheiro de QA gerar cenarios de teste, riscos e validacoes.',
         agentColumnTitle: 'Engenheiro de QA',
-        processingMessage: 'Criando cenários de teste...',
+        processingMessage: 'Criando cenarios de teste...',
         promptInstruction:
-          'Atue como um Engenheiro de QA Sênior. Baseado na história de usuário e nos REQUISITOS TÉCNICOS fornecidos, gere uma resposta em Markdown, profissional, crítica e detalhista, usando listas numeradas com títulos em negrito. Inclua obrigatoriamente: 1. Estratégia de Testes, 2. Dados de Teste Sugeridos, 3. Métricas de Qualidade, 4. Cenários de Testes com exatamente 5 cenários de caminho feliz e 5 cenários de caminho de exceção, 5. Casos de Teste Funcionais com Ação e Resultado Esperado, 6. Análise de Usabilidade e Acessibilidade com Heurísticas de Nielsen, Leis de UX (Fitts, Miller e Jakob) e critérios WCAG com contraste mínimo 4.5:1, legibilidade e áreas de toque de 44x44px.',
+          'Atue como um Engenheiro de QA Senior. Baseado na historia de usuario e nos REQUISITOS TECNICOS fornecidos, gere uma resposta em Markdown, profissional, critica e detalhista, usando listas numeradas com titulos em negrito. Inclua obrigatoriamente: 1. Estrategia de Testes, 2. Dados de Teste Sugeridos, 3. Metricas de Qualidade, 4. Cenarios de Testes com exatamente 5 cenarios de caminho feliz e 5 cenarios de caminho de excecao, 5. Casos de Teste Funcionais com Acao e Resultado Esperado, 6. Analise de Usabilidade e Acessibilidade com Heuristicas de Nielsen, Leis de UX (Fitts, Miller e Jakob) e criterios WCAG com contraste minimo 4.5:1, legibilidade e areas de toque de 44x44px.',
         predecessorStories: qaPredecessorStories,
       };
     }
@@ -254,7 +242,7 @@ export default function PipelineExecutor({ idea, answers }) {
     return {
       stageName: 'requirements',
       agent: 'requirements_analyst',
-      title: 'Kanban de Histórias',
+      title: 'Kanban de Historias',
     };
   };
 
@@ -268,43 +256,42 @@ export default function PipelineExecutor({ idea, answers }) {
 
   const shouldRenderKanban = (stage, index) => {
     if (!isInteractiveStage(stage.agent)) return false;
-
     const stageName = getStageName(stage.agent);
     return currentStep === index || (currentStep > index && stagePendingCounts[stageName] > 0);
   };
 
   if (!runMode) {
     return (
-      <div className="rounded-[32px] border border-slate-200 bg-white/88 p-8 shadow-[0_24px_70px_rgba(23,50,43,0.08)]">
-        <div className="max-w-3xl">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Modo do fluxo</p>
-          <h1 className="mt-3 font-serif text-3xl font-semibold text-slate-900">Escolha como este workspace vai começar</h1>
-          <p className="mt-3 text-sm leading-6 text-slate-600">
+      <div className="dashboard-panel">
+        <div className="dashboard-panel-header">
+          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Modo do fluxo</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">Escolha como este workspace vai começar</h1>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
             Você pode iniciar no fluxo completo ou abrir o board já posicionado na etapa de requisitos ou QA.
           </p>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <button
-              onClick={() => setRunMode('full')}
-              className="mt-8 flex flex-col items-center justify-center rounded-[28px] bg-[#17322b] p-6 font-semibold text-white transition duration-300 hover:bg-[#214338]"
-            >
-              <span className="mb-2 text-4xl">PM</span>
-              Fluxo completo
-            </button>
-            <button
-              onClick={() => setRunMode('mock_to_req')}
-              className="mt-8 flex flex-col items-center justify-center rounded-[28px] border border-slate-200 bg-[#faf8f2] p-6 font-semibold text-slate-800 transition duration-300 hover:bg-[#f3efe4]"
-            >
-              <span className="mb-2 text-4xl">REQ</span>
-              Iniciar em Requisitos
-            </button>
-            <button
-              onClick={() => setRunMode('mock_to_qa')}
-              className="mt-8 flex flex-col items-center justify-center rounded-[28px] border border-slate-200 bg-[#eef5ef] p-6 font-semibold text-slate-800 transition duration-300 hover:bg-[#e4f0e5]"
-            >
-              <span className="mb-2 text-4xl">QA</span>
-              Iniciar em Qualidade
-            </button>
-          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-4 p-8 md:grid-cols-3">
+          <button
+            onClick={() => setRunMode('full')}
+            className="flex flex-col items-center justify-center rounded-2xl bg-[#102a72] p-6 font-semibold text-white transition hover:bg-[#0c205a]"
+          >
+            <span className="mb-2 text-4xl">PM</span>
+            Fluxo completo
+          </button>
+          <button
+            onClick={() => setRunMode('mock_to_req')}
+            className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-6 font-semibold text-slate-800 transition hover:border-[#102a72]/20 hover:bg-slate-50"
+          >
+            <span className="mb-2 text-4xl">REQ</span>
+            Iniciar em Requisitos
+          </button>
+          <button
+            onClick={() => setRunMode('mock_to_qa')}
+            className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-6 font-semibold text-slate-800 transition hover:border-[#102a72]/20 hover:bg-slate-50"
+          >
+            <span className="mb-2 text-4xl">QA</span>
+            Iniciar em Qualidade
+          </button>
         </div>
       </div>
     );
@@ -312,28 +299,29 @@ export default function PipelineExecutor({ idea, answers }) {
 
   return (
     <div>
-      <div className="mb-6 rounded-[28px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Task context</p>
-        <h1 className="mt-3 font-serif text-3xl font-semibold text-slate-900">Fluxo operacional da task</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-600">
-          <strong>Ideia:</strong> "{idea}"
-        </p>
+      <div className="dashboard-panel mb-6">
+        <div className="dashboard-panel-header">
+          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Contexto da task</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">Fluxo operacional da task</h1>
+        </div>
+        <div className="p-6">
+          <p className="text-sm leading-6 text-slate-600">
+            <strong>Ideia:</strong> "{idea}"
+          </p>
+        </div>
       </div>
 
       {error && (
-        <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-700" role="alert">
-          <p className="font-bold">Erro na execução</p>
+        <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-700" role="alert">
+          <p className="font-bold">Erro na execucao</p>
           <p>{error}</p>
         </div>
       )}
 
       <div className="space-y-6">
         {PIPELINE_STAGES.map((stage, index) => (
-          <div
-            key={stage.agent}
-            className="rounded-[28px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]"
-          >
-            <div className="flex items-center justify-between">
+          <div key={stage.agent} className="dashboard-panel">
+            <div className="dashboard-panel-header flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-semibold text-slate-800">
                   {index + 1}. {stage.name}
@@ -345,34 +333,31 @@ export default function PipelineExecutor({ idea, answers }) {
               {currentStep === index && (
                 <>
                   {isInteractiveStage(stage.agent) ? (
-                    <span className="rounded-full bg-[#f4f9e8] px-5 py-2 text-sm font-semibold text-[#56722c]">
+                    <span className="rounded-full bg-blue-50 px-5 py-2 text-sm font-semibold text-[#102a72]">
                       Ação pendente no board abaixo
                     </span>
                   ) : (
-                    <button
-                      onClick={() => handleRunStep(index)}
-                      disabled={loading}
-                      className="rounded-2xl bg-[#17322b] px-6 py-2 text-sm font-semibold text-white transition duration-300 hover:bg-[#214338] disabled:cursor-not-allowed disabled:bg-slate-400"
-                    >
+                    <button onClick={() => handleRunStep(index)} disabled={loading} className="dashboard-button-primary">
                       {loading ? 'Executando...' : `Executar ${stage.name}`}
                     </button>
                   )}
                 </>
               )}
               {currentStep > index && isInteractiveStage(stage.agent) && stagePendingCounts[getStageName(stage.agent)] > 0 && (
-                <span className="rounded-full bg-[#fff5d9] px-5 py-2 text-sm font-semibold text-[#8a6a1f]">
+                <span className="rounded-full bg-amber-50 px-5 py-2 text-sm font-semibold text-amber-700">
                   Pendências restantes
                 </span>
               )}
-              {currentStep > index && (!isInteractiveStage(stage.agent) || stagePendingCounts[getStageName(stage.agent)] === 0) && (
-                <span className="rounded-full bg-[#e5f3e8] px-5 py-2 text-sm font-semibold text-[#2f6c58]">
-                  Concluído
-                </span>
-              )}
+              {currentStep > index &&
+                (!isInteractiveStage(stage.agent) || stagePendingCounts[getStageName(stage.agent)] === 0) && (
+                  <span className="rounded-full bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700">
+                    Concluído
+                  </span>
+                )}
             </div>
 
             {shouldRenderKanban(stage, index) && (
-              <div className="mt-6 border-t pt-6">
+              <div className="border-t border-slate-200 p-6">
                 <BacklogKanban
                   key={`${stage.agent}-${projectId}`}
                   backlogMarkdown={artifacts.backlog || ''}
@@ -385,12 +370,16 @@ export default function PipelineExecutor({ idea, answers }) {
             )}
 
             {artifacts[stage.outputKey] && (
-              <div className="mt-4 max-h-96 overflow-y-auto rounded-2xl border border-slate-200 bg-[#faf8f2] p-4">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {typeof artifacts[stage.outputKey] === 'string'
-                    ? artifacts[stage.outputKey]
-                    : `\`\`\`json\n${JSON.stringify(artifacts[stage.outputKey], null, 2)}\n\`\`\``}
-                </ReactMarkdown>
+              <div className="px-6 pb-6">
+                <div className="max-h-96 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="prose prose-slate max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {typeof artifacts[stage.outputKey] === 'string'
+                        ? artifacts[stage.outputKey]
+                        : `\`\`\`json\n${JSON.stringify(artifacts[stage.outputKey], null, 2)}\n\`\`\``}
+                    </ReactMarkdown>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -398,13 +387,10 @@ export default function PipelineExecutor({ idea, answers }) {
       </div>
 
       {currentStep === PIPELINE_STAGES.length && (
-        <div className="mt-8 rounded-[28px] border border-emerald-200 bg-[#e7f4e8] p-8 text-center">
-          <h2 className="text-3xl font-bold text-[#2f6c58]">Fluxo concluído</h2>
-          <p className="mt-2 text-[#2f6c58]">Backlog, requisitos e QA foram consolidados com sucesso.</p>
-          <button
-            onClick={handleFinishPipeline}
-            className="mt-4 rounded-2xl bg-[#17322b] px-8 py-3 font-bold text-white transition duration-300 hover:bg-[#214338]"
-          >
+        <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50 p-8 text-center">
+          <h2 className="text-3xl font-bold text-emerald-800">Fluxo concluído</h2>
+          <p className="mt-2 text-emerald-700">Backlog, requisitos e QA foram consolidados com sucesso.</p>
+          <button onClick={handleFinishPipeline} className="dashboard-button-primary mt-4">
             Ver central de artefatos
           </button>
         </div>

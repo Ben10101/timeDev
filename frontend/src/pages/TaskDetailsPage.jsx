@@ -2,12 +2,11 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import AppShell from '../components/AppShell';
 import {
-  bootstrapGeneratedApp,
   createTaskArtifact,
   createTaskComment,
   getTask,
+  getProjectArchitectureStatus,
   getTaskImplementationStatus,
-  runTaskImplementation,
   runTaskQa,
   runTaskRequirements,
 } from '../services/api';
@@ -42,6 +41,7 @@ export default function TaskDetailsPage() {
   const navigate = useNavigate();
   const [task, setTask] = useState(null);
   const [implementationStatus, setImplementationStatus] = useState(null);
+  const [architectureStatus, setArchitectureStatus] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -51,7 +51,11 @@ export default function TaskDetailsPage() {
   const [artifactDraft, setArtifactDraft] = useState('');
   const bootstrapContext = JSON.parse(localStorage.getItem('factory_bootstrap_context') || 'null');
   const taskHasRequirements = hasCurrentArtifact(task, 'requirements');
+  const taskHasTestPlan = hasCurrentArtifact(task, 'test_plan');
   const taskIsDone = task?.status === 'done';
+  const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
+  const canRunRequirements = !taskHasRequirements;
+  const canRunQa = taskHasRequirements && !taskHasTestPlan;
   const reviewReport = parseJsonContent(implementationStatus?.reviewArtifact?.content);
   const fixPlanReport = parseJsonContent(implementationStatus?.fixPlanArtifact?.content);
   const buildReport = parseJsonContent(implementationStatus?.buildReportArtifact?.content);
@@ -65,6 +69,8 @@ export default function TaskDetailsPage() {
     try {
       const result = await getTask(taskUuid);
       setTask(result);
+      const projectArchitecture = await getProjectArchitectureStatus(result.project.uuid);
+      setArchitectureStatus(projectArchitecture);
 
       try {
         const implementation = await getTaskImplementationStatus(taskUuid);
@@ -166,6 +172,10 @@ export default function TaskDetailsPage() {
     }
   }
 
+  function handleOpenCodeStudio() {
+    navigate(`/code-studio?project=${projectUuid}&task=${taskUuid}`);
+  }
+
   function handleStartArtifactEdit(artifact) {
     setEditingArtifactId(artifact.id);
     setArtifactDraft(artifact.content || '');
@@ -217,22 +227,24 @@ export default function TaskDetailsPage() {
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
             onClick={handleRunRequirements}
-            disabled={saving || loading}
+            disabled={saving || loading || !canRunRequirements}
             className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
+            title={!canRunRequirements ? 'A etapa de requisitos ja foi concluida.' : undefined}
           >
-            Refinar com Requirements
+            Refinar com Requisitos
           </button>
           <button
             onClick={handleRunQa}
-            disabled={saving || loading || !taskHasRequirements}
+            disabled={saving || loading || !canRunQa}
             className="w-full rounded-2xl bg-[#7b3aa4] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#6d3194] disabled:opacity-50 sm:w-auto"
+            title={!canRunQa && taskHasTestPlan ? 'A etapa de QA ja foi concluida.' : undefined}
           >
             Executar QA
           </button>
           {taskIsDone && (
             <button
-              onClick={handleGenerateCode}
-              disabled={saving || loading}
+              onClick={handleOpenCodeStudio}
+              disabled={loading}
               className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
             >
               Gerar código
@@ -287,6 +299,12 @@ export default function TaskDetailsPage() {
           <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>
         )}
 
+        {task?.processingError && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            <strong>Ultima execucao com erro:</strong> {task.processingError.message}
+          </div>
+        )}
+
         {loading ? (
           <div className="rounded-[28px] border border-slate-200 bg-white/90 p-8 text-center text-slate-500 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
             Carregando detalhes da task...
@@ -338,6 +356,15 @@ export default function TaskDetailsPage() {
                       <p className="mt-2 text-sm font-semibold text-slate-900">{implementationStatus?.status || 'Não iniciado'}</p>
                     </article>
                   </div>
+
+                  {!implementationUnlocked && (
+                    <div className="mt-6 rounded-[24px] border border-amber-200 bg-amber-50 p-5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-700">Gate de arquitetura</p>
+                      <p className="mt-3 text-sm leading-7 text-amber-900">
+                        {architectureStatus?.blockers?.[0] || 'A implementacao continua bloqueada ate a arquitetura do projeto ser gerada.'}
+                      </p>
+                    </div>
+                  )}
 
                   <div className="mt-6 rounded-[24px] border border-slate-200 bg-[#faf8f2] p-5">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#2f6c58]">Próximo passo recomendado</p>
@@ -498,7 +525,7 @@ export default function TaskDetailsPage() {
                       <p className="mt-2 text-sm font-semibold text-slate-900">{buildReport?.status || implementationStatus.buildStatus || 'n/a'}</p>
                     </article>
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Review</p>
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Revisão</p>
                       <p className="mt-2 text-sm font-semibold text-slate-900">
                         {implementationSummary?.status || (implementationStatus.reviewArtifact ? 'disponível' : 'não executado')}
                       </p>
@@ -549,7 +576,7 @@ export default function TaskDetailsPage() {
                     </article>
 
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Implementation Plan</p>
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Plano de implementação</p>
                       <p className="mt-2 text-sm font-semibold text-slate-900">
                         {implementationStatus.implementationPlanArtifact?.title || 'Ainda não gerado'}
                       </p>
@@ -563,7 +590,7 @@ export default function TaskDetailsPage() {
 
                   <div className="grid gap-6 xl:grid-cols-2">
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Implementation Fix Plan</p>
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Plano de correção da implementação</p>
                       <p className="mt-2 text-sm font-semibold text-slate-900">
                         {implementationStatus.fixPlanArtifact?.title || 'Nenhum plano de correção gerado'}
                       </p>
@@ -614,7 +641,7 @@ export default function TaskDetailsPage() {
 
                   <div className="grid gap-6 xl:grid-cols-2">
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Implementation Fix Plan</p>
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Plano de correção da implementação</p>
                       <p className="mt-2 text-sm font-semibold text-slate-900">
                         {implementationStatus.fixPlanArtifact?.title || 'Nenhum plano de correção gerado'}
                       </p>
@@ -720,7 +747,7 @@ export default function TaskDetailsPage() {
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Execuções de agentes</p>
                 <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
-                  {task.agentRuns?.length || 0} runs
+                  {task.agentRuns?.length || 0} execuções
                 </span>
               </div>
               <div className="mt-5 space-y-3">

@@ -98,14 +98,14 @@ function ToolButton({ label, icon: Icon, to, navigate, delay }) {
 
 const AGENTS = [
   { agent: 'Architect v1', task: 'Atualização de Esquema do Banco',  time: '2m atrás',  type: 'SUCCESS', icon: Layout },
-  { agent: 'DevBot',       task: 'Refactoring Core Logic',           time: '15m atrás', type: 'ACTIVE',  icon: Cpu },
+  { agent: 'DevBot',       task: 'Refatoração da lógica central',    time: '15m atrás', type: 'ACTIVE',  icon: Cpu },
   { agent: 'Security Sentinel', task: 'Scan de Vulnerabilidades',   time: '1h atrás',  type: 'ALERT',   icon: Shield },
 ];
 
 const TOOLS = [
   { label: 'Backlog',    to: '/global-backlog', icon: Layout },
-  { label: 'Pipeline',   to: '/pipeline',        icon: Zap },
-  { label: 'Analytics',  to: '/results',         icon: BarChart3 },
+  { label: 'Fluxo',      to: '/pipeline',        icon: Zap },
+  { label: 'Análises',   to: '/results',         icon: BarChart3 },
   { label: 'Equipe',     to: '/team',            icon: Shield },
 ];
 

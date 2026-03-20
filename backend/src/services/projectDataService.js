@@ -51,7 +51,6 @@ function getDurationSeconds(startAt, endAt = new Date()) {
 function buildTaskTiming(task) {
   const now = new Date();
   const leadTimeSeconds = getDurationSeconds(task.createdAt, task.completedAt || now);
-  const cycleTimeSeconds = task.startedAt ? getDurationSeconds(task.startedAt, task.completedAt || now) : 0;
 
   const byAgent = (task.agentRuns || []).reduce((acc, run) => {
     const durationSeconds = run.startedAt ? getDurationSeconds(run.startedAt, run.finishedAt || now) : 0;
@@ -71,6 +70,17 @@ function buildTaskTiming(task) {
     return acc;
   }, {});
 
+  const totalAgentProcessingSeconds = Object.values(byAgent).reduce(
+    (total, agent) => total + (agent.totalDurationSeconds || 0),
+    0
+  );
+  const cycleTimeSeconds =
+    totalAgentProcessingSeconds > 0
+      ? totalAgentProcessingSeconds
+      : task.startedAt
+        ? getDurationSeconds(task.startedAt, task.completedAt || now)
+        : 0;
+
   return {
     leadTimeSeconds,
     cycleTimeSeconds,
@@ -82,9 +92,21 @@ function buildTaskTiming(task) {
 
 function enrichTask(task) {
   if (!task) return task;
+  const latestAgentRun = (task.agentRuns || [])[0] || null;
+  const processingError =
+    latestAgentRun?.status === 'failed'
+      ? {
+          agentName: latestAgentRun.agentName,
+          message: latestAgentRun.errorMessage || 'Falha ao processar a task.',
+          happenedAt: latestAgentRun.finishedAt || latestAgentRun.createdAt || null,
+        }
+      : null;
+
   return {
     ...task,
     timing: buildTaskTiming(task),
+    latestAgentRun,
+    processingError,
   };
 }
 
@@ -366,6 +388,11 @@ export async function getProjectByUuid(projectUuid, userUuid = null) {
         },
       },
       tasks: {
+        where: {
+          taskType: {
+            not: 'agent_job',
+          },
+        },
         orderBy: [{ status: 'asc' }, { position: 'asc' }, { createdAt: 'asc' }],
         include: {
           _count: {
@@ -517,6 +544,9 @@ export async function listProjectTasks(projectUuid, { status, parentTaskUuid } =
   const tasks = await prisma.task.findMany({
     where: {
       projectId: project.id,
+      taskType: {
+        not: 'agent_job',
+      },
       ...(status ? { status } : {}),
       ...(parentTaskUuid ? { parentTaskId } : {}),
     },
@@ -535,6 +565,9 @@ export async function listProjectTasks(projectUuid, { status, parentTaskUuid } =
 export async function listAllTasks({ status } = {}, userUuid = null) {
   const tasks = await prisma.task.findMany({
     where: {
+      taskType: {
+        not: 'agent_job',
+      },
       ...(status ? { status } : {}),
       project: {
         is: buildProjectAccessFilter(userUuid),
@@ -1060,6 +1093,177 @@ const stageTaskConfig = {
   },
 };
 
+function buildArchitectureBlockers({
+  totalStories,
+  pendingStories,
+  hasArchitecture,
+  architectureNeedsRefresh,
+}) {
+  const blockers = [];
+
+  if (!totalStories) {
+    blockers.push('Crie e refine pelo menos uma historia antes de gerar a arquitetura.');
+  }
+
+  if (pendingStories > 0) {
+    blockers.push(`Ainda faltam ${pendingStories} historias com requisitos refinados.`);
+  }
+
+  if (!hasArchitecture) {
+    blockers.push('A arquitetura do projeto ainda nao foi gerada.');
+  }
+
+  if (architectureNeedsRefresh) {
+    blockers.push('A arquitetura atual ficou desatualizada depois de novos refinamentos.');
+  }
+
+  return blockers;
+}
+
+export async function getProjectArchitectureStatus(projectUuid, userUuid = null) {
+  const project = await prisma.project.findFirst({
+    where: {
+      uuid: projectUuid,
+      ...buildProjectAccessFilter(userUuid),
+    },
+    select: {
+      id: true,
+      uuid: true,
+      name: true,
+      description: true,
+      vision: true,
+      intakeConfig: true,
+      tasks: {
+        where: {
+          taskType: {
+            not: 'agent_job',
+          },
+        },
+        select: {
+          id: true,
+          uuid: true,
+          title: true,
+          status: true,
+          taskType: true,
+          artifacts: {
+            where: {
+              isCurrent: true,
+              artifactScope: 'refinement',
+              artifactType: {
+                in: ['requirements', 'test_plan'],
+              },
+            },
+            select: {
+              id: true,
+              uuid: true,
+              artifactType: true,
+              title: true,
+              content: true,
+              version: true,
+              createdAt: true,
+              isCurrent: true,
+            },
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+        orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+      },
+    },
+  });
+
+  if (!project) {
+    throw new Error('Projeto nao encontrado.');
+  }
+
+  const architectureTask = await prisma.task.findFirst({
+    where: {
+      projectId: project.id,
+      title: stageTaskConfig.architect.title,
+    },
+    select: {
+      uuid: true,
+      artifacts: {
+        where: {
+          artifactType: 'architecture',
+          artifactScope: 'refinement',
+          isCurrent: true,
+        },
+        select: {
+          uuid: true,
+          title: true,
+          content: true,
+          version: true,
+          createdAt: true,
+          isCurrent: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      },
+    },
+  });
+
+  const totalStories = project.tasks.length;
+  const refinedTasks = project.tasks.filter((task) =>
+    task.artifacts.some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent)
+  );
+  const refinedStories = refinedTasks.length;
+  const pendingTasks = project.tasks.filter(
+    (task) => !task.artifacts.some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent)
+  );
+  const pendingStories = pendingTasks.length;
+  const allStoriesRefined = totalStories > 0 && pendingStories === 0;
+
+  const latestRequirementsAt = refinedTasks.reduce((latest, task) => {
+    const requirementsArtifact = task.artifacts.find(
+      (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent
+    );
+    if (!requirementsArtifact?.createdAt) return latest;
+    return !latest || new Date(requirementsArtifact.createdAt) > new Date(latest)
+      ? requirementsArtifact.createdAt
+      : latest;
+  }, null);
+
+  const architectureArtifact = architectureTask?.artifacts?.[0] || null;
+  const hasArchitecture = Boolean(architectureArtifact);
+  const architectureNeedsRefresh =
+    Boolean(architectureArtifact?.createdAt && latestRequirementsAt) &&
+    new Date(architectureArtifact.createdAt) < new Date(latestRequirementsAt);
+  const canGenerateArchitecture = allStoriesRefined;
+  const canGenerateCode = allStoriesRefined && hasArchitecture && !architectureNeedsRefresh;
+  const blockers = buildArchitectureBlockers({
+    totalStories,
+    pendingStories,
+    hasArchitecture,
+    architectureNeedsRefresh,
+  });
+
+  return {
+    projectUuid: project.uuid,
+    projectName: project.name,
+    totalStories,
+    refinedStories,
+    pendingStories,
+    allStoriesRefined,
+    canGenerateArchitecture,
+    hasArchitecture,
+    architectureNeedsRefresh,
+    canGenerateCode,
+    blockers,
+    pendingTasks: pendingTasks.map((task) => ({
+      uuid: task.uuid,
+      title: task.title,
+      status: task.status,
+    })),
+    architectureArtifact: architectureArtifact
+      ? {
+          ...architectureArtifact,
+          taskUuid: architectureTask?.uuid || null,
+          preview: String(architectureArtifact.content || '').slice(0, 600),
+        }
+      : null,
+  };
+}
+
 export async function ensureStageTask(projectUuid, agentName) {
   const config = stageTaskConfig[agentName];
   if (!config) return null;
@@ -1122,6 +1326,20 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
     taskId = task?.id || null;
   }
 
+  await prisma.agentRun.updateMany({
+    where: {
+      projectId: project.id,
+      agentName,
+      taskId,
+      status: 'running',
+    },
+    data: {
+      status: 'failed',
+      errorMessage: 'Execucao anterior encerrada automaticamente por uma nova tentativa.',
+      finishedAt: new Date(),
+    },
+  });
+
   return prisma.agentRun.create({
     data: {
       uuid: randomUUID(),
@@ -1151,6 +1369,61 @@ export async function finishAgentRun(agentRunId, { status, result, errorMessage 
       finishedAt: new Date(),
     },
   });
+}
+
+export async function restoreTaskAfterAgentFailure(taskUuid, previousState, { changedByUserUuid, failedAgentName, errorMessage }) {
+  const existingTask = await prisma.task.findUnique({
+    where: { uuid: taskUuid },
+    select: { id: true, status: true },
+  });
+
+  if (!existingTask) {
+    throw new Error('Tarefa nao encontrada.');
+  }
+
+  const changedByUser = changedByUserUuid
+    ? await prisma.user.findUnique({
+        where: { uuid: changedByUserUuid },
+        select: { id: true },
+      })
+    : null;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({
+      where: { id: existingTask.id },
+      data: {
+        status: previousState.status,
+        assigneeType: previousState.assigneeType || 'unassigned',
+        assigneeUserId: previousState.assigneeUserId || null,
+        assigneeAgentName: previousState.assigneeAgentName || null,
+        startedAt: previousState.startedAt || null,
+        completedAt: previousState.completedAt || null,
+        currentArtifactSummary: previousState.currentArtifactSummary || null,
+      },
+    });
+
+    await tx.taskStatusHistory.create({
+      data: {
+        taskId: existingTask.id,
+        fromStatus: existingTask.status,
+        toStatus: previousState.status,
+        changedByUserId: changedByUser?.id || null,
+        note: `Falha ao executar ${failedAgentName}. Task retornada para ${previousState.status}. Erro: ${String(errorMessage || 'Sem detalhes').slice(0, 420)}`,
+      },
+    });
+  });
+
+  const updatedTask = await prisma.task.findUnique({
+    where: { id: existingTask.id },
+    include: {
+      ...taskListInclude,
+      agentRuns: {
+        orderBy: { createdAt: 'desc' },
+      },
+    },
+  });
+
+  return enrichTask(updatedTask);
 }
 
 export async function persistAgentResult(projectUuid, agentName, payload, result) {

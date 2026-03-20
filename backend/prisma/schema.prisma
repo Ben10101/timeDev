@@ -158,6 +158,7 @@ model User {
   uuid                         String              @unique @db.Char(36)
   name                         String              @db.VarChar(120)
   email                        String              @unique @db.VarChar(190)
+  aiSettings                   Json?               @map("ai_settings")
   passwordHash                 String?             @map("password_hash") @db.VarChar(255)
   refreshTokenHash             String?             @map("refresh_token_hash") @db.VarChar(255)
   refreshTokenExpiresAt        DateTime?           @map("refresh_token_expires_at") @db.DateTime(0)

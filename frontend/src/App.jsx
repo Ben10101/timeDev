@@ -9,6 +9,8 @@ import ResultsPage from './pages/ResultsPage';
 import TaskDetailsPage from './pages/TaskDetailsPage';
 import BacklogKanban from './pages/BacklogKanban';
 import GlobalBacklogPage from './pages/GlobalBacklogPage';
+import AiSettingsPage from './pages/AiSettingsPage';
+import CodeStudioPage from './pages/CodeStudioPage';
 
 function App() {
   return (
@@ -50,6 +52,14 @@ function App() {
             }
           />
           <Route
+            path="/code-studio"
+            element={
+              <ProtectedRoute>
+                <CodeStudioPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/results/:projectId"
             element={
               <ProtectedRoute>
@@ -70,6 +80,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <GlobalBacklogPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings/ai"
+            element={
+              <ProtectedRoute>
+                <AiSettingsPage />
               </ProtectedRoute>
             }
           />
