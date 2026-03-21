@@ -48,15 +48,16 @@ export function ProfileSettingsPage() {
             Perfil
           </span>
           <div style={{ display: 'grid', gap: 12 }}>
-            <h2 style={{ margin: 0, fontSize: 44, lineHeight: 1.05, color: '#0f172a' }}>Informações Pessoais</h2>
-            <p style={{ margin: 0, fontSize: 18, lineHeight: 1.6, color: '#475569', maxWidth: 560 }}>Altere seu nome, foto e e-mail para personalizar sua experiência.</p>
+            <h2 style={{ margin: 0, fontSize: 44, lineHeight: 1.05, color: '#0f172a' }}>Gerencie seu perfil</h2>
+            <p style={{ margin: 0, fontSize: 18, lineHeight: 1.6, color: '#475569', maxWidth: 560 }}>Mantenha seus dados atualizados para acessar seus cursos e loja</p>
           </div>
           <div style={{ display: 'grid', gap: 14, padding: 24, borderRadius: 24, background: 'linear-gradient(135deg, #0f766e, #115e59)', color: '#f8fafc', boxShadow: '0 24px 60px rgba(15, 118, 110, 0.22)' }}>
-            <strong style={{ fontSize: 16 }}>Seu Espaço</strong>
-            <p style={{ margin: 0, lineHeight: 1.6, color: 'rgba(248, 250, 252, 0.88)' }}>Altere seu nome, foto e e-mail para personalizar sua experiência.</p>
+            <strong style={{ fontSize: 16 }}>Conta</strong>
+            <p style={{ margin: 0, lineHeight: 1.6, color: 'rgba(248, 250, 252, 0.88)' }}>Mantenha seus dados atualizados para acessar seus cursos e loja</p>
             <div style={{ display: 'grid', gap: 10 }}>
-              <div style={{ padding: '14px 16px', borderRadius: 18, background: 'rgba(255,255,255,0.1)' }}>Nome completo é obrigatório.</div>
-              <div style={{ padding: '14px 16px', borderRadius: 18, background: 'rgba(255,255,255,0.1)' }}>E-mail único.</div>
+              <div style={{ padding: '14px 16px', borderRadius: 18, background: 'rgba(255,255,255,0.1)' }}>Nome completo é obrigatório</div>
+              <div style={{ padding: '14px 16px', borderRadius: 18, background: 'rgba(255,255,255,0.1)' }}>E-mail válido e único</div>
+              <div style={{ padding: '14px 16px', borderRadius: 18, background: 'rgba(255,255,255,0.1)' }}>Senha segura e protegida</div>
             </div>
           </div>
         </div>
@@ -118,7 +119,7 @@ export function ProfileSettingsPage() {
           </div>
 
           <div style={{ padding: 24, borderRadius: 24, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 16px 40px rgba(15, 23, 42, 0.06)' }}>
-            <h3 style={{ marginTop: 0, marginBottom: 12, color: '#0f172a' }}>Informações Salvas</h3>
+            <h3 style={{ marginTop: 0, marginBottom: 12, color: '#0f172a' }}>Seus Cursos</h3>
             {items.length ? (
               <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', display: 'grid', gap: 8 }}>
                 {items.map((item) => (
@@ -126,17 +127,8 @@ export function ProfileSettingsPage() {
                 ))}
               </ul>
             ) : (
-              <p style={{ margin: 0, color: '#64748b' }}>Nenhuma informação encontrada. Comece a editar seu perfil!</p>
+              <p style={{ margin: 0, color: '#64748b' }}>Nenhum curso cadastrado ainda</p>
             )}
-          </div>
-          <div style={{ padding: 24, borderRadius: 24, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 16px 40px rgba(15, 23, 42, 0.06)' }}>
-            <h3 style={{ marginTop: 0, marginBottom: 12, color: '#0f172a' }}>Cenarios de QA mapeados</h3>
-            <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', display: 'grid', gap: 8 }}>
-                  <li>Nome obrigatorio.</li>
-                  <li>E-mail ja cadastrado.</li>
-                  <li>Senha invalida.</li>
-                  <li>E-mail invalido.</li>
-            </ul>
           </div>
         </div>
       </div>

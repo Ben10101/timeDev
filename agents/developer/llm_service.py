@@ -67,6 +67,7 @@ def is_error_text_response(result: str) -> bool:
 
 
 def get_provider_order():
+    disable_ollama_fallback = os.getenv("AI_DISABLE_OLLAMA_FALLBACK", "0").lower() in ("1", "true", "yes")
     configured_order = [
         item.strip().lower()
         for item in os.getenv("AI_PROVIDER_ORDER", "").split(",")
@@ -78,6 +79,8 @@ def get_provider_order():
         ordered = []
         for provider in configured_order:
             if provider in SUPPORTED_PROVIDERS and provider not in seen:
+                if disable_ollama_fallback and provider == "ollama":
+                    continue
                 seen.add(provider)
                 ordered.append(provider)
         if ordered:
@@ -85,10 +88,17 @@ def get_provider_order():
 
     llm_provider = os.getenv("LLM_PROVIDER", "auto").lower()
     if llm_provider in SUPPORTED_PROVIDERS and llm_provider != "auto":
-        others = [provider for provider in SUPPORTED_PROVIDERS if provider not in (llm_provider, "ollama")]
-        return [llm_provider, *others, "ollama"] if llm_provider != "ollama" else ["ollama"]
+        others = [
+            provider
+            for provider in SUPPORTED_PROVIDERS
+            if provider not in (llm_provider, "ollama") and (not disable_ollama_fallback or provider != "ollama")
+        ]
+        if llm_provider == "ollama":
+            return [] if disable_ollama_fallback else ["ollama"]
+        return [llm_provider, *others] if disable_ollama_fallback else [llm_provider, *others, "ollama"]
 
-    return ["gemini", "openai", "anthropic", "groq", "openrouter", "ollama"]
+    fallback_order = ["gemini", "openai", "anthropic", "groq", "openrouter", "ollama"]
+    return [provider for provider in fallback_order if not (disable_ollama_fallback and provider == "ollama")]
 
 
 def get_cache_provider_key():

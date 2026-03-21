@@ -118,6 +118,44 @@ function collectDuplicateLines(content, predicate) {
     .map(([line, count]) => ({ line, count }));
 }
 
+function getImplementationAutoRepairAttempts() {
+  const parsed = Number.parseInt(process.env.IMPLEMENTATION_AUTO_REPAIR_ATTEMPTS || '2', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2;
+}
+
+function truncateText(value, maxLength = 2000) {
+  const text = String(value || '').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 3)}...`;
+}
+
+function formatValidationFailures(summary) {
+  if (!summary?.reports?.length) return [];
+
+  return summary.reports
+    .filter((report) => report.status !== 'completed')
+    .map((report) => ({
+      scriptName: report.scriptName,
+      errorMessage: truncateText(report.errorMessage || report.stderr || report.stdout || 'Falha sem detalhes.'),
+    }));
+}
+
+function buildRepairContext({ reviewReport, validationSummary, attemptNumber }) {
+  return {
+    attemptNumber,
+    reviewStatus: reviewReport?.summary?.status || 'unknown',
+    reviewScore: reviewReport?.summary?.score ?? null,
+    findings: (reviewReport?.findings || []).slice(0, 10).map((finding) => ({
+      code: finding.code,
+      severity: finding.severity,
+      filePath: finding.filePath,
+      message: finding.message,
+    })),
+    validationStatus: validationSummary?.status || 'unknown',
+    validationFailures: formatValidationFailures(validationSummary),
+  };
+}
+
 async function getProjectOrThrow(projectUuid) {
   const project = await prisma.project.findUnique({
     where: { uuid: projectUuid },
@@ -152,8 +190,211 @@ async function getTaskWithArtifactsOrThrow(taskUuid) {
   return task;
 }
 
-function inferFieldDefinitions(sourceText) {
+function inferFieldDefinitions(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
+
+  if (actionSpec?.domainKey === 'course-catalog') {
+    return [
+      {
+        name: 'courseName',
+        label: 'Nome do curso',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Informe um nome claro para identificar o curso.',
+        placeholder: 'Ex.: Dominando React do zero',
+        defaultValue: '',
+        sampleValue: 'Dominando React do zero',
+        validations: ['required', 'min:3'],
+      },
+      {
+        name: 'description',
+        label: 'Descricao',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Descreva a proposta e os beneficios do curso.',
+        placeholder: 'Explique o que o aluno vai aprender.',
+        defaultValue: '',
+        sampleValue: 'Curso completo para criar interfaces modernas com React.',
+        validations: ['required', 'min:10'],
+      },
+      {
+        name: 'category',
+        label: 'Categoria',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Organize o curso em uma categoria comercial.',
+        placeholder: 'Ex.: Desenvolvimento Web',
+        defaultValue: '',
+        sampleValue: 'Desenvolvimento Web',
+        validations: ['required'],
+      },
+      {
+        name: 'price',
+        label: 'Preco',
+        inputType: 'number',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Defina o valor de venda do curso.',
+        placeholder: 'Ex.: 197.00',
+        defaultValue: '',
+        sampleValue: '197.00',
+        validations: ['required'],
+      },
+    ];
+  }
+
+  if (actionSpec?.domainKey === 'course-modules') {
+    return [
+      {
+        name: 'moduleName',
+        label: 'Nome do modulo',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Defina um titulo objetivo para o modulo.',
+        placeholder: 'Ex.: Fundamentos do curso',
+        defaultValue: '',
+        sampleValue: 'Fundamentos do curso',
+        validations: ['required', 'min:3'],
+      },
+      {
+        name: 'moduleDescription',
+        label: 'Descricao do modulo',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: false,
+        unique: false,
+        helperText: 'Explique rapidamente o que sera abordado neste modulo.',
+        placeholder: 'Resumo curto do modulo',
+        defaultValue: '',
+        sampleValue: 'Introducao aos conceitos essenciais do treinamento.',
+        validations: [],
+      },
+      {
+        name: 'displayOrder',
+        label: 'Ordem',
+        inputType: 'number',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Controle a sequencia em que o modulo aparece no curso.',
+        placeholder: '1',
+        defaultValue: '1',
+        sampleValue: '1',
+        validations: ['required'],
+      },
+    ];
+  }
+
+  if (actionSpec?.domainKey === 'course-lessons') {
+    return [
+      {
+        name: 'lessonTitle',
+        label: 'Titulo da aula',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Informe o nome da aula exibido para o aluno.',
+        placeholder: 'Ex.: Instalando o ambiente',
+        defaultValue: '',
+        sampleValue: 'Instalando o ambiente',
+        validations: ['required', 'min:3'],
+      },
+      {
+        name: 'mediaType',
+        label: 'Tipo de midia',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Defina se a aula sera em video, audio ou PDF.',
+        placeholder: 'video | audio | pdf',
+        defaultValue: 'video',
+        sampleValue: 'video',
+        validations: ['required'],
+      },
+      {
+        name: 'moduleReference',
+        label: 'Modulo',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Associe a aula ao modulo correto do curso.',
+        placeholder: 'Ex.: Fundamentos do curso',
+        defaultValue: '',
+        sampleValue: 'Fundamentos do curso',
+        validations: ['required'],
+      },
+    ];
+  }
+
+  if (actionSpec?.domainKey === 'lesson-materials') {
+    return [
+      {
+        name: 'materialTitle',
+        label: 'Titulo do material',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Identifique o material complementar para o aluno.',
+        placeholder: 'Ex.: Checklist da aula',
+        defaultValue: '',
+        sampleValue: 'Checklist da aula',
+        validations: ['required'],
+      },
+      {
+        name: 'fileType',
+        label: 'Tipo de arquivo',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Informe o formato do material enviado.',
+        placeholder: 'pdf | planilha | zip',
+        defaultValue: 'pdf',
+        sampleValue: 'pdf',
+        validations: ['required'],
+      },
+      {
+        name: 'fileUrl',
+        label: 'URL do arquivo',
+        inputType: 'url',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Use a URL do arquivo armazenado para liberar o download.',
+        placeholder: 'https://cdn.exemplo.com/material.pdf',
+        defaultValue: '',
+        sampleValue: 'https://cdn.exemplo.com/material.pdf',
+        validations: ['required', 'url'],
+      },
+    ];
+  }
+
   const fields = [];
 
   if (/\bperfil\b/.test(normalized)) {
@@ -253,6 +494,151 @@ function inferActionSpec(task, sourceText) {
   const looksLikeLogin = /\blogin\b|\bentrar\b|\bautentic/.test(titleNormalized);
   const looksLikeRegister = /\bregistr/.test(titleNormalized) || /\bcadastr/.test(titleNormalized);
   const looksLikeProfile = /\bperfil\b/.test(titleNormalized) || (/\bperfil\b/.test(normalized) && /\bnome\b|\bfoto\b/.test(normalized));
+  const looksLikeCourse = /\bcurso\b/.test(titleNormalized);
+  const looksLikeModule = /\bmodulo\b|\bmodulos\b/.test(titleNormalized);
+  const looksLikeLesson = /\baula\b|\baulas\b/.test(titleNormalized);
+  const looksLikeMaterial = /\bmaterial\b|\bmateriais\b|\banexo\b|\banexar\b|\bupload\b/.test(titleNormalized);
+  const looksLikeCategory = /\bcategoria\b/.test(titleNormalized);
+  const looksLikePricing = /\bpreco\b|\bvalor\b|\breceita\b/.test(titleNormalized);
+  const looksLikeSearch = /\bpesquisar\b|\bbuscar\b|\bpalavra-chave\b/.test(titleNormalized);
+  const looksLikeStudentEnrollment = /\bmatricular\b|\binscrever\b|\bacesso aos cursos\b/.test(titleNormalized);
+  const looksLikeMediaPlayer = /\bvideo\b|\baudio\b|\bassistir\b/.test(titleNormalized);
+
+  if (looksLikeCourse && looksLikePricing && /\bcriar\b/.test(titleNormalized)) {
+    return {
+      domainKey: 'course-catalog',
+      entityName: 'CourseCatalog',
+      routeBase: '/api/courses',
+      frontendRoute: '/courses',
+      pageComponentName: 'CourseCatalogPage',
+      serviceName: 'CourseCatalogService',
+      submitLabel: 'Criar Curso',
+      navigationLabel: 'Cursos',
+      pageTitle: 'Cadastre um novo curso',
+      pageDescription: 'Defina nome, descricao, categoria e preco para disponibilizar um curso na plataforma.',
+      successMessage: 'Curso criado com sucesso.',
+      summary: 'Permite ao infoprodutor cadastrar novos cursos com informacoes comerciais e editoriais.',
+    };
+  }
+
+  if (looksLikeMaterial) {
+    return {
+      domainKey: 'lesson-materials',
+      entityName: 'LessonMaterial',
+      routeBase: '/api/lesson-materials',
+      frontendRoute: '/courses/materials',
+      pageComponentName: 'LessonMaterialsPage',
+      serviceName: 'LessonMaterialsService',
+      submitLabel: 'Enviar Material',
+      navigationLabel: 'Materiais',
+      pageTitle: 'Envie materiais complementares',
+      pageDescription: 'Anexe PDFs, planilhas e outros arquivos para enriquecer cada aula.',
+      successMessage: 'Material enviado com sucesso.',
+      summary: 'Permite gerenciar uploads de materiais complementares vinculados a aulas.',
+    };
+  }
+
+  if (looksLikeLesson) {
+    return {
+      domainKey: 'course-lessons',
+      entityName: 'CourseLesson',
+      routeBase: '/api/course-lessons',
+      frontendRoute: '/courses/lessons',
+      pageComponentName: 'CourseLessonsPage',
+      serviceName: 'CourseLessonsService',
+      submitLabel: 'Adicionar Aula',
+      navigationLabel: 'Aulas',
+      pageTitle: 'Cadastre aulas do curso',
+      pageDescription: 'Associe aulas aos modulos e escolha o tipo de midia para cada conteudo.',
+      successMessage: 'Aula adicionada com sucesso.',
+      summary: 'Permite cadastrar aulas vinculadas a modulos com diferentes tipos de midia.',
+    };
+  }
+
+  if (looksLikeModule) {
+    return {
+      domainKey: 'course-modules',
+      entityName: 'CourseModule',
+      routeBase: '/api/course-modules',
+      frontendRoute: '/courses/modules',
+      pageComponentName: 'CourseModulesPage',
+      serviceName: 'CourseModulesService',
+      submitLabel: 'Adicionar Modulo',
+      navigationLabel: 'Modulos',
+      pageTitle: 'Organize os modulos do curso',
+      pageDescription: 'Crie e ordene modulos para estruturar o conteudo do curso em secoes logicas.',
+      successMessage: 'Modulo adicionado com sucesso.',
+      summary: 'Permite estruturar o curso em modulos e secoes organizadas.',
+    };
+  }
+
+  if (looksLikePricing && looksLikeCourse) {
+    return {
+      domainKey: 'course-pricing',
+      entityName: 'CoursePricing',
+      routeBase: '/api/course-pricing',
+      frontendRoute: '/courses/pricing',
+      pageComponentName: 'CoursePricingPage',
+      serviceName: 'CoursePricingService',
+      submitLabel: 'Salvar Preco',
+      navigationLabel: 'Precos',
+      pageTitle: 'Defina o preco do curso',
+      pageDescription: 'Configure o valor de venda e as regras comerciais de cada curso.',
+      successMessage: 'Preco atualizado com sucesso.',
+      summary: 'Permite configurar e ajustar a estrategia de precificacao dos cursos.',
+    };
+  }
+
+  if (looksLikeCategory && looksLikeSearch) {
+    return {
+      domainKey: 'course-search',
+      entityName: 'CourseSearch',
+      routeBase: '/api/course-search',
+      frontendRoute: '/courses/search',
+      pageComponentName: 'CourseSearchPage',
+      serviceName: 'CourseSearchService',
+      submitLabel: 'Buscar Cursos',
+      navigationLabel: 'Busca',
+      pageTitle: 'Encontre cursos com facilidade',
+      pageDescription: 'Pesquise cursos por categoria, nome ou palavra-chave.',
+      successMessage: 'Busca concluida com sucesso.',
+      summary: 'Permite ao aluno localizar cursos com filtros e termos de busca.',
+    };
+  }
+
+  if (looksLikeStudentEnrollment) {
+    return {
+      domainKey: 'course-enrollment',
+      entityName: 'CourseEnrollment',
+      routeBase: '/api/course-enrollments',
+      frontendRoute: '/courses/enrollments',
+      pageComponentName: 'CourseEnrollmentPage',
+      serviceName: 'CourseEnrollmentService',
+      submitLabel: 'Matricular Aluno',
+      navigationLabel: 'Matriculas',
+      pageTitle: 'Gerencie matriculas',
+      pageDescription: 'Associe alunos aos cursos disponiveis para liberar acesso ao conteudo.',
+      successMessage: 'Matricula criada com sucesso.',
+      summary: 'Permite registrar matriculas e liberar acesso dos alunos aos cursos.',
+    };
+  }
+
+  if (looksLikeMediaPlayer) {
+    return {
+      domainKey: 'course-player',
+      entityName: 'CoursePlayer',
+      routeBase: '/api/course-player',
+      frontendRoute: '/courses/player',
+      pageComponentName: 'CoursePlayerPage',
+      serviceName: 'CoursePlayerService',
+      submitLabel: 'Salvar Progresso',
+      navigationLabel: 'Player',
+      pageTitle: 'Consuma o conteudo do curso',
+      pageDescription: 'Assista aulas em video e audio com acompanhamento de progresso.',
+      successMessage: 'Progresso salvo com sucesso.',
+      summary: 'Permite ao aluno assistir aulas e acompanhar o consumo do conteudo.',
+    };
+  }
 
   if (looksLikeProfile) {
     return {
@@ -449,8 +835,14 @@ function getDomainTemplate(technicalSpec) {
   return resolveDomainTemplate(domainKey, technicalSpec);
 }
 
-async function enrichFrontendWithAi(task, technicalSpec, userUuid = null) {
+async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repairContext = null) {
   const domainTemplate = getDomainTemplate(technicalSpec);
+  const experienceGoals = [
+    technicalSpec.frontend.pageDescription,
+    technicalSpec.domain.successMessage,
+    `Ação principal: ${technicalSpec.domain.submitLabel}`,
+    `Rota da tela: ${technicalSpec.frontend.suggestedRoute}`,
+  ].filter(Boolean);
   const fallback = {
     navigationLabel: technicalSpec.frontend.navigationLabel,
     pageTitle: technicalSpec.frontend.pageTitle,
@@ -470,7 +862,9 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null) {
   };
 
   try {
-    const envOverrides = userUuid ? await buildRuntimeAiEnvForUser(userUuid) : {};
+    const envOverrides = userUuid
+      ? await buildRuntimeAiEnvForUser(userUuid, { includeLocalFallback: false })
+      : { AI_DISABLE_OLLAMA_FALLBACK: '1' };
     const aiResult = await generateImplementationUi({
       taskTitle: task.title,
       summary: technicalSpec.summary,
@@ -480,8 +874,8 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null) {
       pageTitle: technicalSpec.frontend.pageTitle,
       pageDescription: technicalSpec.frontend.pageDescription,
       fields: technicalSpec.domain.fields,
-      businessRules: technicalSpec.businessRules,
-      qaScenarios: technicalSpec.qaScenarios,
+      experienceGoals,
+      repairContext,
     }, { envOverrides });
 
     return {
@@ -608,6 +1002,9 @@ function inferDomainName(actionSpec, sourceText) {
 
   if (actionSpec.domainKey.startsWith('auth-')) return 'auth';
   if (actionSpec.domainKey === 'profile-settings' || /\bperfil\b/.test(normalized)) return 'profile';
+  if (['course-catalog', 'course-modules', 'course-lessons', 'lesson-materials'].includes(actionSpec.domainKey)) {
+    return 'education';
+  }
   if (/\bupload\b|\barquivo\b|\banexo\b|\bimagem\b/.test(normalized)) return 'upload';
   if (/\bcrud\b|\blistar\b|\bcriar\b|\beditar\b|\bexcluir\b/.test(normalized)) return 'crud';
 
@@ -620,6 +1017,10 @@ function inferIntent(actionSpec, sourceText) {
   if (actionSpec.domainKey === 'auth-login' || /\blogin\b|\bentrar\b|\bautentic/.test(normalized)) return 'login';
   if (actionSpec.domainKey === 'auth-register' || /\bregistr/.test(normalized) || /\bcadastr/.test(normalized)) return 'register';
   if (actionSpec.domainKey === 'profile-settings' || /\batualiz/.test(normalized) || /\bedita/.test(normalized)) return 'update';
+  if (actionSpec.domainKey === 'course-catalog') return 'create';
+  if (actionSpec.domainKey === 'course-modules') return 'structure';
+  if (actionSpec.domainKey === 'course-lessons') return 'compose';
+  if (actionSpec.domainKey === 'lesson-materials') return 'attach';
   if (/\bupload\b|\benviar\b/.test(normalized)) return 'upload';
   if (/\bcriar\b/.test(normalized)) return 'create';
   if (/\blistar\b|\bvisualizar\b/.test(normalized)) return 'list';
@@ -750,7 +1151,7 @@ function buildTechnicalSpec(task, projectArchitectureSource = '') {
   const entityName = actionSpec.entityName;
   const routerName = `${entityName}Router`;
   const routeBase = actionSpec.routeBase;
-  const fields = inferFieldDefinitions(sourceText);
+  const fields = inferFieldDefinitions(sourceText, actionSpec);
   const businessRules = inferBusinessRules(sourceText);
   const qaScenarios = inferQaScenarios(sourceText);
   const requestContractName = `${entityName}Request`;
@@ -845,7 +1246,7 @@ function normalizeTechnicalSpec(rawSpec, task) {
   const actionSpec = inferActionSpec(task, sourceText);
   const featureKey = rawSpec?.featureKey || slugify(actionSpec.domainKey, task.uuid);
   const entityName = rawSpec?.entityName || actionSpec.entityName;
-  const fields = rawSpec?.domain?.fields || rawSpec?.database?.fields || inferFieldDefinitions(sourceText);
+  const fields = rawSpec?.domain?.fields || rawSpec?.database?.fields || inferFieldDefinitions(sourceText, actionSpec);
   const businessRules = rawSpec?.businessRules || inferBusinessRules(sourceText);
   const qaScenarios = rawSpec?.qaScenarios || inferQaScenarios(sourceText);
   const requestContractName = rawSpec?.shared?.requestContractName || `${entityName}Request`;
@@ -1231,18 +1632,6 @@ function buildFrontendFeatureFilesFromTemplate(task, technicalSpec) {
           escapeTemplate(technicalSpec.frontend.recordsEmptyState || domainTemplate.recordsEmptyState)
         );
 
-      if (!content.includes('Cenarios de QA mapeados')) {
-        const qaItems = (technicalSpec.qaScenarios || [])
-          .slice(0, 4)
-          .map((item) => `                  <li>${escapeTemplate(item.message)}</li>`)
-          .join('\n');
-
-        content = content.replace(
-          "        </div>\n      </div>\n    </section>",
-          `          <div style={{ padding: 24, borderRadius: 24, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 16px 40px rgba(15, 23, 42, 0.06)' }}>\n            <h3 style={{ marginTop: 0, marginBottom: 12, color: '#0f172a' }}>Cenarios de QA mapeados</h3>\n            <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', display: 'grid', gap: 8 }}>\n${qaItems || "              <li>Nenhum cenário de QA estruturado foi mapeado.</li>"}\n            </ul>\n          </div>\n        </div>\n      </div>\n    </section>`
-        );
-      }
-
       return { ...file, content };
     }
 
@@ -1608,7 +1997,7 @@ function buildSyntheticTaskFromSpec(technicalSpec) {
 }
 
 async function ensureValidationScripts(generatedAppRoot) {
-  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contém textos genéricos de fallback.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluído sem problemas.');\n`;
+  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Visao geral|Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Preencha os dados|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !appContent.includes('Application Studio') || !appContent.includes('function HomePage()')) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contém textos genéricos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contém copy genérica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluído sem problemas.');\n`;
   const testContent = `import { access, readFile } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatório ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluídos com sucesso.');\n`;
 
   return [
@@ -1640,7 +2029,7 @@ async function updateWebApp(generatedAppRoot, routeSpecs, projectName) {
     )
     .join('\n');
 
-  const content = `${importLines ? `${importLines}\n\n` : ''}const routes = [\n  { path: '/', label: 'Home', render: () => <p>Bem-vindo ao ${projectName}.</p> },\n${routeLines}\n]\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const activeRoute = routes.find((route) => route.path === currentPath) || routes[0]\n\n  return (\n    <main style={{ fontFamily: 'sans-serif', padding: 24 }}>\n      <h1>${projectName}</h1>\n      <nav style={{ display: 'flex', gap: 12, marginBottom: 24 }}>\n        {routes.map((route) => (\n          <a key={route.path} href={route.path}>{route.label}</a>\n        ))}\n      </nav>\n      {activeRoute.render()}\n    </main>\n  )\n}\n`;
+  const content = `${importLines ? `${importLines}\n\n` : ''}const routes = [\n  { path: '/', label: 'Inicio', render: () => <HomePage /> },\n${routeLines}\n]\n\nfunction HomePage() {\n  const productAreas = routes.filter((route) => route.path !== '/')\n\n  return (\n    <section\n      style={{\n        display: 'grid',\n        gap: 28,\n        padding: 36,\n        borderRadius: 32,\n        background: 'linear-gradient(145deg, #0f172a 0%, #1e293b 55%, #0f766e 100%)',\n        color: '#f8fafc',\n        boxShadow: '0 32px 90px rgba(15, 23, 42, 0.22)',\n      }}\n    >\n      <div style={{ display: 'grid', gap: 14, maxWidth: 760 }}>\n        <span\n          style={{\n            display: 'inline-flex',\n            width: 'fit-content',\n            padding: '8px 14px',\n            borderRadius: 999,\n            background: 'rgba(255,255,255,0.12)',\n            border: '1px solid rgba(255,255,255,0.16)',\n            letterSpacing: '0.12em',\n            textTransform: 'uppercase',\n            fontSize: 12,\n            fontWeight: 700,\n          }}\n        >\n          Workspace\n        </span>\n        <h1 style={{ margin: 0, fontSize: 48, lineHeight: 1, letterSpacing: '-0.04em' }}>${escapeTemplate(projectName)}</h1>\n        <p style={{ margin: 0, fontSize: 18, lineHeight: 1.7, color: 'rgba(248, 250, 252, 0.82)' }}>\n          Ambiente base gerado para evoluir o produto com rapidez, clareza e consistencia entre as jornadas principais.\n        </p>\n      </div>\n\n      <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>\n        <div style={{ padding: 18, borderRadius: 22, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>\n          <div style={{ fontSize: 12, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(248,250,252,0.66)' }}>Modulos ativos</div>\n          <strong style={{ display: 'block', marginTop: 10, fontSize: 28 }}>{productAreas.length}</strong>\n        </div>\n        <div style={{ padding: 18, borderRadius: 22, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>\n          <div style={{ fontSize: 12, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(248,250,252,0.66)' }}>Navegacao pronta</div>\n          <strong style={{ display: 'block', marginTop: 10, fontSize: 28 }}>100%</strong>\n        </div>\n        <div style={{ padding: 18, borderRadius: 22, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>\n          <div style={{ fontSize: 12, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(248,250,252,0.66)' }}>Base pronta</div>\n          <strong style={{ display: 'block', marginTop: 10, fontSize: 28 }}>Web + API</strong>\n        </div>\n      </div>\n\n      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>\n        {productAreas.map((route) => (\n          <a\n            key={route.path}\n            href={route.path}\n            style={{\n              padding: 20,\n              borderRadius: 24,\n              textDecoration: 'none',\n              color: '#f8fafc',\n              background: 'rgba(255,255,255,0.08)',\n              border: '1px solid rgba(255,255,255,0.12)',\n            }}\n          >\n            <strong style={{ display: 'block', fontSize: 18 }}>{route.label}</strong>\n            <span style={{ display: 'block', marginTop: 10, color: 'rgba(248,250,252,0.7)' }}>Abrir modulo</span>\n          </a>\n        ))}\n      </div>\n    </section>\n  )\n}\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const activeRoute = routes.find((route) => route.path === currentPath) || routes[0]\n\n  return (\n    <main\n      style={{\n        minHeight: '100vh',\n        padding: '24px 24px 48px',\n        background: 'radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 28%), linear-gradient(180deg, #f8fafc 0%, #eef4f7 100%)',\n        color: '#0f172a',\n        fontFamily: 'Inter, Segoe UI, sans-serif',\n      }}\n    >\n      <div style={{ maxWidth: 1220, margin: '0 auto', display: 'grid', gap: 24 }}>\n        <header\n          style={{\n            display: 'flex',\n            justifyContent: 'space-between',\n            alignItems: 'center',\n            gap: 16,\n            padding: '16px 18px',\n            borderRadius: 24,\n            background: 'rgba(255,255,255,0.82)',\n            border: '1px solid rgba(148, 163, 184, 0.2)',\n            boxShadow: '0 18px 50px rgba(15, 23, 42, 0.06)',\n            backdropFilter: 'blur(14px)',\n            position: 'sticky',\n            top: 16,\n            zIndex: 10,\n          }}\n        >\n          <div style={{ display: 'grid', gap: 4 }}>\n            <span style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b', fontWeight: 700 }}>Application Studio</span>\n            <strong style={{ fontSize: 22 }}>${escapeTemplate(projectName)}</strong>\n          </div>\n\n          <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end' }}>\n            {routes.map((route) => {\n              const active = activeRoute.path === route.path\n              return (\n                <a\n                  key={route.path}\n                  href={route.path}\n                  style={{\n                    padding: '10px 14px',\n                    borderRadius: 999,\n                    textDecoration: 'none',\n                    fontWeight: 700,\n                    fontSize: 14,\n                    color: active ? '#f8fafc' : '#334155',\n                    background: active ? 'linear-gradient(135deg, #0f766e, #14b8a6)' : '#f8fafc',\n                    border: active ? 'none' : '1px solid #e2e8f0',\n                    boxShadow: active ? '0 14px 30px rgba(20, 184, 166, 0.24)' : 'none',\n                  }}\n                >\n                  {route.label}\n                </a>\n              )\n            })}\n          </nav>\n        </header>\n\n        {activeRoute.render()}\n      </div>\n    </main>\n  )\n}\n`;
 
   await writeText(appPath, content);
 
@@ -1812,6 +2201,7 @@ async function runGeneratedProjectValidationSuite({ task, implementation, genera
 
 function categorizeFinding(code) {
   if (String(code || '').includes('fallback')) return 'fallback';
+  if (String(code || '').includes('ux')) return 'quality';
   if (String(code || '').includes('duplicate')) return 'duplication';
   if (String(code || '').includes('missing')) return 'inconsistency';
   if (String(code || '').includes('unclassified')) return 'template_deviation';
@@ -1870,6 +2260,26 @@ function buildFixPlan(findings, technicalSpec) {
       };
     }
 
+    if (finding.code === 'basic_web_shell') {
+      return {
+        category: 'quality',
+        priority: 'high',
+        filePath: finding.filePath,
+        action: 'Substituir o shell basico por uma navegacao mais robusta, com home estruturada, contexto visual e estado ativo.',
+        suggestedTemplate: 'app-shell/premium',
+      };
+    }
+
+    if (finding.code === 'generic_ux_copy') {
+      return {
+        category: 'quality',
+        priority: 'high',
+        filePath: finding.filePath,
+        action: 'Reescrever a copy da tela para remover frases genericas e destacar beneficios reais da experiencia.',
+        suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
+      };
+    }
+
     return {
       category: categorizeFinding(finding.code),
       priority: finding.severity === 'high' ? 'high' : 'medium',
@@ -1903,6 +2313,10 @@ async function runImplementationReviewInternal({ task, implementation, technical
   const contractPath = technicalSpec.shared.contractPath;
   const pageContent = loadedFiles[pagePath] || '';
   const contractContent = loadedFiles[contractPath] || '';
+  const genericUxCopyPattern =
+    /Visao geral|Nenhum dado exibido ainda\.|Validacao automatica dos campos antes do envio\.|Feedback imediato em caso de sucesso ou erro\.|Preencha os dados|Conclua esta etapa/;
+  const basicWebShellPattern =
+    /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\.<\/p>|fontFamily: 'sans-serif', padding: 24/;
 
   if (/Campo principal da feature gerada|Informe o valor principal/.test(pageContent)) {
     findings.push({
@@ -1911,6 +2325,26 @@ async function runImplementationReviewInternal({ task, implementation, technical
       category: 'fallback',
       filePath: pagePath,
       message: 'A tela ainda usa textos genericos de fallback no formulario.',
+    });
+  }
+
+  if (genericUxCopyPattern.test(pageContent)) {
+    findings.push({
+      severity: 'high',
+      code: 'generic_ux_copy',
+      category: 'quality',
+      filePath: pagePath,
+      message: 'A tela ainda apresenta copy generica ou placeholder de baixo valor percebido.',
+    });
+  }
+
+  if (basicWebShellPattern.test(webAppContent) || !webAppContent.includes('Application Studio') || !webAppContent.includes('function HomePage()')) {
+    findings.push({
+      severity: 'high',
+      code: 'basic_web_shell',
+      category: 'quality',
+      filePath: 'apps/web/src/App.tsx',
+      message: 'O shell do frontend ainda esta basico demais e nao atende o padrao minimo de UX do projeto gerado.',
     });
   }
 
@@ -2047,6 +2481,139 @@ async function runImplementationReviewInternal({ task, implementation, technical
   );
 
   return { artifact, reviewReport, fixPlanArtifact };
+}
+
+async function createRepairAttemptArtifact(task, implementation, technicalSpec, repairContext) {
+  return createCurrentArtifact(
+    task.id,
+    `Implementation Repair Attempt - ${task.title}`,
+    JSON.stringify(
+      {
+        version: 1,
+        taskUuid: task.uuid,
+        implementationId: String(implementation.id),
+        featureKey: technicalSpec.featureKey,
+        generatedAt: new Date().toISOString(),
+        repairContext,
+      },
+      null,
+      2
+    ),
+    'implementation_repairer',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation.id,
+    }
+  );
+}
+
+async function materializeImplementationFiles({ task, implementation, technicalSpec, generatedApp }) {
+  const routeSpecs = await getIntegratedTechnicalSpecs(generatedApp.id, technicalSpec);
+  const featureFiles = Array.from(
+    new Map(
+      routeSpecs
+        .flatMap((spec) => {
+          const syntheticTask = buildSyntheticTaskFromSpec(spec);
+          return [
+            ...buildBackendModuleFilesFromTemplate(syntheticTask, spec),
+            ...buildFrontendFeatureFilesFromTemplate(syntheticTask, spec),
+          ];
+        })
+        .map((file) => [file.relativePath.replace(/\\/g, '/'), file])
+    ).values()
+  );
+
+  const generatedFiles = [
+    ...featureFiles,
+    ...(await ensureValidationScripts(generatedApp.rootPath)),
+    ...(await ensureWorkspaceFoundationFiles(generatedApp.rootPath, task.project.name)),
+    {
+      relativePath: `docs/implementations/${technicalSpec.featureKey}.md`,
+      content: `# ${task.title}\n\nTask UUID: ${task.uuid}\n\n## Resumo\nFeature integrada no baseline full stack pos-refinamento.\n\n## Rotas\n- Frontend: ${technicalSpec.frontend.suggestedRoute}\n- Backend: ${technicalSpec.backend.routeBase}\n`,
+      fileType: 'md',
+    },
+    await updateApiServer(generatedApp.rootPath, routeSpecs, generatedApp.slug),
+    await updateWebApp(generatedApp.rootPath, routeSpecs, task.project.name),
+    await updatePrismaSchema(generatedApp.rootPath, technicalSpec),
+  ];
+
+  await prisma.generatedFile.deleteMany({
+    where: { taskImplementationId: implementation.id },
+  });
+
+  for (const file of generatedFiles) {
+    await writeText(path.join(generatedApp.rootPath, file.relativePath), file.content);
+  }
+
+  await prisma.generatedFile.createMany({
+    data: generatedFiles.map((file) => ({
+      generatedAppId: generatedApp.id,
+      taskImplementationId: implementation.id,
+      filePath: file.relativePath.replace(/\\/g, '/'),
+      fileType: file.fileType,
+      changeType: 'created',
+      checksum: sha(file.content),
+    })),
+  });
+
+  return generatedFiles;
+}
+
+async function executeImplementationQualityCycle({ task, implementation, technicalSpec, generatedApp }) {
+  const reviewRun = await prisma.generatedAppRun.create({
+    data: {
+      uuid: randomUUID(),
+      generatedAppId: generatedApp.id,
+      taskImplementationId: implementation.id,
+      runType: 'validation',
+      status: 'running',
+      startedAt: new Date(),
+    },
+  });
+
+  const { reviewReport } = await runImplementationReviewInternal({
+    task,
+    implementation,
+    technicalSpec,
+    generatedApp,
+  });
+
+  await prisma.generatedAppRun.update({
+    where: { id: reviewRun.id },
+    data: {
+      status: reviewReport.summary.status === 'approved' ? 'completed' : 'failed',
+      finishedAt: new Date(),
+      logSummary: `Review automatico executado para ${task.uuid} com score ${reviewReport.summary.score}`,
+    },
+  });
+
+  const validationRun = await prisma.generatedAppRun.create({
+    data: {
+      uuid: randomUUID(),
+      generatedAppId: generatedApp.id,
+      taskImplementationId: implementation.id,
+      runType: 'validation',
+      status: 'running',
+      startedAt: new Date(),
+    },
+  });
+
+  const validationSuite = await runGeneratedProjectValidationSuite({
+    task,
+    implementation,
+    generatedApp,
+  });
+
+  await prisma.generatedAppRun.update({
+    where: { id: validationRun.id },
+    data: {
+      status: validationSuite.summary.status === 'completed' ? 'completed' : 'failed',
+      finishedAt: new Date(),
+      logSummary: `Validation suite executada para ${task.uuid} | lint=${validationSuite.summary.lintStatus} test=${validationSuite.summary.testStatus} build=${validationSuite.summary.buildStatus}`,
+    },
+  });
+
+  return { reviewReport, validationSuite };
 }
 
 export async function getGeneratedAppByProjectUuid(projectUuid) {
@@ -2297,7 +2864,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
   const generatedApp = await getGeneratedAppByProjectUuid(task.project.uuid);
 
   if (!generatedApp) {
-    throw new Error('O projeto ainda não possui um app full stack gerado. Faça o bootstrap primeiro.');
+    throw new Error('O projeto ainda nao possui um app full stack gerado. Faca o bootstrap primeiro.');
   }
 
   let implementation = await planTaskImplementation(taskUuid, userUuid);
@@ -2327,129 +2894,79 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
   try {
     await cleanupImplementationFiles(generatedApp.rootPath, implementation);
 
-    const technicalSpec = normalizeTechnicalSpec(JSON.parse(implementation.technicalSpecArtifact.content), task);
-    const routeSpecs = await getIntegratedTechnicalSpecs(generatedApp.id, technicalSpec);
-    const featureFiles = Array.from(
-      new Map(
-        routeSpecs
-          .flatMap((spec) => {
-            const syntheticTask = buildSyntheticTaskFromSpec(spec);
-            return [
-              ...buildBackendModuleFilesFromTemplate(syntheticTask, spec),
-              ...buildFrontendFeatureFilesFromTemplate(syntheticTask, spec),
-            ];
-          })
-          .map((file) => [file.relativePath.replace(/\\/g, '/'), file])
-      ).values()
-    );
-    const generatedFiles = [
-      ...featureFiles,
-      ...(await ensureValidationScripts(generatedApp.rootPath)),
-      ...(await ensureWorkspaceFoundationFiles(generatedApp.rootPath, task.project.name)),
-      {
-        relativePath: `docs/implementations/${technicalSpec.featureKey}.md`,
-        content: `# ${task.title}\n\nTask UUID: ${task.uuid}\n\n## Resumo\nFeature integrada no baseline full stack pós-refinamento.\n\n## Rotas\n- Frontend: ${technicalSpec.frontend.suggestedRoute}\n- Backend: ${technicalSpec.backend.routeBase}\n`,
-        fileType: 'md',
-      },
-      await updateApiServer(generatedApp.rootPath, routeSpecs, generatedApp.slug),
-      await updateWebApp(generatedApp.rootPath, routeSpecs, task.project.name),
-      await updatePrismaSchema(generatedApp.rootPath, technicalSpec),
-    ];
-
-    for (const file of generatedFiles) {
-      await writeText(path.join(generatedApp.rootPath, file.relativePath), file.content);
-    }
-
-    await prisma.generatedFile.createMany({
-      data: generatedFiles.map((file) => ({
-        generatedAppId: generatedApp.id,
-        taskImplementationId: implementation.id,
-        filePath: file.relativePath.replace(/\\/g, '/'),
-        fileType: file.fileType,
-        changeType: 'created',
-        checksum: sha(file.content),
-      })),
+    let technicalSpec = normalizeTechnicalSpec(JSON.parse(implementation.technicalSpecArtifact.content), task);
+    let generatedFiles = await materializeImplementationFiles({
+      task,
+      implementation,
+      technicalSpec,
+      generatedApp,
     });
-
-    const reviewRun = await prisma.generatedAppRun.create({
-      data: {
-        uuid: randomUUID(),
-        generatedAppId: generatedApp.id,
-        taskImplementationId: implementation.id,
-        runType: 'validation',
-        status: 'running',
-        startedAt: new Date(),
-      },
-    });
-
-    const { reviewReport } = await runImplementationReviewInternal({
+    const maxRepairAttempts = getImplementationAutoRepairAttempts();
+    const repairAttempts = [];
+    let cycleResult = await executeImplementationQualityCycle({
       task,
       implementation,
       technicalSpec,
       generatedApp,
     });
 
-    const validationRun = await prisma.generatedAppRun.create({
-      data: {
-        uuid: randomUUID(),
-        generatedAppId: generatedApp.id,
-        taskImplementationId: implementation.id,
-        runType: 'validation',
-        status: 'running',
-        startedAt: new Date(),
-      },
-    });
+    for (let attemptIndex = 1; attemptIndex <= maxRepairAttempts; attemptIndex += 1) {
+      const cyclePassed =
+        cycleResult.reviewReport.summary.status === 'approved' &&
+        cycleResult.validationSuite.summary.status === 'completed';
 
-    const validationSuite = await runGeneratedProjectValidationSuite({
-      task,
-      implementation,
-      generatedApp,
-    });
+      if (cyclePassed) {
+        break;
+      }
 
+      const repairContext = buildRepairContext({
+        reviewReport: cycleResult.reviewReport,
+        validationSummary: cycleResult.validationSuite.summary,
+        attemptNumber: attemptIndex,
+      });
+
+      await createRepairAttemptArtifact(task, implementation, technicalSpec, repairContext);
+      repairAttempts.push(repairContext);
+
+      technicalSpec = await enrichFrontendWithAi(task, technicalSpec, userUuid, repairContext);
+      generatedFiles = await materializeImplementationFiles({
+        task,
+        implementation,
+        technicalSpec,
+        generatedApp,
+      });
+      cycleResult = await executeImplementationQualityCycle({
+        task,
+        implementation,
+        technicalSpec,
+        generatedApp,
+      });
+    }
+
+    const finalSucceeded =
+      cycleResult.reviewReport.summary.status === 'approved' &&
+      cycleResult.validationSuite.summary.status === 'completed';
     const createdPaths = generatedFiles.map((file) => file.relativePath).join('\n');
     await prisma.taskImplementation.update({
       where: { id: implementation.id },
       data: {
-        status:
-          reviewReport.summary.status === 'approved' && validationSuite.summary.status === 'completed'
-            ? 'integrated'
-            : 'failed',
-        buildStatus: validationSuite.summary.buildStatus,
+        status: finalSucceeded ? 'integrated' : 'failed',
+        buildStatus: cycleResult.validationSuite.summary.buildStatus,
         testStatus:
-          validationSuite.summary.testStatus === 'completed' && validationSuite.summary.lintStatus === 'completed'
+          cycleResult.validationSuite.summary.testStatus === 'completed' &&
+          cycleResult.validationSuite.summary.lintStatus === 'completed'
             ? 'completed'
             : 'failed',
-        summary: `Integração aplicada com arquivos reais:\n${createdPaths}\n\nReview score: ${reviewReport.summary.score}\nReview status: ${reviewReport.summary.status}\nValidation status: ${validationSuite.summary.status}\nLint: ${validationSuite.summary.lintStatus}\nTest: ${validationSuite.summary.testStatus}\nBuild: ${validationSuite.summary.buildStatus}`,
-      },
-    });
-
-    await prisma.generatedAppRun.update({
-      where: { id: reviewRun.id },
-      data: {
-        status: 'completed',
-        finishedAt: new Date(),
-        logSummary: `Review automático executado para ${task.uuid} com score ${reviewReport.summary.score}`,
-      },
-    });
-
-    await prisma.generatedAppRun.update({
-      where: { id: validationRun.id },
-      data: {
-        status: validationSuite.summary.status === 'completed' ? 'completed' : 'failed',
-        finishedAt: new Date(),
-        logSummary: `Validation suite executada para ${task.uuid} | lint=${validationSuite.summary.lintStatus} test=${validationSuite.summary.testStatus} build=${validationSuite.summary.buildStatus}`,
+        summary: `Integracao aplicada com arquivos reais:\n${createdPaths}\n\nReview score: ${cycleResult.reviewReport.summary.score}\nReview status: ${cycleResult.reviewReport.summary.status}\nValidation status: ${cycleResult.validationSuite.summary.status}\nLint: ${cycleResult.validationSuite.summary.lintStatus}\nTest: ${cycleResult.validationSuite.summary.testStatus}\nBuild: ${cycleResult.validationSuite.summary.buildStatus}\nRepair attempts: ${repairAttempts.length}`,
       },
     });
 
     await prisma.generatedAppRun.update({
       where: { id: run.id },
       data: {
-        status:
-          reviewReport.summary.status === 'approved' && validationSuite.summary.status === 'completed'
-            ? 'completed'
-            : 'failed',
+        status: finalSucceeded ? 'completed' : 'failed',
         finishedAt: new Date(),
-        logSummary: `Integração incremental aplicada para ${task.uuid} | validation=${validationSuite.summary.status}`,
+        logSummary: `Integracao incremental aplicada para ${task.uuid} | validation=${cycleResult.validationSuite.summary.status} | repairAttempts=${repairAttempts.length}`,
       },
     });
   } catch (error) {

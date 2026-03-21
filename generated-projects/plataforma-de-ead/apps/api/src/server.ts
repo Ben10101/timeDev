@@ -1,6 +1,10 @@
 import express from 'express'
 import cors from 'cors'
 import { ProfileSettingsRouter } from './modules/profile-settings/index'
+import { CourseCatalogRouter } from './modules/course-catalog/index'
+import { CourseModuleRouter } from './modules/course-modules/index'
+import { CourseLessonRouter } from './modules/course-lessons/index'
+import { LessonMaterialRouter } from './modules/lesson-materials/index'
 
 const app = express()
 app.use(cors())
@@ -11,6 +15,10 @@ app.get('/health', (_req, res) => {
 })
 
 app.use('/api/profile', ProfileSettingsRouter)
+app.use('/api/courses', CourseCatalogRouter)
+app.use('/api/course-modules', CourseModuleRouter)
+app.use('/api/course-lessons', CourseLessonRouter)
+app.use('/api/lesson-materials', LessonMaterialRouter)
 
 app.listen(3001, () => {
   console.log('API running on 3001')

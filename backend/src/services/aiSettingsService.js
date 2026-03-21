@@ -85,8 +85,9 @@ export async function updateAiSettingsForUser(userUuid, input = {}) {
   return nextSettings;
 }
 
-export async function buildRuntimeAiEnvForUser(userUuid) {
+export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
   const settings = await getAiSettingsForUser(userUuid);
+  const includeLocalFallback = options.includeLocalFallback !== false;
   const remoteProviders = REMOTE_PROVIDER_KEYS.filter(
     (providerKey) => settings[providerKey]?.enabled && settings[providerKey]?.apiKey
   );
@@ -100,11 +101,12 @@ export async function buildRuntimeAiEnvForUser(userUuid) {
   ];
   const providerOrder = [
     ...orderedRemoteProviders,
-    ...(settings.ollama?.enabled === false ? [] : ['ollama']),
+    ...(includeLocalFallback && settings.ollama?.enabled !== false ? ['ollama'] : []),
   ];
   const env = {
     LLM_PROVIDER: settings.providerPreference || 'auto',
     AI_PROVIDER_ORDER: providerOrder.join(','),
+    AI_DISABLE_OLLAMA_FALLBACK: includeLocalFallback ? '0' : '1',
     OLLAMA_HOST: settings.ollama?.host || DEFAULT_AI_SETTINGS.ollama.host,
     OLLAMA_MODEL: settings.ollama?.model || DEFAULT_AI_SETTINGS.ollama.model,
     GEMINI_MODEL: settings.gemini?.model || DEFAULT_AI_SETTINGS.gemini.model,

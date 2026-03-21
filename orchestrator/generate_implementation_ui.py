@@ -47,8 +47,8 @@ def fallback(payload):
             "Validacao automatica dos campos antes do envio.",
             "Feedback imediato em caso de sucesso ou erro."
         ],
-        "recordsTitle": "Ultimos registros",
-        "recordsEmptyState": "Nenhum registro processado ainda.",
+        "recordsTitle": "Visao geral",
+        "recordsEmptyState": "Nenhum dado exibido ainda.",
     }
 
 
@@ -56,7 +56,7 @@ def main():
     payload = json.load(sys.stdin)
 
     prompt = f"""
-Voce e um especialista em UX writing e product design para interfaces SaaS.
+Voce e um especialista em UX writing e product design para interfaces SaaS premium.
 Sua tarefa e gerar apenas uma proposta curta de copy e estrutura visual para UMA tela de produto.
 
 Contexto da implementacao:
@@ -65,14 +65,19 @@ Contexto da implementacao:
 - Rota frontend: {payload.get('frontendRoute')}
 - Acao principal: {payload.get('submitLabel')}
 - Campos: {json.dumps(payload.get('fields', []), ensure_ascii=False)}
-- Regras de negocio: {json.dumps(payload.get('businessRules', []), ensure_ascii=False)}
-- Cenarios de QA: {json.dumps(payload.get('qaScenarios', []), ensure_ascii=False)}
+- Objetivos de experiencia: {json.dumps(payload.get('experienceGoals', []), ensure_ascii=False)}
+- Contexto de reparo: {json.dumps(payload.get('repairContext'), ensure_ascii=False)}
 
 Instrucoes:
-- Nao replique requisitos longos, QA ou documentacao na tela.
+- Nao replique requisitos longos, QA, criterios de aceite ou documentacao na tela.
 - Escreva como uma interface real de produto, curta e objetiva.
 - Mantenha linguagem em portugues do Brasil.
 - Priorize titulos curtos, orientados a usuario final.
+- Evite tom tecnico, burocratico ou academico.
+- Proponha uma tela com cara de produto pronto, nao de prototipo.
+- Prefira textos que transmitam clareza, confianca e valor percebido.
+- Os highlights devem parecer beneficios reais da experiencia, nunca instrucoes internas do sistema.
+- Se houver contexto de reparo, use-o para evitar repetir os mesmos problemas da tentativa anterior.
 - Retorne APENAS JSON valido, sem markdown.
 
 Formato:
