@@ -9,6 +9,7 @@ export function resolveDomainTemplate(domainKey, fallback = {}) {
 
   return {
     templateKey: 'generic/form',
+    screenTemplate: 'crud',
     heroEyebrow: fallback.frontend?.navigationLabel || fallback.entityName,
     heroTitle: fallback.frontend?.pageTitle || fallback.entityName,
     heroDescription: fallback.frontend?.pageDescription || fallback.summary,
@@ -26,4 +27,3 @@ export function resolveDomainTemplate(domainKey, fallback = {}) {
 }
 
 export { DOMAIN_TEMPLATE_CATALOG };
-

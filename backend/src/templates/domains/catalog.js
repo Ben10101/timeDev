@@ -1,6 +1,7 @@
 export const DOMAIN_TEMPLATE_CATALOG = {
   'auth-register': {
     templateKey: 'auth/register',
+    screenTemplate: 'wizard',
     heroEyebrow: 'Cadastro',
     heroTitle: 'Crie sua conta',
     heroDescription: 'Cadastre seu acesso com e-mail e senha para comecar a usar a plataforma.',
@@ -18,6 +19,7 @@ export const DOMAIN_TEMPLATE_CATALOG = {
   },
   'auth-login': {
     templateKey: 'auth/login',
+    screenTemplate: 'settings',
     heroEyebrow: 'Autenticacao',
     heroTitle: 'Entre na plataforma',
     heroDescription: 'Use suas credenciais para acessar cursos, progresso e recursos da sua conta.',
@@ -35,6 +37,7 @@ export const DOMAIN_TEMPLATE_CATALOG = {
   },
   'profile-settings': {
     templateKey: 'profile/update',
+    screenTemplate: 'settings',
     heroEyebrow: 'Perfil',
     heroTitle: 'Atualize seu perfil',
     heroDescription: 'Mantenha nome, foto e dados principais da conta sempre consistentes.',
@@ -52,6 +55,7 @@ export const DOMAIN_TEMPLATE_CATALOG = {
   },
   'course-catalog': {
     templateKey: 'education/course-catalog',
+    screenTemplate: 'crud',
     heroEyebrow: 'Cursos',
     heroTitle: 'Lance um curso com posicionamento forte',
     heroDescription: 'Defina nome, descricao, categoria e preco para abrir uma oferta clara e pronta para vender.',
@@ -69,6 +73,7 @@ export const DOMAIN_TEMPLATE_CATALOG = {
   },
   'course-modules': {
     templateKey: 'education/course-modules',
+    screenTemplate: 'wizard',
     heroEyebrow: 'Modulos',
     heroTitle: 'Estruture o curso com ritmo e clareza',
     heroDescription: 'Organize o conteudo em modulos bem definidos para tornar a jornada mais intuitiva.',
@@ -86,6 +91,7 @@ export const DOMAIN_TEMPLATE_CATALOG = {
   },
   'course-lessons': {
     templateKey: 'education/course-lessons',
+    screenTemplate: 'wizard',
     heroEyebrow: 'Aulas',
     heroTitle: 'Crie aulas mais faceis de consumir',
     heroDescription: 'Associe cada aula ao modulo certo e escolha o formato ideal para o conteudo.',
@@ -103,6 +109,7 @@ export const DOMAIN_TEMPLATE_CATALOG = {
   },
   'lesson-materials': {
     templateKey: 'education/lesson-materials',
+    screenTemplate: 'crud',
     heroEyebrow: 'Materiais',
     heroTitle: 'Entregue materiais que ampliam o valor da aula',
     heroDescription: 'Anexe arquivos, links e recursos de apoio para enriquecer a experiencia do aluno.',

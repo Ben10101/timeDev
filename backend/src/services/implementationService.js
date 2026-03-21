@@ -140,12 +140,20 @@ function formatValidationFailures(summary) {
     }));
 }
 
-function buildRepairContext({ reviewReport, validationSummary, attemptNumber }) {
+function buildRepairContext({ reviewReport, specialistReviewReport, validationSummary, attemptNumber }) {
   return {
     attemptNumber,
     reviewStatus: reviewReport?.summary?.status || 'unknown',
     reviewScore: reviewReport?.summary?.score ?? null,
+    specialistReviewStatus: specialistReviewReport?.summary?.status || 'unknown',
+    specialistReviewScore: specialistReviewReport?.summary?.score ?? null,
     findings: (reviewReport?.findings || []).slice(0, 10).map((finding) => ({
+      code: finding.code,
+      severity: finding.severity,
+      filePath: finding.filePath,
+      message: finding.message,
+    })),
+    specialistFindings: (specialistReviewReport?.findings || []).slice(0, 10).map((finding) => ({
       code: finding.code,
       severity: finding.severity,
       filePath: finding.filePath,
@@ -153,6 +161,203 @@ function buildRepairContext({ reviewReport, validationSummary, attemptNumber }) 
     })),
     validationStatus: validationSummary?.status || 'unknown',
     validationFailures: formatValidationFailures(validationSummary),
+  };
+}
+
+function parseJsonArtifactContent(artifact) {
+  if (!artifact?.content) return null;
+
+  try {
+    return JSON.parse(artifact.content);
+  } catch {
+    return null;
+  }
+}
+
+function buildImplementationQualitySummary({ implementation, reviewArtifact, specialistReviewArtifact, buildReportArtifact, testReportArtifact, lintReportArtifact }) {
+  const reviewContent = parseJsonArtifactContent(reviewArtifact);
+  const specialistReviewContent = parseJsonArtifactContent(specialistReviewArtifact);
+  const buildContent = parseJsonArtifactContent(buildReportArtifact);
+  const testContent = parseJsonArtifactContent(testReportArtifact);
+  const lintContent = parseJsonArtifactContent(lintReportArtifact);
+  const technicalSpecContent = parseJsonArtifactContent(implementation?.technicalSpecArtifact);
+  const score = reviewContent?.summary?.score ?? null;
+  const reviewStatus = reviewContent?.summary?.status || 'unknown';
+  const findings = reviewContent?.findings || [];
+  const countsBySeverity = findings.reduce(
+    (acc, item) => {
+      const key = item.severity || 'low';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    },
+    { high: 0, medium: 0, low: 0 }
+  );
+  const validationScore =
+    (lintContent?.status === 'completed' ? 25 : 0) +
+    (testContent?.status === 'completed' ? 35 : 0) +
+    (buildContent?.status === 'completed' ? 40 : 0);
+
+  return {
+    score,
+    reviewStatus,
+    specialistReviewStatus: specialistReviewContent?.summary?.status || 'unknown',
+    specialistScore: specialistReviewContent?.summary?.score ?? null,
+    verdict: reviewContent?.summary?.verdict || null,
+    buildStatus: buildContent?.status || implementation?.buildStatus || 'unknown',
+    testStatus: testContent?.status || implementation?.testStatus || 'unknown',
+    lintStatus: lintContent?.status || 'unknown',
+    totalFindings: reviewContent?.summary?.totalFindings ?? findings.length,
+    findingsBySeverity: countsBySeverity,
+    uxScore: reviewContent?.summary?.uxScore ?? null,
+    consistencyScore: reviewContent?.summary?.consistencyScore ?? null,
+    maintainabilityScore: reviewContent?.summary?.maintainabilityScore ?? null,
+    specialistArchitectureScore: specialistReviewContent?.summary?.architectureScore ?? null,
+    specialistExperienceScore: specialistReviewContent?.summary?.experienceScore ?? null,
+    validationScore,
+    screenTemplate:
+      reviewContent?.structured?.classification?.screenTemplate ||
+      technicalSpecContent?.architecture?.screenTemplate ||
+      technicalSpecContent?.structured?.classification?.screenTemplate ||
+      null,
+  };
+}
+
+async function buildProjectMemorySnapshot(task, generatedApp) {
+  const implementations = await prisma.taskImplementation.findMany({
+    where: {
+      generatedAppId: generatedApp.id,
+      status: { in: ['planned', 'in_progress', 'integrated', 'failed'] },
+    },
+    include: {
+      task: {
+        select: { uuid: true, title: true, status: true },
+      },
+      technicalSpecArtifact: true,
+    },
+    orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+    take: 30,
+  });
+
+  const reviewArtifacts = await prisma.taskArtifact.findMany({
+    where: {
+      taskId: { in: implementations.map((item) => item.taskId) },
+      title: { startsWith: 'Implementation Review - ' },
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const reviewByTaskId = new Map();
+  for (const artifact of reviewArtifacts) {
+    if (!reviewByTaskId.has(artifact.taskId)) {
+      reviewByTaskId.set(artifact.taskId, parseJsonArtifactContent(artifact));
+    }
+  }
+
+  const featurePatterns = [];
+  const screenTemplates = {};
+  const recurringFindings = {};
+  const highQualityReferences = [];
+
+  for (const implementation of implementations) {
+    const spec = parseJsonArtifactContent(implementation.technicalSpecArtifact);
+    const review = reviewByTaskId.get(implementation.taskId);
+    if (!spec) continue;
+
+    const templateKey = spec?.structured?.classification?.templateKey || 'generic/form';
+    const screenTemplate = spec?.architecture?.screenTemplate || spec?.structured?.classification?.screenTemplate || 'crud';
+    screenTemplates[screenTemplate] = (screenTemplates[screenTemplate] || 0) + 1;
+
+    featurePatterns.push({
+      taskUuid: implementation.task.uuid,
+      title: implementation.task.title,
+      featureKey: spec.featureKey,
+      route: spec.frontend?.suggestedRoute,
+      routeBase: spec.backend?.routeBase,
+      templateKey,
+      screenTemplate,
+      status: implementation.status,
+      score: review?.summary?.score ?? null,
+    });
+
+    for (const finding of review?.findings || []) {
+      recurringFindings[finding.code] = (recurringFindings[finding.code] || 0) + 1;
+    }
+
+    if ((review?.summary?.score || 0) >= 90 && implementation.status === 'integrated') {
+      highQualityReferences.push({
+        featureKey: spec.featureKey,
+        route: spec.frontend?.suggestedRoute,
+        templateKey,
+        screenTemplate,
+        score: review.summary.score,
+      });
+    }
+  }
+
+  return {
+    version: 1,
+    projectUuid: task.project.uuid,
+    taskUuid: task.uuid,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      integratedFeatures: featurePatterns.filter((item) => item.status === 'integrated').length,
+      totalKnownFeatures: featurePatterns.length,
+      preferredScreenTemplate:
+        Object.entries(screenTemplates).sort((a, b) => b[1] - a[1])[0]?.[0] || 'crud',
+    },
+    featurePatterns,
+    recurringFindings: Object.entries(recurringFindings)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([code, count]) => ({ code, count })),
+    highQualityReferences: highQualityReferences.slice(0, 6),
+  };
+}
+
+async function createProjectMemoryArtifact(task, implementation, generatedApp) {
+  const systemTask = await ensureDevelopmentStageTask(task.project.id);
+  const snapshot = await buildProjectMemorySnapshot(task, generatedApp);
+
+  const artifact = await createCurrentArtifact(
+    systemTask.id,
+    `Project Memory Snapshot - ${task.project.name}`,
+    JSON.stringify(snapshot, null, 2),
+    'implementation_memory',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation?.id || null,
+    }
+  );
+
+  return { artifact, snapshot };
+}
+
+function buildExecutionStrategy(task, generatedApp, technicalSpec, projectMemory) {
+  return {
+    version: 1,
+    taskUuid: task.uuid,
+    generatedAppUuid: generatedApp.uuid,
+    generatedAt: new Date().toISOString(),
+    screenTemplate: technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud',
+    preferredTemplateFromMemory: projectMemory?.summary?.preferredScreenTemplate || null,
+    stages: [
+      'strategy',
+      'materialize',
+      'review_structural',
+      'review_specialist',
+      'validate',
+      'refactor_if_needed',
+      'validate_again',
+    ],
+    architectureSummary: technicalSpec.architecture?.sourceSummary || null,
+    projectMemory: projectMemory || null,
+    qualityTargets: {
+      reviewScore: 85,
+      validationScore: 80,
+      specialistApproval: true,
+    },
   };
 }
 
@@ -190,6 +395,46 @@ async function getTaskWithArtifactsOrThrow(taskUuid) {
   return task;
 }
 
+async function ensureDevelopmentStageTask(projectId) {
+  let task = await prisma.task.findFirst({
+    where: {
+      projectId,
+      taskType: 'agent_job',
+      title: '[SYSTEM] Development Master',
+    },
+    select: { id: true, uuid: true, title: true },
+  });
+
+  if (task) return task;
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: { creator: { select: { id: true } } },
+  });
+
+  if (!project) {
+    throw new Error('Projeto nao encontrado ao criar task de sistema.');
+  }
+
+  task = await prisma.task.create({
+    data: {
+      uuid: randomUUID(),
+      projectId,
+      title: '[SYSTEM] Development Master',
+      description: 'Artefatos tecnicos consolidados do pipeline de implementacao.',
+      taskType: 'agent_job',
+      status: 'done',
+      priority: 'medium',
+      assigneeType: 'agent',
+      assigneeAgentName: 'developer',
+      createdBy: project.creator.id,
+    },
+    select: { id: true, uuid: true, title: true },
+  });
+
+  return task;
+}
+
 function inferFieldDefinitions(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
 
@@ -212,7 +457,7 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
       {
         name: 'description',
         label: 'Descricao',
-        inputType: 'text',
+        inputType: 'textarea',
         tsType: 'string',
         prismaType: 'String',
         required: true,
@@ -273,7 +518,7 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
       {
         name: 'moduleDescription',
         label: 'Descricao do modulo',
-        inputType: 'text',
+        inputType: 'textarea',
         tsType: 'string',
         prismaType: 'String',
         required: false,
@@ -320,7 +565,7 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
       {
         name: 'mediaType',
         label: 'Tipo de midia',
-        inputType: 'text',
+        inputType: 'select',
         tsType: 'string',
         prismaType: 'String',
         required: true,
@@ -329,6 +574,7 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
         placeholder: 'video | audio | pdf',
         defaultValue: 'video',
         sampleValue: 'video',
+        selectOptions: ['video', 'audio', 'pdf'],
         validations: ['required'],
       },
       {
@@ -367,7 +613,7 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
       {
         name: 'fileType',
         label: 'Tipo de arquivo',
-        inputType: 'text',
+        inputType: 'select',
         tsType: 'string',
         prismaType: 'String',
         required: true,
@@ -376,6 +622,7 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
         placeholder: 'pdf | planilha | zip',
         defaultValue: 'pdf',
         sampleValue: 'pdf',
+        selectOptions: ['pdf', 'planilha', 'zip', 'link'],
         validations: ['required'],
       },
       {
@@ -869,12 +1116,17 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
       taskTitle: task.title,
       summary: technicalSpec.summary,
       frontendRoute: technicalSpec.frontend.suggestedRoute,
+      screenTemplate: technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud',
       submitLabel: technicalSpec.domain.submitLabel,
       navigationLabel: technicalSpec.frontend.navigationLabel,
       pageTitle: technicalSpec.frontend.pageTitle,
       pageDescription: technicalSpec.frontend.pageDescription,
       fields: technicalSpec.domain.fields,
       experienceGoals,
+      uiStates: technicalSpec.ux?.states,
+      validationSummary: technicalSpec.ux?.validationSummary,
+      permissions: technicalSpec.ux?.permissions,
+      projectMemory: technicalSpec.projectMemory,
       repairContext,
     }, { envOverrides });
 
@@ -997,6 +1249,43 @@ function buildFieldInitializer(field) {
   return `${field.name}: input.${field.name}`;
 }
 
+function hasEncodingArtifacts(content) {
+  return /Ã.|Â|�/.test(String(content || ''));
+}
+
+function inferUiStates(actionSpec, fields, qaScenarios) {
+  return {
+    loading: `Carregando dados de ${actionSpec.navigationLabel.toLowerCase()}...`,
+    empty: actionSpec.recordsEmptyState || 'Nenhum registro disponivel ainda.',
+    success: actionSpec.successMessage,
+    error: 'Nao foi possivel concluir a operacao. Revise os dados e tente novamente.',
+    validation: qaScenarios.map((scenario) => scenario.message).slice(0, 5),
+    fieldCount: fields.length,
+  };
+}
+
+function inferValidationSummary(fields) {
+  return fields.map((field) => ({
+    field: field.name,
+    label: field.label,
+    required: field.required,
+    validations: field.validations || [],
+  }));
+}
+
+function inferPermissions(sourceText) {
+  const normalized = stripAccents(sourceText).toLowerCase();
+  return {
+    requiresAuthentication: /\blogado\b|\bautenticad|\bconta ativa\b/.test(normalized),
+    actor: /\baluno\b/.test(normalized)
+      ? 'student'
+      : /\binfoprodutor\b/.test(normalized)
+        ? 'creator'
+        : 'user',
+    scope: /\badmin\b|\badministrador\b/.test(normalized) ? 'admin' : 'self_service',
+  };
+}
+
 function inferDomainName(actionSpec, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
 
@@ -1028,6 +1317,55 @@ function inferIntent(actionSpec, sourceText) {
   return 'custom';
 }
 
+function inferScreenTemplate(actionSpec, fields, sourceText) {
+  const normalized = stripAccents(sourceText).toLowerCase();
+  const hasFewFields = (fields || []).length <= 3;
+
+  if (actionSpec.domainKey === 'profile-settings') return 'settings';
+  if (actionSpec.domainKey.startsWith('auth-')) return hasFewFields ? 'settings' : 'wizard';
+  if (/\bdashboard\b|\bpainel\b|\brelatorio\b|\bmetricas\b/.test(normalized)) return 'dashboard';
+  if (/\betapa\b|\bpasso\b|\bwizard\b|\bsequencia\b/.test(normalized)) return 'wizard';
+  if (/\bconfigurar\b|\bpreferencia\b|\bajuste\b|\bperfil\b/.test(normalized)) return 'settings';
+
+  return 'crud';
+}
+
+function extractArchitectureHighlights(architectureSource) {
+  const lines = String(architectureSource || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const sections = {
+    stack: [],
+    modules: [],
+    entities: [],
+    contracts: [],
+  };
+
+  for (const line of lines) {
+    const normalized = stripAccents(line).toLowerCase();
+
+    if (sections.stack.length < 5 && /\b(stack|frontend|backend|prisma|react|express|vite|typescript)\b/.test(normalized)) {
+      sections.stack.push(line);
+    }
+
+    if (sections.modules.length < 6 && /\b(modulo|modulos|module|feature|dominio|domain)\b/.test(normalized)) {
+      sections.modules.push(line);
+    }
+
+    if (sections.entities.length < 6 && /\b(entidade|entidades|entity|model|modelo|tabela)\b/.test(normalized)) {
+      sections.entities.push(line);
+    }
+
+    if (sections.contracts.length < 6 && /\b(api|rota|route|endpoint|contract|contrato)\b/.test(normalized)) {
+      sections.contracts.push(line);
+    }
+  }
+
+  return sections;
+}
+
 function buildUiSections(actionSpec, fields, frontendSpec) {
   const sections = [
     {
@@ -1048,6 +1386,10 @@ function buildUiSections(actionSpec, fields, frontendSpec) {
       label: field.label,
       inputType: field.inputType,
       required: field.required,
+      helperText: field.helperText,
+      placeholder: field.placeholder,
+      validations: field.validations || [],
+      selectOptions: field.selectOptions || [],
     })),
     primaryAction: actionSpec.submitLabel,
   });
@@ -1072,6 +1414,7 @@ function buildStructuredSpec(task, actionSpec, fields, businessRules, qaScenario
     classification: {
       domain: inferDomainName(actionSpec, `${task.title}\n${task.description || ''}`),
       intent: inferIntent(actionSpec, `${task.title}\n${task.description || ''}`),
+      screenTemplate: inferScreenTemplate(actionSpec, fields, `${task.title}\n${task.description || ''}`),
       changeType: 'feature',
       implementationMode: 'post_refinement',
       templateKey: domainTemplate.templateKey,
@@ -1093,16 +1436,27 @@ function buildStructuredSpec(task, actionSpec, fields, businessRules, qaScenario
       route: frontendSpec.suggestedRoute,
       navigationLabel: frontendSpec.navigationLabel,
       sections: buildUiSections(actionSpec, fields, frontendSpec),
+      states: inferUiStates(
+        {
+          ...actionSpec,
+          recordsEmptyState: frontendSpec.recordsEmptyState || domainTemplate.recordsEmptyState,
+        },
+        fields,
+        qaScenarios
+      ),
     },
     api: {
       routeBase: backendSpec.routeBase,
       routes: backendSpec.routes,
       requestContractName: sharedSpec.requestContractName,
       responseContractName: sharedSpec.responseContractName,
+      actor: inferPermissions(`${task.title}\n${task.description || ''}`).actor,
     },
     constraints: {
       businessRules,
       qaScenarios,
+      validations: inferValidationSummary(fields),
+      permissions: inferPermissions(`${task.title}\n${task.description || ''}`),
     },
     files: {
       frontend: [
@@ -1154,6 +1508,11 @@ function buildTechnicalSpec(task, projectArchitectureSource = '') {
   const fields = inferFieldDefinitions(sourceText, actionSpec);
   const businessRules = inferBusinessRules(sourceText);
   const qaScenarios = inferQaScenarios(sourceText);
+  const uiStates = inferUiStates(actionSpec, fields, qaScenarios);
+  const validationSummary = inferValidationSummary(fields);
+  const permissions = inferPermissions(sourceText);
+  const screenTemplate = inferScreenTemplate(actionSpec, fields, sourceText);
+  const architectureHighlights = extractArchitectureHighlights(architectureSource);
   const requestContractName = `${entityName}Request`;
   const responseContractName = `${entityName}Response`;
   const listContractName = `${entityName}ListResponse`;
@@ -1215,6 +1574,15 @@ function buildTechnicalSpec(task, projectArchitectureSource = '') {
     backend: backendSpec,
     shared: sharedSpec,
     database: databaseSpec,
+    ux: {
+      states: uiStates,
+      validationSummary,
+      permissions,
+    },
+    architecture: {
+      screenTemplate,
+      sourceSummary: architectureHighlights,
+    },
     structured: buildStructuredSpec(
       task,
       actionSpec,
@@ -1249,6 +1617,14 @@ function normalizeTechnicalSpec(rawSpec, task) {
   const fields = rawSpec?.domain?.fields || rawSpec?.database?.fields || inferFieldDefinitions(sourceText, actionSpec);
   const businessRules = rawSpec?.businessRules || inferBusinessRules(sourceText);
   const qaScenarios = rawSpec?.qaScenarios || inferQaScenarios(sourceText);
+  const uiStates = rawSpec?.ux?.states || inferUiStates(actionSpec, fields, qaScenarios);
+  const validationSummary = rawSpec?.ux?.validationSummary || inferValidationSummary(fields);
+  const permissions = rawSpec?.ux?.permissions || inferPermissions(sourceText);
+  const screenTemplate =
+    rawSpec?.architecture?.screenTemplate ||
+    rawSpec?.structured?.classification?.screenTemplate ||
+    inferScreenTemplate(actionSpec, fields, sourceText);
+  const architectureHighlights = rawSpec?.architecture?.sourceSummary || extractArchitectureHighlights(rawSpec?.architectureSource || '');
   const requestContractName = rawSpec?.shared?.requestContractName || `${entityName}Request`;
   const responseContractName = rawSpec?.shared?.responseContractName || `${entityName}Response`;
   const listContractName = rawSpec?.shared?.listContractName || `${entityName}ListResponse`;
@@ -1301,6 +1677,15 @@ function normalizeTechnicalSpec(rawSpec, task) {
       schemaPath: rawSpec?.database?.schemaPath || 'prisma/schema.prisma',
       modelName: rawSpec?.database?.modelName || entityName,
       fields,
+    },
+    ux: {
+      states: uiStates,
+      validationSummary,
+      permissions,
+    },
+    architecture: {
+      screenTemplate,
+      sourceSummary: architectureHighlights,
     },
     structured:
       rawSpec?.structured ||
@@ -1356,6 +1741,8 @@ function buildImplementationPlan(task, generatedApp, technicalSpec) {
     generatedAppRoot: generatedApp.rootPath,
     steps: [
       'Ler o contexto atual do monorepo gerado',
+      `Aplicar o template de tela ${technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud'}`,
+      'Usar os highlights da arquitetura para respeitar stack, modulos e contratos ja definidos',
       'Criar contrato compartilhado da feature',
       'Criar módulo funcional no backend',
       'Registrar rota real no servidor da API',
@@ -1378,6 +1765,12 @@ function buildImplementationPlan(task, generatedApp, technicalSpec) {
       technicalSpec.database.schemaPath,
       `docs/implementations/${technicalSpec.featureKey}.md`,
     ],
+    architectureGuidance: technicalSpec.architecture?.sourceSummary || null,
+    qualityTargets: {
+      minimumReviewScore: 85,
+      requiredStatuses: ['review=approved', 'lint=completed', 'test=completed', 'build=completed'],
+      screenTemplate: technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud',
+    },
   };
 }
 
@@ -1514,23 +1907,50 @@ function frontendFeatureFiles(task, technicalSpec) {
     `${technicalSpec.frontend.featurePath}/page.tsx`,
     technicalSpec.shared.contractPath
   );
+  const uiImportPath = toImportPath(
+    `${technicalSpec.frontend.featurePath}/page.tsx`,
+    'packages/ui/src/index.tsx'
+  );
   const initialStateEntries = technicalSpec.domain.fields
     .map((field) => `  ${field.name}: '${escapeTemplate(field.defaultValue || '')}',`)
     .join('\n');
   const inputBlocks = technicalSpec.domain.fields
-    .map(
-      (field) => `        <label style={{ display: 'grid', gap: 6 }}>\n          <span>${field.label}</span>\n          <input\n            type="${field.inputType}"\n            value={form.${field.name}}\n            placeholder="${escapeTemplate(field.placeholder)}"\n            onChange={(event) => setForm((current) => ({ ...current, ${field.name}: event.target.value }))}\n            style={{ padding: 12, borderRadius: 8, border: '1px solid #cbd5e1' }}\n          />\n          <small style={{ color: '#64748b' }}>${escapeTemplate(field.helperText)}</small>\n        </label>`
-    )
+    .map((field) => {
+      const common = `              value={form.${field.name}}\n              onChange={(event) => setForm((current) => ({ ...current, ${field.name}: event.target.value }))}`;
+      let control = '';
+
+      if (field.inputType === 'textarea') {
+        control = `            <textarea\n${common}\n              placeholder="${escapeTemplate(field.placeholder)}"\n              style={inputStyle({ minHeight: 132, resize: 'vertical' })}\n            />`;
+      } else if (field.inputType === 'select' && Array.isArray(field.selectOptions) && field.selectOptions.length) {
+        const options = field.selectOptions
+          .map((option) => `              <option value="${escapeTemplate(option)}">${escapeTemplate(humanizeFieldName(option))}</option>`)
+          .join('\n');
+        control = `            <select\n${common}\n              style={inputStyle()}\n            >\n${options}\n            </select>`;
+      } else {
+        control = `            <input\n              type="${field.inputType}"\n${common}\n              placeholder="${escapeTemplate(field.placeholder)}"\n              style={inputStyle()}\n            />`;
+      }
+
+      return `          <FieldGroup label="${escapeTemplate(field.label)}" hint="${escapeTemplate(field.helperText)}">\n${control}\n          </FieldGroup>`;
+    })
     .join('\n');
   const payloadObject = technicalSpec.domain.fields.map((field) => `      ${field.name}: form.${field.name},`).join('\n');
   const previewField = technicalSpec.domain.fields.find((field) => field.name === 'email') || technicalSpec.domain.fields[0];
+  const secondaryField =
+    technicalSpec.domain.fields.find((field) => field.name !== previewField.name && field.name !== 'password') ||
+    previewField;
   const highlights = (technicalSpec.frontend.highlights || [])
-    .slice(0, 3)
-    .map(
-      (item) =>
-        `              <div style={{ padding: '14px 16px', borderRadius: 18, background: 'rgba(255,255,255,0.1)' }}>${escapeTemplate(item)}</div>`
-    )
-    .join('\n');
+    .slice(0, 3);
+  const accentByTemplateKey = {
+    'auth/register': 'blue',
+    'auth/login': 'violet',
+    'profile/update': 'amber',
+    'education/course-catalog': 'teal',
+    'education/course-modules': 'blue',
+    'education/course-lessons': 'violet',
+    'education/lesson-materials': 'amber',
+  };
+  const accent = accentByTemplateKey[technicalSpec.structured?.classification?.templateKey] || 'teal';
+  const layout = technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'split';
 
   return [
     {
@@ -1540,7 +1960,7 @@ function frontendFeatureFiles(task, technicalSpec) {
     },
     {
       relativePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
-      content: `import { useEffect, useState } from 'react';\nimport type { FormEvent } from 'react';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\nimport { create${entityName}, fetch${entityName}Items } from './service';\n\nconst initialForm: ${technicalSpec.shared.requestContractName} = {\n${initialStateEntries}\n};\n\nexport function ${technicalSpec.frontend.pageComponentName}() {\n  const [items, setItems] = useState<${technicalSpec.shared.responseContractName}[]>([]);\n  const [form, setForm] = useState<${technicalSpec.shared.requestContractName}>(initialForm);\n  const [feedback, setFeedback] = useState('');\n  const [errorMessage, setErrorMessage] = useState('');\n\n  useEffect(() => {\n    fetch${entityName}Items().then(setItems).catch(() => setItems([]));\n  }, []);\n\n  async function handleSubmit(event: FormEvent<HTMLFormElement>) {\n    event.preventDefault();\n    setFeedback('');\n    setErrorMessage('');\n\n    try {\n      const created = await create${entityName}({\n${payloadObject}\n      });\n      setItems((current) => [...current, created]);\n      setForm(initialForm);\n      setFeedback('${escapeTemplate(technicalSpec.domain.successMessage)}');\n    } catch (error) {\n      setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');\n    }\n  }\n\n  return (\n    <section style={{ minHeight: '100vh', background: '#f8fafc', padding: 32 }}>\n      <div style={{ maxWidth: 1040, margin: '0 auto', display: 'grid', gap: 32, gridTemplateColumns: 'minmax(0, 1.05fr) minmax(320px, 0.95fr)' }}>\n        <div style={{ display: 'grid', gap: 18, alignContent: 'start', paddingTop: 32 }}>\n          <span style={{ display: 'inline-flex', width: 'fit-content', padding: '8px 14px', borderRadius: 999, background: '#ccfbf1', color: '#115e59', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', fontSize: 12 }}>\n            ${escapeTemplate(technicalSpec.frontend.navigationLabel || technicalSpec.entityName)}\n          </span>\n          <div style={{ display: 'grid', gap: 12 }}>\n            <h2 style={{ margin: 0, fontSize: 44, lineHeight: 1.05, color: '#0f172a' }}>${escapeTemplate(technicalSpec.frontend.pageTitle || technicalSpec.entityName)}</h2>\n            <p style={{ margin: 0, fontSize: 18, lineHeight: 1.6, color: '#475569', maxWidth: 560 }}>${escapeTemplate(technicalSpec.frontend.pageDescription || technicalSpec.summary)}</p>\n          </div>\n          <div style={{ display: 'grid', gap: 14, padding: 24, borderRadius: 24, background: 'linear-gradient(135deg, #0f766e, #115e59)', color: '#f8fafc', boxShadow: '0 24px 60px rgba(15, 118, 110, 0.22)' }}>\n            <strong style={{ fontSize: 16 }}>${escapeTemplate(technicalSpec.frontend.heroEyebrow || 'Fluxo principal')}</strong>\n            <p style={{ margin: 0, lineHeight: 1.6, color: 'rgba(248, 250, 252, 0.88)' }}>${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.summary)}</p>\n            <div style={{ display: 'grid', gap: 10 }}>\n${highlights || `              <div style={{ padding: '14px 16px', borderRadius: 18, background: 'rgba(255,255,255,0.1)' }}>Validacao automatica dos campos antes do envio.</div>`}\n            </div>\n          </div>\n        </div>\n\n        <div style={{ display: 'grid', gap: 20, alignContent: 'start' }}>\n          <div style={{ padding: 28, borderRadius: 28, background: '#ffffff', boxShadow: '0 22px 50px rgba(15, 23, 42, 0.08)', border: '1px solid #e2e8f0' }}>\n            <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>\n${inputBlocks}\n              <button type="submit" style={{ padding: '14px 18px', borderRadius: 14, border: 'none', background: '#0f766e', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer' }}>\n                ${escapeTemplate(technicalSpec.domain.submitLabel)}\n              </button>\n            </form>\n\n            {feedback ? <p style={{ marginTop: 16, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}\n            {errorMessage ? <p style={{ marginTop: 16, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}\n          </div>\n\n          <div style={{ padding: 24, borderRadius: 24, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 16px 40px rgba(15, 23, 42, 0.06)' }}>\n            <h3 style={{ marginTop: 0, marginBottom: 12, color: '#0f172a' }}>${escapeTemplate(technicalSpec.frontend.recordsTitle || 'Ultimos registros')}</h3>\n            {items.length ? (\n              <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', display: 'grid', gap: 8 }}>\n                {items.map((item) => (\n                  <li key={item.id}>{String(item.${previewField.name === 'password' ? 'passwordHint' : previewField.name} || item.id)}</li>\n                ))}\n              </ul>\n            ) : (\n              <p style={{ margin: 0, color: '#64748b' }}>${escapeTemplate(technicalSpec.frontend.recordsEmptyState || 'Nenhum registro processado ainda.')}</p>\n            )}\n          </div>\n        </div>\n      </div>\n    </section>\n  );\n}\n`,
+      content: `import { useEffect, useState } from 'react';\nimport type { FormEvent } from 'react';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\nimport { FeaturePage, FieldGroup, PrimaryButton, inputStyle } from '${uiImportPath}';\nimport { create${entityName}, fetch${entityName}Items } from './service';\n\nconst initialForm: ${technicalSpec.shared.requestContractName} = {\n${initialStateEntries}\n};\n\nexport function ${technicalSpec.frontend.pageComponentName}() {\n  const [items, setItems] = useState<${technicalSpec.shared.responseContractName}[]>([]);\n  const [form, setForm] = useState<${technicalSpec.shared.requestContractName}>(initialForm);\n  const [feedback, setFeedback] = useState('');\n  const [errorMessage, setErrorMessage] = useState('');\n\n  useEffect(() => {\n    fetch${entityName}Items().then(setItems).catch(() => setItems([]));\n  }, []);\n\n  async function handleSubmit(event: FormEvent<HTMLFormElement>) {\n    event.preventDefault();\n    setFeedback('');\n    setErrorMessage('');\n\n    try {\n      const created = await create${entityName}({\n${payloadObject}\n      });\n      setItems((current) => [created, ...current]);\n      setForm(initialForm);\n      setFeedback('${escapeTemplate(technicalSpec.domain.successMessage)}');\n    } catch (error) {\n      setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');\n    }\n  }\n\n  return (\n    <FeaturePage\n      accent="${accent}"\n      layout="${layout}"\n      eyebrow="${escapeTemplate(technicalSpec.frontend.heroEyebrow || technicalSpec.frontend.navigationLabel || technicalSpec.entityName)}"\n      title="${escapeTemplate(technicalSpec.frontend.heroTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      description="${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      metrics={[\n        { label: 'Campos essenciais', value: '${technicalSpec.domain.fields.length}' },\n        { label: 'Registros atuais', value: String(items.length) },\n        { label: 'Acao principal', value: '${escapeTemplate(technicalSpec.domain.submitLabel)}' },\n      ]}\n      highlights={${JSON.stringify(highlights.length ? highlights : ['Experiencia preparada para uma operacao mais clara e confiavel.'])}}\n      formTitle="${escapeTemplate(technicalSpec.frontend.formCardTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      formDescription="${escapeTemplate(technicalSpec.frontend.formCardDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      form={\n        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>\n${inputBlocks}\n          <PrimaryButton type="submit" accent="${accent}">\n            ${escapeTemplate(technicalSpec.domain.submitLabel)}\n          </PrimaryButton>\n\n          {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}\n          {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}\n        </form>\n      }\n      listTitle="${escapeTemplate(technicalSpec.frontend.recordsTitle || 'Registros recentes')}"\n      listDescription="${escapeTemplate(technicalSpec.ux?.states?.empty || 'Acompanhe os registros criados nesta area.')}"\n      listMeta={\`\${items.length} registro(s)\`}\n    >\n      {items.length ? (\n        <div style={{ display: 'grid', gap: 12 }}>\n          {items.map((item) => (\n            <article key={item.id} style={{ padding: 18, borderRadius: 20, background: '#f8fafc', border: '1px solid #e2e8f0' }}>\n              <strong style={{ display: 'block', color: '#0f172a', fontSize: 17 }}>{String(item.${previewField.name === 'password' ? 'passwordHint' : previewField.name} || item.id)}</strong>\n              <span style={{ display: 'block', marginTop: 6, color: '#64748b' }}>{String(item.${secondaryField.name === 'password' ? 'passwordHint' : secondaryField.name} || item.status || 'active')}</span>\n            </article>\n          ))}\n        </div>\n      ) : (\n        <p style={{ margin: 0, color: '#64748b' }}>${escapeTemplate(technicalSpec.frontend.recordsEmptyState || technicalSpec.ux?.states?.empty || 'Nenhum registro disponivel ainda.')}</p>\n      )}\n    </FeaturePage>\n  );\n}\n`,
       fileType: 'tsx',
     },
     {
@@ -2022,6 +2442,7 @@ async function updateWebApp(generatedAppRoot, routeSpecs, projectName) {
   const importLines = uniqueRouteSpecs
     .map((spec) => `import { ${spec.frontend.pageComponentName} } from './features/${spec.featureKey}/index'`)
     .join('\n');
+  const shellImport = `import { AppFrame, AppHeader, StudioHome } from '../../../packages/ui/src/index.tsx'`;
   const routeLines = uniqueRouteSpecs
     .map(
       (spec) =>
@@ -2029,7 +2450,7 @@ async function updateWebApp(generatedAppRoot, routeSpecs, projectName) {
     )
     .join('\n');
 
-  const content = `${importLines ? `${importLines}\n\n` : ''}const routes = [\n  { path: '/', label: 'Inicio', render: () => <HomePage /> },\n${routeLines}\n]\n\nfunction HomePage() {\n  const productAreas = routes.filter((route) => route.path !== '/')\n\n  return (\n    <section\n      style={{\n        display: 'grid',\n        gap: 28,\n        padding: 36,\n        borderRadius: 32,\n        background: 'linear-gradient(145deg, #0f172a 0%, #1e293b 55%, #0f766e 100%)',\n        color: '#f8fafc',\n        boxShadow: '0 32px 90px rgba(15, 23, 42, 0.22)',\n      }}\n    >\n      <div style={{ display: 'grid', gap: 14, maxWidth: 760 }}>\n        <span\n          style={{\n            display: 'inline-flex',\n            width: 'fit-content',\n            padding: '8px 14px',\n            borderRadius: 999,\n            background: 'rgba(255,255,255,0.12)',\n            border: '1px solid rgba(255,255,255,0.16)',\n            letterSpacing: '0.12em',\n            textTransform: 'uppercase',\n            fontSize: 12,\n            fontWeight: 700,\n          }}\n        >\n          Workspace\n        </span>\n        <h1 style={{ margin: 0, fontSize: 48, lineHeight: 1, letterSpacing: '-0.04em' }}>${escapeTemplate(projectName)}</h1>\n        <p style={{ margin: 0, fontSize: 18, lineHeight: 1.7, color: 'rgba(248, 250, 252, 0.82)' }}>\n          Ambiente base gerado para evoluir o produto com rapidez, clareza e consistencia entre as jornadas principais.\n        </p>\n      </div>\n\n      <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>\n        <div style={{ padding: 18, borderRadius: 22, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>\n          <div style={{ fontSize: 12, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(248,250,252,0.66)' }}>Modulos ativos</div>\n          <strong style={{ display: 'block', marginTop: 10, fontSize: 28 }}>{productAreas.length}</strong>\n        </div>\n        <div style={{ padding: 18, borderRadius: 22, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>\n          <div style={{ fontSize: 12, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(248,250,252,0.66)' }}>Navegacao pronta</div>\n          <strong style={{ display: 'block', marginTop: 10, fontSize: 28 }}>100%</strong>\n        </div>\n        <div style={{ padding: 18, borderRadius: 22, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>\n          <div style={{ fontSize: 12, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(248,250,252,0.66)' }}>Base pronta</div>\n          <strong style={{ display: 'block', marginTop: 10, fontSize: 28 }}>Web + API</strong>\n        </div>\n      </div>\n\n      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>\n        {productAreas.map((route) => (\n          <a\n            key={route.path}\n            href={route.path}\n            style={{\n              padding: 20,\n              borderRadius: 24,\n              textDecoration: 'none',\n              color: '#f8fafc',\n              background: 'rgba(255,255,255,0.08)',\n              border: '1px solid rgba(255,255,255,0.12)',\n            }}\n          >\n            <strong style={{ display: 'block', fontSize: 18 }}>{route.label}</strong>\n            <span style={{ display: 'block', marginTop: 10, color: 'rgba(248,250,252,0.7)' }}>Abrir modulo</span>\n          </a>\n        ))}\n      </div>\n    </section>\n  )\n}\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const activeRoute = routes.find((route) => route.path === currentPath) || routes[0]\n\n  return (\n    <main\n      style={{\n        minHeight: '100vh',\n        padding: '24px 24px 48px',\n        background: 'radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 28%), linear-gradient(180deg, #f8fafc 0%, #eef4f7 100%)',\n        color: '#0f172a',\n        fontFamily: 'Inter, Segoe UI, sans-serif',\n      }}\n    >\n      <div style={{ maxWidth: 1220, margin: '0 auto', display: 'grid', gap: 24 }}>\n        <header\n          style={{\n            display: 'flex',\n            justifyContent: 'space-between',\n            alignItems: 'center',\n            gap: 16,\n            padding: '16px 18px',\n            borderRadius: 24,\n            background: 'rgba(255,255,255,0.82)',\n            border: '1px solid rgba(148, 163, 184, 0.2)',\n            boxShadow: '0 18px 50px rgba(15, 23, 42, 0.06)',\n            backdropFilter: 'blur(14px)',\n            position: 'sticky',\n            top: 16,\n            zIndex: 10,\n          }}\n        >\n          <div style={{ display: 'grid', gap: 4 }}>\n            <span style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b', fontWeight: 700 }}>Application Studio</span>\n            <strong style={{ fontSize: 22 }}>${escapeTemplate(projectName)}</strong>\n          </div>\n\n          <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end' }}>\n            {routes.map((route) => {\n              const active = activeRoute.path === route.path\n              return (\n                <a\n                  key={route.path}\n                  href={route.path}\n                  style={{\n                    padding: '10px 14px',\n                    borderRadius: 999,\n                    textDecoration: 'none',\n                    fontWeight: 700,\n                    fontSize: 14,\n                    color: active ? '#f8fafc' : '#334155',\n                    background: active ? 'linear-gradient(135deg, #0f766e, #14b8a6)' : '#f8fafc',\n                    border: active ? 'none' : '1px solid #e2e8f0',\n                    boxShadow: active ? '0 14px 30px rgba(20, 184, 166, 0.24)' : 'none',\n                  }}\n                >\n                  {route.label}\n                </a>\n              )\n            })}\n          </nav>\n        </header>\n\n        {activeRoute.render()}\n      </div>\n    </main>\n  )\n}\n`;
+  const content = `${shellImport}\n${importLines ? `\n${importLines}\n` : '\n'}const routes = [\n  { path: '/', label: 'Inicio', render: () => <HomePage /> },\n${routeLines}\n]\n\nfunction HomePage() {\n  const productAreas = routes.filter((route) => route.path !== '/')\n  return <StudioHome title="${escapeTemplate(projectName)}" routes={productAreas} />\n}\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const activeRoute = routes.find((route) => route.path === currentPath) || routes[0]\n\n  return (\n    <AppFrame>\n      <AppHeader title="${escapeTemplate(projectName)}" routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n      {activeRoute.render()}\n    </AppFrame>\n  )\n}\n`;
 
   await writeText(appPath, content);
 
@@ -2186,6 +2607,14 @@ async function runGeneratedProjectValidationSuite({ task, implementation, genera
     testStatus: testReport?.status || 'failed',
     buildStatus:
       buildApiReport?.status === 'completed' && buildWebReport?.status === 'completed' ? 'completed' : 'failed',
+    validationScore: Math.round(
+      (
+        (lintReport?.status === 'completed' ? 25 : 0) +
+        (testReport?.status === 'completed' ? 35 : 0) +
+        (buildApiReport?.status === 'completed' ? 20 : 0) +
+        (buildWebReport?.status === 'completed' ? 20 : 0)
+      )
+    ),
     reports,
   };
 
@@ -2280,6 +2709,16 @@ function buildFixPlan(findings, technicalSpec) {
       };
     }
 
+    if (finding.code === 'broken_text_encoding') {
+      return {
+        category: 'quality',
+        priority: 'high',
+        filePath: finding.filePath,
+        action: 'Normalizar o encoding do arquivo para UTF-8 limpo e revisar os textos antes de reaplicar a feature.',
+        suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
+      };
+    }
+
     return {
       category: categorizeFinding(finding.code),
       priority: finding.severity === 'high' ? 'high' : 'medium',
@@ -2317,6 +2756,7 @@ async function runImplementationReviewInternal({ task, implementation, technical
     /Visao geral|Nenhum dado exibido ainda\.|Validacao automatica dos campos antes do envio\.|Feedback imediato em caso de sucesso ou erro\.|Preencha os dados|Conclua esta etapa/;
   const basicWebShellPattern =
     /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\.<\/p>|fontFamily: 'sans-serif', padding: 24/;
+  const encodingPattern = /Ã.|Â|�/;
 
   if (/Campo principal da feature gerada|Informe o valor principal/.test(pageContent)) {
     findings.push({
@@ -2345,6 +2785,16 @@ async function runImplementationReviewInternal({ task, implementation, technical
       category: 'quality',
       filePath: 'apps/web/src/App.tsx',
       message: 'O shell do frontend ainda esta basico demais e nao atende o padrao minimo de UX do projeto gerado.',
+    });
+  }
+
+  if (encodingPattern.test(pageContent) || encodingPattern.test(webAppContent)) {
+    findings.push({
+      severity: 'high',
+      code: 'broken_text_encoding',
+      category: 'quality',
+      filePath: encodingPattern.test(pageContent) ? pagePath : 'apps/web/src/App.tsx',
+      message: 'A implementacao contem texto com encoding quebrado e precisa ser normalizada antes da integracao.',
     });
   }
 
@@ -2424,6 +2874,12 @@ async function runImplementationReviewInternal({ task, implementation, technical
 
   const severityWeight = { high: 20, medium: 10, low: 5 };
   const score = Math.max(0, 100 - findings.reduce((total, finding) => total + (severityWeight[finding.severity] || 0), 0));
+  const uxFindings = findings.filter((item) => item.category === 'quality' || item.code.includes('ux') || item.code.includes('shell'));
+  const consistencyFindings = findings.filter((item) => item.category === 'inconsistency');
+  const duplicationFindings = findings.filter((item) => item.category === 'duplication');
+  const uxScore = Math.max(0, 100 - uxFindings.reduce((total, finding) => total + (severityWeight[finding.severity] || 0), 0));
+  const consistencyScore = Math.max(0, 100 - consistencyFindings.reduce((total, finding) => total + (severityWeight[finding.severity] || 0), 0));
+  const maintainabilityScore = Math.max(0, 100 - duplicationFindings.reduce((total, finding) => total + (severityWeight[finding.severity] || 0), 0));
   const fixPlan = buildFixPlan(findings, technicalSpec);
   const reviewReport = {
     version: 1,
@@ -2433,6 +2889,9 @@ async function runImplementationReviewInternal({ task, implementation, technical
     reviewedAt: new Date().toISOString(),
     summary: {
       score,
+      uxScore,
+      consistencyScore,
+      maintainabilityScore,
       totalFindings: findings.length,
       status: findings.some((item) => item.severity === 'high') ? 'needs_attention' : findings.length ? 'minor_issues' : 'approved',
       verdict: findings.length ? 'A implementacao precisa de ajustes antes de ficar pronta para uso.' : 'A implementacao esta consistente com o structured spec.',
@@ -2483,6 +2942,121 @@ async function runImplementationReviewInternal({ task, implementation, technical
   return { artifact, reviewReport, fixPlanArtifact };
 }
 
+async function runImplementationSpecialistReviewInternal({ task, implementation, technicalSpec, generatedApp }) {
+  const pagePath = path.join(generatedApp.rootPath, `${technicalSpec.frontend.featurePath}/page.tsx`);
+  const servicePath = path.join(generatedApp.rootPath, `${technicalSpec.frontend.featurePath}/service.ts`);
+  const contractPath = path.join(generatedApp.rootPath, technicalSpec.shared.contractPath);
+  const docsPath = path.join(generatedApp.rootPath, `docs/implementations/${technicalSpec.featureKey}.md`);
+  const pageContent = await readText(pagePath);
+  const serviceContent = await readText(servicePath);
+  const contractContent = await readText(contractPath);
+  const docsContent = await readText(docsPath);
+
+  const findings = [];
+  const screenTemplate = technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud';
+
+  if (!pageContent.includes(`layout="${screenTemplate}"`)) {
+    findings.push({
+      severity: 'high',
+      code: 'specialist_screen_template_mismatch',
+      category: 'quality',
+      filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
+      message: `A tela nao aplicou explicitamente o layout ${screenTemplate}.`,
+    });
+  }
+
+  if (!pageContent.includes('FeaturePage') || !pageContent.includes('FieldGroup') || !pageContent.includes('PrimaryButton')) {
+    findings.push({
+      severity: 'high',
+      code: 'specialist_missing_design_system',
+      category: 'quality',
+      filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
+      message: 'A feature nao esta usando plenamente o design system compartilhado.',
+    });
+  }
+
+  if (!serviceContent.includes(technicalSpec.backend.routeBase)) {
+    findings.push({
+      severity: 'high',
+      code: 'specialist_route_contract_mismatch',
+      category: 'inconsistency',
+      filePath: `${technicalSpec.frontend.featurePath}/service.ts`,
+      message: `O service da feature nao aponta para ${technicalSpec.backend.routeBase}.`,
+    });
+  }
+
+  if (!contractContent.includes(technicalSpec.shared.requestContractName) || !contractContent.includes(technicalSpec.shared.responseContractName)) {
+    findings.push({
+      severity: 'high',
+      code: 'specialist_contract_incomplete',
+      category: 'inconsistency',
+      filePath: technicalSpec.shared.contractPath,
+      message: 'Os contratos compartilhados nao estao completos para a feature.',
+    });
+  }
+
+  if (!docsContent.includes('## Template de tela') || !docsContent.includes('## Stack e arquitetura')) {
+    findings.push({
+      severity: 'medium',
+      code: 'specialist_missing_architecture_trace',
+      category: 'quality',
+      filePath: `docs/implementations/${technicalSpec.featureKey}.md`,
+      message: 'A documentacao da implementacao nao preservou o contexto arquitetural esperado.',
+    });
+  }
+
+  if ((technicalSpec.projectMemory?.recurringFindings || []).some((item) => item.code === 'generic_ux_copy') && !pageContent.includes('highlights={')) {
+    findings.push({
+      severity: 'medium',
+      code: 'specialist_memory_ignored',
+      category: 'quality',
+      filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
+      message: 'A feature ignorou um padrao recorrente registrado na memoria do projeto.',
+    });
+  }
+
+  const severityWeight = { high: 25, medium: 12, low: 5 };
+  const specialistScore = Math.max(0, 100 - findings.reduce((total, item) => total + (severityWeight[item.severity] || 0), 0));
+  const architectureScore = findings
+    .filter((item) => item.code.includes('route') || item.code.includes('contract') || item.code.includes('architecture'))
+    .reduce((total, item) => total - (severityWeight[item.severity] || 0), 100);
+  const experienceScore = findings
+    .filter((item) => item.category === 'quality')
+    .reduce((total, item) => total - (severityWeight[item.severity] || 0), 100);
+
+  const reviewReport = {
+    version: 1,
+    taskUuid: task.uuid,
+    implementationId: String(implementation.id),
+    featureKey: technicalSpec.featureKey,
+    reviewedAt: new Date().toISOString(),
+    specialist: 'v3_specialist_reviewer',
+    summary: {
+      score: specialistScore,
+      architectureScore: Math.max(0, architectureScore),
+      experienceScore: Math.max(0, experienceScore),
+      totalFindings: findings.length,
+      status: findings.some((item) => item.severity === 'high') ? 'needs_attention' : findings.length ? 'minor_issues' : 'approved',
+      verdict: findings.length ? 'A implementacao precisa de refinamento especializado para ficar no padrao premium.' : 'A implementacao passou no reviewer especializado.',
+    },
+    findings,
+    projectMemory: technicalSpec.projectMemory || null,
+  };
+
+  const artifact = await createCurrentArtifact(
+    task.id,
+    `Implementation Specialist Review - ${task.title}`,
+    JSON.stringify(reviewReport, null, 2),
+    'implementation_specialist_reviewer',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation.id,
+    }
+  );
+
+  return { artifact, reviewReport };
+}
+
 async function createRepairAttemptArtifact(task, implementation, technicalSpec, repairContext) {
   return createCurrentArtifact(
     task.id,
@@ -2500,6 +3074,49 @@ async function createRepairAttemptArtifact(task, implementation, technicalSpec, 
       2
     ),
     'implementation_repairer',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation.id,
+    }
+  );
+}
+
+async function createRefactorPlanArtifact(task, implementation, technicalSpec, reviewReport, specialistReviewReport, validationSummary) {
+  const actions = [
+    ...(reviewReport?.fixPlan || []),
+    ...((specialistReviewReport?.findings || []).map((finding) => ({
+      category: finding.category,
+      priority: finding.severity,
+      filePath: finding.filePath,
+      action: finding.message,
+      suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
+    }))),
+    ...formatValidationFailures(validationSummary).map((failure) => ({
+      category: 'validation',
+      priority: 'high',
+      filePath: failure.scriptName,
+      action: failure.errorMessage,
+      suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
+    })),
+  ];
+
+  return createCurrentArtifact(
+    task.id,
+    `Implementation Refactor Plan - ${task.title}`,
+    JSON.stringify(
+      {
+        version: 1,
+        taskUuid: task.uuid,
+        implementationId: String(implementation.id),
+        featureKey: technicalSpec.featureKey,
+        generatedAt: new Date().toISOString(),
+        stages: ['review_structural', 'review_specialist', 'validation', 'refactor'],
+        actions,
+      },
+      null,
+      2
+    ),
+    'implementation_refactor_planner',
     {
       artifactScope: 'implementation',
       taskImplementationId: implementation.id,
@@ -2529,7 +3146,7 @@ async function materializeImplementationFiles({ task, implementation, technicalS
     ...(await ensureWorkspaceFoundationFiles(generatedApp.rootPath, task.project.name)),
     {
       relativePath: `docs/implementations/${technicalSpec.featureKey}.md`,
-      content: `# ${task.title}\n\nTask UUID: ${task.uuid}\n\n## Resumo\nFeature integrada no baseline full stack pos-refinamento.\n\n## Rotas\n- Frontend: ${technicalSpec.frontend.suggestedRoute}\n- Backend: ${technicalSpec.backend.routeBase}\n`,
+      content: `# ${task.title}\n\nTask UUID: ${task.uuid}\n\n## Resumo\nFeature integrada no baseline full stack pos-refinamento.\n\n## Template de tela\n- ${technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud'}\n\n## Rotas\n- Frontend: ${technicalSpec.frontend.suggestedRoute}\n- Backend: ${technicalSpec.backend.routeBase}\n\n## Stack e arquitetura\n${(technicalSpec.architecture?.sourceSummary?.stack || []).map((line) => `- ${line}`).join('\n') || '- Sem resumo de stack extraido.'}\n\n## Modulos e limites\n${(technicalSpec.architecture?.sourceSummary?.modules || []).map((line) => `- ${line}`).join('\n') || '- Sem resumo de modulos extraido.'}\n`,
       fileType: 'md',
     },
     await updateApiServer(generatedApp.rootPath, routeSpecs, generatedApp.slug),
@@ -2578,12 +3195,22 @@ async function executeImplementationQualityCycle({ task, implementation, technic
     generatedApp,
   });
 
+  const { reviewReport: specialistReviewReport } = await runImplementationSpecialistReviewInternal({
+    task,
+    implementation,
+    technicalSpec,
+    generatedApp,
+  });
+
   await prisma.generatedAppRun.update({
     where: { id: reviewRun.id },
     data: {
-      status: reviewReport.summary.status === 'approved' ? 'completed' : 'failed',
+      status:
+        reviewReport.summary.status === 'approved' && specialistReviewReport.summary.status === 'approved'
+          ? 'completed'
+          : 'failed',
       finishedAt: new Date(),
-      logSummary: `Review automatico executado para ${task.uuid} com score ${reviewReport.summary.score}`,
+      logSummary: `Review automatico executado para ${task.uuid} | estrutural=${reviewReport.summary.score} | specialist=${specialistReviewReport.summary.score}`,
     },
   });
 
@@ -2613,7 +3240,11 @@ async function executeImplementationQualityCycle({ task, implementation, technic
     },
   });
 
-  return { reviewReport, validationSuite };
+  if (reviewReport.summary.status !== 'approved' || specialistReviewReport.summary.status !== 'approved' || validationSuite.summary.status !== 'completed') {
+    await createRefactorPlanArtifact(task, implementation, technicalSpec, reviewReport, specialistReviewReport, validationSuite.summary);
+  }
+
+  return { reviewReport, specialistReviewReport, validationSuite };
 }
 
 export async function getGeneratedAppByProjectUuid(projectUuid) {
@@ -2770,7 +3401,13 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
     throw new Error('O projeto ainda nao possui um app full stack gerado. Faca o bootstrap primeiro.');
   }
 
-  const technicalSpec = await enrichFrontendWithAi(task, buildTechnicalSpec(task, projectArchitectureSource), userUuid);
+  let technicalSpec = buildTechnicalSpec(task, projectArchitectureSource);
+  const projectMemory = await buildProjectMemorySnapshot(task, generatedApp);
+  technicalSpec = {
+    ...technicalSpec,
+    projectMemory,
+  };
+  technicalSpec = await enrichFrontendWithAi(task, technicalSpec, userUuid);
   const technicalSpecArtifact = await createCurrentArtifact(
     task.id,
     `Technical Spec - ${task.title}`,
@@ -2779,10 +3416,17 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
   );
 
   const plan = buildImplementationPlan(task, generatedApp, technicalSpec);
+  const strategy = buildExecutionStrategy(task, generatedApp, technicalSpec, projectMemory);
   const planArtifact = await createCurrentArtifact(
     task.id,
     `Implementation Plan - ${task.title}`,
     JSON.stringify(plan, null, 2),
+    'implementation_architect'
+  );
+  const strategyArtifact = await createCurrentArtifact(
+    task.id,
+    `Implementation Strategy - ${task.title}`,
+    JSON.stringify(strategy, null, 2),
     'implementation_architect'
   );
 
@@ -2847,9 +3491,18 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
   await prisma.taskArtifact.updateMany({
     where: {
       id: {
-        in: [technicalSpecArtifact.id, planArtifact.id],
+        in: [technicalSpecArtifact.id, planArtifact.id, strategyArtifact.id],
       },
     },
+    data: {
+      taskImplementationId: implementation.id,
+      artifactScope: 'implementation',
+    },
+  });
+
+  const memoryArtifact = await createProjectMemoryArtifact(task, implementation, generatedApp);
+  await prisma.taskArtifact.update({
+    where: { id: memoryArtifact.artifact.id },
     data: {
       taskImplementationId: implementation.id,
       artifactScope: 'implementation',
@@ -2913,6 +3566,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
     for (let attemptIndex = 1; attemptIndex <= maxRepairAttempts; attemptIndex += 1) {
       const cyclePassed =
         cycleResult.reviewReport.summary.status === 'approved' &&
+        cycleResult.specialistReviewReport.summary.status === 'approved' &&
         cycleResult.validationSuite.summary.status === 'completed';
 
       if (cyclePassed) {
@@ -2921,6 +3575,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
 
       const repairContext = buildRepairContext({
         reviewReport: cycleResult.reviewReport,
+        specialistReviewReport: cycleResult.specialistReviewReport,
         validationSummary: cycleResult.validationSuite.summary,
         attemptNumber: attemptIndex,
       });
@@ -2945,6 +3600,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
 
     const finalSucceeded =
       cycleResult.reviewReport.summary.status === 'approved' &&
+      cycleResult.specialistReviewReport.summary.status === 'approved' &&
       cycleResult.validationSuite.summary.status === 'completed';
     const createdPaths = generatedFiles.map((file) => file.relativePath).join('\n');
     await prisma.taskImplementation.update({
@@ -2957,7 +3613,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
           cycleResult.validationSuite.summary.lintStatus === 'completed'
             ? 'completed'
             : 'failed',
-        summary: `Integracao aplicada com arquivos reais:\n${createdPaths}\n\nReview score: ${cycleResult.reviewReport.summary.score}\nReview status: ${cycleResult.reviewReport.summary.status}\nValidation status: ${cycleResult.validationSuite.summary.status}\nLint: ${cycleResult.validationSuite.summary.lintStatus}\nTest: ${cycleResult.validationSuite.summary.testStatus}\nBuild: ${cycleResult.validationSuite.summary.buildStatus}\nRepair attempts: ${repairAttempts.length}`,
+        summary: `Integracao aplicada com arquivos reais:\n${createdPaths}\n\nReview score: ${cycleResult.reviewReport.summary.score}\nUX score: ${cycleResult.reviewReport.summary.uxScore}\nConsistency score: ${cycleResult.reviewReport.summary.consistencyScore}\nSpecialist score: ${cycleResult.specialistReviewReport.summary.score}\nSpecialist architecture score: ${cycleResult.specialistReviewReport.summary.architectureScore}\nValidation score: ${cycleResult.validationSuite.summary.validationScore}\nReview status: ${cycleResult.reviewReport.summary.status}\nSpecialist status: ${cycleResult.specialistReviewReport.summary.status}\nValidation status: ${cycleResult.validationSuite.summary.status}\nLint: ${cycleResult.validationSuite.summary.lintStatus}\nTest: ${cycleResult.validationSuite.summary.testStatus}\nBuild: ${cycleResult.validationSuite.summary.buildStatus}\nRepair attempts: ${repairAttempts.length}`,
       },
     });
 
@@ -3040,6 +3696,16 @@ export async function getTaskImplementationStatus(taskUuid) {
     orderBy: { createdAt: 'desc' },
   });
 
+  const specialistReviewArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      title: `Implementation Specialist Review - ${task.title}`,
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
   const buildReportArtifact = await prisma.taskArtifact.findFirst({
     where: {
       taskId: task.id,
@@ -3073,10 +3739,19 @@ export async function getTaskImplementationStatus(taskUuid) {
   return {
     ...implementation,
     reviewArtifact,
+    specialistReviewArtifact,
     fixPlanArtifact,
     buildReportArtifact,
     testReportArtifact,
     lintReportArtifact,
+    qualitySummary: buildImplementationQualitySummary({
+      implementation,
+      reviewArtifact,
+      specialistReviewArtifact,
+      buildReportArtifact,
+      testReportArtifact,
+      lintReportArtifact,
+    }),
   };
 }
 
@@ -3107,21 +3782,29 @@ export async function reviewTaskImplementation(taskUuid) {
       technicalSpec,
       generatedApp: implementation.generatedApp,
     });
+    const { artifact: specialistReviewArtifact, reviewReport: specialistReviewReport } = await runImplementationSpecialistReviewInternal({
+      task,
+      implementation,
+      technicalSpec,
+      generatedApp: implementation.generatedApp,
+    });
 
     await prisma.generatedAppRun.update({
       where: { id: run.id },
       data: {
         status: 'completed',
         finishedAt: new Date(),
-        logSummary: `Review manual executado para ${task.uuid} com score ${reviewReport.summary.score}`,
+        logSummary: `Review manual executado para ${task.uuid} | estrutural=${reviewReport.summary.score} | specialist=${specialistReviewReport.summary.score}`,
       },
     });
 
     return {
       implementation,
       reviewArtifact: artifact,
+      specialistReviewArtifact,
       fixPlanArtifact,
       reviewReport,
+      specialistReviewReport,
     };
   } catch (error) {
     await prisma.generatedAppRun.update({

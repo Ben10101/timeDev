@@ -30,6 +30,12 @@ function StatusBadge({ value }) {
   return <span className={`dashboard-badge ${tone}`}>{value || 'nao iniciado'}</span>;
 }
 
+function ScoreBadge({ value }) {
+  const numeric = Number(value);
+  const tone = numeric >= 90 ? 'bg-emerald-50 text-emerald-700' : numeric >= 75 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700';
+  return <span className={`dashboard-badge ${tone}`}>{Number.isFinite(numeric) ? `${numeric}/100` : 'sem score'}</span>;
+}
+
 function downloadMarkdownFile(filename, content) {
   const blob = new Blob([content || ''], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -502,6 +508,12 @@ export default function CodeStudioPage() {
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                         <strong>Atualizado:</strong> {formatDate(implementation?.updatedAt)}
                       </div>
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        <strong>Score de qualidade:</strong> {implementation?.qualitySummary?.score ?? 'n/a'}
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        <strong>Template:</strong> {implementation?.qualitySummary?.screenTemplate || 'n/a'}
+                      </div>
                     </div>
 
                     <div className="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -547,15 +559,26 @@ export default function CodeStudioPage() {
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Resumo</p>
                 <div className="mt-4 space-y-3 text-sm text-slate-700">
                   <p><strong>Status:</strong> {selectedImplementation.status}</p>
+                  <p><strong>Review:</strong> {selectedImplementation.qualitySummary?.reviewStatus || 'n/a'}</p>
+                  <p><strong>Specialist review:</strong> {selectedImplementation.qualitySummary?.specialistReviewStatus || 'n/a'}</p>
+                  <p><strong>Score:</strong> {selectedImplementation.qualitySummary?.score ?? 'n/a'}</p>
+                  <p><strong>Specialist score:</strong> {selectedImplementation.qualitySummary?.specialistScore ?? 'n/a'}</p>
+                  <p><strong>UX:</strong> {selectedImplementation.qualitySummary?.uxScore ?? 'n/a'}</p>
+                  <p><strong>Arquitetura:</strong> {selectedImplementation.qualitySummary?.specialistArchitectureScore ?? 'n/a'}</p>
+                  <p><strong>Validacao:</strong> {selectedImplementation.qualitySummary?.validationScore ?? 'n/a'}</p>
                   <p><strong>Build:</strong> {selectedImplementation.buildStatus || 'n/a'}</p>
                   <p><strong>Testes:</strong> {selectedImplementation.testStatus || 'n/a'}</p>
+                  <p><strong>Template:</strong> {selectedImplementation.qualitySummary?.screenTemplate || 'n/a'}</p>
                   <p><strong>Projeto:</strong> {selectedImplementation.generatedApp?.name || 'App full stack'}</p>
                   <p><strong>Pasta:</strong> {selectedImplementation.generatedApp?.rootPath || 'Ainda nao materializado'}</p>
                 </div>
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Arquivos gerados</p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Arquivos gerados</p>
+                  <ScoreBadge value={selectedImplementation.qualitySummary?.score} />
+                </div>
                 <div className="mt-4 space-y-2">
                   {(selectedImplementation.generatedFiles || []).slice(0, 8).map((file) => (
                     <div key={file.id} className="rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
@@ -568,6 +591,22 @@ export default function CodeStudioPage() {
                     </div>
                   )}
                 </div>
+                {selectedImplementation.qualitySummary && (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
+                      <strong>Findings:</strong> {selectedImplementation.qualitySummary.totalFindings}
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
+                      <strong>Altas:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.high || 0}
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
+                      <strong>Medias:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.medium || 0}
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
+                      <strong>Baixas:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.low || 0}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </section>

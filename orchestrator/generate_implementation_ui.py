@@ -35,20 +35,20 @@ def fallback(payload):
     submit_label = payload.get("submitLabel") or "Salvar"
     return {
         "navigationLabel": payload.get("navigationLabel") or "Feature",
-        "pageTitle": payload.get("pageTitle") or "Conclua esta etapa",
+        "pageTitle": payload.get("pageTitle") or "Execute esta jornada",
         "pageDescription": payload.get("pageDescription") or payload.get("summary") or "",
         "heroEyebrow": payload.get("navigationLabel") or "Feature",
-        "heroTitle": payload.get("pageTitle") or "Conclua esta etapa",
+        "heroTitle": payload.get("pageTitle") or "Execute esta jornada",
         "heroDescription": payload.get("pageDescription") or payload.get("summary") or "",
-        "formCardTitle": "Preencha os dados",
-        "formCardDescription": "Informe os dados necessarios para continuar.",
+        "formCardTitle": "Dados principais",
+        "formCardDescription": "Preencha os dados essenciais para concluir a operacao com seguranca.",
         "submitLabel": submit_label,
         "highlights": [
-            "Validacao automatica dos campos antes do envio.",
-            "Feedback imediato em caso de sucesso ou erro."
+            "Fluxo pensado para reduzir duvidas no preenchimento.",
+            "Feedback claro ao concluir ou revisar a operacao."
         ],
-        "recordsTitle": "Visao geral",
-        "recordsEmptyState": "Nenhum dado exibido ainda.",
+        "recordsTitle": "Registros recentes",
+        "recordsEmptyState": "Nenhum registro disponivel ainda.",
     }
 
 
@@ -63,9 +63,14 @@ Contexto da implementacao:
 - Titulo da task: {payload.get('taskTitle')}
 - Resumo: {payload.get('summary')}
 - Rota frontend: {payload.get('frontendRoute')}
+- Template de tela: {payload.get('screenTemplate')}
 - Acao principal: {payload.get('submitLabel')}
 - Campos: {json.dumps(payload.get('fields', []), ensure_ascii=False)}
 - Objetivos de experiencia: {json.dumps(payload.get('experienceGoals', []), ensure_ascii=False)}
+- Estados de UI: {json.dumps(payload.get('uiStates', {}), ensure_ascii=False)}
+- Validacoes: {json.dumps(payload.get('validationSummary', []), ensure_ascii=False)}
+- Permissoes: {json.dumps(payload.get('permissions', {}), ensure_ascii=False)}
+- Memoria do projeto: {json.dumps(payload.get('projectMemory', {}), ensure_ascii=False)}
 - Contexto de reparo: {json.dumps(payload.get('repairContext'), ensure_ascii=False)}
 
 Instrucoes:
@@ -75,8 +80,13 @@ Instrucoes:
 - Priorize titulos curtos, orientados a usuario final.
 - Evite tom tecnico, burocratico ou academico.
 - Proponha uma tela com cara de produto pronto, nao de prototipo.
+- Se o template for `settings`, use copy de configuracao/autogestao.
+- Se o template for `wizard`, use copy de etapas e progressao.
+- Se o template for `dashboard`, use copy orientada a visao geral, metricas e acompanhamento.
+- Se o template for `crud`, use copy de cadastro/listagem com valor percebido.
 - Prefira textos que transmitam clareza, confianca e valor percebido.
 - Os highlights devem parecer beneficios reais da experiencia, nunca instrucoes internas do sistema.
+- Se houver memoria do projeto, reaproveite os padroes bem avaliados e evite repetir achados recorrentes.
 - Se houver contexto de reparo, use-o para evitar repetir os mesmos problemas da tentativa anterior.
 - Retorne APENAS JSON valido, sem markdown.
 
