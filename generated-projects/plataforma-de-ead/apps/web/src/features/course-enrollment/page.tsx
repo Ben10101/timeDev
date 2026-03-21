@@ -1,24 +1,24 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import type { ProfileSettingsRequest, ProfileSettingsResponse } from '../../../../../packages/shared/src/contracts/profile-settings.ts';
+import type { CourseEnrollmentRequest, CourseEnrollmentResponse } from '../../../../../packages/shared/src/contracts/course-enrollment.ts';
 import { FeaturePage, FieldGroup, PrimaryButton, inputStyle } from '../../../../../packages/ui/src/index.tsx';
-import { createProfileSettings, fetchProfileSettingsItems } from './service';
+import { createCourseEnrollment, fetchCourseEnrollmentItems } from './service';
 
-const initialForm: ProfileSettingsRequest = {
+const initialForm: CourseEnrollmentRequest = {
   fullName: '',
   profilePhotoUrl: '',
   email: '',
   password: '',
 };
 
-export function ProfileSettingsPage() {
-  const [items, setItems] = useState<ProfileSettingsResponse[]>([]);
-  const [form, setForm] = useState<ProfileSettingsRequest>(initialForm);
+export function CourseEnrollmentPage() {
+  const [items, setItems] = useState<CourseEnrollmentResponse[]>([]);
+  const [form, setForm] = useState<CourseEnrollmentRequest>(initialForm);
   const [feedback, setFeedback] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
-    fetchProfileSettingsItems().then(setItems).catch(() => setItems([]));
+    fetchCourseEnrollmentItems().then(setItems).catch(() => setItems([]));
   }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -27,7 +27,7 @@ export function ProfileSettingsPage() {
     setErrorMessage('');
 
     try {
-      const created = await createProfileSettings({
+      const created = await createCourseEnrollment({
       fullName: form.fullName,
       profilePhotoUrl: form.profilePhotoUrl,
       email: form.email,
@@ -35,7 +35,7 @@ export function ProfileSettingsPage() {
       });
       setItems((current) => [created, ...current]);
       setForm(initialForm);
-      setFeedback('Perfil atualizado com sucesso.');
+      setFeedback('Matricula criada com sucesso.');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');
     }
@@ -43,19 +43,19 @@ export function ProfileSettingsPage() {
 
   return (
     <FeaturePage
-      accent="amber"
-      layout="split"
-      eyebrow="Conta"
-      title="Gerencie seu perfil"
-      description="Mantenha seus dados atualizados para acessar seus cursos e loja"
+      accent="teal"
+      layout="dashboard"
+      eyebrow="Matriculas"
+      title="Gerencie matriculas"
+      description="Associe alunos aos cursos disponiveis para liberar acesso ao conteudo."
       metrics={[
         { label: 'Campos essenciais', value: '4' },
         { label: 'Registros atuais', value: String(items.length) },
-        { label: 'Acao principal', value: 'Salvar Alterações' },
+        { label: 'Acao principal', value: 'Matricular Aluno' },
       ]}
-      highlights={["Nome completo é obrigatório","E-mail válido e único","Senha segura e protegida"]}
-      formTitle="Informações do Perfil"
-      formDescription="Edite seu nome, foto, e-mail e senha"
+      highlights={["Fluxo pensado para reduzir duvidas no preenchimento.","Feedback claro ao concluir ou revisar a operacao."]}
+      formTitle="Dados principais"
+      formDescription="Preencha os dados essenciais para concluir a operacao com seguranca."
       form={
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
           <FieldGroup label="Nome completo" hint="Informe o nome que sera exibido no seu perfil.">
@@ -94,16 +94,16 @@ export function ProfileSettingsPage() {
               style={inputStyle()}
             />
           </FieldGroup>
-          <PrimaryButton type="submit" accent="amber">
-            Salvar Alterações
+          <PrimaryButton type="submit" accent="teal">
+            Matricular Aluno
           </PrimaryButton>
 
           {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}
           {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}
         </form>
       }
-      listTitle="Seus Cursos"
-      listDescription="Acompanhe os registros criados nesta area."
+      listTitle="Registros recentes"
+      listDescription="Nenhum registro disponivel ainda."
       listMeta={`${items.length} registro(s)`}
     >
       {items.length ? (
@@ -116,7 +116,7 @@ export function ProfileSettingsPage() {
           ))}
         </div>
       ) : (
-        <p style={{ margin: 0, color: '#64748b' }}>Nenhum curso cadastrado ainda</p>
+        <p style={{ margin: 0, color: '#64748b' }}>Nenhum registro disponivel ainda.</p>
       )}
     </FeaturePage>
   );

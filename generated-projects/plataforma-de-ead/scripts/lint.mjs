@@ -38,6 +38,8 @@ async function readSafe(filePath) {
 
 const failures = [];
 const genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;
+const genericUxCopyPattern = /Visao geral|Nenhum dado exibido ainda\.|Validacao automatica dos campos antes do envio\.|Feedback imediato em caso de sucesso ou erro\.|Preencha os dados|Conclua esta etapa/;
+const basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\.<\/p>|fontFamily: 'sans-serif', padding: 24/;
 
 const appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));
 const serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));
@@ -50,10 +52,17 @@ for (const [line, count] of collectDuplicateLines(serverContent, (line) => line.
   failures.push(`server.ts possui linha duplicada ${count}x: ${line}`);
 }
 
+if (basicWebShellPattern.test(appContent) || !appContent.includes('Application Studio') || !appContent.includes('function HomePage()')) {
+  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');
+}
+
 for (const pagePath of await listFeaturePages()) {
   const pageContent = await readSafe(pagePath);
   if (genericFallbackPattern.test(pageContent)) {
     failures.push(`${path.relative(root, pagePath)} ainda contém textos genéricos de fallback.`);
+  }
+  if (genericUxCopyPattern.test(pageContent)) {
+    failures.push(`${path.relative(root, pagePath)} ainda contém copy genérica ou placeholders de UX.`);
   }
 }
 

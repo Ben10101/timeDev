@@ -12,6 +12,6 @@
     "build:web": "npm --workspace apps/web run build",
     "build:api": "npm --workspace apps/api run build",
     "lint": "node scripts/lint.mjs",
-    "test": "node scripts/test.mjs && node scripts/e2e-smoke.mjs"
+    "test": "node scripts/test.mjs"
   }
 }

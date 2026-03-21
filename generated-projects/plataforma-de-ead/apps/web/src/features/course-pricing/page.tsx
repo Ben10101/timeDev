@@ -1,24 +1,23 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import type { ProfileSettingsRequest, ProfileSettingsResponse } from '../../../../../packages/shared/src/contracts/profile-settings.ts';
+import type { CoursePricingRequest, CoursePricingResponse } from '../../../../../packages/shared/src/contracts/course-pricing.ts';
 import { FeaturePage, FieldGroup, PrimaryButton, inputStyle } from '../../../../../packages/ui/src/index.tsx';
-import { createProfileSettings, fetchProfileSettingsItems } from './service';
+import { createCoursePricing, fetchCoursePricingItems } from './service';
 
-const initialForm: ProfileSettingsRequest = {
+const initialForm: CoursePricingRequest = {
   fullName: '',
   profilePhotoUrl: '',
   email: '',
-  password: '',
 };
 
-export function ProfileSettingsPage() {
-  const [items, setItems] = useState<ProfileSettingsResponse[]>([]);
-  const [form, setForm] = useState<ProfileSettingsRequest>(initialForm);
+export function CoursePricingPage() {
+  const [items, setItems] = useState<CoursePricingResponse[]>([]);
+  const [form, setForm] = useState<CoursePricingRequest>(initialForm);
   const [feedback, setFeedback] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
-    fetchProfileSettingsItems().then(setItems).catch(() => setItems([]));
+    fetchCoursePricingItems().then(setItems).catch(() => setItems([]));
   }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -27,15 +26,14 @@ export function ProfileSettingsPage() {
     setErrorMessage('');
 
     try {
-      const created = await createProfileSettings({
+      const created = await createCoursePricing({
       fullName: form.fullName,
       profilePhotoUrl: form.profilePhotoUrl,
       email: form.email,
-      password: form.password,
       });
       setItems((current) => [created, ...current]);
       setForm(initialForm);
-      setFeedback('Perfil atualizado com sucesso.');
+      setFeedback('Preco atualizado com sucesso.');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');
     }
@@ -43,19 +41,19 @@ export function ProfileSettingsPage() {
 
   return (
     <FeaturePage
-      accent="amber"
-      layout="split"
-      eyebrow="Conta"
-      title="Gerencie seu perfil"
-      description="Mantenha seus dados atualizados para acessar seus cursos e loja"
+      accent="teal"
+      layout="dashboard"
+      eyebrow="Precos"
+      title="Defina o preco do curso"
+      description="Configure o valor de venda e as regras comerciais de cada curso."
       metrics={[
-        { label: 'Campos essenciais', value: '4' },
+        { label: 'Campos essenciais', value: '3' },
         { label: 'Registros atuais', value: String(items.length) },
-        { label: 'Acao principal', value: 'Salvar Alterações' },
+        { label: 'Acao principal', value: 'Salvar Preco' },
       ]}
-      highlights={["Nome completo é obrigatório","E-mail válido e único","Senha segura e protegida"]}
-      formTitle="Informações do Perfil"
-      formDescription="Edite seu nome, foto, e-mail e senha"
+      highlights={["Fluxo pensado para reduzir duvidas no preenchimento.","Feedback claro ao concluir ou revisar a operacao."]}
+      formTitle="Dados principais"
+      formDescription="Preencha os dados essenciais para concluir a operacao com seguranca."
       form={
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
           <FieldGroup label="Nome completo" hint="Informe o nome que sera exibido no seu perfil.">
@@ -85,25 +83,16 @@ export function ProfileSettingsPage() {
               style={inputStyle()}
             />
           </FieldGroup>
-          <FieldGroup label="Senha" hint="A senha deve atender aos criterios minimos de seguranca.">
-            <input
-              type="password"
-              value={form.password}
-              onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
-              placeholder="Crie uma senha segura"
-              style={inputStyle()}
-            />
-          </FieldGroup>
-          <PrimaryButton type="submit" accent="amber">
-            Salvar Alterações
+          <PrimaryButton type="submit" accent="teal">
+            Salvar Preco
           </PrimaryButton>
 
           {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}
           {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}
         </form>
       }
-      listTitle="Seus Cursos"
-      listDescription="Acompanhe os registros criados nesta area."
+      listTitle="Registros recentes"
+      listDescription="Nenhum registro disponivel ainda."
       listMeta={`${items.length} registro(s)`}
     >
       {items.length ? (
@@ -116,7 +105,7 @@ export function ProfileSettingsPage() {
           ))}
         </div>
       ) : (
-        <p style={{ margin: 0, color: '#64748b' }}>Nenhum curso cadastrado ainda</p>
+        <p style={{ margin: 0, color: '#64748b' }}>Nenhum registro disponivel ainda.</p>
       )}
     </FeaturePage>
   );
