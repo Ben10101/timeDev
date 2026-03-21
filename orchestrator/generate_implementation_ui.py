@@ -54,6 +54,8 @@ def fallback(payload):
 
 def main():
     payload = json.load(sys.stdin)
+    has_repair_context = bool(payload.get("repairContext"))
+    output_budget = 280 if has_repair_context else 420
 
     prompt = f"""
 Voce e um especialista em UX writing e product design para interfaces SaaS premium.
@@ -105,10 +107,16 @@ Formato:
   "recordsTitle": "titulo da lista lateral",
   "recordsEmptyState": "mensagem curta de vazio"
 }}
-"""
+    """
 
     try:
-        raw = generate_text_from_llm(prompt)
+        raw = generate_text_from_llm(
+            prompt,
+            options_override={
+                "temperature": 0.2,
+                "num_predict": output_budget,
+            },
+        )
         data = extract_json_block(raw)
         print(json.dumps({"success": True, "data": data}, ensure_ascii=False))
     except Exception:

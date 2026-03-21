@@ -77,7 +77,7 @@ Atue como um Engenheiro de QA Senior e gere um plano de testes objetivo em Markd
 Historia:
 "{idea}"
 
-Resumo dos requisitos:
+Resumo estrutural dos requisitos:
 {requirement_summary}
 
 Responda em portugues com as secoes abaixo, de forma direta e implementavel:
@@ -117,7 +117,7 @@ Regras finais:
                 model=qa_model,
                 options_override={
                     "temperature": 0.1,
-                    "num_predict": int(os.getenv("QA_OLLAMA_NUM_PREDICT", "1800")),
+                    "num_predict": int(os.getenv("QA_OLLAMA_NUM_PREDICT", "1500")),
                 },
                 max_retries=int(os.getenv("QA_MAX_RETRIES", "3")),
             )

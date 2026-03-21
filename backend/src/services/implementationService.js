@@ -129,6 +129,64 @@ function truncateText(value, maxLength = 2000) {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
+function compactValidationSummary(validationSummary = []) {
+  return (validationSummary || []).slice(0, 6).map((item) => ({
+    field: item.field,
+    required: Boolean(item.required),
+    validations: (item.validations || []).slice(0, 3),
+  }));
+}
+
+function compactExperienceGoals(goals = []) {
+  return (goals || []).map((item) => truncateText(item, 140)).slice(0, 4);
+}
+
+function compactProjectMemory(projectMemory) {
+  if (!projectMemory) return null;
+
+  return {
+    summary: projectMemory.summary || null,
+    recurringFindings: (projectMemory.recurringFindings || []).slice(0, 4),
+    highQualityReferences: (projectMemory.highQualityReferences || []).slice(0, 3),
+    featurePatterns: (projectMemory.featurePatterns || []).slice(0, 5).map((item) => ({
+      featureKey: item.featureKey,
+      route: item.route,
+      templateKey: item.templateKey,
+      screenTemplate: item.screenTemplate,
+      status: item.status,
+      score: item.score,
+    })),
+  };
+}
+
+function compactRepairContext(repairContext) {
+  if (!repairContext) return null;
+
+  return {
+    attemptNumber: repairContext.attemptNumber,
+    reviewStatus: repairContext.reviewStatus,
+    reviewScore: repairContext.reviewScore,
+    specialistReviewStatus: repairContext.specialistReviewStatus,
+    specialistReviewScore: repairContext.specialistReviewScore,
+    findings: (repairContext.findings || []).slice(0, 4).map((item) => ({
+      code: item.code,
+      severity: item.severity,
+      filePath: item.filePath,
+      message: truncateText(item.message, 160),
+    })),
+    specialistFindings: (repairContext.specialistFindings || []).slice(0, 4).map((item) => ({
+      code: item.code,
+      severity: item.severity,
+      filePath: item.filePath,
+      message: truncateText(item.message, 160),
+    })),
+    validationFailures: (repairContext.validationFailures || []).slice(0, 3).map((item) => ({
+      scriptName: item.scriptName,
+      errorMessage: truncateText(item.errorMessage, 180),
+    })),
+  };
+}
+
 function formatValidationFailures(summary) {
   if (!summary?.reports?.length) return [];
 
@@ -1084,12 +1142,12 @@ function getDomainTemplate(technicalSpec) {
 
 async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repairContext = null) {
   const domainTemplate = getDomainTemplate(technicalSpec);
-  const experienceGoals = [
+  const experienceGoals = compactExperienceGoals([
     technicalSpec.frontend.pageDescription,
     technicalSpec.domain.successMessage,
     `Ação principal: ${technicalSpec.domain.submitLabel}`,
     `Rota da tela: ${technicalSpec.frontend.suggestedRoute}`,
-  ].filter(Boolean);
+  ].filter(Boolean));
   const fallback = {
     navigationLabel: technicalSpec.frontend.navigationLabel,
     pageTitle: technicalSpec.frontend.pageTitle,
@@ -1124,10 +1182,10 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
       fields: technicalSpec.domain.fields,
       experienceGoals,
       uiStates: technicalSpec.ux?.states,
-      validationSummary: technicalSpec.ux?.validationSummary,
+      validationSummary: compactValidationSummary(technicalSpec.ux?.validationSummary),
       permissions: technicalSpec.ux?.permissions,
-      projectMemory: technicalSpec.projectMemory,
-      repairContext,
+      projectMemory: compactProjectMemory(technicalSpec.projectMemory),
+      repairContext: compactRepairContext(repairContext),
     }, { envOverrides });
 
     return {
@@ -3068,7 +3126,7 @@ async function createRepairAttemptArtifact(task, implementation, technicalSpec, 
         implementationId: String(implementation.id),
         featureKey: technicalSpec.featureKey,
         generatedAt: new Date().toISOString(),
-        repairContext,
+        repairContext: compactRepairContext(repairContext),
       },
       null,
       2
@@ -3818,3 +3876,5 @@ export async function reviewTaskImplementation(taskUuid) {
     throw error;
   }
 }
+
+

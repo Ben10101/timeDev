@@ -14,6 +14,56 @@ import {
 } from '../services/projectDataService.js';
 import { serializeBigInts } from '../utils/serialize.js';
 
+function compactText(value = '', maxLength = 220) {
+  const text = String(value || '')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}...`;
+}
+
+function buildCompactRequirementBacklog(task) {
+  return [
+    `Historia alvo: ${compactText(task.title, 140)}`,
+    task.description ? `Contexto imediato: ${compactText(task.description, 180)}` : null,
+    task.project?.description ? `Projeto: ${compactText(task.project.description, 140)}` : null,
+    task.project?.vision ? `Visao: ${compactText(task.project.vision, 160)}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function extractCompactRequirementSection(content = '', sectionTitle = '', maxLength = 260) {
+  const normalized = String(content || '')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n');
+
+  const escaped = sectionTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = normalized.match(new RegExp(`##+\\s+${escaped}\\s*([\\s\\S]*?)(?=\\n##+\\s+|$)`, 'i'));
+  return compactText(match ? match[1] : '', maxLength);
+}
+
+function buildQaRequirementSummary(requirementsContent = '') {
+  const userStory = extractCompactRequirementSection(requirementsContent, 'User Story Refinada', 180);
+  const functional = extractCompactRequirementSection(requirementsContent, 'Requisitos Funcionais', 360);
+  const mainFlow = extractCompactRequirementSection(requirementsContent, 'Fluxo Principal', 220);
+  const rules = extractCompactRequirementSection(requirementsContent, 'Regras de Negocio', 220);
+  const acceptance = extractCompactRequirementSection(requirementsContent, 'Criterios de Aceite (BDD)', 260);
+
+  return [
+    userStory ? `User Story Refinada:\n${userStory}` : null,
+    functional ? `Requisitos Funcionais:\n${functional}` : null,
+    mainFlow ? `Fluxo Principal:\n${mainFlow}` : null,
+    rules ? `Regras de Negocio:\n${rules}` : null,
+    acceptance ? `Criterios de Aceite:\n${acceptance}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 function hasBrokenEnding(content = '') {
   const text = (content || '').trimEnd();
   if (!text) return true;
@@ -161,14 +211,11 @@ export async function runRequirementsForTaskController(req, res) {
       idea: `Refine somente esta historia de usuario: ${task.title}${
         task.description ? `\n\nContexto complementar da tarefa: ${task.description}` : ''
       }`,
-      backlog: [`Historia: ${task.title}`, task.description ? `Contexto: ${task.description}` : null]
-        .filter(Boolean)
-        .join('\n'),
+      backlog: buildCompactRequirementBacklog(task),
       project_name: task.project.name,
       project_context: {
-        description: task.project.description,
-        vision: task.project.vision,
-        intake: task.project.intakeConfig || {},
+        description: compactText(task.project.description, 180),
+        vision: compactText(task.project.vision, 220),
       },
     };
 
@@ -271,23 +318,24 @@ export async function runQaForTaskController(req, res) {
       statusNote: 'Task enviada para QA',
     });
 
+    const requirementSummary = buildQaRequirementSummary(latestRequirements.content);
+
     const payload = {
       project_id: task.project.uuid,
       task_uuid: task.uuid,
       idea: `Crie o plano de testes apenas para esta tarefa: ${task.title}${
         task.description ? `\n\nContexto especifico da tarefa: ${task.description}` : ''
       }`,
-      code_structure: latestRequirements.content,
+      code_structure: requirementSummary,
       developer_output: {
-        code: latestRequirements.content,
+        code: requirementSummary,
       },
       project_name: task.project.name,
       project_context: {
-        description: task.project.description,
-        vision: task.project.vision,
-        intake: task.project.intakeConfig || {},
+        description: compactText(task.project.description, 180),
+        vision: compactText(task.project.vision, 220),
       },
-      requirement_summary: latestRequirements.content,
+      requirement_summary: requirementSummary,
     };
 
     agentRun = await createAgentRunStart(task.project.uuid, 'qa_engineer', payload);

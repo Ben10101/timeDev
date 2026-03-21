@@ -43,7 +43,7 @@ ENTRADA
 User Story:
 "{idea}"
 
-Backlog (apenas contexto, NAO expandir escopo):
+Contexto curto do backlog/projeto (apenas referencia, NAO expandir escopo):
 {backlog}
 
 ---
@@ -118,7 +118,7 @@ DIRETRIZES FINAIS:
             validator=validate_requirements_output,
             options_override={
                 "temperature": 0.1,
-                "num_predict": int(os.getenv("REQUIREMENTS_LLM_NUM_PREDICT", "2200")),
+                "num_predict": int(os.getenv("REQUIREMENTS_LLM_NUM_PREDICT", "1800")),
             },
             max_retries=int(os.getenv("REQUIREMENTS_MAX_RETRIES", "3")),
         )

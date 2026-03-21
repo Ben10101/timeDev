@@ -51,16 +51,39 @@ function clampText(value, maxLength = 420) {
 }
 
 function compactRequirementArtifact(content) {
-  const userStory = clampText(extractMarkdownSection(content, 'User Story Refinada'), 260);
-  const functional = clampText(extractMarkdownSection(content, 'Requisitos Funcionais'), 900);
-  const rules = clampText(extractMarkdownSection(content, 'Regras de Negocio'), 500);
-  const acceptance = clampText(extractMarkdownSection(content, 'Criterios de Aceite (BDD)'), 700);
+  const userStory = clampText(extractMarkdownSection(content, 'User Story Refinada'), 180);
+  const functional = clampText(extractMarkdownSection(content, 'Requisitos Funcionais'), 420);
+  const rules = clampText(extractMarkdownSection(content, 'Regras de Negocio'), 260);
+  const acceptance = clampText(extractMarkdownSection(content, 'Criterios de Aceite (BDD)'), 320);
 
   return [
     userStory ? `User Story Refinada:\n${userStory}` : null,
     functional ? `Requisitos Funcionais:\n${functional}` : null,
     rules ? `Regras de Negocio:\n${rules}` : null,
     acceptance ? `Criterios de Aceite:\n${acceptance}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function compactProjectBrief(project) {
+  return [
+    `Projeto: ${project?.name || 'Projeto'}`,
+    project?.description ? `Descricao: ${clampText(project.description, 180)}` : null,
+    project?.vision ? `Visao: ${clampText(project.vision, 220)}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function compactBacklogInput(idea = '', answers = {}) {
+  const entries = Object.entries(answers || {})
+    .map(([key, value]) => `${key}: ${clampText(typeof value === 'string' ? value : JSON.stringify(value), 120)}`)
+    .slice(0, 8);
+
+  return [
+    clampText(idea, 480),
+    entries.length ? `Respostas-chave:\n- ${entries.join('\n- ')}` : null,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -305,8 +328,8 @@ export async function generateProjectBacklogController(req, res, next) {
 
     const payload = {
       project_id: projectUuid,
-      idea: idea.trim(),
-      answers: answers || {},
+      idea: compactBacklogInput(idea.trim(), answers || {}),
+      answers: {},
     };
 
     agentRun = await createAgentRunStart(projectUuid, 'project_manager', payload);
@@ -390,23 +413,21 @@ export async function generateProjectArchitectureController(req, res, next) {
         });
 
       const requirementsBundle = refinedStories
-        .map(
-          (story, index) =>
-            `## Historia ${index + 1}: ${story.title}\n\nUUID: ${story.taskUuid}\n\n${
-              story.description ? `Contexto: ${story.description}\n\n` : ''
-            }${story.requirements}`
+        .map((story, index) =>
+          [
+            `## Historia ${index + 1}: ${clampText(story.title, 120)}`,
+            `UUID: ${story.taskUuid}`,
+            story.description ? `Contexto: ${clampText(story.description, 120)}` : null,
+            story.requirements,
+          ]
+            .filter(Boolean)
+            .join('\n\n')
         )
         .join('\n\n---\n\n');
 
     const payload = {
       project_id: projectUuid,
-      idea: [
-        `Projeto: ${project?.name || projectUuid}`,
-        project?.description ? `Descricao: ${project.description}` : null,
-        project?.vision ? `Visao: ${project.vision}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n'),
+      idea: compactProjectBrief(project),
       requirements: requirementsBundle,
       project_name: project?.name || 'Projeto',
       project_context: {

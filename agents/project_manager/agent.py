@@ -40,6 +40,8 @@ REGRAS CRITICAS
 - Priorize o que realmente faz sentido para uma primeira versao robusta
 - Nao invente modulos desconectados do problema descrito
 - As historias devem estar prontas para refinamento posterior
+- Trabalhe com sintese; o briefing recebido ja esta resumido
+- Evite justificativas longas e descricoes repetidas
 
 RESPONDA EM MARKDOWN USANDO EXATAMENTE ESTA ESTRUTURA
 
@@ -69,7 +71,7 @@ REGRAS FINAIS
             validator=validate_backlog_output,
             options_override={
                 "temperature": 0.1,
-                "num_predict": int(os.getenv("PROJECT_MANAGER_LLM_NUM_PREDICT", "2200")),
+                "num_predict": int(os.getenv("PROJECT_MANAGER_LLM_NUM_PREDICT", "1600")),
             },
             max_retries=int(os.getenv("PROJECT_MANAGER_MAX_RETRIES", "3")),
         )

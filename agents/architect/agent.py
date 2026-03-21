@@ -58,9 +58,10 @@ INSTRUCOES CRITICAS
 - Pense em estrutura real de projeto full stack
 - Seja objetivo, tecnico e implementavel
 - Considere reaproveitamento, escalabilidade e seguranca
-- Trabalhe com sintese arquitetural, nao reescreva todos os requisitos
+- Trabalhe com sintese arquitetural, nao reescreva os requisitos recebidos
 - Priorize modulos, entidades, contratos, pastas e sequencia de entrega
 - Evite listas gigantes e texto redundante
+- Considere que as historias refinadas ja estao resumidas; extraia padroes e consolidacoes
 
 RESPONDA EM MARKDOWN USANDO EXATAMENTE ESTA ESTRUTURA
 
@@ -102,7 +103,7 @@ REGRAS FINAIS
                 model=architecture_model,
                 options_override={
                     "temperature": 0.1,
-                    "num_predict": int(os.getenv("ARCHITECT_LLM_NUM_PREDICT", "2200")),
+                    "num_predict": int(os.getenv("ARCHITECT_LLM_NUM_PREDICT", "1700")),
                 },
                 max_retries=int(os.getenv("ARCHITECT_MAX_RETRIES", "3")),
             )
