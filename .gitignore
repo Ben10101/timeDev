@@ -11,7 +11,25 @@ __pycache__/
 *.swp
 *.swo
 .DS_Store
-outputs/projects/
 .python-version
 *.log
 npm-debug.log*
+
+# Generated outputs and temporary artifacts
+outputs/
+backend/outputs/
+.cache/
+tmp_req.txt
+pydantic-coreerror
+test_results.json
+test_backlog.md
+test_requirements.md
+test_architecture.md
+test_code.md
+test_tests.md
+
+# Generated application local dependencies and build outputs
+generated-projects/*/node_modules/
+generated-projects/*/apps/*/dist/
+generated-projects/*/apps/*/node_modules/
+generated-projects/*/packages/*/node_modules/
