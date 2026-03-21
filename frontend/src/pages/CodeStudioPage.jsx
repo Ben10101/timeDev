@@ -4,7 +4,9 @@ import { Braces, CheckCircle2, Copy, Download, ExternalLink, FolderGit2, Hammer,
 import AppShell from '../components/AppShell';
 import {
   bootstrapGeneratedApp,
+  getAiOperationsOverview,
   getGeneratedApp,
+  getOperationalHealth,
   getProjectArchitectureStatus,
   getTaskImplementationStatus,
   listProjects,
@@ -62,6 +64,8 @@ export default function CodeStudioPage() {
   const [generationProgress, setGenerationProgress] = useState('');
   const [error, setError] = useState(null);
   const [copyFeedback, setCopyFeedback] = useState('');
+  const [operationsOverview, setOperationsOverview] = useState(null);
+  const [health, setHealth] = useState(null);
 
   const selectedProjectUuid = searchParams.get('project');
   const selectedTaskUuid = searchParams.get('task');
@@ -117,6 +121,13 @@ export default function CodeStudioPage() {
 
       setTasks(taskList);
       setArchitectureStatus(nextArchitectureStatus);
+
+      const [nextOverview, nextHealth] = await Promise.all([
+        getAiOperationsOverview({ projectUuid }),
+        getOperationalHealth().catch(() => null),
+      ]);
+      setOperationsOverview(nextOverview);
+      setHealth(nextHealth);
 
       try {
         const app = await getGeneratedApp(projectUuid);
@@ -260,6 +271,8 @@ export default function CodeStudioPage() {
               <p><strong>Historias refinadas:</strong> {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0}</p>
               <p><strong>Arquitetura:</strong> {architectureStatus?.hasArchitecture ? (architectureStatus?.architectureNeedsRefresh ? 'Desatualizada' : 'Pronta') : 'Pendente'}</p>
               <p><strong>Implementacao:</strong> {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
+              <p><strong>Saude API:</strong> {health?.status || 'n/a'}</p>
+              <p><strong>Banco:</strong> {health?.database || 'n/a'}</p>
             </div>
           </section>
 
@@ -273,6 +286,24 @@ export default function CodeStudioPage() {
               <p><strong>Local:</strong> {generatedApp?.rootPath || 'Sera criado quando a arquitetura ou a implementacao rodar.'}</p>
             </div>
           </section>
+
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Operacao IA</p>
+            </div>
+            <div className="space-y-3 p-4 text-sm text-slate-700">
+              <p><strong>Runs recentes:</strong> {operationsOverview?.summary?.totalRuns || 0}</p>
+              <p><strong>Falhas:</strong> {operationsOverview?.summary?.failedRuns || 0}</p>
+              <p><strong>Tokens:</strong> {operationsOverview?.summary?.totalEstimatedTokens || 0}</p>
+              <p><strong>Custo estimado:</strong> {Number(operationsOverview?.summary?.totalCostUsd || 0).toFixed(4)} USD</p>
+              <p><strong>Acima do budget:</strong> {operationsOverview?.summary?.overBudgetRuns || 0}</p>
+              {(operationsOverview?.alerts || []).slice(0, 2).map((alert) => (
+                <div key={alert.code} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+                  {alert.message}
+                </div>
+              ))}
+            </div>
+          </section>
         </>
       }
     >
@@ -281,6 +312,44 @@ export default function CodeStudioPage() {
         {generationProgress && (
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-[#102a72]">{generationProgress}</div>
         )}
+
+        {operationsOverview?.recentRuns?.length ? (
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Observabilidade</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Execucoes recentes de IA</h2>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto p-6">
+              <table className="min-w-full text-sm">
+                <thead className="text-left text-slate-500">
+                  <tr>
+                    <th className="pb-3 pr-4">Agente</th>
+                    <th className="pb-3 pr-4">Status</th>
+                    <th className="pb-3 pr-4">Provider</th>
+                    <th className="pb-3 pr-4">Tokens</th>
+                    <th className="pb-3 pr-4">Duracao</th>
+                    <th className="pb-3 pr-4">Budget</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {operationsOverview.recentRuns.slice(0, 8).map((run) => (
+                    <tr key={run.uuid} className="border-t border-slate-100">
+                      <td className="py-3 pr-4">{run.agentName}</td>
+                      <td className="py-3 pr-4"><StatusBadge value={run.status} /></td>
+                      <td className="py-3 pr-4">{run.runtimeMeta?.primaryProvider || '-'}</td>
+                      <td className="py-3 pr-4">{run.totalTokens || 0}</td>
+                      <td className="py-3 pr-4">{run.durationSeconds != null ? `${run.durationSeconds}s` : '-'}</td>
+                      <td className="py-3 pr-4">{run.overBudget ? 'acima' : 'ok'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
 
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">

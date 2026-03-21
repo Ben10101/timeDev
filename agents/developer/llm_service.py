@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -225,7 +226,21 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
 
     status, data = http_post_json(base_urls[provider], payload, headers=headers, timeout=120)
     if status >= 400:
-        raise RuntimeError(extract_error_message(data))
+        error_message = extract_error_message(data)
+        if provider == "openrouter":
+            affordable_match = re.search(r"can only afford\s+(\d+)", error_message or "", re.I)
+            if affordable_match:
+                affordable_tokens = int(affordable_match.group(1))
+                if affordable_tokens >= 64 and affordable_tokens < payload["max_tokens"]:
+                    retry_payload = {
+                        **payload,
+                        "max_tokens": max(64, affordable_tokens - 16),
+                    }
+                    retry_status, retry_data = http_post_json(base_urls[provider], retry_payload, headers=headers, timeout=120)
+                    if retry_status < 400:
+                        return extract_text_from_openai_like(retry_data)
+                    error_message = extract_error_message(retry_data)
+        raise RuntimeError(error_message)
 
     return extract_text_from_openai_like(data)
 

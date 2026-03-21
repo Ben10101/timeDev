@@ -125,6 +125,16 @@ export async function testAiProvider(payload) {
   return response.data
 }
 
+export async function getOperationalHealth() {
+  const response = await axios.get(API_URL.replace(/\/api$/, '') + '/health', { withCredentials: true })
+  return response.data
+}
+
+export async function getAiOperationsOverview(params = {}) {
+  const response = await apiClient.get('/observability/ai', { params })
+  return response.data
+}
+
 export const generateProject = async (idea) => {
   try {
     const response = await apiClient.post('/generate-project', {

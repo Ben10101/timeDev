@@ -17,7 +17,14 @@ function App() {
     <Router>
       <div className="min-h-screen">
         <Routes>
-          <Route path="/" element={<HomePage />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <HomePage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/auth" element={<AuthPage />} />
           <Route
             path="/projects"

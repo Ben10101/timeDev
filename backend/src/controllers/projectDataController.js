@@ -25,6 +25,7 @@ import { runSingleAgent } from '../services/orchestratorService.js';
 import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
 import { bootstrapGeneratedApp } from '../services/implementationService.js';
 import { serializeBigInts } from '../utils/serialize.js';
+import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
 
 function compactWhitespace(value = '') {
   return String(value || '')
@@ -332,16 +333,18 @@ export async function generateProjectBacklogController(req, res, next) {
       answers: {},
     };
 
-    agentRun = await createAgentRunStart(projectUuid, 'project_manager', payload);
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
-    const result = await runSingleAgent('project_manager', payload, { envOverrides });
+    const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
+    agentRun = await createAgentRunStart(projectUuid, 'project_manager', payloadWithRuntime);
+    const result = await runSingleAgent('project_manager', payloadWithRuntime, { envOverrides });
 
     await finishAgentRun(agentRun.id, {
       status: 'completed',
       result,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
     });
 
-    await persistAgentResult(projectUuid, 'project_manager', payload, result);
+    await persistAgentResult(projectUuid, 'project_manager', payloadWithRuntime, result);
 
     const [project, tasks] = await Promise.all([
       getProjectByUuid(projectUuid, req.authUser.uuid),
@@ -441,16 +444,18 @@ export async function generateProjectArchitectureController(req, res, next) {
       },
     };
 
-    agentRun = await createAgentRunStart(projectUuid, 'architect', payload);
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
-    const result = await runSingleAgent('architect', payload, { envOverrides });
+    const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
+    agentRun = await createAgentRunStart(projectUuid, 'architect', payloadWithRuntime);
+    const result = await runSingleAgent('architect', payloadWithRuntime, { envOverrides });
 
     await finishAgentRun(agentRun.id, {
       status: 'completed',
       result,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
     });
 
-    await persistAgentResult(projectUuid, 'architect', payload, result);
+    await persistAgentResult(projectUuid, 'architect', payloadWithRuntime, result);
     const generatedApp = await bootstrapGeneratedApp(projectUuid);
     const updatedArchitectureStatus = await getProjectArchitectureStatus(projectUuid, req.authUser.uuid);
 

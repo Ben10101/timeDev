@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma.js';
+import { estimateTokenCount } from '../utils/aiRunMetrics.js';
 
 const taskListInclude = {
   assigneeUser: { select: { uuid: true, name: true, email: true } },
@@ -1355,17 +1356,27 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
   });
 }
 
-export async function finishAgentRun(agentRunId, { status, result, errorMessage }) {
+export async function finishAgentRun(agentRunId, { status, result, errorMessage, usageMeta = null }) {
+  const existingRun = await prisma.agentRun.findUnique({
+    where: { id: agentRunId },
+    select: { inputPayload: true },
+  });
+
+  const outputText = result
+    ? typeof result === 'string'
+      ? result
+      : JSON.stringify(result, null, 2)
+    : null;
+
   return prisma.agentRun.update({
     where: { id: agentRunId },
     data: {
       status,
-      outputText: result
-        ? typeof result === 'string'
-          ? result
-          : JSON.stringify(result, null, 2)
-        : null,
+      outputText,
       errorMessage: errorMessage || null,
+      tokensInput: usageMeta?.tokensInput ?? estimateTokenCount(existingRun?.inputPayload || ''),
+      tokensOutput: usageMeta?.tokensOutput ?? estimateTokenCount(outputText || ''),
+      costUsd: usageMeta?.costUsd ?? null,
       finishedAt: new Date(),
     },
   });

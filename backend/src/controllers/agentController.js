@@ -13,6 +13,7 @@ import {
   updateTask,
 } from '../services/projectDataService.js';
 import { serializeBigInts } from '../utils/serialize.js';
+import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
 
 function compactText(value = '', maxLength = 220) {
   const text = String(value || '')
@@ -143,12 +144,17 @@ export async function runAgentController(req, res) {
     }
 
     await ensurePipelineProject(payload.project_id, payload.idea, req.authUser.uuid);
-    agentRun = await createAgentRunStart(payload.project_id, agent, payload);
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
+    agentRun = await createAgentRunStart(payload.project_id, agent, payloadWithRuntime);
 
-    const result = await runSingleAgent(agent, payload, { envOverrides });
-    await finishAgentRun(agentRun.id, { status: 'completed', result });
-    await persistAgentResult(payload.project_id, agent, payload, result);
+    const result = await runSingleAgent(agent, payloadWithRuntime, { envOverrides });
+    await finishAgentRun(agentRun.id, {
+      status: 'completed',
+      result,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+    });
+    await persistAgentResult(payload.project_id, agent, payloadWithRuntime, result);
 
     res.status(200).json({
       success: true,
@@ -219,13 +225,18 @@ export async function runRequirementsForTaskController(req, res) {
       },
     };
 
-    agentRun = await createAgentRunStart(task.project.uuid, 'requirements_analyst', payload);
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
-    const result = await runSingleAgent('requirements_analyst', payload, { envOverrides });
+    const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
+    agentRun = await createAgentRunStart(task.project.uuid, 'requirements_analyst', payloadWithRuntime);
+    const result = await runSingleAgent('requirements_analyst', payloadWithRuntime, { envOverrides });
     const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
     assertArtifactCompleteness('requirements_analyst', content);
 
-    await finishAgentRun(agentRun.id, { status: 'completed', result });
+    await finishAgentRun(agentRun.id, {
+      status: 'completed',
+      result,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+    });
 
     await createTaskArtifact(task.uuid, {
       artifactType: 'requirements',
@@ -338,13 +349,18 @@ export async function runQaForTaskController(req, res) {
       requirement_summary: requirementSummary,
     };
 
-    agentRun = await createAgentRunStart(task.project.uuid, 'qa_engineer', payload);
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
-    const result = await runSingleAgent('qa_engineer', payload, { envOverrides });
+    const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
+    agentRun = await createAgentRunStart(task.project.uuid, 'qa_engineer', payloadWithRuntime);
+    const result = await runSingleAgent('qa_engineer', payloadWithRuntime, { envOverrides });
     const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
     assertArtifactCompleteness('qa_engineer', content);
 
-    await finishAgentRun(agentRun.id, { status: 'completed', result });
+    await finishAgentRun(agentRun.id, {
+      status: 'completed',
+      result,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+    });
 
     await createTaskArtifact(task.uuid, {
       artifactType: 'test_plan',

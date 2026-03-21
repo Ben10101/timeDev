@@ -9,6 +9,8 @@ import agentRoutes from './routes/agentRoutes.js';
 import dataRoutes from './routes/dataRoutes.js';
 import implementationRoutes from './routes/implementationRoutes.js';
 import authRoutes from './routes/authRoutes.js';
+import observabilityRoutes from './routes/observabilityRoutes.js';
+import { apiRateLimiter, applySecurityHeaders } from './middleware/securityMiddleware.js';
 
 
 BigInt.prototype.toJSON = function () {
@@ -45,6 +47,7 @@ function buildAllowedOrigins() {
 const allowedOrigins = buildAllowedOrigins();
 const isProduction = process.env.NODE_ENV === 'production';
 
+app.use(applySecurityHeaders);
 app.use(
   cors({
     origin(origin, callback) {
@@ -58,17 +61,14 @@ app.use(
   })
 );
 app.use(express.json({ limit: '2mb' }));
+app.use('/api', apiRateLimiter);
 
+app.use('/', observabilityRoutes);
 app.use('/api', authRoutes);
 app.use('/api', projectRoutes);
 app.use('/api', agentRoutes);
 app.use('/api', dataRoutes);
 app.use('/api', implementationRoutes);
-
-
-app.get('/health', (_req, res) => {
-  res.json({ status: 'OK', timestamp: new Date() });
-});
 
 app.use((err, _req, res, _next) => {
   console.error(err.stack);

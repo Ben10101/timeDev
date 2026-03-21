@@ -198,6 +198,38 @@ function formatValidationFailures(summary) {
     }));
 }
 
+function normalizeSemanticText(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '') {
+  const title = normalizeSemanticText(taskTitle);
+  const feature = normalizeSemanticText(featureKey);
+  const route = normalizeSemanticText(routeBase);
+
+  const signals = [
+    { group: 'course', aliases: ['curso', 'courses', 'course'] },
+    { group: 'module', aliases: ['modulo', 'modulos', 'modules', 'module'] },
+    { group: 'lesson', aliases: ['aula', 'aulas', 'lessons', 'lesson'] },
+    { group: 'material', aliases: ['material', 'materiais', 'pdf', 'video', 'audio'] },
+    { group: 'search', aliases: ['buscar', 'busca', 'search', 'pesquisa'] },
+    { group: 'pricing', aliases: ['preco', 'valor', 'pricing', 'pagamento'] },
+    { group: 'enrollment', aliases: ['inscricao', 'matricula', 'enrollment'] },
+    { group: 'profile', aliases: ['perfil', 'profile'] },
+    { group: 'auth', aliases: ['conta', 'login', 'autenticacao', 'cadastro'] },
+  ];
+
+  return signals
+    .filter((signal) => signal.aliases.some((alias) => title.includes(alias)))
+    .map((signal) => ({
+      group: signal.group,
+      matchedInFeature: signal.aliases.some((alias) => feature.includes(alias) || route.includes(alias)),
+    }));
+}
+
 function buildRepairContext({ reviewReport, specialistReviewReport, validationSummary, attemptNumber }) {
   return {
     attemptNumber,
@@ -3070,6 +3102,28 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
       category: 'quality',
       filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
       message: 'A feature ignorou um padrao recorrente registrado na memoria do projeto.',
+    });
+  }
+
+  const semanticSignals = extractSemanticSignals(task.title, technicalSpec.featureKey, technicalSpec.backend.routeBase);
+  if (semanticSignals.some((signal) => !signal.matchedInFeature)) {
+    findings.push({
+      severity: 'high',
+      code: 'specialist_semantic_feature_mismatch',
+      category: 'semantic',
+      filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
+      message: `A feature ${technicalSpec.featureKey} nao parece refletir corretamente o dominio esperado da task: ${task.title}.`,
+    });
+  }
+
+  const titleHint = normalizeSemanticText(task.title);
+  if (titleHint.includes('curso') && !docsContent.toLowerCase().includes('curso')) {
+    findings.push({
+      severity: 'medium',
+      code: 'specialist_docs_semantic_gap',
+      category: 'semantic',
+      filePath: `docs/implementations/${technicalSpec.featureKey}.md`,
+      message: 'A documentacao da implementacao nao preservou os termos centrais do dominio da historia.',
     });
   }
 
