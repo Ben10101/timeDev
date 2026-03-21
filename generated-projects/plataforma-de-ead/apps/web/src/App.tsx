@@ -18,7 +18,7 @@ const routes = [
 
 function HomePage() {
   const productAreas = routes.filter((route) => route.path !== '/')
-  return <StudioHome title="Plataforma de EAD" routes={productAreas} />
+  return <StudioHome title="Plataforma de EAD · Application Studio" routes={productAreas} />
 }
 
 export default function App() {

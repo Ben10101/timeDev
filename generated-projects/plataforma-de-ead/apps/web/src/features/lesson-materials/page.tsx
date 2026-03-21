@@ -51,9 +51,9 @@ export function LessonMaterialsPage() {
         { label: 'Registros atuais', value: String(items.length) },
         { label: 'Acao principal', value: 'Enviar Material' },
       ]}
-      highlights={["Validacao automatica dos campos antes do envio.","Feedback imediato em caso de sucesso ou erro."]}
-      formTitle="Preencha os dados"
-      formDescription="Informe os dados necessarios para continuar."
+      highlights={["Centralize anexos importantes para reforcar o aprendizado da aula.","Publique materiais extras sem depender de ajustes manuais posteriores."]}
+      formTitle="Novo material complementar"
+      formDescription="Cadastre um anexo pronto para download e mantenha a aula sempre atualizada."
       form={
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
           <FieldGroup label="Titulo do material" hint="Identifique o material complementar para o aluno.">
@@ -91,8 +91,8 @@ export function LessonMaterialsPage() {
           {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}
         </form>
       }
-      listTitle="Visao geral"
-      listDescription="Acompanhe os registros criados nesta area."
+      listTitle="Materiais publicados"
+      listDescription="Consulte os anexos recentes e acompanhe o acervo disponivel para cada aula."
       listMeta={`${items.length} registro(s)`}
     >
       {items.length ? (
@@ -105,7 +105,7 @@ export function LessonMaterialsPage() {
           ))}
         </div>
       ) : (
-        <p style={{ margin: 0, color: '#64748b' }}>Nenhum dado exibido ainda.</p>
+        <p style={{ margin: 0, color: '#64748b' }}>Os materiais enviados aparecerao aqui para consulta e manutencao rapida.</p>
       )}
     </FeaturePage>
   );

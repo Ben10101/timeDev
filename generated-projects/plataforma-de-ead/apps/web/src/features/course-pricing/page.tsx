@@ -51,9 +51,9 @@ export function CoursePricingPage() {
         { label: 'Registros atuais', value: String(items.length) },
         { label: 'Acao principal', value: 'Salvar Preco' },
       ]}
-      highlights={["Fluxo pensado para reduzir duvidas no preenchimento.","Feedback claro ao concluir ou revisar a operacao."]}
-      formTitle="Dados principais"
-      formDescription="Preencha os dados essenciais para concluir a operacao com seguranca."
+      highlights={["Defina o posicionamento comercial do curso antes da publicacao.","Ajuste preco e apresentacao da oferta em um unico fluxo."]}
+      formTitle="Configuracao de preco"
+      formDescription="Atualize a oferta comercial do curso com dados prontos para publicacao."
       form={
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
           <FieldGroup label="Nome completo" hint="Informe o nome que sera exibido no seu perfil.">
@@ -92,7 +92,7 @@ export function CoursePricingPage() {
         </form>
       }
       listTitle="Registros recentes"
-      listDescription="Nenhum registro disponivel ainda."
+      listDescription="Acompanhe os ultimos ajustes comerciais aplicados aos cursos."
       listMeta={`${items.length} registro(s)`}
     >
       {items.length ? (
@@ -105,7 +105,7 @@ export function CoursePricingPage() {
           ))}
         </div>
       ) : (
-        <p style={{ margin: 0, color: '#64748b' }}>Nenhum registro disponivel ainda.</p>
+        <p style={{ margin: 0, color: '#64748b' }}>As configuracoes de preco salvas aparecerao aqui para consulta rapida.</p>
       )}
     </FeaturePage>
   );

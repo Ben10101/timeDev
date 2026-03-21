@@ -51,9 +51,9 @@ export function CourseSearchPage() {
         { label: 'Registros atuais', value: String(items.length) },
         { label: 'Acao principal', value: 'Buscar Cursos' },
       ]}
-      highlights={["Fluxo pensado para reduzir duvidas no preenchimento.","Feedback claro ao concluir ou revisar a operacao."]}
-      formTitle="Dados principais"
-      formDescription="Preencha os dados essenciais para concluir a operacao com seguranca."
+      highlights={["Encontre cursos com mais rapidez a partir de filtros objetivos.","Descubra ofertas relevantes sem navegar por longas listagens."]}
+      formTitle="Busca inteligente"
+      formDescription="Combine criterios simples para localizar cursos alinhados ao interesse do aluno."
       form={
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
           <FieldGroup label="Nome completo" hint="Informe o nome que sera exibido no seu perfil.">
@@ -92,7 +92,7 @@ export function CourseSearchPage() {
         </form>
       }
       listTitle="Registros recentes"
-      listDescription="Nenhum registro disponivel ainda."
+      listDescription="Veja as ultimas buscas realizadas e use-as como atalho para novas consultas."
       listMeta={`${items.length} registro(s)`}
     >
       {items.length ? (
@@ -105,7 +105,7 @@ export function CourseSearchPage() {
           ))}
         </div>
       ) : (
-        <p style={{ margin: 0, color: '#64748b' }}>Nenhum registro disponivel ainda.</p>
+        <p style={{ margin: 0, color: '#64748b' }}>As consultas recentes aparecerao aqui para acelerar novas buscas.</p>
       )}
     </FeaturePage>
   );
