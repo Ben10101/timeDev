@@ -463,13 +463,13 @@ export default function HomePage() {
 
         <motion.section
           {...fade(0.5)}
-          className="overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-[#0A1128] via-[#102a72] to-[#173fa6] text-white shadow-xl"
+          className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0A1128] text-white shadow-xl"
         >
           <div className="grid gap-6 px-8 py-8 lg:grid-cols-[1.3fr_0.7fr]">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-200/80">Factory Maturity</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-200/90">Factory Maturity</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">Sua plataforma ja opera como uma fabrica real de software assistida por IA.</h2>
-              <p className="mt-4 max-w-3xl text-sm leading-7 text-blue-100/90">
+              <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-200">
                 O proximo salto nao e adicionar mais telas: e continuar endurecendo qualidade, confiabilidade e governanca
                 da geracao. Hoje voce ja tem backlog, requisitos, QA, arquitetura, codigo e observabilidade em uma mesma esteira.
               </p>
@@ -480,11 +480,11 @@ export default function HomePage() {
                 { label: 'Observabilidade', value: operations?.summary?.totalRuns || 0, icon: Activity },
                 { label: 'Beta v1.0', value: 'pronto', icon: ShieldCheck },
               ].map((item) => (
-                <div key={item.label} className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-sm">
+                <div key={item.label} className="rounded-2xl border border-white/10 bg-slate-900/55 p-4 backdrop-blur-sm">
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-blue-100">
                     <item.icon className="h-4.5 w-4.5" strokeWidth={2} />
                   </div>
-                  <p className="mt-3 text-xs uppercase tracking-[0.2em] text-blue-100/70">{item.label}</p>
+                  <p className="mt-3 text-xs uppercase tracking-[0.2em] text-blue-100/80">{item.label}</p>
                   <p className="mt-1 text-2xl font-bold text-white">{item.value}</p>
                 </div>
               ))}
