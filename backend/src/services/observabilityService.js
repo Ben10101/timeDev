@@ -1,9 +1,19 @@
 import { prisma } from '../lib/prisma.js';
+import { getAuditLogPath, readRecentAuditEntries } from './auditLogService.js';
+import { getRefreshCookieOptions } from './authService.js';
+import { getRateLimitConfig } from '../middleware/securityMiddleware.js';
 import { buildBudgetConfig, estimateTokenCount, extractRuntimeMetaFromPayload } from '../utils/aiRunMetrics.js';
 
 function average(values = []) {
   if (!values.length) return 0;
   return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function percentile(values = [], p = 95) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[index];
 }
 
 function asNumber(value) {
@@ -31,6 +41,7 @@ export async function getOperationalHealth() {
 export async function getAiOperationsOverview(userUuid, projectUuid = null) {
   const budgets = buildBudgetConfig();
   const projectFilter = projectUuid ? { project: { uuid: projectUuid } } : {};
+  const now = Date.now();
 
   const agentRuns = await prisma.agentRun.findMany({
     where: {
@@ -103,6 +114,10 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
       run.startedAt && run.finishedAt
         ? Math.max(0, Math.round((new Date(run.finishedAt) - new Date(run.startedAt)) / 1000))
         : null;
+    const currentRunningSeconds =
+      run.status === 'running' && run.startedAt
+        ? Math.max(0, Math.round((now - new Date(run.startedAt).getTime()) / 1000))
+        : null;
     const totalTokens = asNumber(run.tokensInput) + asNumber(run.tokensOutput);
     const configuredBudget = budgets[run.agentName] || null;
 
@@ -114,6 +129,7 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
       durationSeconds,
+      currentRunningSeconds,
       errorMessage: run.errorMessage,
       tokensInput: asNumber(run.tokensInput),
       tokensOutput: asNumber(run.tokensOutput),
@@ -131,6 +147,13 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
     acc[run.status] = (acc[run.status] || 0) + 1;
     return acc;
   }, {});
+
+  const completedDurations = enrichedRuns
+    .map((run) => run.durationSeconds)
+    .filter((value) => value !== null && value !== undefined);
+  const recentWindowRuns = enrichedRuns.slice(0, 20);
+  const recentFailedRuns = recentWindowRuns.filter((run) => run.status === 'failed');
+  const staleRunningRuns = enrichedRuns.filter((run) => run.status === 'running' && (run.currentRunningSeconds || 0) > 600);
 
   const byAgent = Object.values(
     enrichedRuns.reduce((acc, run) => {
@@ -166,6 +189,14 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
     overBudgetCount: item.overBudgetCount,
   }));
 
+  const topFailingAgents = [...byAgent]
+    .filter((item) => item.failed > 0)
+    .sort((a, b) => {
+      if (b.failed !== a.failed) return b.failed - a.failed;
+      return b.failureRate - a.failureRate;
+    })
+    .slice(0, 5);
+
   const qualityImplementations = generatedRuns
     .map((run) => ({
       uuid: run.uuid,
@@ -183,16 +214,42 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
     }))
     .slice(0, 20);
 
+  const implementationFailures = qualityImplementations.filter((run) => run.status === 'failed');
+
   return {
     summary: {
       totalRuns: enrichedRuns.length,
       completedRuns: statusCounts.completed || 0,
       failedRuns: statusCounts.failed || 0,
       runningRuns: statusCounts.running || 0,
+      successRatePercent: enrichedRuns.length ? Math.round(((statusCounts.completed || 0) / enrichedRuns.length) * 100) : 0,
+      recentFailureRatePercent: recentWindowRuns.length ? Math.round((recentFailedRuns.length / recentWindowRuns.length) * 100) : 0,
       totalCostUsd: Number(enrichedRuns.reduce((sum, run) => sum + run.costUsd, 0).toFixed(6)),
       totalEstimatedTokens: enrichedRuns.reduce((sum, run) => sum + run.totalTokens, 0),
-      averageRunDurationSeconds: average(enrichedRuns.map((run) => run.durationSeconds).filter((value) => value !== null)),
+      averageRunDurationSeconds: average(completedDurations),
+      p95RunDurationSeconds: percentile(completedDurations, 95),
       overBudgetRuns: enrichedRuns.filter((run) => run.overBudget).length,
+      staleRunningRuns: staleRunningRuns.length,
+      implementationFailures: implementationFailures.length,
+    },
+    reliability: {
+      topFailingAgents,
+      recentFailures: recentFailedRuns.slice(0, 8).map((run) => ({
+        uuid: run.uuid,
+        agentName: run.agentName,
+        project: run.project,
+        task: run.task,
+        createdAt: run.createdAt,
+        errorMessage: run.errorMessage,
+      })),
+      staleRunningRuns: staleRunningRuns.map((run) => ({
+        uuid: run.uuid,
+        agentName: run.agentName,
+        project: run.project,
+        task: run.task,
+        startedAt: run.startedAt,
+        currentRunningSeconds: run.currentRunningSeconds,
+      })),
     },
     byAgent,
     recentRuns: enrichedRuns.slice(0, 20),
@@ -209,6 +266,112 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
         : []),
     ],
   };
+}
+
+export async function getProductionReadiness(userUuid, projectUuid = null) {
+  const health = await getOperationalHealth();
+  const aiOverview = await getAiOperationsOverview(userUuid, projectUuid);
+  const recentAudit = await readRecentAuditEntries({ limit: 30, userUuid, projectUuid });
+  const refreshCookie = getRefreshCookieOptions();
+  const defaultRateLimit = getRateLimitConfig(false);
+  const sensitiveRateLimit = getRateLimitConfig(true);
+  const providersConfigured = {
+    openai: Boolean(process.env.OPENAI_API_KEY),
+    anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
+    openrouter: Boolean(process.env.OPENROUTER_API_KEY),
+    gemini: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
+    groq: Boolean(process.env.GROQ_API_KEY),
+  };
+
+  const readinessChecks = [
+    { code: 'database', label: 'Banco operacional', status: health.database === 'ok' ? 'ok' : 'failed' },
+    { code: 'auth_secret', label: 'Segredo de autenticacao configurado', status: process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET ? 'ok' : 'warning' },
+    { code: 'cors', label: 'Origem de frontend definida', status: process.env.FRONTEND_ORIGIN || process.env.VITE_FRONTEND_URL ? 'ok' : 'warning' },
+    { code: 'provider_api', label: 'Pelo menos uma API remota configurada', status: Object.values(providersConfigured).some(Boolean) ? 'ok' : 'warning' },
+    { code: 'audit_log', label: 'Auditoria operacional ativa', status: recentAudit.length ? 'ok' : 'warning' },
+    { code: 'success_rate', label: 'Taxa de sucesso acima de 70%', status: (aiOverview.summary.successRatePercent || 0) >= 70 ? 'ok' : 'warning' },
+    { code: 'stale_runs', label: 'Sem runs travados', status: (aiOverview.summary.staleRunningRuns || 0) === 0 ? 'ok' : 'warning' },
+  ];
+
+  const warningCount = readinessChecks.filter((check) => check.status === 'warning').length;
+  const failedCount = readinessChecks.filter((check) => check.status === 'failed').length;
+  const releaseVersion = process.env.PLATFORM_VERSION || '1.0.0';
+  const releaseChannel = process.env.PLATFORM_RELEASE_CHANNEL || 'internal';
+  const releaseSha = process.env.PLATFORM_RELEASE_SHA || null;
+  const frontendOrigin = process.env.FRONTEND_ORIGIN || process.env.VITE_FRONTEND_URL || 'http://localhost:5173';
+  const readinessAlerts = [
+    ...(warningCount
+      ? [{ code: 'readiness_attention', message: `Existem ${warningCount} checks de readiness exigindo atencao.` }]
+      : []),
+    ...(failedCount
+      ? [{ code: 'readiness_failed', message: `Existem ${failedCount} checks criticos falhando na plataforma.` }]
+      : []),
+    ...((aiOverview.reliability.topFailingAgents || []).slice(0, 2).map((agent) => ({
+      code: `agent_instability_${agent.agentName}`,
+      message: `${agent.agentName} concentra ${agent.failed} falhas recentes (${agent.failureRate}% de falha).`,
+    }))),
+  ];
+
+  return {
+    status: failedCount ? 'degraded' : warningCount ? 'attention' : 'ok',
+    checkedAt: new Date().toISOString(),
+    release: {
+      version: releaseVersion,
+      channel: releaseChannel,
+      sha: releaseSha,
+      nodeVersion: process.version,
+      frontendOrigin,
+      apiBasePath: '/api',
+    },
+    checks: readinessChecks,
+    security: {
+      environment: process.env.NODE_ENV || 'development',
+      secureRefreshCookie: Boolean(refreshCookie.secure),
+      strictSameSite: refreshCookie.sameSite === 'strict',
+      corsRestricted: Boolean(process.env.NODE_ENV === 'production' && (process.env.FRONTEND_ORIGIN || process.env.VITE_FRONTEND_URL)),
+      authSecretConfigured: Boolean(process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET),
+      accessTokenTtlMinutes: 15,
+      refreshTokenTtlDays: 7,
+      rateLimitDefault: defaultRateLimit,
+      rateLimitSensitive: sensitiveRateLimit,
+    },
+    governance: {
+      auditLogPath: getAuditLogPath(),
+      recentAuditEntries: recentAudit.length,
+      recentAuditFailures: recentAudit.filter((entry) => entry.success === false).length,
+      requestTracingEnabled: true,
+      rateLimitEnabled: true,
+      auditEnabled: true,
+      implementationRemoteOnly: process.env.AI_DISABLE_OLLAMA_FALLBACK === '1',
+      sensitiveActionsTracked: [
+        'auth_login',
+        'auth_register',
+        'project_create',
+        'project_generate_backlog',
+        'project_generate_architecture',
+        'task_generate_requirements',
+        'task_generate_qa',
+        'task_generate_implementation',
+      ],
+    },
+    providersConfigured,
+    ai: {
+      successRatePercent: aiOverview.summary.successRatePercent || 0,
+      recentFailureRatePercent: aiOverview.summary.recentFailureRatePercent || 0,
+      staleRunningRuns: aiOverview.summary.staleRunningRuns || 0,
+      overBudgetRuns: aiOverview.summary.overBudgetRuns || 0,
+      topFailingAgents: aiOverview.reliability.topFailingAgents || [],
+    },
+    alerts: readinessAlerts,
+  };
+}
+
+export async function getAuditTrail(userUuid, { projectUuid = null, limit = 40 } = {}) {
+  return readRecentAuditEntries({
+    userUuid,
+    projectUuid,
+    limit: Math.min(100, Math.max(1, Number(limit || 40))),
+  });
 }
 
 export function buildBudgetPreview(agentName, payload) {

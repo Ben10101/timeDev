@@ -162,6 +162,16 @@ export async function getAiOperationsOverview(params = {}) {
   return response.data
 }
 
+export async function getProductionReadiness(params = {}) {
+  const response = await apiClient.get('/observability/readiness', { params })
+  return response.data
+}
+
+export async function getAuditTrail(params = {}) {
+  const response = await apiClient.get('/observability/audit', { params })
+  return response.data
+}
+
 export const generateProject = async (idea) => {
   try {
     const response = await apiClient.post('/generate-project', {
@@ -295,6 +305,8 @@ export default {
   updateAiSettings,
   getAiRuntimeSummary,
   testAiProvider,
+  getProductionReadiness,
+  getAuditTrail,
   generateProject,
   bootstrapWorkspace,
   listProjects,

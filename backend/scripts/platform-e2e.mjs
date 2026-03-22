@@ -26,6 +26,12 @@ async function request(path, options = {}) {
   return { response, data };
 }
 
+function assertOk(result, message) {
+  if (!result.response.ok) {
+    throw new Error(`${message}: ${JSON.stringify(result.data)}`);
+  }
+}
+
 async function main() {
   const health = await fetch(API_BASE.replace(/\/api$/, '') + '/health');
   if (!health.ok) throw new Error(`Health check falhou: ${health.status}`);
@@ -71,14 +77,69 @@ async function main() {
     throw new Error(`Falha ao criar projeto: ${JSON.stringify(createdProject.data)}`);
   }
 
+  const createdTask = await request(`/projects/${createdProject.data.uuid}/tasks`, {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({
+      title: `Task E2E ${Date.now()}`,
+      description: 'Task criada pelo smoke test da plataforma',
+      status: 'backlog',
+      priority: 'medium',
+      taskType: 'task',
+      assigneeType: 'agent',
+      assigneeAgentName: 'requirements_analyst',
+      createdByUuid: register.data.user.uuid,
+    }),
+  });
+  assertOk(createdTask, 'Falha ao criar task');
+
   const projects = await request('/projects', { headers: authHeaders });
   if (!projects.response.ok || !Array.isArray(projects.data) || !projects.data.some((item) => item.uuid === createdProject.data.uuid)) {
     throw new Error('Projeto criado nao apareceu na listagem.');
   }
 
+  const projectTasks = await request(`/projects/${createdProject.data.uuid}/tasks`, { headers: authHeaders });
+  if (!projectTasks.response.ok || !Array.isArray(projectTasks.data) || !projectTasks.data.some((item) => item.uuid === createdTask.data.uuid)) {
+    throw new Error('Task criada nao apareceu no board do projeto.');
+  }
+
+  const taskDetails = await request(`/tasks/${createdTask.data.uuid}`, { headers: authHeaders });
+  if (!taskDetails.response.ok || taskDetails.data?.uuid !== createdTask.data.uuid) {
+    throw new Error('Falha ao consultar detalhe da task criada.');
+  }
+
+  const comment = await request(`/tasks/${createdTask.data.uuid}/comments`, {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({
+      body: 'Comentario criado pelo smoke test E2E.',
+      authorUserUuid: register.data.user.uuid,
+    }),
+  });
+  assertOk(comment, 'Falha ao registrar comentario da task');
+
   const architectureStatus = await request(`/projects/${createdProject.data.uuid}/architecture/status`, { headers: authHeaders });
   if (!architectureStatus.response.ok) {
     throw new Error('Falha ao consultar status de arquitetura do projeto.');
+  }
+
+  const observability = await request('/observability/ai', { headers: authHeaders });
+  if (!observability.response.ok || !observability.data?.summary) {
+    throw new Error('Falha ao consultar observabilidade da plataforma.');
+  }
+
+  if (!Array.isArray(observability.data?.reliability?.topFailingAgents)) {
+    throw new Error('Observabilidade nao retornou a secao de confiabilidade esperada.');
+  }
+
+  const readiness = await request('/observability/readiness', { headers: authHeaders });
+  if (!readiness.response.ok || !Array.isArray(readiness.data?.checks) || !readiness.data?.release?.version) {
+    throw new Error('Falha ao consultar readiness premium da plataforma.');
+  }
+
+  const auditTrail = await request('/observability/audit?limit=5', { headers: authHeaders });
+  if (!auditTrail.response.ok || !Array.isArray(auditTrail.data)) {
+    throw new Error('Falha ao consultar trilha de auditoria da plataforma.');
   }
 
   if (RUN_EXPENSIVE) {

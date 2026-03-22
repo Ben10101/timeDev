@@ -230,6 +230,202 @@ function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '')
     }));
 }
 
+function getExpectedDomainKeywords(domainKey = '') {
+  const catalog = {
+    'course-catalog': ['course', 'courses', 'curso'],
+    'course-modules': ['module', 'modules', 'modulo'],
+    'course-lessons': ['lesson', 'lessons', 'aula'],
+    'lesson-materials': ['material', 'materials', 'arquivo', 'anexo'],
+    'course-pricing': ['pricing', 'preco', 'valor', 'price'],
+    'course-search': ['search', 'busca', 'pesquisa', 'catalog'],
+    'course-enrollment': ['enrollment', 'enrollments', 'matricula', 'inscricao'],
+    'course-player': ['player', 'lesson', 'video', 'audio'],
+    'profile-settings': ['profile', 'perfil'],
+    'auth-login': ['login', 'auth', 'signin'],
+    'auth-register': ['register', 'signup', 'cadastro'],
+  };
+
+  return catalog[domainKey] || [];
+}
+
+function detectDomainMismatch(taskTitle = '', domainKey = '', featureKey = '', routeBase = '', docsContent = '') {
+  const expectedKeywords = getExpectedDomainKeywords(domainKey);
+  if (!expectedKeywords.length) return null;
+
+  const sources = [
+    normalizeSemanticText(featureKey),
+    normalizeSemanticText(routeBase),
+    normalizeSemanticText(docsContent),
+  ];
+
+  const matchedKeywords = expectedKeywords.filter((keyword) =>
+    sources.some((source) => source.includes(normalizeSemanticText(keyword)))
+  );
+
+  if (matchedKeywords.length) return null;
+
+  return {
+    severity: 'high',
+    code: 'specialist_expected_domain_missing',
+    category: 'semantic',
+    message: `A implementacao nao preservou os sinais principais do dominio ${domainKey} esperado para a task: ${taskTitle}.`,
+  };
+}
+
+function inferImplementedDomain(featureKey = '', routeBase = '') {
+  const source = `${normalizeSemanticText(featureKey)} ${normalizeSemanticText(routeBase)}`;
+  const candidates = [
+    'course-catalog',
+    'course-modules',
+    'course-lessons',
+    'lesson-materials',
+    'course-pricing',
+    'course-search',
+    'course-enrollment',
+    'course-player',
+    'profile-settings',
+    'auth-login',
+    'auth-register',
+  ];
+
+  for (const candidate of candidates) {
+    const keywords = getExpectedDomainKeywords(candidate);
+    if (keywords.some((keyword) => source.includes(normalizeSemanticText(keyword)))) {
+      return candidate;
+    }
+  }
+
+  return 'custom';
+}
+
+function buildTraceabilitySummary(task, implementation, technicalSpecContent, expectedDomain, implementedDomain) {
+  const generatedFiles = implementation?.generatedFiles || [];
+  const routeBase = technicalSpecContent?.backend?.routeBase || '';
+  const featurePath = technicalSpecContent?.frontend?.featurePath || '';
+  const contractPath = technicalSpecContent?.shared?.contractPath || '';
+  const docsPath = technicalSpecContent?.featureKey ? `docs/implementations/${technicalSpecContent.featureKey}.md` : '';
+
+  const filePaths = generatedFiles.map((file) => String(file.filePath || '').replace(/\\/g, '/'));
+  const hasFrontendPage = featurePath ? filePaths.some((item) => item.includes(`${featurePath}/page.tsx`)) : false;
+  const hasFrontendService = featurePath ? filePaths.some((item) => item.includes(`${featurePath}/service.ts`)) : false;
+  const hasSharedContract = contractPath ? filePaths.some((item) => item.includes(contractPath.replace(/\\/g, '/'))) : false;
+  const hasDocumentation = docsPath ? filePaths.some((item) => item.includes(docsPath)) : false;
+  const routeSlug = routeBase.split('/').filter(Boolean).pop() || '';
+  const routeRepresentedInFiles = routeSlug ? filePaths.some((item) => item.includes(routeSlug)) : false;
+  const taskTerms = normalizeSemanticText(task?.title || '')
+    .split(/[^a-z0-9]+/)
+    .filter((item) => item.length >= 5)
+    .slice(0, 6);
+  const taskTermsMatched = taskTerms.filter((term) =>
+    filePaths.some((item) => normalizeSemanticText(item).includes(term))
+  );
+
+  const checks = [
+    hasFrontendPage,
+    hasFrontendService,
+    hasSharedContract,
+    hasDocumentation,
+    routeRepresentedInFiles,
+    expectedDomain ? expectedDomain === implementedDomain : true,
+    taskTerms.length ? taskTermsMatched.length >= Math.max(1, Math.ceil(taskTerms.length / 3)) : true,
+  ];
+
+  const passedChecks = checks.filter(Boolean).length;
+  const traceabilityScore = Math.round((passedChecks / checks.length) * 100);
+
+  return {
+    traceabilityScore,
+    expectedDomain,
+    implementedDomain,
+    routeBase,
+    hasFrontendPage,
+    hasFrontendService,
+    hasSharedContract,
+    hasDocumentation,
+    routeRepresentedInFiles,
+    taskTermsMatched,
+  };
+}
+
+async function buildImplementationBenchmarkSummary(implementation, technicalSpecContent, qualitySummary) {
+  const generatedAppId = implementation?.generatedAppId;
+  if (!generatedAppId) return null;
+
+  const expectedDomain =
+    qualitySummary?.expectedDomain ||
+    technicalSpecContent?.structured?.classification?.domain ||
+    technicalSpecContent?.featureKey ||
+    null;
+  const screenTemplate =
+    qualitySummary?.screenTemplate ||
+    technicalSpecContent?.architecture?.screenTemplate ||
+    technicalSpecContent?.structured?.classification?.screenTemplate ||
+    null;
+
+  const peerImplementations = await prisma.taskImplementation.findMany({
+    where: {
+      generatedAppId,
+    },
+    include: {
+      technicalSpecArtifact: true,
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  });
+
+  const totalImplementations = peerImplementations.length;
+  const integratedImplementations = peerImplementations.filter((item) => item.status === 'integrated');
+  const failedImplementations = peerImplementations.filter((item) => item.status === 'failed');
+
+  const peerSpecs = peerImplementations.map((item) => ({
+    implementation: item,
+    spec: parseJsonArtifactContent(item.technicalSpecArtifact),
+  }));
+
+  const sameDomainPeers = peerSpecs.filter((item) => {
+    const peerDomain = item.spec?.structured?.classification?.domain || item.spec?.featureKey || null;
+    return expectedDomain && peerDomain === expectedDomain;
+  });
+
+  const sameTemplatePeers = peerSpecs.filter((item) => {
+    const peerTemplate =
+      item.spec?.architecture?.screenTemplate ||
+      item.spec?.structured?.classification?.screenTemplate ||
+      null;
+    return screenTemplate && peerTemplate === screenTemplate;
+  });
+
+  const projectSuccessRatePercent = totalImplementations
+    ? Math.round((integratedImplementations.length / totalImplementations) * 100)
+    : 0;
+  const domainSuccessRatePercent = sameDomainPeers.length
+    ? Math.round(
+        (sameDomainPeers.filter((item) => item.implementation.status === 'integrated').length / sameDomainPeers.length) * 100
+      )
+    : null;
+  const templateUsagePercent = totalImplementations
+    ? Math.round((sameTemplatePeers.length / totalImplementations) * 100)
+    : 0;
+
+  const comparativeScore = Math.round(
+    ((qualitySummary?.premiumScore || 0) * 0.6) +
+      (projectSuccessRatePercent * 0.15) +
+      ((domainSuccessRatePercent ?? projectSuccessRatePercent) * 0.2) +
+      (templateUsagePercent * 0.05)
+  );
+
+  return {
+    totalImplementations,
+    integratedImplementations: integratedImplementations.length,
+    failedImplementations: failedImplementations.length,
+    projectSuccessRatePercent,
+    domainPeerCount: sameDomainPeers.length,
+    domainSuccessRatePercent,
+    templatePeerCount: sameTemplatePeers.length,
+    templateUsagePercent,
+    comparativeScore,
+  };
+}
+
 function buildRepairContext({ reviewReport, specialistReviewReport, validationSummary, attemptNumber }) {
   return {
     attemptNumber,
@@ -264,7 +460,7 @@ function parseJsonArtifactContent(artifact) {
   }
 }
 
-function buildImplementationQualitySummary({ implementation, reviewArtifact, specialistReviewArtifact, buildReportArtifact, testReportArtifact, lintReportArtifact }) {
+function buildImplementationQualitySummary({ task, implementation, reviewArtifact, specialistReviewArtifact, buildReportArtifact, testReportArtifact, lintReportArtifact }) {
   const reviewContent = parseJsonArtifactContent(reviewArtifact);
   const specialistReviewContent = parseJsonArtifactContent(specialistReviewArtifact);
   const buildContent = parseJsonArtifactContent(buildReportArtifact);
@@ -274,6 +470,7 @@ function buildImplementationQualitySummary({ implementation, reviewArtifact, spe
   const score = reviewContent?.summary?.score ?? null;
   const reviewStatus = reviewContent?.summary?.status || 'unknown';
   const findings = reviewContent?.findings || [];
+  const specialistFindings = specialistReviewContent?.findings || [];
   const countsBySeverity = findings.reduce(
     (acc, item) => {
       const key = item.severity || 'low';
@@ -286,12 +483,43 @@ function buildImplementationQualitySummary({ implementation, reviewArtifact, spe
     (lintContent?.status === 'completed' ? 25 : 0) +
     (testContent?.status === 'completed' ? 35 : 0) +
     (buildContent?.status === 'completed' ? 40 : 0);
+  const semanticFindings = specialistFindings.filter((item) => item.category === 'semantic');
+  const expectedDomain =
+    technicalSpecContent?.structured?.classification?.domain ||
+    technicalSpecContent?.featureKey ||
+    null;
+  const implementedDomain = inferImplementedDomain(
+    technicalSpecContent?.featureKey || '',
+    technicalSpecContent?.backend?.routeBase || ''
+  );
+  const semanticScore = specialistReviewContent?.summary?.semanticScore ?? Math.max(0, 100 - semanticFindings.length * 25);
+  const traceability = buildTraceabilitySummary(task, implementation, technicalSpecContent, expectedDomain, implementedDomain);
+  const premiumScore = Math.round(
+    [
+      score,
+      specialistReviewContent?.summary?.score ?? null,
+      semanticScore,
+      reviewContent?.summary?.uxScore ?? null,
+      reviewContent?.summary?.consistencyScore ?? null,
+      specialistReviewContent?.summary?.architectureScore ?? null,
+      validationScore,
+      traceability.traceabilityScore,
+    ]
+      .filter((value) => value !== null && value !== undefined)
+      .reduce((sum, value, _index, values) => sum + Number(value) / values.length, 0)
+  );
 
   return {
     score,
     reviewStatus,
     specialistReviewStatus: specialistReviewContent?.summary?.status || 'unknown',
     specialistScore: specialistReviewContent?.summary?.score ?? null,
+    semanticScore,
+    premiumScore,
+    expectedDomain,
+    implementedDomain,
+    domainAligned: expectedDomain ? expectedDomain === implementedDomain : null,
+    traceability,
     verdict: reviewContent?.summary?.verdict || null,
     buildStatus: buildContent?.status || implementation?.buildStatus || 'unknown',
     testStatus: testContent?.status || implementation?.testStatus || 'unknown',
@@ -3116,6 +3344,32 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
     });
   }
 
+  const explicitDomainMismatch = detectDomainMismatch(
+    task.title,
+    technicalSpec.structured?.classification?.domain || technicalSpec.featureKey,
+    technicalSpec.featureKey,
+    technicalSpec.backend.routeBase,
+    docsContent
+  );
+  if (explicitDomainMismatch) {
+    findings.push({
+      ...explicitDomainMismatch,
+      filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
+    });
+  }
+
+  const expectedDomain = technicalSpec.structured?.classification?.domain || technicalSpec.featureKey;
+  const implementedDomain = inferImplementedDomain(technicalSpec.featureKey, technicalSpec.backend.routeBase);
+  if (expectedDomain && implementedDomain !== 'custom' && expectedDomain !== implementedDomain) {
+    findings.push({
+      severity: 'high',
+      code: 'specialist_domain_alignment_mismatch',
+      category: 'semantic',
+      filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
+      message: `O dominio implementado (${implementedDomain}) diverge do dominio esperado (${expectedDomain}) para a task.`,
+    });
+  }
+
   const titleHint = normalizeSemanticText(task.title);
   if (titleHint.includes('curso') && !docsContent.toLowerCase().includes('curso')) {
     findings.push({
@@ -3135,6 +3389,10 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
   const experienceScore = findings
     .filter((item) => item.category === 'quality')
     .reduce((total, item) => total - (severityWeight[item.severity] || 0), 100);
+  const semanticScore = findings
+    .filter((item) => item.category === 'semantic')
+    .reduce((total, item) => total - (severityWeight[item.severity] || 0), 100);
+  const hasSemanticBlocker = findings.some((item) => item.category === 'semantic' && item.severity === 'high');
 
   const reviewReport = {
     version: 1,
@@ -3147,9 +3405,17 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
       score: specialistScore,
       architectureScore: Math.max(0, architectureScore),
       experienceScore: Math.max(0, experienceScore),
+      semanticScore: Math.max(0, semanticScore),
+      expectedDomain,
+      implementedDomain,
+      domainAligned: expectedDomain === implementedDomain,
       totalFindings: findings.length,
-      status: findings.some((item) => item.severity === 'high') ? 'needs_attention' : findings.length ? 'minor_issues' : 'approved',
-      verdict: findings.length ? 'A implementacao precisa de refinamento especializado para ficar no padrao premium.' : 'A implementacao passou no reviewer especializado.',
+      status: hasSemanticBlocker || findings.some((item) => item.severity === 'high') ? 'needs_attention' : findings.length ? 'minor_issues' : 'approved',
+      verdict: hasSemanticBlocker
+        ? 'A implementacao divergiu semanticamente do dominio esperado e precisa ser corrigida antes de integrar.'
+        : findings.length
+          ? 'A implementacao precisa de refinamento especializado para ficar no padrao premium.'
+          : 'A implementacao passou no reviewer especializado.',
     },
     findings,
     projectMemory: technicalSpec.projectMemory || null,
@@ -3848,6 +4114,21 @@ export async function getTaskImplementationStatus(taskUuid) {
     orderBy: { createdAt: 'desc' },
   });
 
+  const qualitySummary = buildImplementationQualitySummary({
+    task,
+    implementation,
+    reviewArtifact,
+    specialistReviewArtifact,
+    buildReportArtifact,
+    testReportArtifact,
+    lintReportArtifact,
+  });
+  const benchmarkSummary = await buildImplementationBenchmarkSummary(
+    implementation,
+    parseJsonArtifactContent(implementation.technicalSpecArtifact),
+    qualitySummary
+  );
+
   return {
     ...implementation,
     reviewArtifact,
@@ -3856,14 +4137,10 @@ export async function getTaskImplementationStatus(taskUuid) {
     buildReportArtifact,
     testReportArtifact,
     lintReportArtifact,
-    qualitySummary: buildImplementationQualitySummary({
-      implementation,
-      reviewArtifact,
-      specialistReviewArtifact,
-      buildReportArtifact,
-      testReportArtifact,
-      lintReportArtifact,
-    }),
+    qualitySummary: {
+      ...qualitySummary,
+      benchmark: benchmarkSummary,
+    },
   };
 }
 

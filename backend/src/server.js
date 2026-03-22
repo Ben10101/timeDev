@@ -10,7 +10,9 @@ import dataRoutes from './routes/dataRoutes.js';
 import implementationRoutes from './routes/implementationRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import observabilityRoutes from './routes/observabilityRoutes.js';
-import { apiRateLimiter, applySecurityHeaders } from './middleware/securityMiddleware.js';
+import { attachAuthUser } from './middleware/authMiddleware.js';
+import { apiAuditLogger } from './middleware/auditMiddleware.js';
+import { apiRateLimiter, applySecurityHeaders, attachRequestContext } from './middleware/securityMiddleware.js';
 
 
 BigInt.prototype.toJSON = function () {
@@ -48,6 +50,7 @@ const allowedOrigins = buildAllowedOrigins();
 const isProduction = process.env.NODE_ENV === 'production';
 
 app.use(applySecurityHeaders);
+app.use(attachRequestContext);
 app.use(
   cors({
     origin(origin, callback) {
@@ -61,7 +64,7 @@ app.use(
   })
 );
 app.use(express.json({ limit: '2mb' }));
-app.use('/api', apiRateLimiter);
+app.use('/api', attachAuthUser, apiRateLimiter, apiAuditLogger);
 
 app.use('/', observabilityRoutes);
 app.use('/api', observabilityRoutes);

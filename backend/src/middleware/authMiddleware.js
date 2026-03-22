@@ -28,7 +28,7 @@ export async function requireAuth(req, res, next) {
   try {
     const accessToken = getBearerToken(req);
     if (!accessToken) {
-      return res.status(401).json({ message: 'Autenticação obrigatória.' });
+      return res.status(401).json({ message: 'Autenticacao obrigatoria.' });
     }
 
     const user = await getAuthUser(accessToken);
@@ -36,7 +36,7 @@ export async function requireAuth(req, res, next) {
     req.authToken = accessToken;
     next();
   } catch (error) {
-    res.status(401).json({ message: error.message || 'Sessão inválida.' });
+    res.status(401).json({ message: error.message || 'Sessao invalida.' });
   }
 }
 

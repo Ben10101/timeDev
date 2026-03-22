@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -19,9 +19,11 @@ import {
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import {
+  getAuditTrail,
   getAiOperationsOverview,
   getApiErrorMessage,
   getOperationalHealth,
+  getProductionReadiness,
   listAllTasks,
   listProjects,
 } from '../services/api';
@@ -151,6 +153,8 @@ export default function HomePage() {
   const [tasks, setTasks] = useState([]);
   const [health, setHealth] = useState(null);
   const [operations, setOperations] = useState(null);
+  const [readiness, setReadiness] = useState(null);
+  const [auditTrail, setAuditTrail] = useState([]);
 
   useEffect(() => {
     let active = true;
@@ -159,11 +163,13 @@ export default function HomePage() {
       try {
         setLoading(true);
         setLoadError('');
-        const [projectsResult, tasksResult, healthResult, operationsResult] = await Promise.allSettled([
+        const [projectsResult, tasksResult, healthResult, operationsResult, readinessResult, auditResult] = await Promise.allSettled([
           listProjects(),
           listAllTasks(),
           getOperationalHealth(),
           getAiOperationsOverview(),
+          getProductionReadiness(),
+          getAuditTrail({ limit: 8 }),
         ]);
 
         if (!active) return;
@@ -172,17 +178,21 @@ export default function HomePage() {
         const tasksData = tasksResult.status === 'fulfilled' ? tasksResult.value : [];
         const healthData = healthResult.status === 'fulfilled' ? healthResult.value : null;
         const operationsData = operationsResult.status === 'fulfilled' ? operationsResult.value : null;
+        const readinessData = readinessResult.status === 'fulfilled' ? readinessResult.value : null;
+        const auditData = auditResult.status === 'fulfilled' ? auditResult.value : [];
 
         setProjects(Array.isArray(projectsData) ? projectsData : []);
         setTasks(Array.isArray(tasksData) ? tasksData : []);
         setHealth(healthData);
         setOperations(operationsData);
+        setReadiness(readinessData);
+        setAuditTrail(Array.isArray(auditData) ? auditData : []);
 
         const primaryError = [projectsResult, tasksResult, healthResult].find((result) => result.status === 'rejected');
         if (primaryError) {
           setLoadError(getApiErrorMessage(primaryError.reason, 'Nao foi possivel carregar o dashboard.'));
-        } else if (operationsResult.status === 'rejected') {
-          setLoadError('A observabilidade de IA nao esta disponivel no momento, mas o restante do dashboard foi carregado.');
+        } else if ([operationsResult, readinessResult, auditResult].some((result) => result.status === 'rejected')) {
+          setLoadError('Parte da observabilidade premium nao esta disponivel no momento, mas o restante do dashboard foi carregado.');
         }
       } catch (error) {
         if (!active) return;
@@ -229,6 +239,9 @@ export default function HomePage() {
   const recentRuns = operations?.recentRuns || [];
   const alerts = operations?.alerts || [];
   const healthySystem = health?.status === 'ok' && (operations?.summary?.failedRuns || 0) === 0;
+  const topFailingAgents = operations?.reliability?.topFailingAgents || [];
+  const staleRunningRuns = operations?.reliability?.staleRunningRuns || [];
+  const readinessWarnings = readiness?.checks?.filter((check) => check.status !== 'ok') || [];
 
   return (
     <AppShell
@@ -341,9 +354,7 @@ export default function HomePage() {
                     description={
                       tool.label === 'Projetos'
                         ? 'Criar, revisar e governar iniciativas'
-                        : tool.label === 'Backlog'
-                          ? 'Operar historias e progresso'
-                          : tool.label === 'Codigo'
+                        : tool.label === 'Codigo'
                             ? 'Gerar e validar a aplicacao'
                             : 'Configurar providers e fallback'
                     }
@@ -400,12 +411,12 @@ export default function HomePage() {
                 <p className="mt-2 text-2xl font-bold text-slate-900">{operations?.summary?.failedRuns || 0}</p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Tokens estimados</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{operations?.summary?.totalEstimatedTokens || 0}</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Taxa de sucesso</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{operations?.summary?.successRatePercent || 0}%</p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Custo estimado</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">US$ {(operations?.summary?.totalCostUsd || 0).toFixed(4)}</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">P95 duracao</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{operations?.summary?.p95RunDurationSeconds || 0}s</p>
               </div>
             </div>
           </motion.section>
@@ -441,10 +452,26 @@ export default function HomePage() {
 
           <motion.section {...fade(0.42)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Alertas</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Confiabilidade</p>
               <h2 className="mt-2 text-xl font-bold text-slate-900">Pontos de atencao</h2>
             </div>
             <div className="space-y-3 p-6">
+              {staleRunningRuns.length ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
+                  <p className="text-sm font-semibold text-rose-900">Runs travados detectados</p>
+                  <p className="mt-1 text-xs leading-5 text-rose-700">
+                    {staleRunningRuns.length} execucoes estao rodando ha mais de 10 minutos.
+                  </p>
+                </div>
+              ) : null}
+              {topFailingAgents.slice(0, 2).map((agent) => (
+                <div key={agent.agentName} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <p className="text-sm font-semibold text-slate-900">{agent.agentName}</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    {agent.failed} falhas em {agent.runs} runs · {agent.failureRate}% de falha.
+                  </p>
+                </div>
+              ))}
               {alerts.length ? (
                 alerts.map((alert, index) => (
                   <motion.div
@@ -466,6 +493,106 @@ export default function HomePage() {
               ) : (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-6 text-sm text-emerald-800">
                   Nenhum alerta relevante no momento. A operacao esta estavel.
+                </div>
+              )}
+            </div>
+          </motion.section>
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+          <motion.section {...fade(0.46)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Readiness</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Prontidao de producao</h2>
+            </div>
+            <div className="grid gap-3 p-6 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Status</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{readiness?.status || 'n/a'}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Checks</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{readiness?.checks?.length || 0}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Auditoria</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{readiness?.governance?.recentAuditEntries || 0}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Providers API</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {Object.values(readiness?.providersConfigured || {}).filter(Boolean).length}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Versao</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">
+                  v{readiness?.release?.version || 'n/a'} · {readiness?.release?.channel || 'n/a'}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Policy IA</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">
+                  {readiness?.governance?.implementationRemoteOnly ? 'Somente APIs remotas' : 'Fallback local permitido'}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Cookie seguro</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">
+                  {readiness?.security?.secureRefreshCookie ? 'Ativo' : 'Desenvolvimento'}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Rate limit sensivel</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">
+                  {readiness?.security?.rateLimitSensitive?.limit || 0} req / {Math.round((readiness?.security?.rateLimitSensitive?.windowMs || 0) / 1000)}s
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3 px-6 pb-6">
+              {(readiness?.alerts || []).slice(0, 2).map((alert) => (
+                <div key={alert.code} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
+                  <p className="text-sm font-semibold text-rose-900">{alert.code.replace(/_/g, ' ')}</p>
+                  <p className="mt-1 text-xs text-rose-700">{alert.message}</p>
+                </div>
+              ))}
+              {readinessWarnings.length ? readinessWarnings.slice(0, 4).map((check) => (
+                <div key={check.code} className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                  <p className="text-sm font-semibold text-amber-900">{check.label}</p>
+                  <p className="mt-1 text-xs text-amber-700">Status: {check.status}</p>
+                </div>
+              )) : (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
+                  Nenhum ponto critico de readiness detectado no momento.
+                </div>
+              )}
+            </div>
+          </motion.section>
+
+          <motion.section {...fade(0.5)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Auditoria</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Acoes criticas recentes</h2>
+            </div>
+            <div className="space-y-3 p-6">
+              {auditTrail.length ? auditTrail.map((entry, index) => (
+                <motion.div key={`${entry.timestamp}-${index}`} {...fade(0.52 + index * 0.03)} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                      {entry.actionType}
+                    </span>
+                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${entry.success ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                      {entry.success ? 'ok' : 'falha'}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{entry.method} {entry.path}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {entry.userEmail || 'Usuario desconhecido'} · {entry.durationMs}ms · {new Date(entry.timestamp).toLocaleString('pt-BR')}
+                  </p>
+                </motion.div>
+              )) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                  Nenhuma acao auditada registrada ainda.
                 </div>
               )}
             </div>
@@ -506,3 +633,4 @@ export default function HomePage() {
     </AppShell>
   );
 }
+

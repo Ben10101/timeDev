@@ -18,11 +18,13 @@ import {
 import AppShell from '../components/AppShell';
 import {
   bootstrapGeneratedApp,
+  getAuditTrail,
   getApiErrorMessage,
   getAiOperationsOverview,
   getGeneratedApp,
   getOperationalHealth,
   getProjectArchitectureStatus,
+  getProductionReadiness,
   getTaskImplementationStatus,
   listProjects,
   listProjectTasks,
@@ -112,6 +114,8 @@ export default function CodeStudioPage() {
   const [copyFeedback, setCopyFeedback] = useState('');
   const [operationsOverview, setOperationsOverview] = useState(null);
   const [health, setHealth] = useState(null);
+  const [readiness, setReadiness] = useState(null);
+  const [auditTrail, setAuditTrail] = useState([]);
 
   const selectedProjectUuid = searchParams.get('project');
   const selectedTaskUuid = searchParams.get('task');
@@ -171,12 +175,16 @@ export default function CodeStudioPage() {
       setTasks(taskList);
       setArchitectureStatus(nextArchitectureStatus);
 
-      const [nextOverview, nextHealth] = await Promise.all([
+      const [nextOverview, nextHealth, nextReadiness, nextAuditTrail] = await Promise.all([
         getAiOperationsOverview({ projectUuid }),
         getOperationalHealth().catch(() => null),
+        getProductionReadiness({ projectUuid }).catch(() => null),
+        getAuditTrail({ projectUuid, limit: 10 }).catch(() => []),
       ]);
       setOperationsOverview(nextOverview);
       setHealth(nextHealth);
+      setReadiness(nextReadiness);
+      setAuditTrail(Array.isArray(nextAuditTrail) ? nextAuditTrail : []);
 
       try {
         const app = await getGeneratedApp(projectUuid);
@@ -314,6 +322,7 @@ export default function CodeStudioPage() {
               <p><strong>Implementacao:</strong> {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
               <p><strong>Saude API:</strong> {health?.status || 'n/a'}</p>
               <p><strong>Banco:</strong> {health?.database || 'n/a'}</p>
+              <p><strong>Readiness:</strong> {readiness?.status || 'n/a'}</p>
             </div>
           </section>
 
@@ -335,9 +344,13 @@ export default function CodeStudioPage() {
             <div className="space-y-3 p-4 text-sm text-slate-700">
               <p><strong>Runs recentes:</strong> {operationsOverview?.summary?.totalRuns || 0}</p>
               <p><strong>Falhas:</strong> {operationsOverview?.summary?.failedRuns || 0}</p>
+              <p><strong>Sucesso:</strong> {operationsOverview?.summary?.successRatePercent || 0}%</p>
+              <p><strong>P95 duracao:</strong> {operationsOverview?.summary?.p95RunDurationSeconds || 0}s</p>
               <p><strong>Tokens:</strong> {operationsOverview?.summary?.totalEstimatedTokens || 0}</p>
               <p><strong>Custo estimado:</strong> {Number(operationsOverview?.summary?.totalCostUsd || 0).toFixed(4)} USD</p>
               <p><strong>Acima do budget:</strong> {operationsOverview?.summary?.overBudgetRuns || 0}</p>
+              <p><strong>Runs travados:</strong> {operationsOverview?.summary?.staleRunningRuns || 0}</p>
+              <p><strong>Auditoria:</strong> {readiness?.governance?.recentAuditEntries || 0}</p>
               {(operationsOverview?.alerts || []).slice(0, 2).map((alert) => (
                 <div key={alert.code} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
                   {alert.message}
@@ -398,8 +411,65 @@ export default function CodeStudioPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard icon={Layers3} label="Projeto" value={selectedProject ? 'selecionado' : 'nenhum'} hint={selectedProject?.name || 'Escolha um workspace'} tone="blue" />
           <MetricCard icon={Braces} label="App base" value={generatedApp?.status || 'pendente'} hint={generatedApp?.rootPath || 'Sera materializado na geracao'} tone="emerald" />
-          <MetricCard icon={Activity} label="Runs IA" value={operationsOverview?.summary?.totalRuns || 0} hint={`${operationsOverview?.summary?.failedRuns || 0} falhas recentes`} tone="amber" />
-          <MetricCard icon={Cpu} label="Custo estimado" value={`US$ ${Number(operationsOverview?.summary?.totalCostUsd || 0).toFixed(4)}`} hint={`${operationsOverview?.summary?.totalEstimatedTokens || 0} tokens`} tone="slate" />
+          <MetricCard icon={Activity} label="Confiabilidade" value={`${operationsOverview?.summary?.successRatePercent || 0}%`} hint={`${operationsOverview?.summary?.failedRuns || 0} falhas recentes`} tone="amber" />
+          <MetricCard icon={Cpu} label="P95 / custo" value={`${operationsOverview?.summary?.p95RunDurationSeconds || 0}s`} hint={`US$ ${Number(operationsOverview?.summary?.totalCostUsd || 0).toFixed(4)} · ${operationsOverview?.summary?.totalEstimatedTokens || 0} tokens`} tone="slate" />
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Readiness premium</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Governanca e seguranca operacional</h2>
+              </div>
+            </div>
+            <div className="grid gap-4 p-6 md:grid-cols-2">
+              <DetailCard label="Status" value={readiness?.status || 'n/a'} />
+              <DetailCard label="Checks" value={String(readiness?.checks?.length || 0)} />
+              <DetailCard label="Versao" value={`v${readiness?.release?.version || 'n/a'} · ${readiness?.release?.channel || 'n/a'}`} />
+              <DetailCard label="Auth secret" value={readiness?.security?.authSecretConfigured ? 'Configurado' : 'Ausente'} />
+              <DetailCard label="Cookie seguro" value={readiness?.security?.secureRefreshCookie ? 'Ativo' : 'Desenvolvimento'} />
+              <DetailCard label="CORS restrito" value={readiness?.security?.corsRestricted ? 'Sim' : 'Nao'} />
+              <DetailCard label="Policy IA" value={readiness?.governance?.implementationRemoteOnly ? 'Somente APIs remotas' : 'Fallback local permitido'} />
+              <DetailCard label="Falhas auditadas" value={String(readiness?.governance?.recentAuditFailures || 0)} />
+            </div>
+            {!!readiness?.alerts?.length && (
+              <div className="space-y-3 px-6 pb-6">
+                {readiness.alerts.slice(0, 3).map((alert) => (
+                  <div key={alert.code} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
+                    <strong>{alert.code.replace(/_/g, ' ')}:</strong> {alert.message}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Auditoria</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Rastro recente do projeto</h2>
+              </div>
+            </div>
+            <div className="space-y-3 p-6">
+              {auditTrail.length ? auditTrail.map((entry, index) => (
+                <div key={`${entry.timestamp}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge value={entry.success ? 'integrated' : 'failed'} />
+                    <span className="dashboard-badge bg-slate-100 text-slate-600">{entry.actionType}</span>
+                  </div>
+                  <p className="mt-3 text-sm font-semibold text-slate-900">{entry.method} {entry.path}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {entry.userEmail || 'Usuario desconhecido'} · {entry.durationMs}ms · {formatDate(entry.timestamp)}
+                  </p>
+                </div>
+              )) : (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
+                  Nenhum evento auditado encontrado para este projeto.
+                </div>
+              )}
+            </div>
+          </section>
         </div>
 
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
@@ -672,7 +742,10 @@ export default function CodeStudioPage() {
                         <strong>Atualizado:</strong> {formatDate(implementation?.updatedAt)}
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                        <strong>Score de qualidade:</strong> {implementation?.qualitySummary?.score ?? 'n/a'}
+                        <strong>Score premium:</strong> {implementation?.qualitySummary?.premiumScore ?? implementation?.qualitySummary?.score ?? 'n/a'}
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        <strong>Score comparativo:</strong> {implementation?.qualitySummary?.benchmark?.comparativeScore ?? 'n/a'}
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                         <strong>Template:</strong> {implementation?.qualitySummary?.screenTemplate || 'n/a'}
@@ -725,13 +798,21 @@ export default function CodeStudioPage() {
                   <p><strong>Review:</strong> {selectedImplementation.qualitySummary?.reviewStatus || 'n/a'}</p>
                   <p><strong>Specialist review:</strong> {selectedImplementation.qualitySummary?.specialistReviewStatus || 'n/a'}</p>
                   <p><strong>Score:</strong> {selectedImplementation.qualitySummary?.score ?? 'n/a'}</p>
+                  <p><strong>Score premium:</strong> {selectedImplementation.qualitySummary?.premiumScore ?? 'n/a'}</p>
+                  <p><strong>Score comparativo:</strong> {selectedImplementation.qualitySummary?.benchmark?.comparativeScore ?? 'n/a'}</p>
                   <p><strong>Specialist score:</strong> {selectedImplementation.qualitySummary?.specialistScore ?? 'n/a'}</p>
+                  <p><strong>Semantica:</strong> {selectedImplementation.qualitySummary?.semanticScore ?? 'n/a'}</p>
                   <p><strong>UX:</strong> {selectedImplementation.qualitySummary?.uxScore ?? 'n/a'}</p>
                   <p><strong>Arquitetura:</strong> {selectedImplementation.qualitySummary?.specialistArchitectureScore ?? 'n/a'}</p>
                   <p><strong>Validacao:</strong> {selectedImplementation.qualitySummary?.validationScore ?? 'n/a'}</p>
                   <p><strong>Build:</strong> {selectedImplementation.buildStatus || 'n/a'}</p>
                   <p><strong>Testes:</strong> {selectedImplementation.testStatus || 'n/a'}</p>
                   <p><strong>Template:</strong> {selectedImplementation.qualitySummary?.screenTemplate || 'n/a'}</p>
+                  <p><strong>Dominio esperado:</strong> {selectedImplementation.qualitySummary?.expectedDomain || 'n/a'}</p>
+                  <p><strong>Dominio implementado:</strong> {selectedImplementation.qualitySummary?.implementedDomain || 'n/a'}</p>
+                  <p><strong>Rastreabilidade:</strong> {selectedImplementation.qualitySummary?.traceability?.traceabilityScore ?? 'n/a'}</p>
+                  <p><strong>Sucesso no projeto:</strong> {selectedImplementation.qualitySummary?.benchmark?.projectSuccessRatePercent ?? 'n/a'}%</p>
+                  <p><strong>Sucesso no dominio:</strong> {selectedImplementation.qualitySummary?.benchmark?.domainSuccessRatePercent ?? 'n/a'}%</p>
                   <p><strong>Projeto:</strong> {selectedImplementation.generatedApp?.name || 'App full stack'}</p>
                   <p><strong>Pasta:</strong> {selectedImplementation.generatedApp?.rootPath || 'Ainda nao materializado'}</p>
                 </div>
@@ -767,6 +848,12 @@ export default function CodeStudioPage() {
                     </div>
                     <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
                       <strong>Baixas:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.low || 0}
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
+                      <strong>Frontend:</strong> {selectedImplementation.qualitySummary.traceability?.hasFrontendPage ? 'ok' : 'pendente'}
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
+                      <strong>Contrato/docs:</strong> {selectedImplementation.qualitySummary.traceability?.hasSharedContract && selectedImplementation.qualitySummary.traceability?.hasDocumentation ? 'ok' : 'pendente'}
                     </div>
                   </div>
                 )}
