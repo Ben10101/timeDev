@@ -32,6 +32,9 @@ export function buildAiRuntimeMeta(envOverrides = {}) {
     primaryProvider,
     primaryModel: modelByProvider[primaryProvider] || null,
     localFallbackDisabled: String(envOverrides.AI_DISABLE_OLLAMA_FALLBACK || process.env.AI_DISABLE_OLLAMA_FALLBACK || '') === '1',
+    policyVersion: envOverrides.AI_POLICY_VERSION || process.env.AI_POLICY_VERSION || 'v1',
+    promptVersion: envOverrides.AI_PROMPT_VERSION || process.env.AI_PROMPT_VERSION || 'v1',
+    releaseVersion: envOverrides.PLATFORM_VERSION || process.env.PLATFORM_VERSION || '1.0.0',
     capturedAt: new Date().toISOString(),
   };
 }

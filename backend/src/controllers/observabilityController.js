@@ -1,6 +1,9 @@
 import {
+  getActiveAlerts,
   getAiOperationsOverview,
   getAuditTrail,
+  getGovernanceOverview,
+  getOperationalHistory,
   getOperationalHealth,
   getProductionReadiness,
 } from '../services/observabilityService.js';
@@ -40,6 +43,40 @@ export async function auditTrailController(req, res, next) {
       limit: req.query.limit || 30,
     });
     res.json(serializeBigInts(auditTrail));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function governanceOverviewController(req, res, next) {
+  try {
+    const overview = await getGovernanceOverview(req.authUser.uuid, {
+      projectUuid: req.query.projectUuid || null,
+    });
+    res.json(serializeBigInts(overview));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function operationalHistoryController(req, res, next) {
+  try {
+    const history = await getOperationalHistory(req.authUser.uuid, {
+      projectUuid: req.query.projectUuid || null,
+      days: req.query.days || 7,
+    });
+    res.json(serializeBigInts(history));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function activeAlertsController(req, res, next) {
+  try {
+    const alerts = await getActiveAlerts(req.authUser.uuid, {
+      projectUuid: req.query.projectUuid || null,
+    });
+    res.json(serializeBigInts(alerts));
   } catch (error) {
     next(error);
   }

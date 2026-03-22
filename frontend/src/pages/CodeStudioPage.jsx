@@ -17,12 +17,15 @@ import {
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import {
+  getActiveAlerts,
   bootstrapGeneratedApp,
   getAuditTrail,
   getApiErrorMessage,
   getAiOperationsOverview,
   getGeneratedApp,
+  getGovernanceOverview,
   getOperationalHealth,
+  getOperationalHistory,
   getProjectArchitectureStatus,
   getProductionReadiness,
   getTaskImplementationStatus,
@@ -116,6 +119,9 @@ export default function CodeStudioPage() {
   const [health, setHealth] = useState(null);
   const [readiness, setReadiness] = useState(null);
   const [auditTrail, setAuditTrail] = useState([]);
+  const [governanceOverview, setGovernanceOverview] = useState(null);
+  const [historyOverview, setHistoryOverview] = useState(null);
+  const [activeAlerts, setActiveAlerts] = useState([]);
 
   const selectedProjectUuid = searchParams.get('project');
   const selectedTaskUuid = searchParams.get('task');
@@ -175,16 +181,22 @@ export default function CodeStudioPage() {
       setTasks(taskList);
       setArchitectureStatus(nextArchitectureStatus);
 
-      const [nextOverview, nextHealth, nextReadiness, nextAuditTrail] = await Promise.all([
+      const [nextOverview, nextHealth, nextReadiness, nextAuditTrail, nextGovernanceOverview, nextHistoryOverview, nextActiveAlerts] = await Promise.all([
         getAiOperationsOverview({ projectUuid }),
         getOperationalHealth().catch(() => null),
         getProductionReadiness({ projectUuid }).catch(() => null),
         getAuditTrail({ projectUuid, limit: 10 }).catch(() => []),
+        getGovernanceOverview({ projectUuid }).catch(() => null),
+        getOperationalHistory({ projectUuid, days: 7 }).catch(() => null),
+        getActiveAlerts({ projectUuid }).catch(() => []),
       ]);
       setOperationsOverview(nextOverview);
       setHealth(nextHealth);
       setReadiness(nextReadiness);
       setAuditTrail(Array.isArray(nextAuditTrail) ? nextAuditTrail : []);
+      setGovernanceOverview(nextGovernanceOverview);
+      setHistoryOverview(nextHistoryOverview);
+      setActiveAlerts(Array.isArray(nextActiveAlerts) ? nextActiveAlerts : []);
 
       try {
         const app = await getGeneratedApp(projectUuid);
@@ -323,6 +335,7 @@ export default function CodeStudioPage() {
               <p><strong>Saude API:</strong> {health?.status || 'n/a'}</p>
               <p><strong>Banco:</strong> {health?.database || 'n/a'}</p>
               <p><strong>Readiness:</strong> {readiness?.status || 'n/a'}</p>
+              <p><strong>Policy version:</strong> {operationsOverview?.recentRuns?.[0]?.runtimeMeta?.policyVersion || 'v1'}</p>
             </div>
           </section>
 
@@ -351,6 +364,7 @@ export default function CodeStudioPage() {
               <p><strong>Acima do budget:</strong> {operationsOverview?.summary?.overBudgetRuns || 0}</p>
               <p><strong>Runs travados:</strong> {operationsOverview?.summary?.staleRunningRuns || 0}</p>
               <p><strong>Auditoria:</strong> {readiness?.governance?.recentAuditEntries || 0}</p>
+              <p><strong>Prompt version:</strong> {operationsOverview?.recentRuns?.[0]?.runtimeMeta?.promptVersion || 'v1'}</p>
               {(operationsOverview?.alerts || []).slice(0, 2).map((alert) => (
                 <div key={alert.code} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
                   {alert.message}
@@ -466,6 +480,104 @@ export default function CodeStudioPage() {
               )) : (
                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
                   Nenhum evento auditado encontrado para este projeto.
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1fr_1fr_1fr]">
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Governanca</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Acoes dominantes</h2>
+              </div>
+            </div>
+            <div className="space-y-3 p-6">
+              {(governanceOverview?.topActionTypes || []).slice(0, 4).map((item) => (
+                <div key={item.actionType} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">{item.actionType}</p>
+                  <p className="mt-1 text-xs text-slate-500">{item.total} eventos · {item.averageDurationMs}ms medio</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Falhas</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Hotspots do projeto</h2>
+              </div>
+            </div>
+            <div className="space-y-3 p-6">
+              {(governanceOverview?.failureHotspots || []).length ? (governanceOverview.failureHotspots.slice(0, 4).map((item) => (
+                <div key={item.actionType} className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+                  <p className="text-sm font-semibold text-rose-900">{item.actionType}</p>
+                  <p className="mt-1 text-xs text-rose-700">{item.failures} falhas · {item.failureRatePercent}%</p>
+                </div>
+              ))) : (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                  Nenhum hotspot de falha forte neste projeto.
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Latencia</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Acoes mais lentas</h2>
+              </div>
+            </div>
+            <div className="space-y-3 p-6">
+              {(governanceOverview?.latencyHotspots || []).slice(0, 4).map((item) => (
+                <div key={item.actionType} className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-sm font-semibold text-amber-900">{item.actionType}</p>
+                  <p className="mt-1 text-xs text-amber-700">{item.averageDurationMs}ms medio · {item.total} eventos</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Historico operacional</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Tendencia dos ultimos 7 dias</h2>
+              </div>
+            </div>
+            <div className="grid gap-4 p-6 md:grid-cols-2 xl:grid-cols-4">
+              {(historyOverview?.series || []).slice(-4).map((day) => (
+                <DetailCard
+                  key={day.date}
+                  label={day.date}
+                  value={`${day.totalRuns} runs · ${day.successRatePercent}%`}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Alertas ativos</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Playbooks do projeto</h2>
+              </div>
+            </div>
+            <div className="space-y-3 p-6">
+              {activeAlerts.length ? activeAlerts.slice(0, 4).map((alert) => (
+                <div key={alert.code} className={`rounded-xl border p-4 text-sm ${alert.severity === 'high' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                  <p><strong>{alert.message}</strong></p>
+                  <p className="mt-1">{alert.recommendedAction}</p>
+                </div>
+              )) : (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                  Nenhum alerta ativo para este projeto.
                 </div>
               )}
             </div>
@@ -800,6 +912,9 @@ export default function CodeStudioPage() {
                   <p><strong>Score:</strong> {selectedImplementation.qualitySummary?.score ?? 'n/a'}</p>
                   <p><strong>Score premium:</strong> {selectedImplementation.qualitySummary?.premiumScore ?? 'n/a'}</p>
                   <p><strong>Score comparativo:</strong> {selectedImplementation.qualitySummary?.benchmark?.comparativeScore ?? 'n/a'}</p>
+                  <p><strong>Policy version:</strong> {selectedImplementation.qualitySummary?.versioning?.policyVersion ?? 'v1'}</p>
+                  <p><strong>Prompt version:</strong> {selectedImplementation.qualitySummary?.versioning?.promptVersion ?? 'v1'}</p>
+                  <p><strong>Release version:</strong> {selectedImplementation.qualitySummary?.versioning?.releaseVersion ?? '1.0.0'}</p>
                   <p><strong>Specialist score:</strong> {selectedImplementation.qualitySummary?.specialistScore ?? 'n/a'}</p>
                   <p><strong>Semantica:</strong> {selectedImplementation.qualitySummary?.semanticScore ?? 'n/a'}</p>
                   <p><strong>UX:</strong> {selectedImplementation.qualitySummary?.uxScore ?? 'n/a'}</p>

@@ -19,10 +19,13 @@ import {
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import {
+  getActiveAlerts,
   getAuditTrail,
   getAiOperationsOverview,
   getApiErrorMessage,
+  getGovernanceOverview,
   getOperationalHealth,
+  getOperationalHistory,
   getProductionReadiness,
   listAllTasks,
   listProjects,
@@ -155,6 +158,9 @@ export default function HomePage() {
   const [operations, setOperations] = useState(null);
   const [readiness, setReadiness] = useState(null);
   const [auditTrail, setAuditTrail] = useState([]);
+  const [governance, setGovernance] = useState(null);
+  const [history, setHistory] = useState(null);
+  const [activeAlerts, setActiveAlerts] = useState([]);
 
   useEffect(() => {
     let active = true;
@@ -163,13 +169,16 @@ export default function HomePage() {
       try {
         setLoading(true);
         setLoadError('');
-        const [projectsResult, tasksResult, healthResult, operationsResult, readinessResult, auditResult] = await Promise.allSettled([
+        const [projectsResult, tasksResult, healthResult, operationsResult, readinessResult, auditResult, governanceResult, historyResult, alertsResult] = await Promise.allSettled([
           listProjects(),
           listAllTasks(),
           getOperationalHealth(),
           getAiOperationsOverview(),
           getProductionReadiness(),
           getAuditTrail({ limit: 8 }),
+          getGovernanceOverview(),
+          getOperationalHistory({ days: 7 }),
+          getActiveAlerts(),
         ]);
 
         if (!active) return;
@@ -180,6 +189,9 @@ export default function HomePage() {
         const operationsData = operationsResult.status === 'fulfilled' ? operationsResult.value : null;
         const readinessData = readinessResult.status === 'fulfilled' ? readinessResult.value : null;
         const auditData = auditResult.status === 'fulfilled' ? auditResult.value : [];
+        const governanceData = governanceResult.status === 'fulfilled' ? governanceResult.value : null;
+        const historyData = historyResult.status === 'fulfilled' ? historyResult.value : null;
+        const alertsData = alertsResult.status === 'fulfilled' ? alertsResult.value : [];
 
         setProjects(Array.isArray(projectsData) ? projectsData : []);
         setTasks(Array.isArray(tasksData) ? tasksData : []);
@@ -187,11 +199,14 @@ export default function HomePage() {
         setOperations(operationsData);
         setReadiness(readinessData);
         setAuditTrail(Array.isArray(auditData) ? auditData : []);
+        setGovernance(governanceData);
+        setHistory(historyData);
+        setActiveAlerts(Array.isArray(alertsData) ? alertsData : []);
 
         const primaryError = [projectsResult, tasksResult, healthResult].find((result) => result.status === 'rejected');
         if (primaryError) {
           setLoadError(getApiErrorMessage(primaryError.reason, 'Nao foi possivel carregar o dashboard.'));
-        } else if ([operationsResult, readinessResult, auditResult].some((result) => result.status === 'rejected')) {
+        } else if ([operationsResult, readinessResult, auditResult, governanceResult, historyResult, alertsResult].some((result) => result.status === 'rejected')) {
           setLoadError('Parte da observabilidade premium nao esta disponivel no momento, mas o restante do dashboard foi carregado.');
         }
       } catch (error) {
@@ -242,6 +257,7 @@ export default function HomePage() {
   const topFailingAgents = operations?.reliability?.topFailingAgents || [];
   const staleRunningRuns = operations?.reliability?.staleRunningRuns || [];
   const readinessWarnings = readiness?.checks?.filter((check) => check.status !== 'ok') || [];
+  const historySeries = history?.series || [];
 
   return (
     <AppShell
@@ -499,6 +515,43 @@ export default function HomePage() {
           </motion.section>
         </div>
 
+        <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
+          <motion.section {...fade(0.44)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Historico</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Ultimos 7 dias da operacao</h2>
+            </div>
+            <div className="grid gap-3 p-6 md:grid-cols-2 xl:grid-cols-4">
+              {historySeries.slice(-4).map((day) => (
+                <div key={day.date} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{day.date}</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">{day.totalRuns}</p>
+                  <p className="mt-1 text-xs text-slate-500">{day.successRatePercent}% sucesso · {day.estimatedTokens} tokens</p>
+                </div>
+              ))}
+            </div>
+          </motion.section>
+
+          <motion.section {...fade(0.46)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Alertas ativos</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Playbooks sugeridos</h2>
+            </div>
+            <div className="space-y-3 p-6">
+              {activeAlerts.length ? activeAlerts.slice(0, 4).map((alert) => (
+                <div key={alert.code} className={`rounded-2xl border px-4 py-4 ${alert.severity === 'high' ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`}>
+                  <p className={`text-sm font-semibold ${alert.severity === 'high' ? 'text-rose-900' : 'text-amber-900'}`}>{alert.message}</p>
+                  <p className={`mt-1 text-xs ${alert.severity === 'high' ? 'text-rose-700' : 'text-amber-700'}`}>{alert.recommendedAction}</p>
+                </div>
+              )) : (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
+                  Nenhum alerta ativo no momento.
+                </div>
+              )}
+            </div>
+          </motion.section>
+        </div>
+
         <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <motion.section {...fade(0.46)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
@@ -595,6 +648,57 @@ export default function HomePage() {
                   Nenhuma acao auditada registrada ainda.
                 </div>
               )}
+            </div>
+          </motion.section>
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1fr_1fr_1fr]">
+          <motion.section {...fade(0.54)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Governanca</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Acoes mais frequentes</h2>
+            </div>
+            <div className="space-y-3 p-6">
+              {(governance?.topActionTypes || []).slice(0, 4).map((item) => (
+                <div key={item.actionType} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <p className="text-sm font-semibold text-slate-900">{item.actionType}</p>
+                  <p className="mt-1 text-xs text-slate-500">{item.total} eventos · {item.averageDurationMs}ms medio</p>
+                </div>
+              ))}
+            </div>
+          </motion.section>
+
+          <motion.section {...fade(0.58)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Hotspots</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Falhas recorrentes</h2>
+            </div>
+            <div className="space-y-3 p-6">
+              {(governance?.failureHotspots || []).length ? (governance.failureHotspots.slice(0, 4).map((item) => (
+                <div key={item.actionType} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
+                  <p className="text-sm font-semibold text-rose-900">{item.actionType}</p>
+                  <p className="mt-1 text-xs text-rose-700">{item.failures} falhas · {item.failureRatePercent}% de falha</p>
+                </div>
+              ))) : (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
+                  Nenhum hotspot de falha relevante no recorte recente.
+                </div>
+              )}
+            </div>
+          </motion.section>
+
+          <motion.section {...fade(0.62)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Latencia</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Rotas mais lentas</h2>
+            </div>
+            <div className="space-y-3 p-6">
+              {(governance?.latencyHotspots || []).slice(0, 4).map((item) => (
+                <div key={item.actionType} className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                  <p className="text-sm font-semibold text-amber-900">{item.actionType}</p>
+                  <p className="mt-1 text-xs text-amber-700">{item.averageDurationMs}ms medio · {item.total} eventos</p>
+                </div>
+              ))}
             </div>
           </motion.section>
         </div>

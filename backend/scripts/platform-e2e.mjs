@@ -142,6 +142,11 @@ async function main() {
     throw new Error('Falha ao consultar trilha de auditoria da plataforma.');
   }
 
+  const governance = await request('/observability/governance', { headers: authHeaders });
+  if (!governance.response.ok || !Array.isArray(governance.data?.topActionTypes)) {
+    throw new Error('Falha ao consultar governanca operacional da plataforma.');
+  }
+
   if (RUN_EXPENSIVE) {
     const backlog = await request(`/projects/${createdProject.data.uuid}/generate-backlog`, {
       method: 'POST',

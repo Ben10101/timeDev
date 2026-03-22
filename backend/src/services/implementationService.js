@@ -129,6 +129,14 @@ function truncateText(value, maxLength = 2000) {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
+function getAiGovernanceVersionMeta() {
+  return {
+    policyVersion: process.env.AI_POLICY_VERSION || 'v1',
+    promptVersion: process.env.AI_PROMPT_VERSION || 'v1',
+    releaseVersion: process.env.PLATFORM_VERSION || '1.0.0',
+  };
+}
+
 function compactValidationSummary(validationSummary = []) {
   return (validationSummary || []).slice(0, 6).map((item) => ({
     field: item.field,
@@ -510,6 +518,7 @@ function buildImplementationQualitySummary({ task, implementation, reviewArtifac
   );
 
   return {
+    versioning: getAiGovernanceVersionMeta(),
     score,
     reviewStatus,
     specialistReviewStatus: specialistReviewContent?.summary?.status || 'unknown',

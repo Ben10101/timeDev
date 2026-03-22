@@ -172,6 +172,21 @@ export async function getAuditTrail(params = {}) {
   return response.data
 }
 
+export async function getGovernanceOverview(params = {}) {
+  const response = await apiClient.get('/observability/governance', { params })
+  return response.data
+}
+
+export async function getOperationalHistory(params = {}) {
+  const response = await apiClient.get('/observability/history', { params })
+  return response.data
+}
+
+export async function getActiveAlerts(params = {}) {
+  const response = await apiClient.get('/observability/alerts', { params })
+  return response.data
+}
+
 export const generateProject = async (idea) => {
   try {
     const response = await apiClient.post('/generate-project', {
@@ -307,6 +322,9 @@ export default {
   testAiProvider,
   getProductionReadiness,
   getAuditTrail,
+  getGovernanceOverview,
+  getOperationalHistory,
+  getActiveAlerts,
   generateProject,
   bootstrapWorkspace,
   listProjects,

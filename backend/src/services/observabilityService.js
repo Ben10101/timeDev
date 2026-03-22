@@ -374,6 +374,183 @@ export async function getAuditTrail(userUuid, { projectUuid = null, limit = 40 }
   });
 }
 
+export async function getGovernanceOverview(userUuid, { projectUuid = null } = {}) {
+  const auditTrail = await readRecentAuditEntries({
+    userUuid,
+    projectUuid,
+    limit: 120,
+  });
+
+  const byAction = Object.values(
+    auditTrail.reduce((acc, entry) => {
+      const current = acc[entry.actionType] || {
+        actionType: entry.actionType,
+        total: 0,
+        failures: 0,
+        averageDurationMsValues: [],
+      };
+      current.total += 1;
+      current.failures += entry.success ? 0 : 1;
+      current.averageDurationMsValues.push(Number(entry.durationMs || 0));
+      acc[entry.actionType] = current;
+      return acc;
+    }, {})
+  ).map((entry) => ({
+    actionType: entry.actionType,
+    total: entry.total,
+    failures: entry.failures,
+    failureRatePercent: entry.total ? Math.round((entry.failures / entry.total) * 100) : 0,
+    averageDurationMs: average(entry.averageDurationMsValues),
+  }));
+
+  const topActionTypes = [...byAction].sort((a, b) => b.total - a.total).slice(0, 5);
+  const failureHotspots = [...byAction]
+    .filter((entry) => entry.failures > 0)
+    .sort((a, b) => {
+      if (b.failures !== a.failures) return b.failures - a.failures;
+      return b.failureRatePercent - a.failureRatePercent;
+    })
+    .slice(0, 5);
+  const latencyHotspots = [...byAction]
+    .filter((entry) => entry.averageDurationMs > 0)
+    .sort((a, b) => b.averageDurationMs - a.averageDurationMs)
+    .slice(0, 5);
+
+  const uniqueUsers = new Set(auditTrail.map((entry) => entry.userUuid).filter(Boolean)).size;
+
+  return {
+    summary: {
+      totalEvents: auditTrail.length,
+      failureEvents: auditTrail.filter((entry) => entry.success === false).length,
+      uniqueActors: uniqueUsers,
+      coveredActionTypes: byAction.length,
+    },
+    topActionTypes,
+    failureHotspots,
+    latencyHotspots,
+    recentEvents: auditTrail.slice(0, 10),
+  };
+}
+
+export async function getOperationalHistory(userUuid, { projectUuid = null, days = 7 } = {}) {
+  const lookbackDays = Math.min(30, Math.max(1, Number(days || 7)));
+  const fromDate = new Date();
+  fromDate.setDate(fromDate.getDate() - (lookbackDays - 1));
+  fromDate.setHours(0, 0, 0, 0);
+
+  const projectFilter = projectUuid ? { project: { uuid: projectUuid } } : {};
+  const runs = await prisma.agentRun.findMany({
+    where: {
+      createdAt: { gte: fromDate },
+      project: {
+        workspace: {
+          ownerUser: {
+            uuid: userUuid,
+          },
+        },
+      },
+      ...projectFilter,
+    },
+    select: {
+      status: true,
+      createdAt: true,
+      tokensInput: true,
+      tokensOutput: true,
+      costUsd: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const buckets = new Map();
+  for (let offset = 0; offset < lookbackDays; offset += 1) {
+    const current = new Date(fromDate);
+    current.setDate(fromDate.getDate() + offset);
+    const key = current.toISOString().slice(0, 10);
+    buckets.set(key, {
+      date: key,
+      totalRuns: 0,
+      completedRuns: 0,
+      failedRuns: 0,
+      estimatedTokens: 0,
+      costUsd: 0,
+    });
+  }
+
+  for (const run of runs) {
+    const key = new Date(run.createdAt).toISOString().slice(0, 10);
+    const bucket = buckets.get(key);
+    if (!bucket) continue;
+    bucket.totalRuns += 1;
+    bucket.completedRuns += run.status === 'completed' ? 1 : 0;
+    bucket.failedRuns += run.status === 'failed' ? 1 : 0;
+    bucket.estimatedTokens += Number(run.tokensInput || 0) + Number(run.tokensOutput || 0);
+    bucket.costUsd = Number((bucket.costUsd + Number(run.costUsd || 0)).toFixed(6));
+  }
+
+  return {
+    days: lookbackDays,
+    series: Array.from(buckets.values()).map((bucket) => ({
+      ...bucket,
+      successRatePercent: bucket.totalRuns ? Math.round((bucket.completedRuns / bucket.totalRuns) * 100) : 0,
+    })),
+  };
+}
+
+export async function getActiveAlerts(userUuid, { projectUuid = null } = {}) {
+  const [readiness, governance, aiOverview] = await Promise.all([
+    getProductionReadiness(userUuid, projectUuid),
+    getGovernanceOverview(userUuid, { projectUuid }),
+    getAiOperationsOverview(userUuid, projectUuid),
+  ]);
+
+  const alerts = [];
+
+  for (const alert of readiness.alerts || []) {
+    alerts.push({
+      severity: alert.code === 'readiness_failed' ? 'high' : 'medium',
+      source: 'readiness',
+      code: alert.code,
+      message: alert.message,
+      recommendedAction:
+        alert.code === 'readiness_failed'
+          ? 'Corrigir os checks criticos antes de ampliar a operacao.'
+          : 'Revisar os checks de readiness e estabilizar a operacao antes da proxima release.',
+    });
+  }
+
+  for (const hotspot of (governance.failureHotspots || []).slice(0, 3)) {
+    alerts.push({
+      severity: hotspot.failureRatePercent >= 50 ? 'high' : 'medium',
+      source: 'governance',
+      code: `hotspot_${hotspot.actionType}`,
+      message: `${hotspot.actionType} concentra ${hotspot.failures} falhas recentes (${hotspot.failureRatePercent}%).`,
+      recommendedAction: `Revisar o fluxo ${hotspot.actionType} e adicionar remediacao automatica ou validacao preventiva.`,
+    });
+  }
+
+  if ((aiOverview.summary.staleRunningRuns || 0) > 0) {
+    alerts.push({
+      severity: 'high',
+      source: 'runtime',
+      code: 'stale_running_runs',
+      message: `Existem ${aiOverview.summary.staleRunningRuns} runs travados ha mais de 10 minutos.`,
+      recommendedAction: 'Cancelar execucoes travadas, revisar timeout e criar playbook automatico de recuperacao.',
+    });
+  }
+
+  if ((aiOverview.summary.overBudgetRuns || 0) > 0) {
+    alerts.push({
+      severity: 'medium',
+      source: 'cost',
+      code: 'over_budget_runs',
+      message: `Foram detectadas ${aiOverview.summary.overBudgetRuns} execucoes acima do budget configurado.`,
+      recommendedAction: 'Reduzir contexto, revisar provider/modelo e reforcar budgets por agente.',
+    });
+  }
+
+  return alerts.slice(0, 10);
+}
+
 export function buildBudgetPreview(agentName, payload) {
   const budgets = buildBudgetConfig();
   const estimatedInputTokens = estimateTokenCount(payload);
