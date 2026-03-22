@@ -22,8 +22,14 @@ export async function updateAiSettingsController(req, res, next) {
 export async function getAiRuntimeSummaryController(req, res, next) {
   try {
     const env = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const providerOrder = String(env.AI_PROVIDER_ORDER || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
     res.json({
       provider: env.LLM_PROVIDER,
+      providerOrder,
+      localFallbackDisabled: env.AI_DISABLE_OLLAMA_FALLBACK === '1',
       hasGeminiKey: Boolean(env.GEMINI_API_KEY),
       hasOpenAiKey: Boolean(env.OPENAI_API_KEY),
       hasAnthropicKey: Boolean(env.ANTHROPIC_API_KEY),
@@ -31,6 +37,9 @@ export async function getAiRuntimeSummaryController(req, res, next) {
       hasOpenRouterKey: Boolean(env.OPENROUTER_API_KEY),
       ollamaHost: env.OLLAMA_HOST || null,
       ollamaModel: env.OLLAMA_MODEL || null,
+      policyVersion: process.env.AI_POLICY_VERSION || 'v1',
+      promptVersion: process.env.AI_PROMPT_VERSION || 'v1',
+      platformVersion: process.env.PLATFORM_VERSION || '1.0.0',
     });
   } catch (error) {
     next(error);

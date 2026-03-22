@@ -493,9 +493,9 @@ export default function ProjectsPage() {
 
   return (
     <AppShell
-      eyebrow="Operacao de Projetos"
-      title="Projetos e Execucao"
-      description="Gerencie briefing, backlog, requisitos, QA e liberacao tecnica em um board operacional unico."
+      eyebrow="Operacao por Projeto"
+      title="Board Operacional"
+      description="Gerencie briefing, backlog, requisitos, QA e arquitetura dentro do contexto certo de cada projeto."
     >
       <div className="min-w-0 overflow-x-hidden flex flex-col gap-8 pb-16">
         <AnimatePresence>

@@ -3,7 +3,7 @@ import AppShell from '../components/AppShell';
 import { getAiRuntimeSummary, getAiSettings, testAiProvider, updateAiSettings } from '../services/api';
 
 const PROVIDER_OPTIONS = [
-  { value: 'auto', label: 'Automático' },
+  { value: 'auto', label: 'Automatico' },
   { value: 'ollama', label: 'Ollama' },
   { value: 'gemini', label: 'Gemini' },
   { value: 'openai', label: 'OpenAI' },
@@ -135,9 +135,14 @@ export default function AiSettingsPage() {
   const providerSummary = useMemo(() => {
     if (!runtime) return [];
     return [
-      { label: 'Provider ativo', value: runtime.provider || '-' },
+      { label: 'Preferencia ativa', value: runtime.provider || '-' },
+      { label: 'Ordem', value: runtime.providerOrder?.length ? runtime.providerOrder.join(' -> ') : 'Sem ordem definida' },
+      { label: 'Fallback local', value: runtime.localFallbackDisabled ? 'Desligado' : 'Disponivel' },
+      { label: 'Policy', value: runtime.policyVersion || 'v1' },
+      { label: 'Prompt', value: runtime.promptVersion || 'v1' },
+      { label: 'Release', value: runtime.platformVersion || '1.0.0' },
       { label: 'Gemini', value: runtime.hasGeminiKey ? 'Configurado' : 'Sem chave' },
-      { label: 'Ollama', value: runtime.ollamaHost ? `${runtime.ollamaModel} @ ${runtime.ollamaHost}` : 'Não configurado' },
+      { label: 'Ollama', value: runtime.ollamaHost ? `${runtime.ollamaModel} @ ${runtime.ollamaHost}` : 'Nao configurado' },
     ];
   }, [runtime]);
 
@@ -162,9 +167,9 @@ export default function AiSettingsPage() {
       const runtimeSummary = await getAiRuntimeSummary();
       setSettings({ ...EMPTY_SETTINGS, ...saved });
       setRuntime(runtimeSummary);
-      setSuccess('Configurações salvas. Os próximos agentes usarão essas credenciais.');
+      setSuccess('Configuracoes salvas. Os proximos agentes usarao essas credenciais.');
     } catch (saveError) {
-      setError(saveError.response?.data?.message || saveError.message || 'Não foi possível salvar as configurações de IA.');
+      setError(saveError.response?.data?.message || saveError.message || 'Nao foi possivel salvar as configuracoes de IA.');
     } finally {
       setSaving(false);
     }
@@ -202,7 +207,7 @@ export default function AiSettingsPage() {
         ...current,
         [provider]: {
           ok: false,
-          message: testError.response?.data?.message || `Não foi possível testar ${provider}.`,
+          message: testError.response?.data?.message || `Nao foi possivel testar ${provider}.`,
           meta: {
             detail: testError.response?.data?.detail || testError.response?.data?.meta?.detail || testError.message,
           },
@@ -215,21 +220,21 @@ export default function AiSettingsPage() {
 
   return (
     <AppShell
-      eyebrow="Configurações"
-      title="Conexões de I.A"
-      description="Cadastre e ajuste as credenciais dos provedores de IA disponíveis para este usuário."
+      eyebrow="Governanca"
+      title="Governanca de IA"
+      description="Configure providers, ordem de fallback, policy de runtime e credenciais usadas pela fabrica."
     >
       <div className="space-y-6">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/60">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#102a72]">Execução atual</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Preferência de provedor</h2>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#102a72]">Runtime atual</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Policy, fallback e ordem de execucao</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Escolha como o backend decide qual IA usar ao acionar requisitos, QA e backlog.
+                Esta area controla como a plataforma escolhe providers, como reage a falhas e quais versoes de policy estao em vigor.
               </p>
             </div>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {providerSummary.map((item) => (
                 <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                   <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{item.label}</p>
@@ -242,7 +247,7 @@ export default function AiSettingsPage() {
 
         <form className="space-y-6" onSubmit={handleSave}>
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/60">
-            <Field label="Provider preferencial" hint="Automático tenta Ollama primeiro e depois provedores com chave cadastrada.">
+            <Field label="Provider preferencial" hint="Automatico usa a policy configurada e a ordem disponivel para decidir o melhor provider.">
               <select
                 value={settings.providerPreference}
                 onChange={(event) => setSettings((current) => ({ ...current, providerPreference: event.target.value }))}
@@ -257,7 +262,7 @@ export default function AiSettingsPage() {
             </Field>
           </section>
 
-          <ProviderCard title="Ollama local" description="Use um modelo rodando na sua máquina ou em outro host Ollama." supported>
+          <ProviderCard title="Ollama local" description="Use um modelo rodando na sua maquina ou em outro host Ollama." supported>
             <Toggle
               checked={Boolean(settings.ollama?.enabled)}
               onChange={(value) => patchProvider('ollama', 'enabled', value)}
@@ -271,7 +276,7 @@ export default function AiSettingsPage() {
                   placeholder="http://127.0.0.1:11434"
                 />
               </Field>
-              <Field label="Modelo padrão">
+              <Field label="Modelo padrao">
                 <TextInput
                   value={settings.ollama?.model || ''}
                   onChange={(event) => patchProvider('ollama', 'model', event.target.value)}

@@ -261,9 +261,9 @@ export default function HomePage() {
 
   return (
     <AppShell
-      eyebrow="Visao Geral"
+      eyebrow="Visao Executiva"
       title="Factory OS"
-      description="Acompanhe a saude da plataforma, o volume de trabalho e a operacao dos agentes em uma visao unica."
+      description="Monitore saude, readiness, riscos e operacao da fabrica em uma leitura executiva unica."
       actions={
         <button
           onClick={() => navigate('/projects')}

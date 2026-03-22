@@ -14,11 +14,22 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
-const NAV = [
-  { label: 'Inicio', to: '/', icon: Home },
-  { label: 'Projetos', to: '/projects', icon: Briefcase },
-  { label: 'Codigo', to: '/code-studio', icon: Braces },
-  { label: 'IAs', to: '/settings/ai', icon: Settings },
+const NAV_SECTIONS = [
+  {
+    label: 'Visao',
+    items: [{ label: 'Inicio', hint: 'Painel executivo', to: '/', icon: Home }],
+  },
+  {
+    label: 'Execucao',
+    items: [
+      { label: 'Projetos', hint: 'Board operacional', to: '/projects', icon: Briefcase },
+      { label: 'Codigo', hint: 'Entrega tecnica', to: '/code-studio', icon: Braces },
+    ],
+  },
+  {
+    label: 'Governanca',
+    items: [{ label: 'IA', hint: 'Runtime e policy', to: '/settings/ai', icon: Settings }],
+  },
 ];
 
 function NavItem({ item }) {
@@ -42,6 +53,7 @@ function NavItem({ item }) {
         strokeWidth={2}
       />
       <span className="flex-1">{item.label}</span>
+      {item.hint ? <span className="hidden text-[10px] text-slate-500 xl:block">{item.hint}</span> : null}
       {active && <ChevronRight className="h-3.5 w-3.5 text-blue-300/60" />}
     </Link>
   );
@@ -72,10 +84,16 @@ export default function AppShell({ title, eyebrow, description, actions, sidebar
           </div>
         </div>
 
-        <nav className="flex-1 space-y-0.5 overflow-y-auto p-3 pt-4">
-          <p className="mb-2 px-3 text-[9px] font-bold uppercase tracking-[0.3em] text-slate-600">Navegacao</p>
-          {NAV.map((item) => (
-            <NavItem key={item.to} item={item} />
+        <nav className="flex-1 space-y-5 overflow-y-auto p-3 pt-4">
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.label}>
+              <p className="mb-2 px-3 text-[9px] font-bold uppercase tracking-[0.3em] text-slate-600">{section.label}</p>
+              <div className="space-y-0.5">
+                {section.items.map((item) => (
+                  <NavItem key={item.to} item={item} />
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 

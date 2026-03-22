@@ -307,9 +307,9 @@ export default function CodeStudioPage() {
 
   return (
     <AppShell
-      eyebrow="Estudio de Codigo"
+      eyebrow="Entrega Tecnica"
       title="Code Studio"
-      description="Cockpit tecnico da plataforma: prontidao, arquitetura, qualidade, geracao e observabilidade em uma experiencia unica."
+      description="Concentre arquitetura, qualidade, rastreabilidade e geracao da aplicacao em uma area tecnica por projeto."
       actions={
         <div className="flex flex-col gap-3 sm:flex-row">
           <button onClick={() => selectedProjectUuid && loadProjectWorkspace(selectedProjectUuid)} className="dashboard-button-secondary">
