@@ -2,7 +2,6 @@ import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import AuthPage from './pages/AuthPage';
 import HomePage from './pages/HomePage';
-import PipelinePage from './pages/PipelinePage';
 import ProjectOverviewPage from './pages/ProjectOverviewPage';
 import ProjectsPage from './pages/ProjectsPage';
 import ResultsPage from './pages/ResultsPage';
@@ -47,14 +46,6 @@ function App() {
             element={
               <ProtectedRoute>
                 <TaskDetailsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/pipeline"
-            element={
-              <ProtectedRoute>
-                <PipelinePage />
               </ProtectedRoute>
             }
           />

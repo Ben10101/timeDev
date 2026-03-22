@@ -52,12 +52,6 @@ export default function ResultsPage() {
           <button onClick={() => navigate('/')} className="dashboard-button-secondary w-full sm:w-auto">
             Voltar ao workspace
           </button>
-          <button
-            onClick={() => navigate('/pipeline', { state: { idea: data.backlog } })}
-            className="dashboard-button-primary w-full sm:w-auto"
-          >
-            Reabrir fluxo
-          </button>
         </>
       }
       sidebar={
