@@ -51,9 +51,9 @@ export function CourseModulesPage() {
         { label: 'Registros atuais', value: String(items.length) },
         { label: 'Acao principal', value: 'Adicionar Módulo' },
       ]}
-      highlights={["Organize o curso em etapas claras para facilitar a jornada do aluno.","Defina uma sequencia didatica antes de publicar o conteudo."]}
-      formTitle="Novo modulo"
-      formDescription="Descreva o modulo e posicione-o na trilha principal do curso."
+      highlights={["Estruture o conteúdo em módulos claros","Defina a ordem de exibição dos módulos"]}
+      formTitle="Novo módulo"
+      formDescription="Preencha os dados para adicionar um módulo ao curso."
       form={
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
           <FieldGroup label="Nome do modulo" hint="Defina um titulo objetivo para o modulo.">
@@ -92,7 +92,7 @@ export function CourseModulesPage() {
         </form>
       }
       listTitle="Módulos existentes"
-      listDescription="Revise a estrutura atual do curso e ajuste a ordem dos modulos sempre que necessario."
+      listDescription="Acompanhe os registros criados nesta area."
       listMeta={`${items.length} registro(s)`}
     >
       {items.length ? (
@@ -110,4 +110,3 @@ export function CourseModulesPage() {
     </FeaturePage>
   );
 }
-

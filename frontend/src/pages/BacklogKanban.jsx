@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -15,8 +14,10 @@ import {
   X,
 } from 'lucide-react';
 import {
+  apiClient,
   createTaskArtifact,
   ensurePipelineProject,
+  getApiErrorMessage,
   importBacklogTasks,
   listAllTasks,
   listProjectTasks,
@@ -293,7 +294,7 @@ export default function BacklogKanban({
         await loadStoriesFromApi();
       } catch (error) {
         if (!active) return;
-        setSyncError(error.response?.data?.error || error.message || 'Nao foi possivel carregar o kanban do banco.');
+        setSyncError(getApiErrorMessage(error, 'Nao foi possivel carregar o kanban do banco.'));
         setStories([]);
       }
     }
@@ -349,7 +350,7 @@ export default function BacklogKanban({
         payloadData.developer_output = { code: backlogPayload };
       }
 
-      const response = await axios.post('/api/agents/run', {
+      const response = await apiClient.post('/agents/run', {
         agent,
         payload: payloadData,
       });
@@ -375,7 +376,7 @@ export default function BacklogKanban({
       }
     } catch (error) {
       setStories((prev) => prev.map((story) => (story.id === storyId ? { ...story, status: 'todo' } : story)));
-      setSyncError(error.response?.data?.error || error.message || 'Erro ao processar a historia com o agente.');
+      setSyncError(getApiErrorMessage(error, 'Erro ao processar a historia com o agente.'));
     } finally {
       setProcessingStoryId(null);
     }

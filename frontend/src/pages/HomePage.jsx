@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   Clock3,
   Cpu,
-  ListChecks,
   Plus,
   Settings,
   ShieldCheck,
@@ -21,6 +20,7 @@ import {
 import AppShell from '../components/AppShell';
 import {
   getAiOperationsOverview,
+  getApiErrorMessage,
   getOperationalHealth,
   listAllTasks,
   listProjects,
@@ -61,7 +61,6 @@ const STATUS_META = {
 
 const TOOL_LINKS = [
   { label: 'Projetos', to: '/projects', icon: Briefcase },
-  { label: 'Backlog', to: '/global-backlog', icon: ListChecks },
   { label: 'Codigo', to: '/code-studio', icon: Braces },
   { label: 'IAs', to: '/settings/ai', icon: Settings },
 ];
@@ -160,7 +159,7 @@ export default function HomePage() {
       try {
         setLoading(true);
         setLoadError('');
-        const [projectsData, tasksData, healthData, operationsData] = await Promise.all([
+        const [projectsResult, tasksResult, healthResult, operationsResult] = await Promise.allSettled([
           listProjects(),
           listAllTasks(),
           getOperationalHealth(),
@@ -169,13 +168,25 @@ export default function HomePage() {
 
         if (!active) return;
 
+        const projectsData = projectsResult.status === 'fulfilled' ? projectsResult.value : [];
+        const tasksData = tasksResult.status === 'fulfilled' ? tasksResult.value : [];
+        const healthData = healthResult.status === 'fulfilled' ? healthResult.value : null;
+        const operationsData = operationsResult.status === 'fulfilled' ? operationsResult.value : null;
+
         setProjects(Array.isArray(projectsData) ? projectsData : []);
         setTasks(Array.isArray(tasksData) ? tasksData : []);
         setHealth(healthData);
         setOperations(operationsData);
+
+        const primaryError = [projectsResult, tasksResult, healthResult].find((result) => result.status === 'rejected');
+        if (primaryError) {
+          setLoadError(getApiErrorMessage(primaryError.reason, 'Nao foi possivel carregar o dashboard.'));
+        } else if (operationsResult.status === 'rejected') {
+          setLoadError('A observabilidade de IA nao esta disponivel no momento, mas o restante do dashboard foi carregado.');
+        }
       } catch (error) {
         if (!active) return;
-        setLoadError(error.response?.data?.message || error.message || 'Nao foi possivel carregar o dashboard.');
+        setLoadError(getApiErrorMessage(error, 'Nao foi possivel carregar o dashboard.'));
       } finally {
         if (active) setLoading(false);
       }
@@ -454,7 +465,7 @@ export default function HomePage() {
                 ))
               ) : (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-6 text-sm text-emerald-800">
-                  Nenhum alerta relevante agora. A operacao esta estavel.
+                  Nenhum alerta relevante no momento. A operacao esta estavel.
                 </div>
               )}
             </div>
@@ -470,8 +481,8 @@ export default function HomePage() {
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-200/90">Factory Maturity</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">Sua plataforma ja opera como uma fabrica real de software assistida por IA.</h2>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-200">
-                O proximo salto nao e adicionar mais telas: e continuar endurecendo qualidade, confiabilidade e governanca
-                da geracao. Hoje voce ja tem backlog, requisitos, QA, arquitetura, codigo e observabilidade em uma mesma esteira.
+                O proximo salto nao e adicionar mais telas. Agora o foco e reforcar qualidade, confiabilidade e governanca
+                da geracao. Hoje voce ja tem backlog, requisitos, QA, arquitetura, codigo e observabilidade na mesma esteira.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">

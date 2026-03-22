@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
-import { listProjectTasks } from '../services/api';
+import { apiClient, getApiErrorMessage, listProjectTasks } from '../services/api';
 import BacklogKanban from '../pages/BacklogKanban';
 
 const PIPELINE_STAGES = [
@@ -130,7 +129,7 @@ export default function PipelineExecutor({ idea, answers }) {
         payload.developer_output = { code: payload.code };
       }
 
-      const response = await axios.post('/api/agents/run', {
+      const response = await apiClient.post('/agents/run', {
         agent: stage.agent,
         payload,
       });
@@ -144,7 +143,7 @@ export default function PipelineExecutor({ idea, answers }) {
       setArtifacts((prev) => ({ ...prev, [stage.outputKey]: data }));
       setCurrentStep(stepIndex + 1);
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Ocorreu um erro desconhecido.');
+      setError(getApiErrorMessage(err, 'Ocorreu um erro desconhecido.'));
     } finally {
       setLoading(false);
     }

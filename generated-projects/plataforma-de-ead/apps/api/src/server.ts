@@ -5,9 +5,10 @@ import { CourseCatalogRouter } from './modules/course-catalog/index'
 import { CourseModuleRouter } from './modules/course-modules/index'
 import { CourseLessonRouter } from './modules/course-lessons/index'
 import { LessonMaterialRouter } from './modules/lesson-materials/index'
-import { CourseSearchRouter } from './modules/course-search/index'
+import { CoursePricingRouter } from './modules/course-pricing/index'
 
 const app = express()
+const PORT = Number(process.env.PORT || 3001)
 app.use(cors())
 app.use(express.json())
 
@@ -20,8 +21,8 @@ app.use('/api/courses', CourseCatalogRouter)
 app.use('/api/course-modules', CourseModuleRouter)
 app.use('/api/course-lessons', CourseLessonRouter)
 app.use('/api/lesson-materials', LessonMaterialRouter)
-app.use('/api/course-search', CourseSearchRouter)
+app.use('/api/course-pricing', CoursePricingRouter)
 
-app.listen(3001, () => {
-  console.log('API running on 3001')
+app.listen(PORT, () => {
+  console.log(`API running on ${PORT}`)
 })

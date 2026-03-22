@@ -13,6 +13,33 @@ export function clearApiAccessToken() {
   accessToken = null
 }
 
+export function getApiErrorMessage(error, fallback = 'Nao foi possivel concluir a solicitacao.') {
+  const status = error?.response?.status
+  const data = error?.response?.data
+
+  if (typeof data?.message === 'string' && data.message.trim()) {
+    return data.message
+  }
+
+  if (typeof data?.error === 'string' && data.error.trim()) {
+    return data.error
+  }
+
+  if (status === 404) {
+    return 'O recurso solicitado nao foi encontrado ou pode ter sido removido.'
+  }
+
+  if (status === 401) {
+    return 'Sua sessao expirou. Entre novamente para continuar.'
+  }
+
+  if (status === 403) {
+    return 'Voce nao tem permissao para acessar este recurso.'
+  }
+
+  return error?.message || fallback
+}
+
 async function refreshAuthSession() {
   if (!refreshPromise) {
     refreshPromise = axios

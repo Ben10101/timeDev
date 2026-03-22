@@ -64,6 +64,7 @@ app.use(express.json({ limit: '2mb' }));
 app.use('/api', apiRateLimiter);
 
 app.use('/', observabilityRoutes);
+app.use('/api', observabilityRoutes);
 app.use('/api', authRoutes);
 app.use('/api', projectRoutes);
 app.use('/api', agentRoutes);

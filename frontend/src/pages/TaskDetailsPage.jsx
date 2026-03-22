@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import AppShell from '../components/AppShell';
 import {
+  bootstrapGeneratedApp,
   createTaskArtifact,
   createTaskComment,
+  getApiErrorMessage,
   getTask,
   getProjectArchitectureStatus,
   getTaskImplementationStatus,
   runTaskQa,
+  runTaskImplementation,
   runTaskRequirements,
 } from '../services/api';
 
@@ -83,7 +86,11 @@ export default function TaskDetailsPage() {
         }
       }
     } catch (loadError) {
-      setError(loadError.response?.data?.error || loadError.message || 'Não foi possível carregar a task.');
+      if (loadError.response?.status === 404) {
+        navigate(projectUuid ? `/projects?project=${projectUuid}` : '/projects', { replace: true });
+        return;
+      }
+      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar a task.'));
     } finally {
       setLoading(false);
     }
@@ -107,7 +114,8 @@ export default function TaskDetailsPage() {
       setCommentBody('');
       await loadTask();
     } catch (submitError) {
-      setError(submitError.response?.data?.error || submitError.message || 'Não foi possível salvar o comentário.');
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel salvar o comentario.'));
+
     } finally {
       setSaving(false);
     }
@@ -122,12 +130,8 @@ export default function TaskDetailsPage() {
       });
       await loadTask();
     } catch (submitError) {
-      setError(
-        submitError.response?.data?.error ||
-          submitError.response?.data?.message ||
-          submitError.message ||
-          'Não foi possível executar o Analista de Requisitos.'
-      );
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel executar o Analista de Requisitos.'));
+
     } finally {
       setSaving(false);
     }
@@ -142,12 +146,8 @@ export default function TaskDetailsPage() {
       });
       await loadTask();
     } catch (submitError) {
-      setError(
-        submitError.response?.data?.error ||
-          submitError.response?.data?.message ||
-          submitError.message ||
-          'Não foi possível executar o QA Engineer.'
-      );
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel executar o QA Engineer.'));
+
     } finally {
       setSaving(false);
     }
@@ -161,12 +161,8 @@ export default function TaskDetailsPage() {
       await runTaskImplementation(taskUuid);
       await loadTask();
     } catch (submitError) {
-      setError(
-        submitError.response?.data?.error ||
-          submitError.response?.data?.message ||
-          submitError.message ||
-          'Não foi possível gerar o código da task.'
-      );
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel gerar o codigo da task.'));
+
     } finally {
       setSaving(false);
     }
@@ -200,12 +196,8 @@ export default function TaskDetailsPage() {
       handleCancelArtifactEdit();
       await loadTask();
     } catch (submitError) {
-      setError(
-        submitError.response?.data?.error ||
-          submitError.response?.data?.message ||
-          submitError.message ||
-          'Não foi possível salvar a edição do artefato.'
-      );
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel salvar a edicao do artefato.'));
+
     } finally {
       setSaving(false);
     }

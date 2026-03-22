@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -17,13 +17,16 @@ import {
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import {
+  bootstrapGeneratedApp,
   bootstrapWorkspace,
   createProject,
   createTask,
   generateProjectArchitecture,
+  getApiErrorMessage,
   getProjectArchitectureStatus,
   listProjects,
   listProjectTasks,
+  runTaskImplementation,
   runTaskQa,
   runTaskRequirements,
 } from '../services/api';
@@ -32,9 +35,9 @@ const BOARD_COLUMNS = [
   { key: 'backlog', label: 'Backlog', icon: Layout },
   { key: 'todo', label: 'A Fazer', icon: Clock },
   { key: 'in_progress', label: 'Em Progresso', icon: Sparkles },
-  { key: 'in_review', label: 'Em Revisão', icon: AlertCircle },
+  { key: 'in_review', label: 'Em Revisao', icon: AlertCircle },
   { key: 'qa', label: 'Qualidade', icon: TestTube2 },
-  { key: 'done', label: 'Concluído', icon: CheckCircle2 },
+  { key: 'done', label: 'Concluido', icon: CheckCircle2 },
 ];
 
 const EMPTY_BOOTSTRAP = { userName: '', email: '', workspaceName: '' };
@@ -305,9 +308,12 @@ export default function ProjectsPage() {
     try {
       const nextProjects = await listProjects();
       setProjects(nextProjects);
-      setActiveProjectUuid(preferredProjectUuid || nextProjects[0]?.uuid || null);
+      const preferredExists = preferredProjectUuid
+        ? nextProjects.some((project) => project.uuid === preferredProjectUuid)
+        : false;
+      setActiveProjectUuid(preferredExists ? preferredProjectUuid : nextProjects[0]?.uuid || null);
     } catch (loadError) {
-      setError(loadError.response?.data?.error || loadError.message || 'Não foi possível carregar os projetos.');
+      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar os projetos.'));
     } finally {
       if (!options.silent) setLoading(false);
     }
@@ -319,7 +325,7 @@ export default function ProjectsPage() {
       setTasks(nextTasks);
     } catch (loadError) {
       if (!options.silent) {
-        setError(loadError.response?.data?.error || loadError.message || 'Não foi possível carregar as tasks.');
+        setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar as tasks.'));
       }
     }
   }
@@ -330,11 +336,7 @@ export default function ProjectsPage() {
       setArchitectureStatus(nextStatus);
     } catch (loadError) {
       if (!options.silent) {
-        setError(
-          loadError.response?.data?.message ||
-            loadError.message ||
-            'Nao foi possivel carregar o status da arquitetura do projeto.'
-        );
+        setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar o status da arquitetura do projeto.'));
       }
     }
   }
@@ -361,7 +363,7 @@ export default function ProjectsPage() {
       setBootstrapContext(result);
       setBootstrapForm(EMPTY_BOOTSTRAP);
     } catch (submitError) {
-      setError(submitError.response?.data?.error || submitError.message || 'Não foi possível preparar o workspace.');
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel preparar o workspace.'));
     } finally {
       setSaving(false);
     }
@@ -385,7 +387,7 @@ export default function ProjectsPage() {
       await loadProjects(project.uuid);
       navigate(`/projects/${project.uuid}`);
     } catch (submitError) {
-      setError(submitError.response?.data?.error || submitError.message || 'Não foi possível criar o projeto.');
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel criar o projeto.'));
     } finally {
       setSaving(false);
     }
@@ -407,7 +409,7 @@ export default function ProjectsPage() {
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
       await loadProjects(activeProjectUuid, { silent: true });
     } catch (submitError) {
-      setError(submitError.response?.data?.error || submitError.message || 'Não foi possível criar a task.');
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel criar a task.'));
     } finally {
       setSaving(false);
     }
@@ -423,12 +425,7 @@ export default function ProjectsPage() {
       await loadTasks(activeProjectUuid);
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
     } catch (submitError) {
-      setError(
-        submitError.response?.data?.error ||
-          submitError.response?.data?.message ||
-          submitError.message ||
-          'A análise de requisitos falhou.'
-      );
+      setError(getApiErrorMessage(submitError, 'A analise de requisitos falhou.'));
     } finally {
       setSaving(false);
     }
@@ -444,12 +441,7 @@ export default function ProjectsPage() {
       await loadTasks(activeProjectUuid);
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
     } catch (submitError) {
-      setError(
-        submitError.response?.data?.error ||
-          submitError.response?.data?.message ||
-          submitError.message ||
-          'A análise de QA falhou.'
-      );
+      setError(getApiErrorMessage(submitError, 'A analise de QA falhou.'));
     } finally {
       setSaving(false);
     }
@@ -467,12 +459,7 @@ export default function ProjectsPage() {
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
       await loadProjects(activeProjectUuid, { silent: true });
     } catch (submitError) {
-      setError(
-        submitError.response?.data?.error ||
-          submitError.response?.data?.message ||
-          submitError.message ||
-          'A geração de código falhou.'
-      );
+      setError(getApiErrorMessage(submitError, 'A geracao de codigo falhou.'));
     } finally {
       setSaving(false);
     }
@@ -488,11 +475,7 @@ export default function ProjectsPage() {
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
       await loadProjects(activeProjectUuid, { silent: true });
     } catch (submitError) {
-      setError(
-        submitError.response?.data?.message ||
-          submitError.message ||
-          'Nao foi possivel gerar a arquitetura do projeto.'
-      );
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel gerar a arquitetura do projeto.'));
     } finally {
       setGeneratingArchitecture(false);
     }
@@ -504,14 +487,15 @@ export default function ProjectsPage() {
   }
 
   const qaCount = tasks.filter((task) => hasCurrentArtifact(task, 'test_plan')).length;
+  const doneCount = tasks.filter((task) => task.status === 'done').length;
   const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
   const implementationBlockReason = architectureStatus?.blockers?.[0] || null;
 
   return (
     <AppShell
-      eyebrow="Estúdio de Desenvolvimento"
-      title="Arquitetura e Implementação"
-      description="Gerencie o ciclo do produto da visão até a validação com agentes autônomos."
+      eyebrow="Operacao de Projetos"
+      title="Projetos e Execucao"
+      description="Gerencie briefing, backlog, requisitos, QA e liberacao tecnica em um board operacional unico."
     >
       <div className="min-w-0 overflow-x-hidden flex flex-col gap-8 pb-16">
         <AnimatePresence>
@@ -545,10 +529,10 @@ export default function ProjectsPage() {
                       <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#102a72] text-white">
                         <LayoutDashboard className="h-4 w-4" />
                       </div>
-                      <h3 className="text-sm font-bold text-slate-900">Catálogo</h3>
+                      <h3 className="text-sm font-bold text-slate-900">Catalogo</h3>
                     </div>
                     <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400">
-                      Inventários ativos
+                      Inventarios ativos
                     </p>
                   </div>
                   <button
@@ -569,7 +553,7 @@ export default function ProjectsPage() {
                         layout
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
-                        onClick={() => navigate(`/projects/${project.uuid}`)}
+                        onClick={() => navigate(`/projects?project=${project.uuid}`)}
                         className={`w-full rounded-xl border px-4 py-4 text-left transition ${
                           project.uuid === activeProjectUuid
                             ? 'border-[#102a72]/20 bg-[#102a72]/5 shadow-sm'
@@ -580,7 +564,7 @@ export default function ProjectsPage() {
                           <div className="min-w-0 flex-1">
                             <h4 className="text-sm font-semibold text-slate-900">{project.name}</h4>
                             <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">
-                              {project.description || 'Architecture visualization and task distribution dashboard.'}
+                              {project.description || 'Workspace pronto para backlog, refinamento, QA e geracao tecnica.'}
                             </p>
                           </div>
                           <span className="dashboard-badge bg-slate-100 text-slate-600">
@@ -611,20 +595,20 @@ export default function ProjectsPage() {
                       className="space-y-4 overflow-hidden border-t border-slate-200 pt-4"
                     >
                       <TextInput
-                      label="Codinome"
+                        label="Nome do projeto"
                         value={projectForm.name}
                         onChange={(e) => setProjectForm((prev) => ({ ...prev, name: e.target.value }))}
-                        placeholder="Identificador do projeto..."
+                        placeholder="Ex.: Plataforma de EAD"
                       />
                       <TextArea
-                        label="Diretriz de visão"
+                        label="Visao do produto"
                         value={projectForm.vision}
                         onChange={(e) => setProjectForm((prev) => ({ ...prev, vision: e.target.value }))}
-                        placeholder="Objetivos estratégicos..."
+                        placeholder="Objetivo principal, publico e resultado esperado..."
                         rows={3}
                       />
                       <button type="submit" disabled={saving || !canCreateProject} className="dashboard-button-primary w-full">
-                        Inicializar operações
+                        Criar projeto
                       </button>
                     </motion.form>
                   )}
@@ -641,7 +625,7 @@ export default function ProjectsPage() {
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">Equipe base</h3>
                     <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400">
-                      Autenticação
+                      Autenticacao
                     </p>
                   </div>
                 </div>
@@ -666,7 +650,7 @@ export default function ProjectsPage() {
                       label="Identidade do diretor"
                       value={bootstrapForm.userName}
                       onChange={(e) => setBootstrapForm((prev) => ({ ...prev, userName: e.target.value }))}
-                      placeholder="Nome do responsável"
+                      placeholder="Nome do responsavel"
                       icon={Users}
                     />
                     <TextInput
@@ -683,7 +667,7 @@ export default function ProjectsPage() {
                       icon={Layout}
                     />
                     <button disabled={saving} className="dashboard-button-primary mt-2 w-full">
-                      Estabelecer vínculo
+                      Criar workspace base
                     </button>
                   </form>
                 )}
@@ -708,21 +692,22 @@ export default function ProjectsPage() {
                           {activeProject ? (
                             <span className="dashboard-badge bg-emerald-50 text-emerald-700">Operacional</span>
                           ) : (
-                            <span className="dashboard-badge bg-slate-100 text-slate-500">Aguardando direção</span>
+                            <span className="dashboard-badge bg-slate-100 text-slate-500">Aguardando selecao</span>
                           )}
                         </div>
                       </div>
                     </div>
                     <p className="mt-6 text-base leading-8 text-slate-500">
                       {activeProject?.vision ||
-                        'Dashboard de visualização da arquitetura e distribuição de tasks. Selecione um projeto no catálogo para começar a implementação.'}
+                        'Selecione um projeto no catalogo para operar backlog, requisitos, QA e liberacao tecnica no mesmo board.'}
                     </p>
                   </div>
 
-                  <div className="grid w-full gap-4 sm:grid-cols-2 xl:w-auto">
+                  <div className="grid w-full gap-4 sm:grid-cols-3 xl:w-auto">
                     {[
-                      { label: 'Unidades', value: tasks.length, icon: LayoutDashboard, tone: 'bg-slate-50 text-slate-900' },
-                      { label: 'Validadas', value: qaCount, icon: Sparkles, tone: 'bg-blue-50 text-[#102a72]' },
+                      { label: 'Tasks', value: tasks.length, icon: LayoutDashboard, tone: 'bg-slate-50 text-slate-900' },
+                      { label: 'Em QA', value: qaCount, icon: Sparkles, tone: 'bg-blue-50 text-[#102a72]' },
+                      { label: 'Concluidas', value: doneCount, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
                     ].map((stat) => (
                       <div key={stat.label} className="min-w-[160px] rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                         <div className="flex items-center justify-between">
@@ -746,7 +731,7 @@ export default function ProjectsPage() {
                         <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Gate de arquitetura</p>
                         <p className="mt-2 text-sm text-slate-700">
                           {architectureStatus?.canGenerateCode
-                            ? 'Todas as historias refinadas e arquitetura pronta. A implementacao por task foi liberada.'
+                            ? 'Todas as historias refinadas e a arquitetura estao prontas. A implementacao por task foi liberada.'
                             : architectureStatus?.blockers?.[0] || 'Refine todas as historias para liberar a arquitetura do projeto.'}
                         </p>
                         <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -775,7 +760,7 @@ export default function ProjectsPage() {
                         className="dashboard-button-primary w-full lg:w-auto"
                         title={!architectureStatus?.canGenerateArchitecture ? architectureStatus?.blockers?.[0] : undefined}
                       >
-                        {generatingArchitecture ? 'Gerando arquitetura...' : 'Gerar arquitetura do projeto'}
+                        {generatingArchitecture ? 'Gerando arquitetura...' : 'Gerar arquitetura'}
                       </button>
                     </div>
                   </div>
@@ -886,3 +871,4 @@ export default function ProjectsPage() {
     </AppShell>
   );
 }
+

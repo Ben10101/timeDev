@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import AppShell from '../components/AppShell';
 import {
   generateProjectArchitecture,
   generateProjectBacklog,
+  getApiErrorMessage,
   getProject,
   getProjectArchitectureStatus,
   listProjectTasks,
@@ -81,7 +82,11 @@ export default function ProjectOverviewPage() {
         constraints: projectData?.intakeConfig?.answers?.constraints || '',
       });
     } catch (loadError) {
-      setError(loadError.response?.data?.message || loadError.message || 'Nao foi possivel carregar o overview do projeto.');
+      if (loadError.response?.status === 404) {
+        navigate('/projects', { replace: true });
+        return;
+      }
+      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar o overview do projeto.'));
     } finally {
       setLoading(false);
     }
@@ -118,7 +123,7 @@ export default function ProjectOverviewPage() {
       setArchitectureStatus(nextArchitectureStatus);
       setSuccessMessage('Backlog gerado pelo PM Agent e enviado direto para o board.');
     } catch (submitError) {
-      setError(submitError.response?.data?.message || submitError.message || 'Nao foi possivel gerar o backlog do projeto.');
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel gerar o backlog do projeto.'));
     } finally {
       setGenerating(false);
     }
@@ -135,7 +140,7 @@ export default function ProjectOverviewPage() {
       setArchitectureStatus(nextArchitectureStatus);
       setSuccessMessage('Arquitetura do projeto gerada e estrutura base preparada para a implementacao.');
     } catch (submitError) {
-      setError(submitError.response?.data?.message || submitError.message || 'Nao foi possivel gerar a arquitetura do projeto.');
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel gerar a arquitetura do projeto.'));
     } finally {
       setGeneratingArchitecture(false);
     }
@@ -143,9 +148,9 @@ export default function ProjectOverviewPage() {
 
   return (
     <AppShell
-      eyebrow="Visão do Projeto"
+      eyebrow="Visao do Projeto"
       title={project?.name || 'Projeto'}
-      description="Descreva a iniciativa, gere o backlog com o PM Agent e depois entre no board já com as tasks persistidas."
+      description="Descreva a iniciativa, gere o backlog com o PM Agent e depois entre no board com as tasks persistidas."
       actions={
         <div className="flex flex-col gap-3 sm:flex-row">
           <button onClick={() => navigate('/projects')} className="dashboard-button-secondary w-full sm:w-auto">
@@ -160,14 +165,14 @@ export default function ProjectOverviewPage() {
         <>
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Saúde do projeto</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Saude do projeto</p>
             </div>
             <div className="grid grid-cols-2 gap-3 p-4">
               {[
                 [groupedStats.total, 'Tasks'],
                 [groupedStats.backlog, 'Backlog'],
                 [groupedStats.qa, 'Em QA'],
-                [groupedStats.done, 'Concluídas'],
+                [groupedStats.done, 'Concluidas'],
               ].map(([value, label]) => (
                 <div key={label} className="rounded-xl border border-slate-200 bg-white p-4">
                   <div className="text-2xl font-semibold text-slate-900">{value}</div>
@@ -194,7 +199,7 @@ export default function ProjectOverviewPage() {
         {successMessage && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{successMessage}</div>}
         {isBriefingLocked && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            O briefing foi bloqueado porque o backlog deste projeto já foi gerado. Depois dessa etapa, os campos ficam somente leitura para preservar o contexto original.
+            O briefing foi bloqueado porque o backlog deste projeto ja foi gerado. Depois dessa etapa, os campos ficam somente leitura para preservar o contexto original.
           </div>
         )}
 
@@ -206,7 +211,7 @@ export default function ProjectOverviewPage() {
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
               <h2 className="text-3xl font-bold tracking-tight text-slate-900">{project?.name || 'Carregando projeto...'}</h2>
               <p className="mt-3 text-sm leading-7 text-slate-600">
-                {project?.description || 'Este projeto ainda não tem um briefing consolidado.'}
+                {project?.description || 'Este projeto ainda nao tem um briefing consolidado.'}
               </p>
               <p className="mt-4 text-sm leading-7 text-slate-600">
                 {project?.vision || 'Defina o objetivo do projeto e use o PM Agent para abrir o board com contexto.'}
@@ -214,7 +219,7 @@ export default function ProjectOverviewPage() {
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Configuração atual</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Configuracao atual</p>
               <div className="mt-4 space-y-3 text-sm text-slate-700">
                 <p><strong>Workspace:</strong> {project?.workspace?.name || '-'}</p>
                 <p><strong>Status:</strong> {project?.status || '-'}</p>
@@ -286,7 +291,7 @@ export default function ProjectOverviewPage() {
             <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing do projeto</p>
             <h3 className="mt-2 text-2xl font-bold text-slate-900">Converse com o projeto antes dos agentes</h3>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-              Aqui o intake deixa de ser uma tela isolada. O briefing passa a morar dentro do projeto, e o PM Agent usa esse contexto para criar as tasks do board.
+              Aqui o intake deixa de ser uma tela isolada. O briefing passa a viver dentro do projeto, e o PM Agent usa esse contexto para criar as tasks do board.
             </p>
           </div>
 
@@ -305,12 +310,12 @@ export default function ProjectOverviewPage() {
               label="Objetivo"
               value={form.objective}
               onChange={(event) => setForm((prev) => ({ ...prev, objective: event.target.value }))}
-                placeholder="Qual transformação esse projeto deve entregar?"
+                placeholder="Qual transformacao esse projeto deve entregar?"
               rows={3}
               disabled={isBriefingLocked}
             />
             <TextAreaField
-                label="Público ou operação atendida"
+                label="Publico ou operacao atendida"
               value={form.audience}
               onChange={(event) => setForm((prev) => ({ ...prev, audience: event.target.value }))}
                 placeholder="Quem usa isso e em qual contexto?"
@@ -321,15 +326,15 @@ export default function ProjectOverviewPage() {
               label="Fluxos principais"
               value={form.mainFlows}
               onChange={(event) => setForm((prev) => ({ ...prev, mainFlows: event.target.value }))}
-                placeholder="Ex.: cadastrar cliente, consultar histórico, acompanhar dashboard."
+                placeholder="Ex.: cadastrar cliente, consultar historico, acompanhar dashboard."
               rows={3}
               disabled={isBriefingLocked}
             />
             <TextAreaField
-                label="Restrições ou riscos"
+                label="Restricoes ou riscos"
               value={form.constraints}
               onChange={(event) => setForm((prev) => ({ ...prev, constraints: event.target.value }))}
-                placeholder="Regras, dependências, limitações técnicas ou operacionais."
+                placeholder="Regras, dependencias e limitacoes tecnicas ou operacionais."
               rows={3}
               disabled={isBriefingLocked}
             />
@@ -338,7 +343,7 @@ export default function ProjectOverviewPage() {
                 Recarregar projeto
               </button>
               <button disabled={generating || loading || isBriefingLocked} className="dashboard-button-primary w-full sm:w-auto">
-                {isBriefingLocked ? 'Backlog já gerado' : generating ? 'Gerando backlog...' : 'Gerar backlog com PM Agent'}
+                {isBriefingLocked ? 'Backlog ja gerado' : generating ? 'Gerando backlog...' : 'Gerar backlog com PM Agent'}
               </button>
             </div>
           </form>
@@ -349,7 +354,7 @@ export default function ProjectOverviewPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Backlog inicial</p>
-                <h3 className="mt-2 text-xl font-bold text-slate-900">Tasks que vão aparecer no board</h3>
+                <h3 className="mt-2 text-xl font-bold text-slate-900">Tasks que vao aparecer no board</h3>
               </div>
               <span className="rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600">
                 {tasks.length} tasks
@@ -391,3 +396,4 @@ export default function ProjectOverviewPage() {
     </AppShell>
   );
 }
+

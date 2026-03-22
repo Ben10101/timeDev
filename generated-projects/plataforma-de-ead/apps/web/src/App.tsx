@@ -5,7 +5,7 @@ import { CourseCatalogPage } from './features/course-catalog/index'
 import { CourseModulesPage } from './features/course-modules/index'
 import { CourseLessonsPage } from './features/course-lessons/index'
 import { LessonMaterialsPage } from './features/lesson-materials/index'
-import { CourseSearchPage } from './features/course-search/index'
+import { CoursePricingPage } from './features/course-pricing/index'
 const routes = [
   { path: '/', label: 'Inicio', render: () => <HomePage /> },
   { path: '/profile', label: 'Perfil', render: () => <ProfileSettingsPage /> },
@@ -13,12 +13,12 @@ const routes = [
   { path: '/courses/modules', label: 'Módulos', render: () => <CourseModulesPage /> },
   { path: '/courses/lessons', label: 'Aulas', render: () => <CourseLessonsPage /> },
   { path: '/courses/materials', label: 'Materiais', render: () => <LessonMaterialsPage /> },
-  { path: '/courses/search', label: 'Busca', render: () => <CourseSearchPage /> },
+  { path: '/courses/pricing', label: 'Precos', render: () => <CoursePricingPage /> },
 ]
 
 function HomePage() {
   const productAreas = routes.filter((route) => route.path !== '/')
-  return <StudioHome title="Plataforma de EAD · Application Studio" routes={productAreas} />
+  return <StudioHome title="Plataforma de EAD" routes={productAreas} />
 }
 
 export default function App() {

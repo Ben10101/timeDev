@@ -1,17 +1,17 @@
 import { randomUUID } from 'crypto';
-import type { CourseSearchListResponse, CourseSearchRequest, CourseSearchResponse } from '../../../../../packages/shared/src/contracts/course-search.ts';
+import type { CoursePlayerListResponse, CoursePlayerRequest, CoursePlayerResponse } from '../../../../../packages/shared/src/contracts/course-player.ts';
 
-const records: CourseSearchResponse[] = [];
+const records: CoursePlayerResponse[] = [];
 
 /**
  * - O nome do perfil e obrigatorio e nao pode ficar em branco.
  */
-export class CourseSearchService {
-  list(): CourseSearchListResponse {
+export class CoursePlayerService {
+  list(): CoursePlayerListResponse {
     return { items: records };
   }
 
-  create(input: CourseSearchRequest): CourseSearchResponse {
+  create(input: CoursePlayerRequest): CoursePlayerResponse {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) {
       throw new Error('E-mail invalido.');
     }
@@ -31,7 +31,7 @@ export class CourseSearchService {
       throw new Error('Foto do perfil precisa ser uma URL valida.');
     }
 
-    const item: CourseSearchResponse = {
+    const item: CoursePlayerResponse = {
       id: randomUUID(),
       fullName: input.fullName,
       ...(input.profilePhotoUrl ? { profilePhotoUrl: input.profilePhotoUrl } : {}),
@@ -44,7 +44,7 @@ export class CourseSearchService {
     return item;
   }
 
-  buildSeedFromTask(): CourseSearchRequest {
+  buildSeedFromTask(): CoursePlayerRequest {
     return {
       fullName: 'Joao Silva',
       profilePhotoUrl: 'https://exemplo.com/avatar-joao.png',
@@ -53,5 +53,5 @@ export class CourseSearchService {
   }
 }
 
-export const CourseSearchServiceInstance = new CourseSearchService();
-records.push(CourseSearchServiceInstance.create(CourseSearchServiceInstance.buildSeedFromTask()));
+export const CoursePlayerServiceInstance = new CoursePlayerService();
+records.push(CoursePlayerServiceInstance.create(CoursePlayerServiceInstance.buildSeedFromTask()));

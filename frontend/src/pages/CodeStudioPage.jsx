@@ -18,6 +18,7 @@ import {
 import AppShell from '../components/AppShell';
 import {
   bootstrapGeneratedApp,
+  getApiErrorMessage,
   getAiOperationsOverview,
   getGeneratedApp,
   getOperationalHealth,
@@ -140,7 +141,10 @@ export default function CodeStudioPage() {
       const nextProjects = await listProjects();
       setProjects(nextProjects);
 
-      const fallbackProjectUuid = selectedProjectUuid || nextProjects[0]?.uuid || null;
+      const preferredExists = selectedProjectUuid
+        ? nextProjects.some((project) => project.uuid === selectedProjectUuid)
+        : false;
+      const fallbackProjectUuid = preferredExists ? selectedProjectUuid : nextProjects[0]?.uuid || null;
       if (fallbackProjectUuid && fallbackProjectUuid !== selectedProjectUuid) {
         const nextParams = new URLSearchParams(searchParams);
         nextParams.set('project', fallbackProjectUuid);
@@ -149,7 +153,7 @@ export default function CodeStudioPage() {
         setLoading(false);
       }
     } catch (loadError) {
-      setError(loadError.response?.data?.message || loadError.message || 'Nao foi possivel carregar os projetos.');
+      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar os projetos.'));
       setLoading(false);
     }
   }
@@ -202,11 +206,7 @@ export default function CodeStudioPage() {
 
       setImplementationMap(Object.fromEntries(implementationEntries));
     } catch (loadError) {
-      setError(
-        loadError.response?.data?.message ||
-          loadError.message ||
-          'Nao foi possivel carregar o estagio tecnico do projeto.'
-      );
+      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar o estagio tecnico do projeto.'));
     } finally {
       setLoading(false);
     }
@@ -223,11 +223,7 @@ export default function CodeStudioPage() {
       await runTaskImplementation(taskUuid);
       await loadProjectWorkspace(selectedProjectUuid);
     } catch (runError) {
-      setError(
-        runError.response?.data?.message ||
-          runError.message ||
-          'Nao foi possivel iniciar a implementacao da task.'
-      );
+      setError(getApiErrorMessage(runError, 'Nao foi possivel iniciar a implementacao da task.'));
     } finally {
       setRunningTaskUuid(null);
     }
@@ -262,11 +258,7 @@ export default function CodeStudioPage() {
 
       await loadProjectWorkspace(selectedProjectUuid);
     } catch (runError) {
-      setError(
-        runError.response?.data?.message ||
-          runError.message ||
-          'Nao foi possivel gerar a aplicacao do projeto.'
-      );
+      setError(getApiErrorMessage(runError, 'Nao foi possivel gerar a aplicacao do projeto.'));
     } finally {
       setRunningTaskUuid(null);
       setIsGeneratingApplication(false);

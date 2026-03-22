@@ -4,7 +4,6 @@ import {
   Home,
   Briefcase,
   Braces,
-  ListChecks,
   Search,
   Bell,
   ChevronRight,
@@ -19,7 +18,6 @@ const NAV = [
   { label: 'Inicio', to: '/', icon: Home },
   { label: 'Projetos', to: '/projects', icon: Briefcase },
   { label: 'Codigo', to: '/code-studio', icon: Braces },
-  { label: 'Backlog', to: '/global-backlog', icon: ListChecks },
   { label: 'IAs', to: '/settings/ai', icon: Settings },
 ];
 

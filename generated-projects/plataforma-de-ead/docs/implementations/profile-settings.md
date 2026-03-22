@@ -1,16 +1,16 @@
-# Como Aluno, eu quero poder baixar os materiais complementares dos cursos, para que eu possa estudar em qualquer lugar.
+# Como Administrador, eu quero poder configurar as opções de pagamento da plataforma, para que eu possa oferecer diferentes métodos de pagamento aos alunos.
 
-Task UUID: c924682c-68dd-4cb1-9472-ac4b2850c7bd
+Task UUID: 0d6d5a0a-0d7b-43b4-a0e2-bb17f4308d9b
 
 ## Resumo
 Feature integrada no baseline full stack pos-refinamento.
 
 ## Template de tela
-- dashboard
+- settings
 
 ## Rotas
-- Frontend: /courses/materials
-- Backend: /api/lesson-materials
+- Frontend: /profile
+- Backend: /api/profile
 
 ## Stack e arquitetura
 - ## Stack Tecnologico

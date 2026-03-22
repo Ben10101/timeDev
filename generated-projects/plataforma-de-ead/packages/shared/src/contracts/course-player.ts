@@ -1,10 +1,10 @@
-export interface CourseSearchRequest {
+export interface CoursePlayerRequest {
   fullName: string;
   profilePhotoUrl?: string;
   email: string;
 }
 
-export interface CourseSearchResponse {
+export interface CoursePlayerResponse {
   id: string;
   fullName: string;
   profilePhotoUrl?: string;
@@ -13,6 +13,6 @@ export interface CourseSearchResponse {
   createdAt: string;
 }
 
-export interface CourseSearchListResponse {
-  items: CourseSearchResponse[];
+export interface CoursePlayerListResponse {
+  items: CoursePlayerResponse[];
 }

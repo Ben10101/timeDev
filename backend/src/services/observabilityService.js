@@ -36,7 +36,7 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
     where: {
       project: {
         workspace: {
-          owner: {
+          ownerUser: {
             uuid: userUuid,
           },
         },
@@ -67,7 +67,7 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
       generatedApp: {
         project: {
           workspace: {
-            owner: {
+            ownerUser: {
               uuid: userUuid,
             },
           },
@@ -89,10 +89,9 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
       taskImplementation: {
         select: {
           task: { select: { uuid: true, title: true } },
-          qualityScore: true,
-          reviewStatus: true,
           buildStatus: true,
           testStatus: true,
+          status: true,
         },
       },
     },
@@ -174,8 +173,8 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
       status: run.status,
       project: run.generatedApp.project,
       task: run.taskImplementation?.task || null,
-      qualityScore: run.taskImplementation?.qualityScore ?? null,
-      reviewStatus: run.taskImplementation?.reviewStatus || null,
+      qualityScore: null,
+      reviewStatus: run.taskImplementation?.status || null,
       buildStatus: run.taskImplementation?.buildStatus || null,
       testStatus: run.taskImplementation?.testStatus || null,
       startedAt: run.startedAt,

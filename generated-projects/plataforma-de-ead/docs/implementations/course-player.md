@@ -1,6 +1,6 @@
-# Como Aluno, eu quero poder baixar os materiais complementares dos cursos, para que eu possa estudar em qualquer lugar.
+# Como Aluno, eu quero poder assistir aos vídeos e áudios dos cursos, para que eu possa aprender com o conteúdo.
 
-Task UUID: c924682c-68dd-4cb1-9472-ac4b2850c7bd
+Task UUID: 943841e1-cbfe-4a49-ab5e-193c6fd07760
 
 ## Resumo
 Feature integrada no baseline full stack pos-refinamento.
@@ -9,8 +9,8 @@ Feature integrada no baseline full stack pos-refinamento.
 - dashboard
 
 ## Rotas
-- Frontend: /courses/materials
-- Backend: /api/lesson-materials
+- Frontend: /courses/player
+- Backend: /api/course-player
 
 ## Stack e arquitetura
 - ## Stack Tecnologico

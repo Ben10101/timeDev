@@ -1,4 +1,4 @@
-model CourseSearch {
+model CoursePricing {
   id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   fullName  String @db.VarChar(190)
   profilePhotoUrl String @db.VarChar(190)

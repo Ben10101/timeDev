@@ -45,17 +45,17 @@ export function CourseEnrollmentPage() {
     <FeaturePage
       accent="teal"
       layout="dashboard"
-      eyebrow="Matriculas"
-      title="Gerencie matriculas"
-      description="Associe alunos aos cursos disponiveis para liberar acesso ao conteudo."
+      eyebrow="Matrículas"
+      title="Cadastrar Aluno"
+      description="Registre alunos para liberar acesso aos cursos."
       metrics={[
         { label: 'Campos essenciais', value: '4' },
         { label: 'Registros atuais', value: String(items.length) },
         { label: 'Acao principal', value: 'Matricular Aluno' },
       ]}
-      highlights={["Matricule alunos com um cadastro simples e confiavel.","Centralize o inicio do acesso ao curso em um fluxo unico."]}
-      formTitle="Nova matricula"
-      formDescription="Cadastre o aluno e libere o acesso inicial ao curso selecionado."
+      highlights={["Fluxo pensado para reduzir duvidas no preenchimento.","Feedback claro ao concluir ou revisar a operacao."]}
+      formTitle="Dados principais"
+      formDescription="Preencha os dados essenciais para concluir a operacao com seguranca."
       form={
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
           <FieldGroup label="Nome completo" hint="Informe o nome que sera exibido no seu perfil.">
@@ -103,7 +103,7 @@ export function CourseEnrollmentPage() {
         </form>
       }
       listTitle="Registros recentes"
-      listDescription="Consulte os ultimos alunos matriculados e acompanhe os acessos liberados."
+      listDescription="Nenhum registro disponivel ainda."
       listMeta={`${items.length} registro(s)`}
     >
       {items.length ? (
@@ -116,7 +116,7 @@ export function CourseEnrollmentPage() {
           ))}
         </div>
       ) : (
-        <p style={{ margin: 0, color: '#64748b' }}>As matriculas mais recentes aparecerao aqui assim que um aluno for cadastrado.</p>
+        <p style={{ margin: 0, color: '#64748b' }}>Nenhum registro disponivel ainda.</p>
       )}
     </FeaturePage>
   );
