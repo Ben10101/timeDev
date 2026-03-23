@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
 
@@ -13,7 +13,7 @@ export function clearApiAccessToken() {
   accessToken = null
 }
 
-export function getApiErrorMessage(error, fallback = 'Nao foi possivel concluir a solicitacao.') {
+export function getApiErrorMessage(error, fallback = 'Não foi possível concluir a solicitação.') {
   const status = error?.response?.status
   const data = error?.response?.data
 
@@ -26,15 +26,15 @@ export function getApiErrorMessage(error, fallback = 'Nao foi possivel concluir 
   }
 
   if (status === 404) {
-    return 'O recurso solicitado nao foi encontrado ou pode ter sido removido.'
+    return 'O recurso solicitado não foi encontrado ou pode ter sido removido.'
   }
 
   if (status === 401) {
-    return 'Sua sessao expirou. Entre novamente para continuar.'
+    return 'Sua sessão expirou. Entre novamente para continuar.'
   }
 
   if (status === 403) {
-    return 'Voce nao tem permissao para acessar este recurso.'
+    return 'Você não tem permissão para acessar este recurso.'
   }
 
   return error?.message || fallback
@@ -355,3 +355,4 @@ export default {
   createTaskArtifact,
   listAllTasks,
 }
+

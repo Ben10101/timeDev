@@ -89,8 +89,8 @@ function assertArtifactCompleteness(agentName, content) {
       'fluxo principal',
       'fluxos alternativos',
       'fluxos de excecao',
-      'regras de negocio',
-      'criterios de aceite',
+      'regras de negócio',
+      'critérios de aceite',
     ];
 
     for (const section of requiredSections) {
@@ -100,7 +100,7 @@ function assertArtifactCompleteness(agentName, content) {
     }
 
     if (!normalized.includes('dado') || !normalized.includes('quando') || !normalized.includes('entao')) {
-      throw new Error('O artefato de requisitos foi retornado sem criterios de aceite BDD completos.');
+      throw new Error('O artefato de requisitos foi retornado sem critérios de aceite BDD completos.');
     }
   }
 
@@ -109,7 +109,7 @@ function assertArtifactCompleteness(agentName, content) {
       'estrategia de testes',
       'dados de teste',
       'riscos e metricas',
-      'cenarios de teste',
+      'cenários de teste',
       'casos de teste funcionais',
       'usabilidade e acessibilidade',
     ];
@@ -180,7 +180,7 @@ export async function runRequirementsForTaskController(req, res) {
     const task = await getTaskContextByUuid(taskUuid, req.authUser.uuid);
 
     if (!task) {
-      return res.status(404).json({ message: 'Tarefa nao encontrada.' });
+      return res.status(404).json({ message: 'Tarefa não encontrada.' });
     }
 
     previousTaskState = {
@@ -199,7 +199,7 @@ export async function runRequirementsForTaskController(req, res) {
 
     if (latestRequirements) {
       return res.status(400).json({
-        message: 'A etapa de requisitos desta task ja foi concluida e nao pode ser executada novamente.',
+        message: 'A etapa de requisitos desta task já foi concluída e não pode ser executada novamente.',
       });
     }
 
@@ -214,7 +214,7 @@ export async function runRequirementsForTaskController(req, res) {
     const payload = {
       project_id: task.project.uuid,
       task_uuid: task.uuid,
-      idea: `Refine somente esta historia de usuario: ${task.title}${
+      idea: `Refine somente esta história de usuário: ${task.title}${
         task.description ? `\n\nContexto complementar da tarefa: ${task.description}` : ''
       }`,
       backlog: buildCompactRequirementBacklog(task),
@@ -252,7 +252,7 @@ export async function runRequirementsForTaskController(req, res) {
       assigneeType: 'agent',
       assigneeAgentName: 'requirements_analyst',
       changedByUserUuid: req.authUser.uuid,
-      statusNote: 'Refinamento de requisitos concluido',
+      statusNote: 'Refinamento de requisitos concluído',
     });
 
     res.status(200).json(
@@ -288,7 +288,7 @@ export async function runQaForTaskController(req, res) {
     const task = await getTaskContextByUuid(taskUuid, req.authUser.uuid);
 
     if (!task) {
-      return res.status(404).json({ message: 'Tarefa nao encontrada.' });
+      return res.status(404).json({ message: 'Tarefa não encontrada.' });
     }
 
     previousTaskState = {
@@ -317,7 +317,7 @@ export async function runQaForTaskController(req, res) {
 
     if (latestTestPlan) {
       return res.status(400).json({
-        message: 'A etapa de QA desta task ja foi concluida e nao pode ser executada novamente.',
+        message: 'A etapa de QA desta task já foi concluída e não pode ser executada novamente.',
       });
     }
 
@@ -376,7 +376,7 @@ export async function runQaForTaskController(req, res) {
       assigneeType: 'agent',
       assigneeAgentName: 'qa_engineer',
       changedByUserUuid: req.authUser.uuid,
-      statusNote: 'Plano de testes concluido',
+      statusNote: 'Plano de testes concluído',
     });
 
     res.status(200).json(

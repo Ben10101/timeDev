@@ -106,7 +106,7 @@ export default function GovernancePage() {
         setAuditTrail(Array.isArray(auditData) ? auditData : []);
       } catch (loadError) {
         if (!active) return;
-        setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar a governanca da plataforma.'));
+        setError(getApiErrorMessage(loadError, 'Não foi possível carregar a governança da plataforma.'));
       } finally {
         if (active) setLoading(false);
       }
@@ -122,9 +122,9 @@ export default function GovernancePage() {
 
   return (
     <AppShell
-      eyebrow="Governanca"
-      title="Governanca Operacional"
-      description="Concentre readiness, alertas, auditoria, historico e hotspots da plataforma em uma area dedicada."
+      eyebrow="Governança"
+      title="Governança Operacional"
+      description="Concentre readiness, alertas, auditoria, histórico e hotspots da plataforma em uma área dedicada."
     >
       <div className="space-y-8">
         {error ? (
@@ -166,12 +166,12 @@ export default function GovernancePage() {
           <motion.section {...fade(0.1)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Readiness</p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-900">Prontidao de producao</h2>
+              <h2 className="mt-2 text-2xl font-bold text-slate-900">Prontidão de produção</h2>
             </div>
             <div className="grid gap-4 p-6 md:grid-cols-2">
-              <EventCard title={`v${readiness?.release?.version || 'n/a'} · ${readiness?.release?.channel || 'n/a'}`} subtitle="Release em operacao" />
-              <EventCard title={readiness?.governance?.implementationRemoteOnly ? 'Somente APIs remotas' : 'Fallback local permitido'} subtitle="Policy de execucao de IA" tone="amber" />
-              <EventCard title={readiness?.security?.authSecretConfigured ? 'Segredo de auth configurado' : 'Segredo ausente'} subtitle="Seguranca de autenticacao" tone={readiness?.security?.authSecretConfigured ? 'emerald' : 'rose'} />
+              <EventCard title={`v${readiness?.release?.version || 'n/a'} · ${readiness?.release?.channel || 'n/a'}`} subtitle="Release em operação" />
+              <EventCard title={readiness?.governance?.implementationRemoteOnly ? 'Somente APIs remotas' : 'Fallback local permitido'} subtitle="Policy de execução de IA" tone="amber" />
+              <EventCard title={readiness?.security?.authSecretConfigured ? 'Segredo de auth configurado' : 'Segredo ausente'} subtitle="Segurança de autenticação" tone={readiness?.security?.authSecretConfigured ? 'emerald' : 'rose'} />
               <EventCard title={`${Object.values(readiness?.providersConfigured || {}).filter(Boolean).length} providers com chave`} subtitle="Capacidade remota atual" />
             </div>
             <div className="space-y-3 px-6 pb-6">
@@ -202,7 +202,7 @@ export default function GovernancePage() {
                   />
                 ))
               ) : (
-                <EventCard title="Nenhum alerta ativo" subtitle="A governanca da plataforma esta estavel agora." tone="emerald" />
+                <EventCard title="Nenhum alerta ativo" subtitle="A governança da plataforma está estável agora." tone="emerald" />
               )}
             </div>
           </motion.section>
@@ -211,7 +211,7 @@ export default function GovernancePage() {
         <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr_1fr]">
           <motion.section {...fade(0.18)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Historico</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Histórico</p>
               <h2 className="mt-2 text-xl font-bold text-slate-900">Ultimos 7 dias</h2>
             </div>
             <div className="space-y-3 p-6">
@@ -228,7 +228,7 @@ export default function GovernancePage() {
           <motion.section {...fade(0.22)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Hotspots</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Falhas e latencia</h2>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Falhas e latência</h2>
             </div>
             <div className="space-y-3 p-6">
               {(governance?.failureHotspots || []).slice(0, 3).map((item) => (
@@ -253,14 +253,14 @@ export default function GovernancePage() {
           <motion.section {...fade(0.26)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Auditoria</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Acoes recentes</h2>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Ações recentes</h2>
             </div>
             <div className="space-y-3 p-6">
               {auditTrail.slice(0, 8).map((entry) => (
                 <EventCard
                   key={`${entry.timestamp}-${entry.actionType}`}
                   title={`${entry.method} ${entry.path}`}
-                  subtitle={`${entry.actionType} · ${entry.userEmail || 'Usuario desconhecido'} · ${entry.durationMs}ms`}
+                  subtitle={`${entry.actionType} · ${entry.userEmail || 'Usuário desconhecido'} · ${entry.durationMs}ms`}
                   tone={entry.success ? 'slate' : 'rose'}
                 />
               ))}
@@ -268,36 +268,36 @@ export default function GovernancePage() {
           </motion.section>
         </div>
 
-        <motion.section {...fade(0.3)} className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0A1128] text-white shadow-xl">
+        <motion.section {...fade(0.3)} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="grid gap-6 px-8 py-8 lg:grid-cols-[1.2fr_0.8fr]">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-200/90">Governanca da fabrica</p>
-              <h2 className="mt-3 text-3xl font-bold tracking-tight">Esta area existe para separar risco, policy e operacao daquilo que o time usa para construir produto.</h2>
-              <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-200">
-                Agora readiness, auditoria, historico, hotspots e alertas nao precisam mais competir com board de projeto ou com detalhe tecnico de implementacao.
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Governança da fábrica</p>
+              <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">Acompanhe risco, policy e operação sem misturar isso com o fluxo de produto.</h2>
+              <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
+                Readiness, auditoria, histórico, hotspots e alertas ficam concentrados aqui para facilitar leitura e tomada de decisão.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4 backdrop-blur-sm">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-blue-100">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#102a72]/10 text-[#102a72]">
                   <ShieldCheck className="h-4.5 w-4.5" strokeWidth={2} />
                 </div>
-                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-blue-100/80">Status</p>
-                <p className="mt-1 text-2xl font-bold text-white">{readiness?.status || 'n/a'}</p>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500">Status</p>
+                <p className="mt-1 text-2xl font-bold text-slate-900">{readiness?.status || 'n/a'}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4 backdrop-blur-sm">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-blue-100">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#102a72]/10 text-[#102a72]">
                   <AlertCircle className="h-4.5 w-4.5" strokeWidth={2} />
                 </div>
-                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-blue-100/80">Alertas</p>
-                <p className="mt-1 text-2xl font-bold text-white">{alerts.length}</p>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500">Alertas</p>
+                <p className="mt-1 text-2xl font-bold text-slate-900">{alerts.length}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4 backdrop-blur-sm">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-blue-100">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#102a72]/10 text-[#102a72]">
                   <Clock3 className="h-4.5 w-4.5" strokeWidth={2} />
                 </div>
-                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-blue-100/80">P95</p>
-                <p className="mt-1 text-2xl font-bold text-white">{operations?.summary?.p95RunDurationSeconds || 0}s</p>
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500">P95</p>
+                <p className="mt-1 text-2xl font-bold text-slate-900">{operations?.summary?.p95RunDurationSeconds || 0}s</p>
               </div>
             </div>
           </div>

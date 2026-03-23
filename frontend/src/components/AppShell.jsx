@@ -21,17 +21,17 @@ const NAV_SECTIONS = [
     items: [{ label: 'Aligna', hint: 'Alinhamento inicial', to: '/', icon: Home }],
   },
   {
-    label: 'Execucao',
+    label: 'Execução',
     items: [
       { label: 'Projetos', hint: 'Board operacional', to: '/projects', icon: Briefcase },
-      { label: 'Entrega', hint: 'Handoff tecnico', to: '/code-studio', icon: Braces },
+      { label: 'Entrega', hint: 'Handoff técnico', to: '/code-studio', icon: Braces },
     ],
   },
   {
-    label: 'Governanca',
+    label: 'Governança',
     items: [
       { label: 'IA', hint: 'Runtime e policy', to: '/settings/ai', icon: Settings },
-      { label: 'Governanca', hint: 'Readiness e auditoria', to: '/governance', icon: ShieldCheck },
+      { label: 'Governança', hint: 'Readiness e auditoria', to: '/governance', icon: ShieldCheck },
     ],
   },
 ];
@@ -107,7 +107,7 @@ export default function AppShell({ title, eyebrow, description, actions, sidebar
               <User className="h-3.5 w-3.5 text-blue-300" strokeWidth={2.5} />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold leading-none text-white">{user?.name || 'Usuario'}</p>
+              <p className="truncate text-xs font-semibold leading-none text-white">{user?.name || 'Usuário'}</p>
               <p className="mt-0.5 truncate text-[10px] text-slate-500">{user?.email || ''}</p>
             </div>
             <button
@@ -129,7 +129,7 @@ export default function AppShell({ title, eyebrow, description, actions, sidebar
               type="text"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar projetos, analises e tarefas..."
+              placeholder="Buscar projetos, análises e tarefas..."
               className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#102a72]/40 focus:bg-white focus:ring-2 focus:ring-[#102a72]/10"
             />
           </div>

@@ -145,7 +145,7 @@ export async function loginUser({ email, password }) {
   }
 
   if (user.status !== 'active') {
-    throw createAuthError('Usuario inativo.', 403);
+    throw createAuthError('Usuário inativo.', 403);
   }
 
   const refreshToken = createRefreshToken();
@@ -206,7 +206,7 @@ export async function getAuthUser(accessToken) {
   });
 
   if (!user || user.status !== 'active') {
-    throw createAuthError('Usuario invalido.', 401);
+    throw createAuthError('Usuário inválido.', 401);
   }
 
   return {

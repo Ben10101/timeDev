@@ -71,7 +71,7 @@ export async function getTaskImplementationStatusController(req, res, next) {
     const implementation = await getTaskImplementationStatus(req.params.taskUuid);
 
     if (!implementation) {
-      return res.status(404).json({ message: 'Nenhuma implementacao foi iniciada para esta task.' });
+      return res.status(404).json({ message: 'Nenhuma implementação foi iniciada para esta task.' });
     }
 
     res.json(serializeBigInts(implementation));

@@ -90,7 +90,7 @@ export default function TaskDetailsPage() {
         navigate(projectUuid ? `/projects?project=${projectUuid}` : '/projects', { replace: true });
         return;
       }
-      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar a task.'));
+      setError(getApiErrorMessage(loadError, 'Não foi possível carregar a task.'));
     } finally {
       setLoading(false);
     }
@@ -114,7 +114,7 @@ export default function TaskDetailsPage() {
       setCommentBody('');
       await loadTask();
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel salvar o comentario.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível salvar o comentário.'));
 
     } finally {
       setSaving(false);
@@ -130,7 +130,7 @@ export default function TaskDetailsPage() {
       });
       await loadTask();
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel executar o Analista de Requisitos.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível executar o Analista de Requisitos.'));
 
     } finally {
       setSaving(false);
@@ -146,7 +146,7 @@ export default function TaskDetailsPage() {
       });
       await loadTask();
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel executar o QA Engineer.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível executar o QA Engineer.'));
 
     } finally {
       setSaving(false);
@@ -161,7 +161,7 @@ export default function TaskDetailsPage() {
       await runTaskImplementation(taskUuid);
       await loadTask();
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel gerar o codigo da task.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível gerar o código da task.'));
 
     } finally {
       setSaving(false);
@@ -196,7 +196,7 @@ export default function TaskDetailsPage() {
       handleCancelArtifactEdit();
       await loadTask();
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel salvar a edicao do artefato.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível salvar a edição do artefato.'));
 
     } finally {
       setSaving(false);
@@ -353,7 +353,7 @@ export default function TaskDetailsPage() {
                     <div className="mt-6 rounded-[24px] border border-amber-200 bg-amber-50 p-5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-700">Gate de arquitetura</p>
                       <p className="mt-3 text-sm leading-7 text-amber-900">
-                        {architectureStatus?.blockers?.[0] || 'A implementacao continua bloqueada ate a arquitetura do projeto ser gerada.'}
+                        {architectureStatus?.blockers?.[0] || 'A implementação continua bloqueada até a arquitetura do projeto ser gerada.'}
                       </p>
                     </div>
                   )}

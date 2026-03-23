@@ -141,8 +141,8 @@ function findAmbiguityAlerts(input) {
     alerts.push({
       type: 'undefined_actor',
       severity: 'high',
-      message: 'A entrada nao deixa claro quem inicia ou consome o fluxo.',
-      recommendation: 'Informe o ator principal, por exemplo: cliente, gestor, analista ou usuario final.',
+      message: 'A entrada não deixa claro quem inicia ou consome o fluxo.',
+      recommendation: 'Informe o ator principal, por exemplo: cliente, gestor, analista ou usuário final.',
     });
   }
 
@@ -150,8 +150,8 @@ function findAmbiguityAlerts(input) {
     alerts.push({
       type: 'missing_outcome',
       severity: 'high',
-      message: 'O objetivo de negocio nao esta explicitado.',
-      recommendation: 'Explique o resultado esperado ou o valor de negocio da funcionalidade.',
+      message: 'O objetivo de negócio não está explicitado.',
+      recommendation: 'Explique o resultado esperado ou o valor de negócio da funcionalidade.',
     });
   }
 
@@ -159,8 +159,8 @@ function findAmbiguityAlerts(input) {
     alerts.push({
       type: 'missing_exception_flow',
       severity: 'medium',
-      message: 'O fluxo nao descreve excecoes, falhas ou validacoes negativas.',
-      recommendation: 'Adicione o que deve acontecer quando o usuario errar, nao tiver permissao ou enviar dados invalidos.',
+      message: 'O fluxo não descreve exceções, falhas ou validações negativas.',
+      recommendation: 'Adicione o que deve acontecer quando o usuário errar, não tiver permissão ou enviar dados inválidos.',
     });
   }
 
@@ -168,8 +168,8 @@ function findAmbiguityAlerts(input) {
     alerts.push({
       type: 'missing_business_rules',
       severity: 'medium',
-      message: 'As regras de negocio ainda nao estao claras.',
-      recommendation: 'Descreva limites, permissoes, obrigatoriedades e restricoes do fluxo.',
+      message: 'As regras de negócio ainda não estão claras.',
+      recommendation: 'Descreva limites, permissões, obrigatoriedades e restrições do fluxo.',
     });
   }
 
@@ -177,7 +177,7 @@ function findAmbiguityAlerts(input) {
     alerts.push({
       type: 'insufficient_context',
       severity: 'high',
-      message: 'A descricao esta curta demais para validar requisitos com confianca.',
+      message: 'A descrição está curta demais para validar requisitos com confiança.',
       recommendation: 'Inclua ator, objetivo, regra principal e o que deve acontecer em sucesso e erro.',
     });
   }
@@ -199,7 +199,7 @@ function buildAcceptanceCriteria({ actor, action, outcome, alerts }) {
   if (alerts.some((alert) => alert.type === 'missing_exception_flow')) {
     criteria.push('O comportamento em caso de erro, permissao insuficiente ou dados invalidos deve ser explicitado antes do desenvolvimento.');
   } else {
-    criteria.push('Os cenarios de excecao devem retornar mensagens compreensiveis e proximos passos claros para o usuario.');
+    criteria.push('Os cenários de exceção devem retornar mensagens compreensíveis e próximos passos claros para o usuário.');
   }
 
   return uniqueList(criteria);
@@ -212,19 +212,19 @@ function buildTestScenarios({ actor, action, outcome, alerts }) {
 
   const scenarios = [
     `Cenario feliz: ${titleCase(normalizedActor)} ${normalizedAction.toLowerCase()} e obtém ${normalizedOutcome.toLowerCase()}.`,
-    `Validacao: o sistema bloqueia dados obrigatorios ausentes e orienta a correcao antes de prosseguir.`,
+    `Validação: o sistema bloqueia dados obrigatórios ausentes e orienta a correção antes de prosseguir.`,
   ];
 
   if (alerts.some((alert) => alert.type === 'undefined_actor')) {
-    scenarios.push('Refino necessario: validar qual perfil de usuario pode iniciar o fluxo.');
+    scenarios.push('Refino necessário: validar qual perfil de usuário pode iniciar o fluxo.');
   } else {
-    scenarios.push(`Permissao: confirmar se ${normalizedActor.toLowerCase()} tem acesso ao fluxo e ao resultado esperado.`);
+    scenarios.push(`Permissão: confirmar se ${normalizedActor.toLowerCase()} tem acesso ao fluxo e ao resultado esperado.`);
   }
 
   if (alerts.some((alert) => alert.type === 'missing_exception_flow')) {
-    scenarios.push('Excecao: definir o comportamento quando a operacao falhar ou quando houver dados invalidos.');
+    scenarios.push('Exceção: definir o comportamento quando a operação falhar ou quando houver dados inválidos.');
   } else {
-    scenarios.push('Excecao: validar o retorno do sistema quando ocorrer falha operacional ou regra de negocio nao atendida.');
+    scenarios.push('Exceção: validar o retorno do sistema quando ocorrer falha operacional ou regra de negócio não atendida.');
   }
 
   return uniqueList(scenarios);
@@ -287,7 +287,7 @@ export function analyzeAlignmentInput(rawInput = '') {
   const input = normalizeWhitespace(rawInput);
 
   if (!input) {
-    throw new Error('A descricao da ideia ou da feature e obrigatoria.');
+    throw new Error('A descrição da ideia ou da feature é obrigatória.');
   }
 
   const actor = detectActor(input);
@@ -314,7 +314,7 @@ export function analyzeAlignmentInput(rawInput = '') {
     acceptance_criteria: acceptanceCriteria,
     business_rules: businessRules.length
       ? businessRules
-      : ['Regras de negocio ainda nao foram explicitadas; valide limites, permissoes e obrigatoriedades antes de desenvolver.'],
+      : ['Regras de negócio ainda não foram explicitadas; valide limites, permissões e obrigatoriedades antes de desenvolver.'],
     test_scenarios: testScenarios,
     clarity_score: clarityScore,
     ambiguity_alerts: ambiguityAlerts,

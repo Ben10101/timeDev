@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -22,17 +22,17 @@ const fade = (delay = 0) => ({
 });
 
 const EXAMPLE_PROMPTS = [
-  'Como gerente de operacoes, preciso aprovar reembolsos acima de R$ 500 com dupla validacao para reduzir fraude.',
-  'Quero permitir que clientes acompanhem o status do pedido por notificacoes e timeline no portal.',
-  'Precisamos de um fluxo para cadastrar fornecedores com documentos obrigatorios, aprovacao e bloqueio por pendencias.',
+  'Como gerente de operações, preciso aprovar reembolsos acima de R$ 500 com dupla validação para reduzir fraude.',
+  'Quero permitir que clientes acompanhem o status do pedido por notificações e timeline no portal.',
+  'Precisamos de um fluxo para cadastrar fornecedores com documentos obrigatórios, aprovação e bloqueio por pendências.',
 ];
 
 const SCORE_META = [
-  { key: 'overall', label: 'Score geral', icon: Sparkles, hint: 'Visao consolidada da entrada' },
+  { key: 'overall', label: 'Score geral', icon: Sparkles, hint: 'Visão consolidada da entrada' },
   { key: 'clarity', label: 'Clareza', icon: Target, hint: 'Objetivo e linguagem objetiva' },
   { key: 'completeness', label: 'Completude', icon: FileCheck2, hint: 'Contexto, regra e resultado' },
   { key: 'testability', label: 'Testabilidade', icon: TestTube2, hint: 'Base para QA e aceite' },
-  { key: 'ambiguity', label: 'Ambiguidade', icon: ShieldAlert, hint: 'Risco semantico; menor e melhor' },
+  { key: 'ambiguity', label: 'Ambiguidade', icon: ShieldAlert, hint: 'Risco semântico; menor é melhor' },
 ];
 
 function ScoreCard({ label, value, hint, icon: Icon, inverse = false }) {
@@ -77,7 +77,7 @@ function OutputBlock({ title, icon: Icon, items, emptyText }) {
             <div key={`${title}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
               {typeof item === 'string' ? item : item.message}
               {typeof item === 'object' && item.recommendation ? (
-                <p className="mt-2 text-xs text-slate-500">Proxima acao: {item.recommendation}</p>
+                <p className="mt-2 text-xs text-slate-500">Próxima ação: {item.recommendation}</p>
               ) : null}
             </div>
           ))
@@ -93,6 +93,7 @@ function OutputBlock({ title, icon: Icon, items, emptyText }) {
 
 export default function HomePage() {
   const navigate = useNavigate();
+  const resultRef = useRef(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -105,6 +106,12 @@ export default function HomePage() {
       value: result.clarity_score[item.key] ?? 0,
       inverse: item.key === 'ambiguity',
     }));
+  }, [result]);
+
+  useEffect(() => {
+    if (result && resultRef.current) {
+      resultRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }, [result]);
 
   async function handleAnalyze(exampleText) {
@@ -124,7 +131,7 @@ export default function HomePage() {
       const analysis = await analyzeAlignment(nextInput);
       setResult(analysis);
     } catch (analysisError) {
-      setError(getApiErrorMessage(analysisError, 'Nao foi possivel analisar a clareza da solicitacao.'));
+      setError(getApiErrorMessage(analysisError, 'Não foi possível analisar a clareza da solicitação.'));
     } finally {
       setLoading(false);
     }
@@ -134,7 +141,7 @@ export default function HomePage() {
     <AppShell
       eyebrow="Alinhamento antes do desenvolvimento"
       title="Aligna"
-      description="Transforme uma ideia inicial em user story, criterios de aceite, regras de negocio, cenarios de teste e alertas de ambiguidade."
+      description="Transforme uma ideia inicial em user story, critérios de aceite, regras de negócio, cenários de teste e alertas de ambiguidade."
       actions={
         <div className="flex flex-wrap gap-2">
           <button
@@ -160,7 +167,7 @@ export default function HomePage() {
             <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Fluxo principal</p>
             <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">Descreva a necessidade e valide antes de desenvolver</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-              O Aligna ajuda times a eliminar ambiguidade, reduzir retrabalho e chegar no desenvolvimento com requisitos muito mais claros.
+              O Aligna ajuda times a eliminar ambiguidades, reduzir retrabalho e chegar ao desenvolvimento com requisitos muito mais claros.
             </p>
           </div>
           <div className="grid gap-6 p-6 xl:grid-cols-[1.5fr_0.9fr]">
@@ -168,7 +175,7 @@ export default function HomePage() {
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
-                placeholder="Exemplo: Como gerente de operacoes, preciso aprovar pedidos acima de R$ 500 com dupla validacao para reduzir fraude e manter rastreabilidade."
+                placeholder="Exemplo: Como gerente de operações, preciso aprovar pedidos acima de R$ 500 com dupla validação para reduzir fraude e manter rastreabilidade."
                 className="min-h-[220px] w-full rounded-3xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#102a72]/40 focus:bg-white focus:ring-2 focus:ring-[#102a72]/10"
               />
               <div className="flex flex-wrap gap-3">
@@ -191,18 +198,23 @@ export default function HomePage() {
                   Limpar
                 </button>
               </div>
+              {loading ? (
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-[#102a72]">
+                  O Aligna está analisando a solicitação e montando o pacote de alinhamento.
+                </div>
+              ) : null}
               {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
             </div>
 
             <div className="space-y-4">
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">O que voce recebe</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">O que você recebe</p>
                 <div className="mt-4 space-y-3">
                   {[
                     'User story pronta para refinamento',
-                    'Criterios de aceite acionaveis',
-                    'Regras de negocio para alinhamento',
-                    'Cenarios de teste para QA',
+                    'Critérios de aceite acionáveis',
+                    'Regras de negócio para alinhamento',
+                    'Cenários de teste para QA',
                     'Score de clareza e alertas de ambiguidade',
                   ].map((item) => (
                     <div key={item} className="flex items-start gap-3 rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
@@ -214,7 +226,7 @@ export default function HomePage() {
               </div>
 
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-sm font-semibold text-slate-900">Exemplos rapidos</p>
+                <p className="text-sm font-semibold text-slate-900">Exemplos rápidos</p>
                 <div className="mt-3 space-y-2">
                   {EXAMPLE_PROMPTS.map((prompt) => (
                     <button
@@ -232,7 +244,7 @@ export default function HomePage() {
         </motion.section>
 
         {result ? (
-          <div className="space-y-6">
+          <div ref={resultRef} className="space-y-6">
             <motion.section {...fade(0.12)} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-end justify-between gap-4">
                 <div>
@@ -251,7 +263,7 @@ export default function HomePage() {
                     onClick={() => navigate('/code-studio')}
                     className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                   >
-                    Handoff tecnico
+                    Handoff técnico
                   </button>
                 </div>
               </div>
@@ -269,22 +281,22 @@ export default function HomePage() {
 
             <div className="grid gap-6 xl:grid-cols-2">
               <OutputBlock
-                title="Criterios de Aceite"
+                title="Critérios de Aceite"
                 icon={ListChecks}
                 items={result.acceptance_criteria}
-                emptyText="Nenhum criterio foi extraido."
+                emptyText="Nenhum critério foi extraído."
               />
               <OutputBlock
-                title="Regras de Negocio"
+                title="Regras de Negócio"
                 icon={Target}
                 items={result.business_rules}
-                emptyText="Nenhuma regra foi extraida."
+                emptyText="Nenhuma regra foi extraída."
               />
               <OutputBlock
-                title="Cenarios de Teste"
+                title="Cenários de Teste"
                 icon={TestTube2}
                 items={result.test_scenarios}
-                emptyText="Nenhum cenario foi sugerido."
+                emptyText="Nenhum cenário foi sugerido."
               />
               <OutputBlock
                 title="Alertas de Ambiguidade"

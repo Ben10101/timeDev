@@ -86,7 +86,7 @@ export default function ProjectOverviewPage() {
         navigate('/projects', { replace: true });
         return;
       }
-      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar o overview do projeto.'));
+      setError(getApiErrorMessage(loadError, 'Não foi possível carregar o overview do projeto.'));
     } finally {
       setLoading(false);
     }
@@ -123,7 +123,7 @@ export default function ProjectOverviewPage() {
       setArchitectureStatus(nextArchitectureStatus);
       setSuccessMessage('Backlog gerado pelo PM Agent e enviado direto para o board.');
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel gerar o backlog do projeto.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível gerar o backlog do projeto.'));
     } finally {
       setGenerating(false);
     }
@@ -138,9 +138,9 @@ export default function ProjectOverviewPage() {
       await generateProjectArchitecture(projectUuid);
       const nextArchitectureStatus = await getProjectArchitectureStatus(projectUuid);
       setArchitectureStatus(nextArchitectureStatus);
-      setSuccessMessage('Arquitetura do projeto gerada e estrutura base preparada para a implementacao.');
+      setSuccessMessage('Arquitetura do projeto gerada e estrutura base preparada para a implementação.');
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel gerar a arquitetura do projeto.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível gerar a arquitetura do projeto.'));
     } finally {
       setGeneratingArchitecture(false);
     }
@@ -148,7 +148,7 @@ export default function ProjectOverviewPage() {
 
   return (
     <AppShell
-      eyebrow="Visao do Projeto"
+      eyebrow="Visão do Projeto"
       title={project?.name || 'Projeto'}
       description="Descreva a iniciativa, gere o backlog com o PM Agent e depois entre no board com as tasks persistidas."
       actions={
@@ -172,7 +172,7 @@ export default function ProjectOverviewPage() {
                 [groupedStats.total, 'Tasks'],
                 [groupedStats.backlog, 'Backlog'],
                 [groupedStats.qa, 'Em QA'],
-                [groupedStats.done, 'Concluidas'],
+                [groupedStats.done, 'Concluídas'],
               ].map(([value, label]) => (
                 <div key={label} className="rounded-xl border border-slate-200 bg-white p-4">
                   <div className="text-2xl font-semibold text-slate-900">{value}</div>
@@ -186,9 +186,9 @@ export default function ProjectOverviewPage() {
             <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Proximos passos</p>
             <ol className="mt-4 space-y-4 text-sm text-slate-700">
               <li>1. Estruture a ideia do projeto com contexto suficiente para o PM.</li>
-              <li>2. Gere o backlog inicial e revise as historias no board.</li>
-              <li>3. Refine todas as historias com Requisitos e QA.</li>
-              <li>4. Gere a arquitetura do projeto para liberar implementacao.</li>
+              <li>2. Gere o backlog inicial e revise as histórias no board.</li>
+              <li>3. Refine todas as histórias com Requisitos e QA.</li>
+              <li>4. Gere a arquitetura do projeto para liberar implementação.</li>
             </ol>
           </section>
         </>
@@ -211,7 +211,7 @@ export default function ProjectOverviewPage() {
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
               <h2 className="text-3xl font-bold tracking-tight text-slate-900">{project?.name || 'Carregando projeto...'}</h2>
               <p className="mt-3 text-sm leading-7 text-slate-600">
-                {project?.description || 'Este projeto ainda nao tem um briefing consolidado.'}
+                {project?.description || 'Este projeto ainda não tem um briefing consolidado.'}
               </p>
               <p className="mt-4 text-sm leading-7 text-slate-600">
                 {project?.vision || 'Defina o objetivo do projeto e use o PM Agent para abrir o board com contexto.'}
@@ -219,7 +219,7 @@ export default function ProjectOverviewPage() {
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Configuracao atual</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Configuração atual</p>
               <div className="mt-4 space-y-3 text-sm text-slate-700">
                 <p><strong>Workspace:</strong> {project?.workspace?.name || '-'}</p>
                 <p><strong>Status:</strong> {project?.status || '-'}</p>
@@ -235,9 +235,9 @@ export default function ProjectOverviewPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Arquitetura</p>
-                <h3 className="mt-2 text-2xl font-bold text-slate-900">Gate antes da implementacao</h3>
+                <h3 className="mt-2 text-2xl font-bold text-slate-900">Gate antes da implementação</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                  A arquitetura do projeto so pode ser gerada quando todas as historias tiverem requisitos refinados. A implementacao fica bloqueada ate essa etapa existir e estar atualizada.
+                  A arquitetura do projeto só pode ser gerada quando todas as histórias tiverem requisitos refinados. A implementação fica bloqueada até essa etapa existir e estar atualizada.
                 </p>
               </div>
               <button
@@ -254,7 +254,7 @@ export default function ProjectOverviewPage() {
 
           <div className="grid gap-4 p-6 lg:grid-cols-3">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Historias refinadas</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Histórias refinadas</p>
               <p className="mt-3 text-3xl font-bold text-slate-900">
                 {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0}
               </p>
@@ -270,7 +270,7 @@ export default function ProjectOverviewPage() {
               </p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Implementacao</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Implementação</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}
               </p>
@@ -310,12 +310,12 @@ export default function ProjectOverviewPage() {
               label="Objetivo"
               value={form.objective}
               onChange={(event) => setForm((prev) => ({ ...prev, objective: event.target.value }))}
-                placeholder="Qual transformacao esse projeto deve entregar?"
+                placeholder="Qual transformação esse projeto deve entregar?"
               rows={3}
               disabled={isBriefingLocked}
             />
             <TextAreaField
-                label="Publico ou operacao atendida"
+                label="Público ou operação atendida"
               value={form.audience}
               onChange={(event) => setForm((prev) => ({ ...prev, audience: event.target.value }))}
                 placeholder="Quem usa isso e em qual contexto?"
@@ -326,15 +326,15 @@ export default function ProjectOverviewPage() {
               label="Fluxos principais"
               value={form.mainFlows}
               onChange={(event) => setForm((prev) => ({ ...prev, mainFlows: event.target.value }))}
-                placeholder="Ex.: cadastrar cliente, consultar historico, acompanhar dashboard."
+                placeholder="Ex.: cadastrar cliente, consultar histórico, acompanhar dashboard."
               rows={3}
               disabled={isBriefingLocked}
             />
             <TextAreaField
-                label="Restricoes ou riscos"
+                label="Restrições ou riscos"
               value={form.constraints}
               onChange={(event) => setForm((prev) => ({ ...prev, constraints: event.target.value }))}
-                placeholder="Regras, dependencias e limitacoes tecnicas ou operacionais."
+                placeholder="Regras, dependências e limitações técnicas ou operacionais."
               rows={3}
               disabled={isBriefingLocked}
             />
@@ -343,7 +343,7 @@ export default function ProjectOverviewPage() {
                 Recarregar projeto
               </button>
               <button disabled={generating || loading || isBriefingLocked} className="dashboard-button-primary w-full sm:w-auto">
-                {isBriefingLocked ? 'Backlog ja gerado' : generating ? 'Gerando backlog...' : 'Gerar backlog com PM Agent'}
+                {isBriefingLocked ? 'Backlog já gerado' : generating ? 'Gerando backlog...' : 'Gerar backlog com PM Agent'}
               </button>
             </div>
           </form>

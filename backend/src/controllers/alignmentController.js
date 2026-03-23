@@ -1,4 +1,4 @@
-import { analyzeAlignmentInput } from '../services/alignmentService.js';
+﻿import { analyzeAlignmentInput } from '../services/alignmentService.js';
 
 export async function analyzeAlignmentController(req, res, next) {
   try {
@@ -6,7 +6,7 @@ export async function analyzeAlignmentController(req, res, next) {
 
     if (!String(input || '').trim()) {
       return res.status(400).json({
-        message: 'input e obrigatorio para analisar clareza e ambiguidade.',
+        message: 'input é obrigatório para analisar clareza e ambiguidade.',
       });
     }
 
@@ -20,3 +20,4 @@ export async function analyzeAlignmentController(req, res, next) {
 export default {
   analyzeAlignmentController,
 };
+

@@ -234,7 +234,7 @@ export async function assertWorkspaceAccess(workspaceUuid, userUuid) {
   });
 
   if (!workspace) {
-    throw new Error('Workspace nao encontrado ou sem permissao de acesso.');
+    throw new Error('Workspace não encontrado ou sem permissão de acesso.');
   }
 
   return workspace;
@@ -250,7 +250,7 @@ export async function assertProjectAccess(projectUuid, userUuid) {
   });
 
   if (!project) {
-    throw new Error('Projeto nao encontrado ou sem permissao de acesso.');
+    throw new Error('Projeto não encontrado ou sem permissão de acesso.');
   }
 
   return project;
@@ -268,7 +268,7 @@ export async function assertTaskAccess(taskUuid, userUuid) {
   });
 
   if (!task) {
-    throw new Error('Tarefa nao encontrada ou sem permissao de acesso.');
+    throw new Error('Tarefa não encontrada ou sem permissão de acesso.');
   }
 
   return task;
@@ -885,7 +885,7 @@ export async function ensurePipelineProject(projectUuid, idea = 'Pipeline Projec
     });
 
     if (!authUser) {
-      throw new Error('Usuario autenticado nao encontrado.');
+      throw new Error('Usuário autenticado não encontrado.');
     }
 
     workspace = await getDefaultWorkspaceForUserUuid(userUuid);
@@ -1103,15 +1103,15 @@ function buildArchitectureBlockers({
   const blockers = [];
 
   if (!totalStories) {
-    blockers.push('Crie e refine pelo menos uma historia antes de gerar a arquitetura.');
+    blockers.push('Crie e refine pelo menos uma história antes de gerar a arquitetura.');
   }
 
   if (pendingStories > 0) {
-    blockers.push(`Ainda faltam ${pendingStories} historias com requisitos refinados.`);
+    blockers.push(`Ainda faltam ${pendingStories} histórias com requisitos refinados.`);
   }
 
   if (!hasArchitecture) {
-    blockers.push('A arquitetura do projeto ainda nao foi gerada.');
+    blockers.push('A arquitetura do projeto ainda não foi gerada.');
   }
 
   if (architectureNeedsRefresh) {
@@ -1173,7 +1173,7 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
   });
 
   if (!project) {
-    throw new Error('Projeto nao encontrado.');
+    throw new Error('Projeto não encontrado.');
   }
 
   const architectureTask = await prisma.task.findFirst({
@@ -1389,7 +1389,7 @@ export async function restoreTaskAfterAgentFailure(taskUuid, previousState, { ch
   });
 
   if (!existingTask) {
-    throw new Error('Tarefa nao encontrada.');
+    throw new Error('Tarefa não encontrada.');
   }
 
   const changedByUser = changedByUserUuid

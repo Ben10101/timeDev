@@ -35,9 +35,9 @@ const BOARD_COLUMNS = [
   { key: 'backlog', label: 'Backlog', icon: Layout },
   { key: 'todo', label: 'A Fazer', icon: Clock },
   { key: 'in_progress', label: 'Em Progresso', icon: Sparkles },
-  { key: 'in_review', label: 'Em Revisao', icon: AlertCircle },
+  { key: 'in_review', label: 'Em Revisão', icon: AlertCircle },
   { key: 'qa', label: 'Qualidade', icon: TestTube2 },
-  { key: 'done', label: 'Concluido', icon: CheckCircle2 },
+  { key: 'done', label: 'Concluído', icon: CheckCircle2 },
 ];
 
 const EMPTY_BOOTSTRAP = { userName: '', email: '', workspaceName: '' };
@@ -189,9 +189,9 @@ function TaskCard({
 
         {isDone && !canRunImplementation && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-600">Implementacao bloqueada</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-600">Implementação bloqueada</p>
             <p className="mt-1 text-sm font-medium text-amber-800">
-              {implementationBlockReason || 'Gere a arquitetura do projeto depois que todas as historias estiverem refinadas.'}
+              {implementationBlockReason || 'Gere a arquitetura do projeto depois que todas as histórias estiverem refinadas.'}
             </p>
           </div>
         )}
@@ -215,7 +215,7 @@ function TaskCard({
               onClick={() => onRequirements(task.uuid)}
               disabled={busy || !canRunRequirements}
               className="dashboard-button-primary flex-1"
-              title={!canRunRequirements ? 'A etapa de requisitos ja foi concluida.' : undefined}
+              title={!canRunRequirements ? 'A etapa de requisitos já foi concluída.' : undefined}
             >
               <FileText className="h-4 w-4" />
               Analisar
@@ -224,7 +224,7 @@ function TaskCard({
               onClick={() => onQa(task.uuid)}
               disabled={busy || !canRunQa}
               className="dashboard-button-secondary flex-1"
-              title={!canRunQa && hasTestPlan ? 'A etapa de QA ja foi concluida.' : undefined}
+              title={!canRunQa && hasTestPlan ? 'A etapa de QA já foi concluída.' : undefined}
             >
               <TestTube2 className="h-4 w-4" />
               Validar
@@ -238,7 +238,7 @@ function TaskCard({
               className="dashboard-button-primary flex-1"
             >
               <Sparkles className="h-4 w-4" />
-              Ir para codigo
+              Ir para código
             </button>
             <button
               onClick={() => onExportArtifacts(task)}
@@ -313,7 +313,7 @@ export default function ProjectsPage() {
         : false;
       setActiveProjectUuid(preferredExists ? preferredProjectUuid : nextProjects[0]?.uuid || null);
     } catch (loadError) {
-      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar os projetos.'));
+      setError(getApiErrorMessage(loadError, 'Não foi possível carregar os projetos.'));
     } finally {
       if (!options.silent) setLoading(false);
     }
@@ -325,7 +325,7 @@ export default function ProjectsPage() {
       setTasks(nextTasks);
     } catch (loadError) {
       if (!options.silent) {
-        setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar as tasks.'));
+        setError(getApiErrorMessage(loadError, 'Não foi possível carregar as tasks.'));
       }
     }
   }
@@ -336,7 +336,7 @@ export default function ProjectsPage() {
       setArchitectureStatus(nextStatus);
     } catch (loadError) {
       if (!options.silent) {
-        setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar o status da arquitetura do projeto.'));
+        setError(getApiErrorMessage(loadError, 'Não foi possível carregar o status da arquitetura do projeto.'));
       }
     }
   }
@@ -363,7 +363,7 @@ export default function ProjectsPage() {
       setBootstrapContext(result);
       setBootstrapForm(EMPTY_BOOTSTRAP);
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel preparar o workspace.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível preparar o workspace.'));
     } finally {
       setSaving(false);
     }
@@ -387,7 +387,7 @@ export default function ProjectsPage() {
       await loadProjects(project.uuid);
       navigate(`/projects/${project.uuid}`);
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel criar o projeto.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível criar o projeto.'));
     } finally {
       setSaving(false);
     }
@@ -409,7 +409,7 @@ export default function ProjectsPage() {
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
       await loadProjects(activeProjectUuid, { silent: true });
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel criar a task.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível criar a task.'));
     } finally {
       setSaving(false);
     }
@@ -459,7 +459,7 @@ export default function ProjectsPage() {
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
       await loadProjects(activeProjectUuid, { silent: true });
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'A geracao de codigo falhou.'));
+      setError(getApiErrorMessage(submitError, 'A geração de código falhou.'));
     } finally {
       setSaving(false);
     }
@@ -475,7 +475,7 @@ export default function ProjectsPage() {
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
       await loadProjects(activeProjectUuid, { silent: true });
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Nao foi possivel gerar a arquitetura do projeto.'));
+      setError(getApiErrorMessage(submitError, 'Não foi possível gerar a arquitetura do projeto.'));
     } finally {
       setGeneratingArchitecture(false);
     }
@@ -493,7 +493,7 @@ export default function ProjectsPage() {
 
   return (
     <AppShell
-      eyebrow="Operacao por Projeto"
+      eyebrow="Operação por Projeto"
       title="Board Operacional"
       description="Gerencie briefing, backlog, requisitos, QA e arquitetura dentro do contexto certo de cada projeto."
     >
@@ -564,7 +564,7 @@ export default function ProjectsPage() {
                           <div className="min-w-0 flex-1">
                             <h4 className="text-sm font-semibold text-slate-900">{project.name}</h4>
                             <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">
-                              {project.description || 'Workspace pronto para backlog, refinamento, QA e geracao tecnica.'}
+                              {project.description || 'Workspace pronto para backlog, refinamento, QA e geração técnica.'}
                             </p>
                           </div>
                           <span className="dashboard-badge bg-slate-100 text-slate-600">
@@ -601,10 +601,10 @@ export default function ProjectsPage() {
                         placeholder="Ex.: Plataforma de EAD"
                       />
                       <TextArea
-                        label="Visao do produto"
+                        label="Visão do produto"
                         value={projectForm.vision}
                         onChange={(e) => setProjectForm((prev) => ({ ...prev, vision: e.target.value }))}
-                        placeholder="Objetivo principal, publico e resultado esperado..."
+                        placeholder="Objetivo principal, público e resultado esperado..."
                         rows={3}
                       />
                       <button type="submit" disabled={saving || !canCreateProject} className="dashboard-button-primary w-full">
@@ -625,7 +625,7 @@ export default function ProjectsPage() {
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">Equipe base</h3>
                     <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400">
-                      Autenticacao
+                      Autenticação
                     </p>
                   </div>
                 </div>
@@ -699,7 +699,7 @@ export default function ProjectsPage() {
                     </div>
                     <p className="mt-6 text-base leading-8 text-slate-500">
                       {activeProject?.vision ||
-                        'Selecione um projeto no catalogo para operar backlog, requisitos, QA e liberacao tecnica no mesmo board.'}
+                        'Selecione um projeto no catálogo para operar backlog, requisitos, QA e liberação técnica no mesmo board.'}
                     </p>
                   </div>
 
@@ -731,12 +731,12 @@ export default function ProjectsPage() {
                         <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Gate de arquitetura</p>
                         <p className="mt-2 text-sm text-slate-700">
                           {architectureStatus?.canGenerateCode
-                            ? 'Todas as historias refinadas e a arquitetura estao prontas. A implementacao por task foi liberada.'
-                            : architectureStatus?.blockers?.[0] || 'Refine todas as historias para liberar a arquitetura do projeto.'}
+                            ? 'Todas as histórias refinadas e a arquitetura estão prontas. A implementação por task foi liberada.'
+                            : architectureStatus?.blockers?.[0] || 'Refine todas as histórias para liberar a arquitetura do projeto.'}
                         </p>
                         <div className="mt-3 flex flex-wrap items-center gap-3">
                           <span className="dashboard-badge bg-slate-100 text-slate-600">
-                            {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0} historias refinadas
+                            {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0} histórias refinadas
                           </span>
                           <span
                             className={`dashboard-badge ${

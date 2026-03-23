@@ -4,19 +4,19 @@
 
 ## Why Aligna
 
-A maioria dos problemas de software nasce antes da implementacao. O Aligna ajuda a garantir clareza antes do codigo.
+A maioria dos problemas de software nasce antes da implementação. O Aligna ajuda a garantir clareza antes do código.
 
-Em vez de pular da ideia direto para a implementacao, o produto transforma uma necessidade inicial em um pacote mais claro, verificavel e menos ambiguo para produto, engenharia e QA.
+Em vez de pular da ideia direto para a implementação, o produto transforma uma necessidade inicial em um pacote mais claro, verificável e menos ambíguo para produto, engenharia e QA.
 
 ## What problem it solves
 
 Times sofrem com:
 
 - retrabalho causado por requisitos vagos
-- historias mal especificadas
-- criterios de aceite incompletos
-- regras de negocio implícitas
-- cenarios de teste pensados tarde demais
+- histórias mal especificadas
+- critérios de aceite incompletos
+- regras de negócio implícitas
+- cenários de teste pensados tarde demais
 
 O Aligna reduz esse desalinhamento antes do desenvolvimento.
 
@@ -26,23 +26,23 @@ Entrada:
 
 - uma ideia
 - uma feature
-- uma necessidade de negocio
+- uma necessidade de negócio
 
 Saida:
 
 - user story refinada
-- criterios de aceite
-- regras de negocio
-- cenarios de teste
+- critérios de aceite
+- regras de negócio
+- cenários de teste
 - score de clareza
 - alertas de ambiguidade
 
 ## Main product experience
 
-1. O usuario descreve a necessidade na tela principal
+1. O usuário descreve a necessidade na tela principal
 2. O Aligna analisa a entrada
 3. O produto devolve um pacote estruturado para alinhamento antes do desenvolvimento
-4. O time pode seguir para projetos, handoff tecnico e governanca quando fizer sentido
+4. O time pode seguir para projetos, handoff técnico e governança quando fizer sentido
 
 ## Clarity score
 
@@ -53,11 +53,11 @@ O produto avalia a entrada em quatro dimensoes principais:
 - `testability`
 - `ambiguity`
 
-Observacao:
+Observação:
 
-- `clarity`, `completeness` e `testability` usam a logica "quanto maior, melhor"
-- `ambiguity` representa risco semantico: quanto menor, melhor
-- `overall` consolida essas leituras em um score unico
+- `clarity`, `completeness` e `testability` usam a lógica "quanto maior, melhor"
+- `ambiguity` representa risco semântico: quanto menor, melhor
+- `overall` consolida essas leituras em um score único
 
 ## Ambiguity alerts
 
@@ -65,9 +65,9 @@ O Aligna sinaliza problemas comuns como:
 
 - termos vagos
 - ator indefinido
-- objetivo de negocio ausente
-- fluxo sem excecao
-- regras de negocio incompletas
+- objetivo de negócio ausente
+- fluxo sem exceção
+- regras de negócio incompletas
 - contexto insuficiente
 
 ## Stack
@@ -185,7 +185,7 @@ Example payload:
 
 ```json
 {
-  "input": "Como gerente de operacoes, preciso aprovar reembolsos acima de R$ 500 com dupla validacao para reduzir fraude."
+  "input": "Como gerente de operações, preciso aprovar reembolsos acima de R$ 500 com dupla validação para reduzir fraude."
 }
 ```
 

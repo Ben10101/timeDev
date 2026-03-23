@@ -63,7 +63,7 @@ export async function testOllamaConnection(settings) {
     const content = typeof data?.response === 'string' ? data.response.trim() : '';
     return okResult(`Ollama respondeu com sucesso usando ${model}.`, { responsePreview: content || 'Sem texto.' });
   } catch (error) {
-    return failResult('Nao foi possivel conectar ao Ollama.', { detail: error.message });
+    return failResult('Não foi possível conectar ao Ollama.', { detail: error.message });
   }
 }
 
@@ -97,7 +97,7 @@ export async function testGeminiConnection(settings) {
     const text = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join(' ').trim();
     return okResult(`Gemini respondeu com sucesso usando ${model}.`, { responsePreview: text || 'Sem texto.' });
   } catch (error) {
-    return failResult('Nao foi possivel testar a chave do Gemini.', { detail: error.message });
+    return failResult('Não foi possível testar a chave do Gemini.', { detail: error.message });
   }
 }
 
@@ -135,7 +135,7 @@ export async function testOpenAiConnection(settings) {
     const text = data?.choices?.[0]?.message?.content?.trim();
     return okResult(`OpenAI respondeu com sucesso usando ${model}.`, { responsePreview: text || 'Sem texto.' });
   } catch (error) {
-    return failResult('Nao foi possivel testar a chave da OpenAI.', { detail: error.message });
+    return failResult('Não foi possível testar a chave da OpenAI.', { detail: error.message });
   }
 }
 
@@ -174,7 +174,7 @@ export async function testAnthropicConnection(settings) {
     const text = data?.content?.map((item) => item.text || '').join(' ').trim();
     return okResult(`Anthropic respondeu com sucesso usando ${model}.`, { responsePreview: text || 'Sem texto.' });
   } catch (error) {
-    return failResult('Nao foi possivel testar a chave da Anthropic.', { detail: error.message });
+    return failResult('Não foi possível testar a chave da Anthropic.', { detail: error.message });
   }
 }
 
@@ -212,7 +212,7 @@ export async function testGroqConnection(settings) {
     const text = data?.choices?.[0]?.message?.content?.trim();
     return okResult(`Groq respondeu com sucesso usando ${model}.`, { responsePreview: text || 'Sem texto.' });
   } catch (error) {
-    return failResult('Nao foi possivel testar a chave da Groq.', { detail: error.message });
+    return failResult('Não foi possível testar a chave da Groq.', { detail: error.message });
   }
 }
 
@@ -254,7 +254,7 @@ export async function testOpenRouterConnection(settings) {
     const text = data?.choices?.[0]?.message?.content?.trim();
     return okResult(`OpenRouter respondeu com sucesso usando ${model}.`, { responsePreview: text || 'Sem texto.' });
   } catch (error) {
-    return failResult('Nao foi possivel testar a chave da OpenRouter.', { detail: error.message });
+    return failResult('Não foi possível testar a chave da OpenRouter.', { detail: error.message });
   }
 }
 

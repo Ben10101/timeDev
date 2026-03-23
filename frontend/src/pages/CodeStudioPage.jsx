@@ -66,7 +66,7 @@ function StatusBadge({ value }) {
           ? 'bg-blue-50 text-[#102a72]'
           : 'bg-slate-100 text-slate-600';
 
-  return <span className={`dashboard-badge ${tone}`}>{value || 'nao iniciado'}</span>;
+  return <span className={`dashboard-badge ${tone}`}>{value || 'não iniciado'}</span>;
 }
 
 function ScoreBadge({ value }) {
@@ -144,7 +144,7 @@ export default function CodeStudioPage() {
         setLoading(false);
       }
     } catch (loadError) {
-      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar os projetos.'));
+      setError(getApiErrorMessage(loadError, 'Não foi possível carregar os projetos.'));
       setLoading(false);
     }
   }
@@ -197,7 +197,7 @@ export default function CodeStudioPage() {
 
       setImplementationMap(Object.fromEntries(implementationEntries));
     } catch (loadError) {
-      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar o estagio tecnico do projeto.'));
+      setError(getApiErrorMessage(loadError, 'Não foi possível carregar o estágio técnico do projeto.'));
     } finally {
       setLoading(false);
     }
@@ -214,7 +214,7 @@ export default function CodeStudioPage() {
       await runTaskImplementation(taskUuid);
       await loadProjectWorkspace(selectedProjectUuid);
     } catch (runError) {
-      setError(getApiErrorMessage(runError, 'Nao foi possivel iniciar a implementacao da task.'));
+      setError(getApiErrorMessage(runError, 'Não foi possível iniciar a implementação da task.'));
     } finally {
       setRunningTaskUuid(null);
     }
@@ -242,14 +242,14 @@ export default function CodeStudioPage() {
       }
 
       if (!tasksToRun.length) {
-        setGenerationProgress('A aplicacao ja esta sincronizada com as tasks prontas.');
+        setGenerationProgress('A aplicação já está sincronizada com as tasks prontas.');
       } else {
-        setGenerationProgress('Geracao da aplicacao concluida.');
+        setGenerationProgress('Geração da aplicação concluída.');
       }
 
       await loadProjectWorkspace(selectedProjectUuid);
     } catch (runError) {
-      setError(getApiErrorMessage(runError, 'Nao foi possivel gerar a aplicacao do projeto.'));
+      setError(getApiErrorMessage(runError, 'Não foi possível gerar a aplicação do projeto.'));
     } finally {
       setRunningTaskUuid(null);
       setIsGeneratingApplication(false);
@@ -264,7 +264,7 @@ export default function CodeStudioPage() {
       setCopyFeedback('Arquitetura copiada.');
       window.setTimeout(() => setCopyFeedback(''), 2500);
     } catch (_error) {
-      setCopyFeedback('Nao foi possivel copiar automaticamente.');
+      setCopyFeedback('Não foi possível copiar automaticamente.');
       window.setTimeout(() => setCopyFeedback(''), 2500);
     }
   }
@@ -280,7 +280,7 @@ export default function CodeStudioPage() {
     <AppShell
       eyebrow="Entrega Tecnica"
       title="Code Studio"
-      description="Concentre arquitetura, qualidade, rastreabilidade e geracao da aplicacao em uma area tecnica por projeto."
+      description="Concentre arquitetura, qualidade, rastreabilidade e geração da aplicação em uma área técnica por projeto."
       actions={
         <div className="flex flex-col gap-3 sm:flex-row">
           <button onClick={() => selectedProjectUuid && loadProjectWorkspace(selectedProjectUuid)} className="dashboard-button-secondary">
@@ -302,7 +302,7 @@ export default function CodeStudioPage() {
               <p><strong>Projeto:</strong> {selectedProject?.name || 'Selecione um projeto'}</p>
               <p><strong>Historias refinadas:</strong> {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0}</p>
               <p><strong>Arquitetura:</strong> {architectureStatus?.hasArchitecture ? (architectureStatus?.architectureNeedsRefresh ? 'Desatualizada' : 'Pronta') : 'Pendente'}</p>
-              <p><strong>Implementacao:</strong> {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
+              <p><strong>Implementação:</strong> {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
               <p><strong>Saude API:</strong> {health?.status || 'n/a'}</p>
               <p><strong>Banco:</strong> {health?.database || 'n/a'}</p>
               <p><strong>Policy version:</strong> {operationsOverview?.recentRuns?.[0]?.runtimeMeta?.policyVersion || 'v1'}</p>
@@ -314,21 +314,21 @@ export default function CodeStudioPage() {
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">App base</p>
             </div>
             <div className="space-y-3 p-4 text-sm text-slate-700">
-              <p><strong>Status:</strong> {generatedApp?.status || 'Ainda nao gerado'}</p>
+              <p><strong>Status:</strong> {generatedApp?.status || 'Ainda não gerado'}</p>
               <p><strong>Stack:</strong> {generatedApp?.stackPreset || 'Full stack padrao'}</p>
-              <p><strong>Local:</strong> {generatedApp?.rootPath || 'Sera criado quando a arquitetura ou a implementacao rodar.'}</p>
+              <p><strong>Local:</strong> {generatedApp?.rootPath || 'Será criado quando a arquitetura ou a implementação rodar.'}</p>
             </div>
           </section>
 
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Operacao IA</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Operação IA</p>
             </div>
             <div className="space-y-3 p-4 text-sm text-slate-700">
               <p><strong>Runs recentes:</strong> {operationsOverview?.summary?.totalRuns || 0}</p>
               <p><strong>Falhas:</strong> {operationsOverview?.summary?.failedRuns || 0}</p>
               <p><strong>Sucesso:</strong> {operationsOverview?.summary?.successRatePercent || 0}%</p>
-              <p><strong>P95 duracao:</strong> {operationsOverview?.summary?.p95RunDurationSeconds || 0}s</p>
+              <p><strong>P95 duração:</strong> {operationsOverview?.summary?.p95RunDurationSeconds || 0}s</p>
               <p><strong>Tokens:</strong> {operationsOverview?.summary?.totalEstimatedTokens || 0}</p>
               <p><strong>Custo estimado:</strong> {Number(operationsOverview?.summary?.totalCostUsd || 0).toFixed(4)} USD</p>
               <p><strong>Acima do budget:</strong> {operationsOverview?.summary?.overBudgetRuns || 0}</p>
@@ -344,26 +344,26 @@ export default function CodeStudioPage() {
       }
     >
       <div className="space-y-8">
-        <section className="overflow-hidden rounded-[32px] border border-slate-800 bg-[#0A1128] text-white shadow-xl">
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
           <div className="grid gap-8 px-8 py-8 lg:grid-cols-[1.3fr_0.7fr]">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-200/90">Entrega assistida por IA</p>
-              <h2 className="mt-3 text-3xl font-bold tracking-tight">Gere a aplicacao com arquitetura, validacao e leitura operacional no mesmo lugar.</h2>
-              <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-200">
-                O Code Studio agora funciona como cockpit tecnico: mostra se o projeto esta pronto, quantas historias ja foram integradas e quais riscos ainda restam antes de gerar codigo.
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Entrega assistida</p>
+              <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">Gere a aplicação com arquitetura, validação e leitura técnica no mesmo lugar.</h2>
+              <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
+                O Code Studio mostra se o projeto está pronto, quantas histórias já foram integradas e quais riscos ainda restam antes de gerar código.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   onClick={handleGenerateApplication}
                   disabled={isGeneratingApplication || !architectureStatus?.canGenerateCode || !readyTasks.length}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-[#102a72] transition-all hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-2xl bg-[#102a72] px-5 py-3 text-sm font-semibold text-white transition-all hover:bg-[#0c205a] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Sparkles className="h-4 w-4" />
-                  {isGeneratingApplication ? 'Gerando aplicacao...' : 'Gerar aplicacao'}
+                  {isGeneratingApplication ? 'Gerando aplicação...' : 'Gerar aplicação'}
                 </button>
                 <button
                   onClick={() => selectedProjectUuid && loadProjectWorkspace(selectedProjectUuid)}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white backdrop-blur-sm transition-all hover:bg-white/15"
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-700 transition-all hover:border-slate-300 hover:bg-white"
                 >
                   <RefreshCw className="h-4 w-4" />
                   Sincronizar
@@ -372,19 +372,19 @@ export default function CodeStudioPage() {
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4 backdrop-blur-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-blue-100/85">Arquitetura</p>
-                <p className="mt-2 text-2xl font-bold text-white">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Arquitetura</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">
                   {architectureStatus?.hasArchitecture ? (architectureStatus?.architectureNeedsRefresh ? 'Desatualizada' : 'Pronta') : 'Pendente'}
                 </p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4 backdrop-blur-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-blue-100/85">Stories prontas</p>
-                <p className="mt-2 text-2xl font-bold text-white">{readyTasks.length}</p>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Stories prontas</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{readyTasks.length}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4 backdrop-blur-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-blue-100/85">Integradas</p>
-                <p className="mt-2 text-2xl font-bold text-white">{integratedTasks.length}</p>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Integradas</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{integratedTasks.length}</p>
               </div>
             </div>
           </div>
@@ -392,7 +392,7 @@ export default function CodeStudioPage() {
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard icon={Layers3} label="Projeto" value={selectedProject ? 'selecionado' : 'nenhum'} hint={selectedProject?.name || 'Escolha um workspace'} tone="blue" />
-          <MetricCard icon={Braces} label="App base" value={generatedApp?.status || 'pendente'} hint={generatedApp?.rootPath || 'Sera materializado na geracao'} tone="emerald" />
+          <MetricCard icon={Braces} label="App base" value={generatedApp?.status || 'pendente'} hint={generatedApp?.rootPath || 'Será materializado na geração'} tone="emerald" />
           <MetricCard icon={Activity} label="Confiabilidade" value={`${operationsOverview?.summary?.successRatePercent || 0}%`} hint={`${operationsOverview?.summary?.failedRuns || 0} falhas recentes`} tone="amber" />
           <MetricCard icon={Cpu} label="P95 / custo" value={`${operationsOverview?.summary?.p95RunDurationSeconds || 0}s`} hint={`US$ ${Number(operationsOverview?.summary?.totalCostUsd || 0).toFixed(4)} · ${operationsOverview?.summary?.totalEstimatedTokens || 0} tokens`} tone="slate" />
         </div>
@@ -401,7 +401,7 @@ export default function CodeStudioPage() {
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Leitura tecnica</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Leitura técnica</p>
                 <h2 className="mt-2 text-2xl font-bold text-slate-900">Prontidao para gerar e integrar</h2>
               </div>
             </div>
@@ -427,7 +427,7 @@ export default function CodeStudioPage() {
                 <p className="mt-2 text-sm font-semibold text-slate-900">{generatedApp?.status || 'Pendente'}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Integracao</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Integração</p>
                 <p className="mt-2 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -481,7 +481,7 @@ export default function CodeStudioPage() {
                     <th className="pb-3 pr-4">Status</th>
                     <th className="pb-3 pr-4">Provider</th>
                     <th className="pb-3 pr-4">Tokens</th>
-                    <th className="pb-3 pr-4">Duracao</th>
+                    <th className="pb-3 pr-4">Duração</th>
                     <th className="pb-3 pr-4">Budget</th>
                   </tr>
                 </thead>
@@ -532,7 +532,7 @@ export default function CodeStudioPage() {
                   <h3 className="text-base font-semibold text-slate-900">{project.name}</h3>
                   <FolderGit2 className="h-4 w-4 text-slate-400" />
                 </div>
-                <p className="mt-3 text-sm leading-6 text-slate-500">{project.description || 'Sem descricao consolidada.'}</p>
+                <p className="mt-3 text-sm leading-6 text-slate-500">{project.description || 'Sem descrição consolidada.'}</p>
               </button>
             ))}
           </div>
@@ -542,8 +542,8 @@ export default function CodeStudioPage() {
           <div className="dashboard-panel-header">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Gate tecnico</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Arquitetura e liberacao</h2>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Gate técnico</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Arquitetura e liberação</h2>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <StatusBadge value={architectureStatus?.canGenerateCode ? 'integrated' : 'planned'} />
@@ -554,7 +554,7 @@ export default function CodeStudioPage() {
                   title={!architectureStatus?.canGenerateCode ? architectureStatus?.blockers?.[0] : undefined}
                 >
                   <Sparkles className="h-4 w-4" />
-                  {isGeneratingApplication ? 'Gerando aplicacao...' : 'Gerar aplicacao'}
+                  {isGeneratingApplication ? 'Gerando aplicação...' : 'Gerar aplicação'}
                 </button>
               </div>
             </div>
@@ -620,7 +620,7 @@ export default function CodeStudioPage() {
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Arquitetura gerada</p>
                 <h2 className="mt-2 text-2xl font-bold text-slate-900">Documento mestre do projeto</h2>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                  Aqui fica o artefato completo gerado pelo agente de arquitetura, com stack, modulos, entidades, contratos e sequencia de implementacao.
+                  Aqui fica o artefato completo gerado pelo agente de arquitetura, com stack, módulos, entidades, contratos e sequência de implementação.
                 </p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
@@ -681,7 +681,7 @@ export default function CodeStudioPage() {
           ) : (
             <div className="p-6">
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
-                A arquitetura ainda nao foi gerada para este projeto.
+                A arquitetura ainda não foi gerada para este projeto.
               </div>
             </div>
           )}
@@ -691,7 +691,7 @@ export default function CodeStudioPage() {
           <div className="dashboard-panel-header">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Implementacao por historia</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Implementação por história</p>
                 <h2 className="mt-2 text-2xl font-bold text-slate-900">Stories prontas para codigo</h2>
               </div>
               <span className="dashboard-badge bg-slate-100 text-slate-600">{readyTasks.length} tasks prontas</span>
@@ -700,7 +700,7 @@ export default function CodeStudioPage() {
 
           <div className="grid gap-4 p-6 xl:grid-cols-2">
             {loading ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">Carregando estagio tecnico...</div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">Carregando estágio técnico...</div>
             ) : readyTasks.length ? (
               readyTasks.map((task) => {
                 const implementation = implementationMap[task.uuid] || null;
@@ -723,7 +723,7 @@ export default function CodeStudioPage() {
 
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                        <strong>Ultimo status:</strong> {implementation?.status || 'Nao iniciado'}
+                        <strong>Último status:</strong> {implementation?.status || 'Não iniciado'}
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                         <strong>Atualizado:</strong> {formatDate(implementation?.updatedAt)}
@@ -750,7 +750,7 @@ export default function CodeStudioPage() {
                         className="dashboard-button-secondary"
                       >
                         <ExternalLink className="h-4 w-4" />
-                        Ver detalhes tecnicos
+                        Ver detalhes técnicos
                       </button>
                       <button
                         onClick={() => navigate(`/projects/${selectedProjectUuid}/tasks/${task.uuid}`)}
@@ -764,7 +764,7 @@ export default function CodeStudioPage() {
               })
             ) : (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
-                Nenhuma task esta pronta para implementacao ainda. Finalize requisitos e QA primeiro.
+                Nenhuma task está pronta para implementação ainda. Finalize requisitos e QA primeiro.
               </div>
             )}
           </div>
@@ -773,8 +773,8 @@ export default function CodeStudioPage() {
         {selectedTaskUuid && selectedImplementation && (
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Detalhe tecnico</p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-900">{selectedImplementation.task?.title || 'Implementacao selecionada'}</h2>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Detalhe técnico</p>
+              <h2 className="mt-2 text-2xl font-bold text-slate-900">{selectedImplementation.task?.title || 'Implementação selecionada'}</h2>
             </div>
 
             <div className="grid gap-4 p-6 lg:grid-cols-2">
@@ -791,10 +791,10 @@ export default function CodeStudioPage() {
                   <p><strong>Prompt version:</strong> {selectedImplementation.qualitySummary?.versioning?.promptVersion ?? 'v1'}</p>
                   <p><strong>Release version:</strong> {selectedImplementation.qualitySummary?.versioning?.releaseVersion ?? '1.0.0'}</p>
                   <p><strong>Specialist score:</strong> {selectedImplementation.qualitySummary?.specialistScore ?? 'n/a'}</p>
-                  <p><strong>Semantica:</strong> {selectedImplementation.qualitySummary?.semanticScore ?? 'n/a'}</p>
+                  <p><strong>Semântica:</strong> {selectedImplementation.qualitySummary?.semanticScore ?? 'n/a'}</p>
                   <p><strong>UX:</strong> {selectedImplementation.qualitySummary?.uxScore ?? 'n/a'}</p>
                   <p><strong>Arquitetura:</strong> {selectedImplementation.qualitySummary?.specialistArchitectureScore ?? 'n/a'}</p>
-                  <p><strong>Validacao:</strong> {selectedImplementation.qualitySummary?.validationScore ?? 'n/a'}</p>
+                  <p><strong>Validação:</strong> {selectedImplementation.qualitySummary?.validationScore ?? 'n/a'}</p>
                   <p><strong>Build:</strong> {selectedImplementation.buildStatus || 'n/a'}</p>
                   <p><strong>Testes:</strong> {selectedImplementation.testStatus || 'n/a'}</p>
                   <p><strong>Template:</strong> {selectedImplementation.qualitySummary?.screenTemplate || 'n/a'}</p>
@@ -804,7 +804,7 @@ export default function CodeStudioPage() {
                   <p><strong>Sucesso no projeto:</strong> {selectedImplementation.qualitySummary?.benchmark?.projectSuccessRatePercent ?? 'n/a'}%</p>
                   <p><strong>Sucesso no dominio:</strong> {selectedImplementation.qualitySummary?.benchmark?.domainSuccessRatePercent ?? 'n/a'}%</p>
                   <p><strong>Projeto:</strong> {selectedImplementation.generatedApp?.name || 'App full stack'}</p>
-                  <p><strong>Pasta:</strong> {selectedImplementation.generatedApp?.rootPath || 'Ainda nao materializado'}</p>
+                  <p><strong>Pasta:</strong> {selectedImplementation.generatedApp?.rootPath || 'Ainda não materializado'}</p>
                 </div>
               </div>
 
@@ -821,7 +821,7 @@ export default function CodeStudioPage() {
                   ))}
                   {!selectedImplementation.generatedFiles?.length && (
                     <div className="rounded-lg bg-white px-3 py-4 text-sm text-slate-500">
-                      Nenhum arquivo registrado ainda para esta implementacao.
+                      Nenhum arquivo registrado ainda para esta implementação.
                     </div>
                   )}
                 </div>

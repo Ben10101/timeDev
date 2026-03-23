@@ -142,7 +142,7 @@ export default function AiSettingsPage() {
       { label: 'Prompt', value: runtime.promptVersion || 'v1' },
       { label: 'Release', value: runtime.platformVersion || '1.0.0' },
       { label: 'Gemini', value: runtime.hasGeminiKey ? 'Configurado' : 'Sem chave' },
-      { label: 'Ollama', value: runtime.ollamaHost ? `${runtime.ollamaModel} @ ${runtime.ollamaHost}` : 'Nao configurado' },
+      { label: 'Ollama', value: runtime.ollamaHost ? `${runtime.ollamaModel} @ ${runtime.ollamaHost}` : 'Não configurado' },
     ];
   }, [runtime]);
 
@@ -169,7 +169,7 @@ export default function AiSettingsPage() {
       setRuntime(runtimeSummary);
       setSuccess('Configuracoes salvas. Os proximos agentes usarao essas credenciais.');
     } catch (saveError) {
-      setError(saveError.response?.data?.message || saveError.message || 'Nao foi possivel salvar as configuracoes de IA.');
+      setError(saveError.response?.data?.message || saveError.message || 'Não foi possível salvar as configurações de IA.');
     } finally {
       setSaving(false);
     }
@@ -207,7 +207,7 @@ export default function AiSettingsPage() {
         ...current,
         [provider]: {
           ok: false,
-          message: testError.response?.data?.message || `Nao foi possivel testar ${provider}.`,
+          message: testError.response?.data?.message || `Não foi possível testar ${provider}.`,
           meta: {
             detail: testError.response?.data?.detail || testError.response?.data?.meta?.detail || testError.message,
           },

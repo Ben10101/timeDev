@@ -256,13 +256,13 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
     generatedRuns: qualityImplementations,
     alerts: [
       ...(enrichedRuns.some((run) => run.overBudget)
-        ? [{ code: 'agent_budget_exceeded', message: 'Existem execucoes recentes acima do budget configurado por agente.' }]
+        ? [{ code: 'agent_budget_exceeded', message: 'Existem execuções recentes acima do budget configurado por agente.' }]
         : []),
       ...(enrichedRuns.some((run) => run.status === 'failed')
-        ? [{ code: 'agent_failures_detected', message: 'Foram detectadas falhas recentes em execucoes de agentes.' }]
+        ? [{ code: 'agent_failures_detected', message: 'Foram detectadas falhas recentes em execuções de agentes.' }]
         : []),
       ...(qualityImplementations.some((run) => run.status === 'failed')
-        ? [{ code: 'implementation_validation_failed', message: 'Existem execucoes de implementacao/validacao com falha recente.' }]
+        ? [{ code: 'implementation_validation_failed', message: 'Existem execuções de implementação/validação com falha recente.' }]
         : []),
     ],
   };
@@ -285,7 +285,7 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
 
   const readinessChecks = [
     { code: 'database', label: 'Banco operacional', status: health.database === 'ok' ? 'ok' : 'failed' },
-    { code: 'auth_secret', label: 'Segredo de autenticacao configurado', status: process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET ? 'ok' : 'warning' },
+    { code: 'auth_secret', label: 'Segredo de autenticação configurado', status: process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET ? 'ok' : 'warning' },
     { code: 'cors', label: 'Origem de frontend definida', status: process.env.FRONTEND_ORIGIN || process.env.VITE_FRONTEND_URL ? 'ok' : 'warning' },
     { code: 'provider_api', label: 'Pelo menos uma API remota configurada', status: Object.values(providersConfigured).some(Boolean) ? 'ok' : 'warning' },
     { code: 'audit_log', label: 'Auditoria operacional ativa', status: recentAudit.length ? 'ok' : 'warning' },
@@ -304,7 +304,7 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
       ? [{ code: 'readiness_attention', message: `Existem ${warningCount} checks de readiness exigindo atencao.` }]
       : []),
     ...(failedCount
-      ? [{ code: 'readiness_failed', message: `Existem ${failedCount} checks criticos falhando na plataforma.` }]
+      ? [{ code: 'readiness_failed', message: `Existem ${failedCount} checks críticos falhando na plataforma.` }]
       : []),
     ...((aiOverview.reliability.topFailingAgents || []).slice(0, 2).map((agent) => ({
       code: `agent_instability_${agent.agentName}`,
@@ -513,8 +513,8 @@ export async function getActiveAlerts(userUuid, { projectUuid = null } = {}) {
       message: alert.message,
       recommendedAction:
         alert.code === 'readiness_failed'
-          ? 'Corrigir os checks criticos antes de ampliar a operacao.'
-          : 'Revisar os checks de readiness e estabilizar a operacao antes da proxima release.',
+          ? 'Corrigir os checks críticos antes de ampliar a operação.'
+          : 'Revisar os checks de readiness e estabilizar a operação antes da próxima release.',
     });
   }
 
@@ -524,7 +524,7 @@ export async function getActiveAlerts(userUuid, { projectUuid = null } = {}) {
       source: 'governance',
       code: `hotspot_${hotspot.actionType}`,
       message: `${hotspot.actionType} concentra ${hotspot.failures} falhas recentes (${hotspot.failureRatePercent}%).`,
-      recommendedAction: `Revisar o fluxo ${hotspot.actionType} e adicionar remediacao automatica ou validacao preventiva.`,
+      recommendedAction: `Revisar o fluxo ${hotspot.actionType} e adicionar remediação automática ou validação preventiva.`,
     });
   }
 
@@ -534,7 +534,7 @@ export async function getActiveAlerts(userUuid, { projectUuid = null } = {}) {
       source: 'runtime',
       code: 'stale_running_runs',
       message: `Existem ${aiOverview.summary.staleRunningRuns} runs travados ha mais de 10 minutos.`,
-      recommendedAction: 'Cancelar execucoes travadas, revisar timeout e criar playbook automatico de recuperacao.',
+      recommendedAction: 'Cancelar execuções travadas, revisar timeout e criar playbook automático de recuperação.',
     });
   }
 
@@ -543,7 +543,7 @@ export async function getActiveAlerts(userUuid, { projectUuid = null } = {}) {
       severity: 'medium',
       source: 'cost',
       code: 'over_budget_runs',
-      message: `Foram detectadas ${aiOverview.summary.overBudgetRuns} execucoes acima do budget configurado.`,
+      message: `Foram detectadas ${aiOverview.summary.overBudgetRuns} execuções acima do budget configurado.`,
       recommendedAction: 'Reduzir contexto, revisar provider/modelo e reforcar budgets por agente.',
     });
   }

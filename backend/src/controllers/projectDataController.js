@@ -101,7 +101,7 @@ export async function listProjectsController(req, res, next) {
 
 export async function bootstrapController(_req, res) {
   res.status(410).json({
-    message: 'Bootstrap publico desativado. Use /api/auth/register para criar sua conta com seguranca.',
+    message: 'Bootstrap público desativado. Use /api/auth/register para criar sua conta com segurança.',
   });
 }
 
@@ -110,7 +110,7 @@ export async function getProjectController(req, res, next) {
     const project = await getProjectByUuid(req.params.projectUuid, req.authUser.uuid);
 
     if (!project) {
-      return res.status(404).json({ message: 'Projeto nao encontrado.' });
+      return res.status(404).json({ message: 'Projeto não encontrado.' });
     }
 
     res.json(serializeBigInts(project));
@@ -148,7 +148,7 @@ export async function createProjectController(req, res, next) {
 
     if (!workspace?.uuid) {
       return res.status(400).json({
-        message: 'Nenhum workspace disponivel para este usuario.',
+        message: 'Nenhum workspace disponível para este usuário.',
       });
     }
 
@@ -248,7 +248,7 @@ export async function getTaskController(req, res, next) {
     const task = await getTaskByUuid(req.params.taskUuid, req.authUser.uuid);
 
     if (!task) {
-      return res.status(404).json({ message: 'Tarefa nao encontrada.' });
+      return res.status(404).json({ message: 'Tarefa não encontrada.' });
     }
 
     res.json(serializeBigInts(task));
@@ -395,7 +395,7 @@ export async function generateProjectArchitectureController(req, res, next) {
 
     if (!architectureStatus.allStoriesRefined) {
       return res.status(400).json({
-        message: 'A arquitetura so pode ser gerada quando todas as historias estiverem refinadas.',
+        message: 'A arquitetura só pode ser gerada quando todas as histórias estiverem refinadas.',
         architectureStatus: serializeBigInts(architectureStatus),
       });
     }
