@@ -9,7 +9,6 @@ export async function getAiSettingsController(req, res, next) {
     next(error);
   }
 }
-
 export async function updateAiSettingsController(req, res, next) {
   try {
     const settings = await updateAiSettingsForUser(req.authUser.uuid, req.body || {});
@@ -32,9 +31,18 @@ export async function getAiRuntimeSummaryController(req, res, next) {
       localFallbackDisabled: env.AI_DISABLE_OLLAMA_FALLBACK === '1',
       hasGeminiKey: Boolean(env.GEMINI_API_KEY),
       hasOpenAiKey: Boolean(env.OPENAI_API_KEY),
+      hasDeepSeekKey: Boolean(env.DEEPSEEK_API_KEY),
+      hasNvidiaKey: Boolean(env.NVIDIA_API_KEY),
       hasAnthropicKey: Boolean(env.ANTHROPIC_API_KEY),
       hasGroqKey: Boolean(env.GROQ_API_KEY),
       hasOpenRouterKey: Boolean(env.OPENROUTER_API_KEY),
+      deepSeekModel: env.DEEPSEEK_MODEL || null,
+      nvidiaModel: env.NVIDIA_MODEL || null,
+      openRouterModel: env.OPENROUTER_MODEL || null,
+      openRouterFallbackModels: String(env.OPENROUTER_MODEL_FALLBACKS || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
       ollamaHost: env.OLLAMA_HOST || null,
       ollamaModel: env.OLLAMA_MODEL || null,
       policyVersion: process.env.AI_POLICY_VERSION || 'v1',
@@ -60,6 +68,8 @@ export async function testAiProviderController(req, res, next) {
       ollama: { ...storedSettings.ollama, ...(settings?.ollama || {}) },
       gemini: { ...storedSettings.gemini, ...(settings?.gemini || {}) },
       openai: { ...storedSettings.openai, ...(settings?.openai || {}) },
+      deepseek: { ...storedSettings.deepseek, ...(settings?.deepseek || {}) },
+      nvidia: { ...storedSettings.nvidia, ...(settings?.nvidia || {}) },
       anthropic: { ...storedSettings.anthropic, ...(settings?.anthropic || {}) },
       groq: { ...storedSettings.groq, ...(settings?.groq || {}) },
       openrouter: { ...storedSettings.openrouter, ...(settings?.openrouter || {}) },
@@ -71,3 +81,4 @@ export async function testAiProviderController(req, res, next) {
     next(error);
   }
 }
+

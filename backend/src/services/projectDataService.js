@@ -926,6 +926,44 @@ function extractStoriesFromBacklog(backlogMarkdown) {
     .filter(Boolean);
 }
 
+function extractMarkdownSection(content, sectionTitle) {
+  const text = String(content || '');
+  if (!text.trim()) return '';
+
+  const escaped = sectionTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`##+\\s+${escaped}\\s*([\\s\\S]*?)(?=\\n##+\\s+|$)`, 'i');
+  const match = text.match(regex);
+  return match ? String(match[1] || '').trim() : '';
+}
+
+function extractBulletLines(sectionContent, { onlyStories = false } = {}) {
+  if (!sectionContent) return [];
+
+  return String(sectionContent)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^[-*]?\s*\d*\.?\s*(?:\*\*)?/.test(line))
+    .map((line) => line.replace(/^[-*]?\s*\d*\.?\s*(?:\*\*)?/, '').replace(/\*\*/g, '').trim())
+    .filter(Boolean)
+    .filter((line) => (onlyStories ? /^Como\b/i.test(line) : true));
+}
+
+function extractBacklogItems(backlogMarkdown) {
+  if (!backlogMarkdown) {
+    return { epics: [], stories: [], technicalTasks: [] };
+  }
+
+  const epics = extractBulletLines(extractMarkdownSection(backlogMarkdown, 'Epicos'));
+  const stories = extractBulletLines(extractMarkdownSection(backlogMarkdown, 'Historias de Usuario'), { onlyStories: true });
+  const technicalTasks = extractBulletLines(extractMarkdownSection(backlogMarkdown, 'Tarefas Tecnicas Iniciais'));
+
+  return {
+    epics,
+    stories: stories.length ? stories : extractStoriesFromBacklog(backlogMarkdown),
+    technicalTasks,
+  };
+}
+
 export async function importBacklogTasks(projectUuid, backlogMarkdown) {
   const project = await prisma.project.findUnique({
     where: { uuid: projectUuid },
@@ -939,31 +977,58 @@ export async function importBacklogTasks(projectUuid, backlogMarkdown) {
     throw new Error('Projeto não encontrado.');
   }
 
-  const stories = extractStoriesFromBacklog(backlogMarkdown);
+  const { epics, stories, technicalTasks } = extractBacklogItems(backlogMarkdown);
   const existingTitles = new Set(project.tasks.map((task) => task.title.trim()));
 
-  for (const [index, title] of stories.entries()) {
-    if (existingTitles.has(title.trim())) continue;
+  const itemsToCreate = [
+    ...epics.map((title, index) => ({
+      title,
+      taskType: 'epic',
+      assigneeType: 'unassigned',
+      assigneeAgentName: null,
+      position: index,
+      note: 'Epic importado do backlog',
+    })),
+    ...stories.map((title, index) => ({
+      title,
+      taskType: 'story',
+      assigneeType: 'agent',
+      assigneeAgentName: 'requirements_analyst',
+      position: epics.length + index,
+      note: 'Story importada do backlog',
+    })),
+    ...technicalTasks.map((title, index) => ({
+      title,
+      taskType: 'task',
+      assigneeType: 'unassigned',
+      assigneeAgentName: null,
+      position: epics.length + stories.length + index,
+      note: 'Tarefa tecnica importada do backlog',
+    })),
+  ];
+
+  for (const item of itemsToCreate) {
+    if (existingTitles.has(item.title.trim())) continue;
 
     await prisma.task.create({
       data: {
         uuid: randomUUID(),
         projectId: project.id,
-        title,
+        title: item.title,
         description: null,
-        taskType: 'story',
+        taskType: item.taskType,
         status: 'backlog',
         priority: 'medium',
-        assigneeType: 'agent',
-        assigneeAgentName: 'requirements_analyst',
-        position: index,
+        assigneeType: item.assigneeType,
+        assigneeAgentName: item.assigneeAgentName,
+        position: item.position,
         createdBy: project.creator.id,
         statusHistory: {
           create: {
             fromStatus: null,
             toStatus: 'backlog',
             changedByUserId: project.creator.id,
-            note: 'Task importada do backlog',
+            note: item.note,
           },
         },
       },
@@ -1136,9 +1201,7 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
       intakeConfig: true,
       tasks: {
         where: {
-          taskType: {
-            not: 'agent_job',
-          },
+          taskType: 'story',
         },
         select: {
           id: true,
@@ -1327,19 +1390,24 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
     taskId = task?.id || null;
   }
 
-  await prisma.agentRun.updateMany({
+  const existingRunningRun = await prisma.agentRun.findFirst({
     where: {
       projectId: project.id,
       agentName,
       taskId,
       status: 'running',
     },
-    data: {
-      status: 'failed',
-      errorMessage: 'Execucao anterior encerrada automaticamente por uma nova tentativa.',
-      finishedAt: new Date(),
+    select: {
+      uuid: true,
+      createdAt: true,
     },
   });
+
+  if (existingRunningRun) {
+    throw new Error(
+      `Ja existe uma execucao em andamento para ${agentName}${payload.task_uuid ? ' nesta task' : ' neste projeto'} (run ${existingRunningRun.uuid}).`
+    );
+  }
 
   return prisma.agentRun.create({
     data: {

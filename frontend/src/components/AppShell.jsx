@@ -1,7 +1,6 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Home,
   Briefcase,
   Braces,
   Search,
@@ -16,10 +15,6 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 
 const NAV_SECTIONS = [
-  {
-    label: 'Produto',
-    items: [{ label: 'Aligna', hint: 'Alinhamento inicial', to: '/', icon: Home }],
-  },
   {
     label: 'Execução',
     items: [
@@ -38,7 +33,7 @@ const NAV_SECTIONS = [
 
 function NavItem({ item }) {
   const location = useLocation();
-  const active = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to);
+  const active = location.pathname.startsWith(item.to);
   const Icon = item.icon;
 
   return (

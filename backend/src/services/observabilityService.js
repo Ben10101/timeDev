@@ -277,6 +277,8 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
   const sensitiveRateLimit = getRateLimitConfig(true);
   const providersConfigured = {
     openai: Boolean(process.env.OPENAI_API_KEY),
+    deepseek: Boolean(process.env.DEEPSEEK_API_KEY),
+    nvidia: Boolean(process.env.NVIDIA_API_KEY),
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
     openrouter: Boolean(process.env.OPENROUTER_API_KEY),
     gemini: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),

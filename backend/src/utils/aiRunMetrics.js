@@ -24,6 +24,8 @@ export function buildAiRuntimeMeta(envOverrides = {}) {
     openrouter: envOverrides.OPENROUTER_MODEL || process.env.OPENROUTER_MODEL || null,
     groq: envOverrides.GROQ_MODEL || process.env.GROQ_MODEL || null,
     openai: envOverrides.OPENAI_MODEL || process.env.OPENAI_MODEL || null,
+    deepseek: envOverrides.DEEPSEEK_MODEL || process.env.DEEPSEEK_MODEL || null,
+    nvidia: envOverrides.NVIDIA_MODEL || process.env.NVIDIA_MODEL || null,
     anthropic: envOverrides.ANTHROPIC_MODEL || process.env.ANTHROPIC_MODEL || null,
   };
 
@@ -50,6 +52,8 @@ function estimateCostUsd(primaryProvider, totalTokens) {
   const rates = {
     openrouter: 0.0000025,
     openai: 0.0000035,
+    deepseek: 0.0000012,
+    nvidia: 0.0000018,
     anthropic: 0.000004,
     gemini: 0.0000015,
     groq: 0.000001,

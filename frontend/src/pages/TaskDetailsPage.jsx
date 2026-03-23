@@ -30,6 +30,12 @@ function hasCurrentArtifact(task, artifactType) {
   return (task?.artifacts || []).some((artifact) => artifact.artifactType === artifactType && artifact.isCurrent);
 }
 
+function isTaskAgentRunning(task, agentName = null) {
+  const runs = task?.agentRuns || [];
+  if (!runs.length) return false;
+  return runs.some((run) => run.status === 'running' && (!agentName || run.agentName === agentName));
+}
+
 function parseJsonContent(rawContent) {
   if (!rawContent) return null;
   try {
@@ -57,8 +63,10 @@ export default function TaskDetailsPage() {
   const taskHasTestPlan = hasCurrentArtifact(task, 'test_plan');
   const taskIsDone = task?.status === 'done';
   const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
-  const canRunRequirements = !taskHasRequirements;
-  const canRunQa = taskHasRequirements && !taskHasTestPlan;
+  const requirementsRunning = isTaskAgentRunning(task, 'requirements_analyst');
+  const qaRunning = isTaskAgentRunning(task, 'qa_engineer');
+  const canRunRequirements = !taskHasRequirements && !requirementsRunning;
+  const canRunQa = taskHasRequirements && !taskHasTestPlan && !qaRunning;
   const reviewReport = parseJsonContent(implementationStatus?.reviewArtifact?.content);
   const fixPlanReport = parseJsonContent(implementationStatus?.fixPlanArtifact?.content);
   const buildReport = parseJsonContent(implementationStatus?.buildReportArtifact?.content);
@@ -221,17 +229,29 @@ export default function TaskDetailsPage() {
             onClick={handleRunRequirements}
             disabled={saving || loading || !canRunRequirements}
             className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
-            title={!canRunRequirements ? 'A etapa de requisitos ja foi concluida.' : undefined}
+            title={
+              requirementsRunning
+                ? 'Ja existe uma execucao de requisitos em andamento para esta task.'
+                : !canRunRequirements
+                  ? 'A etapa de requisitos ja foi concluida.'
+                  : undefined
+            }
           >
-            Refinar com Requisitos
+            {requirementsRunning ? 'Requisitos em execucao' : 'Refinar com Requisitos'}
           </button>
           <button
             onClick={handleRunQa}
             disabled={saving || loading || !canRunQa}
             className="w-full rounded-2xl bg-[#7b3aa4] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#6d3194] disabled:opacity-50 sm:w-auto"
-            title={!canRunQa && taskHasTestPlan ? 'A etapa de QA ja foi concluida.' : undefined}
+            title={
+              qaRunning
+                ? 'Ja existe uma execucao de QA em andamento para esta task.'
+                : !canRunQa && taskHasTestPlan
+                  ? 'A etapa de QA ja foi concluida.'
+                  : undefined
+            }
           >
-            Executar QA
+            {qaRunning ? 'QA em execucao' : 'Executar QA'}
           </button>
           {taskIsDone && (
             <button

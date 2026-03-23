@@ -73,5 +73,5 @@ REGRAS FINAIS
                 "temperature": 0.1,
                 "num_predict": int(os.getenv("PROJECT_MANAGER_LLM_NUM_PREDICT", "1600")),
             },
-            max_retries=int(os.getenv("PROJECT_MANAGER_MAX_RETRIES", "3")),
+            max_retries=int(os.getenv("PROJECT_MANAGER_MAX_RETRIES", "1")),
         )

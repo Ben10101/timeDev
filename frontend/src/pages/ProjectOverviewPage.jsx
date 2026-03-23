@@ -10,6 +10,25 @@ import {
   listProjectTasks,
 } from '../services/api';
 
+const STORY_SHORTCUT_EXAMPLES = [
+  {
+    label: 'SaaS operacional',
+    idea: 'Plataforma para times operacionais registrarem solicitacoes, acompanharem status, anexarem evidencias e aprovarem excecoes com trilha de auditoria.',
+    objective: 'Reduzir retrabalho operacional e dar visibilidade do fluxo ponta a ponta.',
+    audience: 'Analistas de operacoes, lideres de equipe e gestores.',
+    mainFlows: 'Abrir solicitacao, priorizar fila, aprovar excecao, acompanhar SLA e consultar historico.',
+    constraints: 'Controle de acesso por perfil, historico imutavel e notificacoes de atraso.',
+  },
+  {
+    label: 'Portal do cliente',
+    idea: 'Portal para clientes acompanharem pedidos, documentos pendentes, mensagens e status de atendimento em uma timeline unica.',
+    objective: 'Diminuir volume de suporte e aumentar autonomia do cliente.',
+    audience: 'Clientes finais e equipe de atendimento.',
+    mainFlows: 'Consultar pedido, enviar documentos, responder pendencias e acompanhar timeline.',
+    constraints: 'Experiencia mobile, notificacoes e integracao com sistema interno.',
+  },
+];
+
 function TextAreaField({ label, value, onChange, placeholder, rows = 4, disabled = false }) {
   return (
     <label className="block">
@@ -55,6 +74,8 @@ export default function ProjectOverviewPage() {
     [tasks]
   );
   const isBriefingLocked = tasks.length > 0;
+  const ideaLength = form.idea.trim().length;
+  const shortcutReady = ideaLength >= 40;
 
   useEffect(() => {
     loadOverview();
@@ -121,12 +142,24 @@ export default function ProjectOverviewPage() {
       setTasks(response.tasks || []);
       const nextArchitectureStatus = await getProjectArchitectureStatus(projectUuid);
       setArchitectureStatus(nextArchitectureStatus);
-      setSuccessMessage('Backlog gerado pelo PM Agent e enviado direto para o board.');
+      setSuccessMessage('User stories geradas e enviadas direto para o board.');
     } catch (submitError) {
       setError(getApiErrorMessage(submitError, 'Não foi possível gerar o backlog do projeto.'));
     } finally {
       setGenerating(false);
     }
+  }
+
+  function applyShortcutExample(example) {
+    setForm({
+      idea: example.idea,
+      objective: example.objective,
+      audience: example.audience,
+      mainFlows: example.mainFlows,
+      constraints: example.constraints,
+    });
+    setError(null);
+    setSuccessMessage('');
   }
 
   async function handleGenerateArchitecture() {
@@ -150,7 +183,7 @@ export default function ProjectOverviewPage() {
     <AppShell
       eyebrow="Visão do Projeto"
       title={project?.name || 'Projeto'}
-      description="Descreva a iniciativa, gere o backlog com o PM Agent e depois entre no board com as tasks persistidas."
+      description="Descreva a iniciativa, gere user stories com o PM Agent e depois entre no board com as tasks persistidas."
       actions={
         <div className="flex flex-col gap-3 sm:flex-row">
           <button onClick={() => navigate('/projects')} className="dashboard-button-secondary w-full sm:w-auto">
@@ -289,13 +322,53 @@ export default function ProjectOverviewPage() {
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">
             <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing do projeto</p>
-            <h3 className="mt-2 text-2xl font-bold text-slate-900">Converse com o projeto antes dos agentes</h3>
+            <h3 className="mt-2 text-2xl font-bold text-slate-900">Atalho para gerar user stories</h3>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-              Aqui o intake deixa de ser uma tela isolada. O briefing passa a viver dentro do projeto, e o PM Agent usa esse contexto para criar as tasks do board.
+              Em vez de montar tudo no board manualmente, descreva o produto com contexto suficiente e o PM Agent transforma isso em user stories acionaveis.
             </p>
           </div>
 
           <form className="grid gap-4 p-6 lg:grid-cols-2" onSubmit={handleGenerateBacklog}>
+            <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-3xl">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Atalho rapido</p>
+                  <h4 className="mt-2 text-xl font-bold text-slate-900">Escreva como se estivesse pedindo o produto para um PM senior</h4>
+                  <p className="mt-2 text-sm leading-7 text-slate-600">
+                    Quanto melhor o contexto sobre usuario, objetivo, fluxo e restricoes, melhores ficam as historias criadas.
+                  </p>
+                </div>
+                {!isBriefingLocked && (
+                  <div className="flex flex-wrap gap-2">
+                    {STORY_SHORTCUT_EXAMPLES.map((example) => (
+                      <button
+                        key={example.label}
+                        type="button"
+                        onClick={() => applyShortcutExample(example)}
+                        className="dashboard-button-secondary px-3 py-2 text-xs"
+                      >
+                        Usar exemplo {example.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Entrada</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{shortcutReady ? 'Boa para gerar stories' : 'Precisa de mais contexto'}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Tamanho da ideia</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{ideaLength} caracteres</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Saida esperada</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">Stories prontas para refinamento</p>
+                </div>
+              </div>
+            </div>
             <div className="lg:col-span-2">
               <TextAreaField
                 label="Ideia do projeto"
@@ -343,7 +416,7 @@ export default function ProjectOverviewPage() {
                 Recarregar projeto
               </button>
               <button disabled={generating || loading || isBriefingLocked} className="dashboard-button-primary w-full sm:w-auto">
-                {isBriefingLocked ? 'Backlog já gerado' : generating ? 'Gerando backlog...' : 'Gerar backlog com PM Agent'}
+                {isBriefingLocked ? 'User stories ja geradas' : generating ? 'Gerando user stories...' : 'Gerar user stories agora'}
               </button>
             </div>
           </form>
@@ -353,8 +426,8 @@ export default function ProjectOverviewPage() {
           <div className="dashboard-panel-header">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Backlog inicial</p>
-                <h3 className="mt-2 text-xl font-bold text-slate-900">Tasks que vao aparecer no board</h3>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">User stories geradas</p>
+                <h3 className="mt-2 text-xl font-bold text-slate-900">Stories que vao aparecer no board</h3>
               </div>
               <span className="rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600">
                 {tasks.length} tasks
@@ -380,14 +453,14 @@ export default function ProjectOverviewPage() {
                       </span>
                     </div>
                     <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">
-                      {task.description || 'Task criada pelo PM Agent e pronta para refinamento.'}
+                      {task.description || 'Story criada pelo PM Agent e pronta para refinamento.'}
                     </p>
                   </button>
                 ))}
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
-                Nenhuma task ainda. Gere o backlog com o PM Agent para popular o board.
+                Nenhuma story ainda. Use o atalho acima para gerar user stories com o PM Agent.
               </div>
             )}
           </div>

@@ -17,6 +17,16 @@ const DEFAULT_AI_SETTINGS = {
     apiKey: '',
     model: 'gpt-4.1-mini',
   },
+  deepseek: {
+    enabled: false,
+    apiKey: '',
+    model: 'deepseek-chat',
+  },
+  nvidia: {
+    enabled: false,
+    apiKey: '',
+    model: 'qwen/qwen3.5-122b-a10b',
+  },
   anthropic: {
     enabled: false,
     apiKey: '',
@@ -31,10 +41,11 @@ const DEFAULT_AI_SETTINGS = {
     enabled: false,
     apiKey: '',
     model: 'openai/gpt-4.1-mini',
+    fallbackModels: [],
   },
 };
 
-const REMOTE_PROVIDER_KEYS = ['gemini', 'openai', 'anthropic', 'groq', 'openrouter'];
+const REMOTE_PROVIDER_KEYS = ['gemini', 'openai', 'deepseek', 'nvidia', 'anthropic', 'groq', 'openrouter'];
 
 function normalizeProviderSettings(current = {}, fallback = {}) {
   return {
@@ -43,15 +54,39 @@ function normalizeProviderSettings(current = {}, fallback = {}) {
   };
 }
 
+function normalizeModelList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(/[\n,;]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
 export function normalizeAiSettings(input = {}) {
+  const normalizedOpenRouter = normalizeProviderSettings(input.openrouter, DEFAULT_AI_SETTINGS.openrouter);
+
   return {
     providerPreference: input.providerPreference || DEFAULT_AI_SETTINGS.providerPreference,
     ollama: normalizeProviderSettings(input.ollama, DEFAULT_AI_SETTINGS.ollama),
     gemini: normalizeProviderSettings(input.gemini, DEFAULT_AI_SETTINGS.gemini),
     openai: normalizeProviderSettings(input.openai, DEFAULT_AI_SETTINGS.openai),
+    deepseek: normalizeProviderSettings(input.deepseek, DEFAULT_AI_SETTINGS.deepseek),
+    nvidia: normalizeProviderSettings(input.nvidia, DEFAULT_AI_SETTINGS.nvidia),
     anthropic: normalizeProviderSettings(input.anthropic, DEFAULT_AI_SETTINGS.anthropic),
     groq: normalizeProviderSettings(input.groq, DEFAULT_AI_SETTINGS.groq),
-    openrouter: normalizeProviderSettings(input.openrouter, DEFAULT_AI_SETTINGS.openrouter),
+    openrouter: {
+      ...normalizedOpenRouter,
+      fallbackModels: normalizeModelList(normalizedOpenRouter.fallbackModels),
+    },
   };
 }
 
@@ -72,6 +107,8 @@ export async function updateAiSettingsForUser(userUuid, input = {}) {
     ollama: { ...current.ollama, ...(input.ollama || {}) },
     gemini: { ...current.gemini, ...(input.gemini || {}) },
     openai: { ...current.openai, ...(input.openai || {}) },
+    deepseek: { ...current.deepseek, ...(input.deepseek || {}) },
+    nvidia: { ...current.nvidia, ...(input.nvidia || {}) },
     anthropic: { ...current.anthropic, ...(input.anthropic || {}) },
     groq: { ...current.groq, ...(input.groq || {}) },
     openrouter: { ...current.openrouter, ...(input.openrouter || {}) },
@@ -111,13 +148,18 @@ export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
     OLLAMA_MODEL: settings.ollama?.model || DEFAULT_AI_SETTINGS.ollama.model,
     GEMINI_MODEL: settings.gemini?.model || DEFAULT_AI_SETTINGS.gemini.model,
     OPENAI_MODEL: settings.openai?.model || DEFAULT_AI_SETTINGS.openai.model,
+    DEEPSEEK_MODEL: settings.deepseek?.model || DEFAULT_AI_SETTINGS.deepseek.model,
+    NVIDIA_MODEL: settings.nvidia?.model || DEFAULT_AI_SETTINGS.nvidia.model,
     ANTHROPIC_MODEL: settings.anthropic?.model || DEFAULT_AI_SETTINGS.anthropic.model,
     GROQ_MODEL: settings.groq?.model || DEFAULT_AI_SETTINGS.groq.model,
     OPENROUTER_MODEL: settings.openrouter?.model || DEFAULT_AI_SETTINGS.openrouter.model,
+    OPENROUTER_MODEL_FALLBACKS: normalizeModelList(settings.openrouter?.fallbackModels).join(','),
   };
 
   if (settings.gemini?.enabled && settings.gemini?.apiKey) env.GEMINI_API_KEY = settings.gemini.apiKey;
   if (settings.openai?.enabled && settings.openai?.apiKey) env.OPENAI_API_KEY = settings.openai.apiKey;
+  if (settings.deepseek?.enabled && settings.deepseek?.apiKey) env.DEEPSEEK_API_KEY = settings.deepseek.apiKey;
+  if (settings.nvidia?.enabled && settings.nvidia?.apiKey) env.NVIDIA_API_KEY = settings.nvidia.apiKey;
   if (settings.anthropic?.enabled && settings.anthropic?.apiKey) env.ANTHROPIC_API_KEY = settings.anthropic.apiKey;
   if (settings.groq?.enabled && settings.groq?.apiKey) env.GROQ_API_KEY = settings.groq.apiKey;
   if (settings.openrouter?.enabled && settings.openrouter?.apiKey) env.OPENROUTER_API_KEY = settings.openrouter.apiKey;

@@ -11,6 +11,7 @@ import implementationRoutes from './routes/implementationRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import observabilityRoutes from './routes/observabilityRoutes.js';
 import alignmentRoutes from './routes/alignmentRoutes.js';
+import { recoverStaleAgentRuns } from './services/agentRunRecoveryService.js';
 import { attachAuthUser } from './middleware/authMiddleware.js';
 import { apiAuditLogger } from './middleware/auditMiddleware.js';
 import { apiRateLimiter, applySecurityHeaders, attachRequestContext } from './middleware/securityMiddleware.js';
@@ -21,11 +22,12 @@ BigInt.prototype.toJSON = function () {
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
+dotenv.config({ path: path.join(__dirname, '..', '..', '.env'), override: true });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL || '';
+let recoveryIntervalHandle = null;
 
 function getSafeDatabaseLabel() {
   if (!DATABASE_URL) return 'DATABASE_URL ausente';
@@ -89,6 +91,29 @@ async function startServer() {
   try {
     await prisma.$connect();
     console.log('Prisma conectado com sucesso');
+    const timeoutMs = Number(process.env.AGENT_RUN_TIMEOUT_MS || 10 * 60 * 1000);
+    const recoveryWindowSeconds = Math.max(120, Math.round(timeoutMs / 1000) + 30);
+    const recoveryResult = await recoverStaleAgentRuns({
+      maxAgeSeconds: recoveryWindowSeconds,
+    });
+
+    if (recoveryResult.recoveredCount > 0) {
+      console.log(`Recuperadas ${recoveryResult.recoveredCount} execucoes presas na inicializacao`);
+    }
+
+    recoveryIntervalHandle = setInterval(async () => {
+      try {
+        const result = await recoverStaleAgentRuns({
+          maxAgeSeconds: recoveryWindowSeconds,
+          reason: 'Execucao marcada como falha por watchdog de recuperacao do backend.',
+        });
+        if (result.recoveredCount > 0) {
+          console.log(`Watchdog recuperou ${result.recoveredCount} execucoes presas`);
+        }
+      } catch (error) {
+        console.error(`Falha no watchdog de recuperacao de agent runs: ${error.message}`);
+      }
+    }, 60 * 1000);
   } catch (error) {
     console.error(`Falha ao conectar no banco: ${error.message}`);
   }
@@ -100,5 +125,17 @@ async function startServer() {
 }
 
 startServer();
+
+process.on('SIGINT', async () => {
+  if (recoveryIntervalHandle) clearInterval(recoveryIntervalHandle);
+  await prisma.$disconnect().catch(() => null);
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  if (recoveryIntervalHandle) clearInterval(recoveryIntervalHandle);
+  await prisma.$disconnect().catch(() => null);
+  process.exit(0);
+});
 
 export default app;

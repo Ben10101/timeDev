@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from 'crypto';
+﻿import { randomUUID, createHash } from 'crypto';
 import { exec } from 'child_process';
 import { access, mkdir, readFile, rm, writeFile } from 'fs/promises';
 import path from 'path';
@@ -695,7 +695,7 @@ async function getProjectOrThrow(projectUuid) {
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
   return project;
@@ -716,7 +716,7 @@ async function getTaskWithArtifactsOrThrow(taskUuid) {
   });
 
   if (!task) {
-    throw new Error('Tarefa não encontrada.');
+    throw new Error('Tarefa nÃ£o encontrada.');
   }
 
   return task;
@@ -1331,35 +1331,35 @@ function getDomainTemplateLegacy(technicalSpec) {
       templateKey: 'auth/register',
       heroEyebrow: 'Cadastro',
       heroTitle: 'Crie sua conta',
-      heroDescription: 'Cadastre seu acesso com e-mail e senha para começar a usar a plataforma.',
+      heroDescription: 'Cadastre seu acesso com e-mail e senha para comeÃ§ar a usar a plataforma.',
       formCardTitle: 'Dados de acesso',
-      formCardDescription: 'Preencha as credenciais mínimas para liberar seu primeiro acesso.',
+      formCardDescription: 'Preencha as credenciais mÃ­nimas para liberar seu primeiro acesso.',
       recordsTitle: 'Cadastros recentes',
-      recordsEmptyState: 'Nenhum cadastro processado até o momento.',
+      recordsEmptyState: 'Nenhum cadastro processado atÃ© o momento.',
       highlights: [
-        'Validação imediata de e-mail antes da persistência.',
+        'ValidaÃ§Ã£o imediata de e-mail antes da persistÃªncia.',
         'Senha forte exigida para concluir o cadastro.',
-        'Proteção contra e-mails duplicados no fluxo incremental.',
+        'ProteÃ§Ã£o contra e-mails duplicados no fluxo incremental.',
       ],
       profileSummaryTitle: 'Checklist de cadastro',
-      profileSummaryDescription: 'O fluxo precisa validar e-mail, senha e evitar duplicidade antes da criação da conta.',
+      profileSummaryDescription: 'O fluxo precisa validar e-mail, senha e evitar duplicidade antes da criaÃ§Ã£o da conta.',
     };
   }
 
   if (domainKey === 'auth-login') {
     return {
       templateKey: 'auth/login',
-      heroEyebrow: 'Autenticação',
+      heroEyebrow: 'AutenticaÃ§Ã£o',
       heroTitle: 'Entre na plataforma',
       heroDescription: 'Use suas credenciais para acessar cursos, progresso e recursos da sua conta.',
       formCardTitle: 'Acesso',
-      formCardDescription: 'Informe o e-mail cadastrado e a senha para autenticar a sessão.',
-      recordsTitle: 'Sessões recentes',
-      recordsEmptyState: 'Nenhuma sessão registrada até o momento.',
+      formCardDescription: 'Informe o e-mail cadastrado e a senha para autenticar a sessÃ£o.',
+      recordsTitle: 'SessÃµes recentes',
+      recordsEmptyState: 'Nenhuma sessÃ£o registrada atÃ© o momento.',
       highlights: [
-        'Validação de credenciais antes de iniciar a sessão.',
-        'Mensagens claras para e-mail ou senha inválidos.',
-        'Fluxo pensado para acoplar autenticação real depois.',
+        'ValidaÃ§Ã£o de credenciais antes de iniciar a sessÃ£o.',
+        'Mensagens claras para e-mail ou senha invÃ¡lidos.',
+        'Fluxo pensado para acoplar autenticaÃ§Ã£o real depois.',
       ],
       profileSummaryTitle: 'Checklist de login',
       profileSummaryDescription: 'A entrada deve validar credenciais e retornar feedback imediato em caso de falha.',
@@ -1373,16 +1373,16 @@ function getDomainTemplateLegacy(technicalSpec) {
       heroTitle: 'Atualize seu perfil',
       heroDescription: 'Mantenha nome, foto e dados principais da conta sempre consistentes.',
       formCardTitle: 'Dados do perfil',
-      formCardDescription: 'Edite as informações visíveis na conta e salve as alterações.',
-      recordsTitle: 'Histórico de alterações',
-      recordsEmptyState: 'Nenhuma alteração realizada até o momento.',
+      formCardDescription: 'Edite as informaÃ§Ãµes visÃ­veis na conta e salve as alteraÃ§Ãµes.',
+      recordsTitle: 'HistÃ³rico de alteraÃ§Ãµes',
+      recordsEmptyState: 'Nenhuma alteraÃ§Ã£o realizada atÃ© o momento.',
       highlights: [
-        'Nome obrigatório para exibição correta do perfil.',
-        'Foto de perfil com validação de formato e limite de tamanho.',
-        'Histórico preparado para auditoria de atualizações.',
+        'Nome obrigatÃ³rio para exibiÃ§Ã£o correta do perfil.',
+        'Foto de perfil com validaÃ§Ã£o de formato e limite de tamanho.',
+        'HistÃ³rico preparado para auditoria de atualizaÃ§Ãµes.',
       ],
-      profileSummaryTitle: 'Boas práticas do perfil',
-      profileSummaryDescription: 'O aluno precisa manter dados atualizados, com nome obrigatório e foto válida.',
+      profileSummaryTitle: 'Boas prÃ¡ticas do perfil',
+      profileSummaryDescription: 'O aluno precisa manter dados atualizados, com nome obrigatÃ³rio e foto vÃ¡lida.',
     };
   }
 
@@ -1392,11 +1392,11 @@ function getDomainTemplateLegacy(technicalSpec) {
     heroTitle: technicalSpec.frontend?.pageTitle || technicalSpec.entityName,
     heroDescription: technicalSpec.frontend?.pageDescription || technicalSpec.summary,
     formCardTitle: 'Preencha os dados',
-    formCardDescription: 'Informe os dados necessários para continuar.',
-    recordsTitle: 'Últimos registros',
+    formCardDescription: 'Informe os dados necessÃ¡rios para continuar.',
+    recordsTitle: 'Ãšltimos registros',
     recordsEmptyState: 'Nenhum registro processado ainda.',
     highlights: [
-      'Validação básica aplicada aos campos principais.',
+      'ValidaÃ§Ã£o bÃ¡sica aplicada aos campos principais.',
       'Feedback imediato em caso de sucesso ou erro.',
     ],
     profileSummaryTitle: 'Resumo da feature',
@@ -1414,7 +1414,7 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
   const experienceGoals = compactExperienceGoals([
     technicalSpec.frontend.pageDescription,
     technicalSpec.domain.successMessage,
-    `Ação principal: ${technicalSpec.domain.submitLabel}`,
+    `AÃ§Ã£o principal: ${technicalSpec.domain.submitLabel}`,
     `Rota da tela: ${technicalSpec.frontend.suggestedRoute}`,
   ].filter(Boolean));
   const fallback = {
@@ -1437,8 +1437,8 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
 
   try {
     const envOverrides = userUuid
-      ? await buildRuntimeAiEnvForUser(userUuid, { includeLocalFallback: false })
-      : { AI_DISABLE_OLLAMA_FALLBACK: '1' };
+      ? await buildRuntimeAiEnvForUser(userUuid)
+      : { AI_DISABLE_OLLAMA_FALLBACK: '0' };
     const aiResult = await generateImplementationUi({
       taskTitle: task.title,
       summary: technicalSpec.summary,
@@ -1577,7 +1577,7 @@ function buildFieldInitializer(field) {
 }
 
 function hasEncodingArtifacts(content) {
-  return /Ã.|Â|�/.test(String(content || ''));
+  return /Ãƒ.|Ã‚|ï¿½/.test(String(content || ''));
 }
 
 function inferUiStates(actionSpec, fields, qaScenarios) {
@@ -2071,12 +2071,12 @@ function buildImplementationPlan(task, generatedApp, technicalSpec) {
       `Aplicar o template de tela ${technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud'}`,
       'Usar os highlights da arquitetura para respeitar stack, modulos e contratos ja definidos',
       'Criar contrato compartilhado da feature',
-      'Criar módulo funcional no backend',
+      'Criar mÃ³dulo funcional no backend',
       'Registrar rota real no servidor da API',
-      'Criar página e serviço reais no frontend',
-      'Registrar a página na navegação do app',
+      'Criar pÃ¡gina e serviÃ§o reais no frontend',
+      'Registrar a pÃ¡gina na navegaÃ§Ã£o do app',
       'Atualizar prisma/schema.prisma do app gerado',
-      'Registrar documentação da implementação incremental',
+      'Registrar documentaÃ§Ã£o da implementaÃ§Ã£o incremental',
     ],
     targetFiles: [
       technicalSpec.shared.contractPath,
@@ -2222,7 +2222,7 @@ function backendModuleFiles(task, technicalSpec) {
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/README.md`,
-      content: `# ${task.title}\n\nMódulo backend incremental criado a partir da task refinada.\n`,
+      content: `# ${task.title}\n\nMÃ³dulo backend incremental criado a partir da task refinada.\n`,
       fileType: 'md',
     },
   ];
@@ -2744,8 +2744,8 @@ function buildSyntheticTaskFromSpec(technicalSpec) {
 }
 
 async function ensureValidationScripts(generatedAppRoot) {
-  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Visao geral|Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Preencha os dados|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !appContent.includes('Application Studio') || !appContent.includes('function HomePage()')) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contém textos genéricos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contém copy genérica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluído sem problemas.');\n`;
-  const testContent = `import { access, readFile } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatório ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluídos com sucesso.');\n`;
+  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Visao geral|Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Preencha os dados|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !appContent.includes('Application Studio') || !appContent.includes('function HomePage()')) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contÃ©m textos genÃ©ricos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contÃ©m copy genÃ©rica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluÃ­do sem problemas.');\n`;
+  const testContent = `import { access, readFile } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatÃ³rio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluÃ­dos com sucesso.');\n`;
 
   return [
     {
@@ -2971,7 +2971,7 @@ function buildFixPlan(findings, technicalSpec) {
         category: 'fallback',
         priority: 'high',
         filePath: finding.filePath,
-        action: 'Substituir copy genérica e campos de fallback pelo template de domínio correspondente.',
+        action: 'Substituir copy genÃ©rica e campos de fallback pelo template de domÃ­nio correspondente.',
         suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
       };
     }
@@ -3011,7 +3011,7 @@ function buildFixPlan(findings, technicalSpec) {
         category: 'template_deviation',
         priority: 'medium',
         filePath: finding.filePath,
-        action: 'Mapear a task para um template de domínio conhecido ou enriquecer o structured spec.',
+        action: 'Mapear a task para um template de domÃ­nio conhecido ou enriquecer o structured spec.',
         suggestedTemplate: 'domain-mapping',
       };
     }
@@ -3050,7 +3050,7 @@ function buildFixPlan(findings, technicalSpec) {
       category: categorizeFinding(finding.code),
       priority: finding.severity === 'high' ? 'high' : 'medium',
       filePath: finding.filePath,
-      action: 'Ajustar o arquivo para alinhar a implementação ao structured spec e rodar review novamente.',
+      action: 'Ajustar o arquivo para alinhar a implementaÃ§Ã£o ao structured spec e rodar review novamente.',
       suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
     };
   });
@@ -3083,7 +3083,7 @@ async function runImplementationReviewInternal({ task, implementation, technical
     /Visao geral|Nenhum dado exibido ainda\.|Validacao automatica dos campos antes do envio\.|Feedback imediato em caso de sucesso ou erro\.|Preencha os dados|Conclua esta etapa/;
   const basicWebShellPattern =
     /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\.<\/p>|fontFamily: 'sans-serif', padding: 24/;
-  const encodingPattern = /Ã.|Â|�/;
+  const encodingPattern = /Ãƒ.|Ã‚|ï¿½/;
 
   if (/Campo principal da feature gerada|Informe o valor principal/.test(pageContent)) {
     findings.push({
@@ -4158,7 +4158,7 @@ export async function reviewTaskImplementation(taskUuid) {
   const implementation = await getLatestTaskImplementation(task.id);
 
   if (!implementation?.technicalSpecArtifact || !implementation?.generatedApp) {
-    throw new Error('A task ainda não possui implementação gerada para revisar.');
+    throw new Error('A task ainda nÃ£o possui implementaÃ§Ã£o gerada para revisar.');
   }
 
   const run = await prisma.generatedAppRun.create({
@@ -4216,5 +4216,6 @@ export async function reviewTaskImplementation(taskUuid) {
     throw error;
   }
 }
+
 
 

@@ -1,7 +1,6 @@
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import AuthPage from './pages/AuthPage';
-import HomePage from './pages/HomePage';
 import ProjectOverviewPage from './pages/ProjectOverviewPage';
 import ProjectsPage from './pages/ProjectsPage';
 import ResultsPage from './pages/ResultsPage';
@@ -21,7 +20,7 @@ function App() {
             path="/"
             element={
               <ProtectedRoute>
-                <HomePage />
+                <Navigate to="/projects" replace />
               </ProtectedRoute>
             }
           />

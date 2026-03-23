@@ -1,0 +1,33 @@
+{
+  "agent": "qa_engineer",
+  "payload": {
+    "project_id": "8e67ad10-a38f-48a4-8b0d-dd9fe2b78dc9",
+    "task_uuid": "82789ccb-4a1a-409f-ac94-10023eeebc78",
+    "idea": "Crie o plano de testes apenas para esta tarefa: Como usuário comum, eu quero poder solicitar um reembolso, anexando comprovantes e justificativa, para que eu possa receber o valor devido.",
+    "code_structure": "User Story Refinada:\nComo usuário comum, eu quero poder solicitar um reembolso, anexando comprovantes e justificativa, para que eu possa receber o valor devido.\n\nRequisitos Funcionais:\n### RF-01 - Solicitar Reembolso\n- Descricao: Permitir que o usuário comum submeta uma solicitação de reembolso.\n- Atores: Usuário Comum\n- Entradas: Dados do reembolso (valor, tipo, data), justificativa textual.\n- Processamento: Validar dados obrigatórios, persistir solicitação.\n- Saidas: Identificador único da solicitação, status inicial \"Pendente\".\n\nFluxo Principal:\n1. Usuário acessa área de reembolso.\n2. Usuário preenche RF-01 (valor, tipo, data, justificativa).\n3. Usuário anexa RF-02 (comprovantes).\n4. Usuário clica em \"Submeter Solicitação\".\n5. Sistema valida RF-01, RF-02 e RF-03...\n\nRegras de Negocio:\n1. Cada solicitação deve ter pelo menos um comprovante anexado.\n2. A justificativa deve conter no mínimo 50 caracteres.\n3. O valor da solicitação deve estar entre R$ 1,00 e R$ 5.000,00.\n4. Arquivos anexados não podem con...\n\nCriterios de Aceite:\nDADO que o usuário comum esteja logado e tenha acesso ao sistema.\nQUANDO ele acessar o módulo de reembolso.\nENTAO ele deve ver um formulário com campos para valor, tipo, data, justificativa e botão de anexar.\nQUANDO ele preencher os campos obrigatórios (valor,...",
+    "developer_output": {
+      "code": "User Story Refinada:\nComo usuário comum, eu quero poder solicitar um reembolso, anexando comprovantes e justificativa, para que eu possa receber o valor devido.\n\nRequisitos Funcionais:\n### RF-01 - Solicitar Reembolso\n- Descricao: Permitir que o usuário comum submeta uma solicitação de reembolso.\n- Atores: Usuário Comum\n- Entradas: Dados do reembolso (valor, tipo, data), justificativa textual.\n- Processamento: Validar dados obrigatórios, persistir solicitação.\n- Saidas: Identificador único da solicitação, status inicial \"Pendente\".\n\nFluxo Principal:\n1. Usuário acessa área de reembolso.\n2. Usuário preenche RF-01 (valor, tipo, data, justificativa).\n3. Usuário anexa RF-02 (comprovantes).\n4. Usuário clica em \"Submeter Solicitação\".\n5. Sistema valida RF-01, RF-02 e RF-03...\n\nRegras de Negocio:\n1. Cada solicitação deve ter pelo menos um comprovante anexado.\n2. A justificativa deve conter no mínimo 50 caracteres.\n3. O valor da solicitação deve estar entre R$ 1,00 e R$ 5.000,00.\n4. Arquivos anexados não podem con...\n\nCriterios de Aceite:\nDADO que o usuário comum esteja logado e tenha acesso ao sistema.\nQUANDO ele acessar o módulo de reembolso.\nENTAO ele deve ver um formulário com campos para valor, tipo, data, justificativa e botão de anexar.\nQUANDO ele preencher os campos obrigatórios (valor,..."
+    },
+    "project_name": "Plataforma SaaS de gestão de reembolsos corporativos",
+    "project_context": {
+      "description": "Criar uma plataforma SaaS de gestão de reembolsos corporativos para empresas que precisam controlar solicitações de despesas, validar comprovantes, aplicar regras de aprovação por...",
+      "vision": "Reduzir retrabalho, fraude e demora no processo de reembolso corporativo, centralizando solicitações, validações e aprovações em um fluxo digital com rastreabilidade e regras claras."
+    },
+    "requirement_summary": "User Story Refinada:\nComo usuário comum, eu quero poder solicitar um reembolso, anexando comprovantes e justificativa, para que eu possa receber o valor devido.\n\nRequisitos Funcionais:\n### RF-01 - Solicitar Reembolso\n- Descricao: Permitir que o usuário comum submeta uma solicitação de reembolso.\n- Atores: Usuário Comum\n- Entradas: Dados do reembolso (valor, tipo, data), justificativa textual.\n- Processamento: Validar dados obrigatórios, persistir solicitação.\n- Saidas: Identificador único da solicitação, status inicial \"Pendente\".\n\nFluxo Principal:\n1. Usuário acessa área de reembolso.\n2. Usuário preenche RF-01 (valor, tipo, data, justificativa).\n3. Usuário anexa RF-02 (comprovantes).\n4. Usuário clica em \"Submeter Solicitação\".\n5. Sistema valida RF-01, RF-02 e RF-03...\n\nRegras de Negocio:\n1. Cada solicitação deve ter pelo menos um comprovante anexado.\n2. A justificativa deve conter no mínimo 50 caracteres.\n3. O valor da solicitação deve estar entre R$ 1,00 e R$ 5.000,00.\n4. Arquivos anexados não podem con...\n\nCriterios de Aceite:\nDADO que o usuário comum esteja logado e tenha acesso ao sistema.\nQUANDO ele acessar o módulo de reembolso.\nENTAO ele deve ver um formulário com campos para valor, tipo, data, justificativa e botão de anexar.\nQUANDO ele preencher os campos obrigatórios (valor,...",
+    "_runtimeMeta": {
+      "providerOrder": [
+        "gemini",
+        "nvidia",
+        "openrouter",
+        "ollama"
+      ],
+      "primaryProvider": "gemini",
+      "primaryModel": "gemini-2.0-flash",
+      "localFallbackDisabled": false,
+      "policyVersion": "v1",
+      "promptVersion": "v1",
+      "releaseVersion": "1.0.0",
+      "capturedAt": "2026-03-23T19:51:06.687Z"
+    }
+  }
+}

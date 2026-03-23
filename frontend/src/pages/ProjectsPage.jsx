@@ -40,6 +40,13 @@ const BOARD_COLUMNS = [
   { key: 'done', label: 'Concluído', icon: CheckCircle2 },
 ];
 
+const TASK_TYPE_ORDER = ['epic', 'story', 'task'];
+const TASK_TYPE_META = {
+  epic: { label: 'Epics' },
+  story: { label: 'Stories' },
+  task: { label: 'Tecnicas' },
+};
+
 const EMPTY_BOOTSTRAP = { userName: '', email: '', workspaceName: '' };
 const EMPTY_PROJECT = { name: '', description: '', vision: '' };
 const EMPTY_TASK = {
@@ -66,6 +73,12 @@ function formatElapsed(seconds) {
 
 function hasCurrentArtifact(task, artifactType) {
   return (task?.artifacts || []).some((artifact) => artifact.artifactType === artifactType && artifact.isCurrent);
+}
+
+function isTaskAgentRunning(task, agentName = null) {
+  const runs = task?.agentRuns || [];
+  if (!runs.length) return false;
+  return runs.some((run) => run.status === 'running' && (!agentName || run.agentName === agentName));
 }
 
 function TextInput({ label, value, onChange, placeholder, icon: Icon }) {
@@ -139,14 +152,23 @@ function TaskCard({
   const hasTestPlan = hasCurrentArtifact(task, 'test_plan');
   const isDone = task.status === 'done';
   const processingError = task.processingError;
-  const canRunRequirements = !hasRequirements;
-  const canRunQa = hasRequirements && !hasTestPlan;
+  const isStory = task.taskType === 'story';
+  const isEpic = task.taskType === 'epic';
+  const requirementsRunning = isTaskAgentRunning(task, 'requirements_analyst');
+  const qaRunning = isTaskAgentRunning(task, 'qa_engineer');
+  const canRunRequirements = isStory && !hasRequirements && !requirementsRunning;
+  const canRunQa = isStory && hasRequirements && !hasTestPlan && !qaRunning;
   const canRunImplementation = Boolean(implementationUnlocked);
 
   const priorityColors = {
     high: 'bg-rose-50 text-rose-700',
     medium: 'bg-blue-50 text-[#102a72]',
     low: 'bg-slate-100 text-slate-600',
+  };
+  const typeLabels = {
+    epic: 'Epic',
+    story: 'Story',
+    task: 'Tecnica',
   };
 
   return (
@@ -163,6 +185,9 @@ function TaskCard({
             <div className="flex flex-wrap items-center gap-2">
               <span className={`dashboard-badge ${priorityColors[task.priority] || priorityColors.medium}`}>
                 {task.priority}
+              </span>
+              <span className="dashboard-badge bg-slate-100 text-slate-600">
+                {typeLabels[task.taskType] || task.taskType || 'Task'}
               </span>
               <span className="text-[11px] font-semibold text-slate-400">#{task.uuid?.split('-')[0]}</span>
             </div>
@@ -211,24 +236,53 @@ function TaskCard({
       <div className="mt-auto flex items-center gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
         {!isDone ? (
           <>
-            <button
-              onClick={() => onRequirements(task.uuid)}
-              disabled={busy || !canRunRequirements}
-              className="dashboard-button-primary flex-1"
-              title={!canRunRequirements ? 'A etapa de requisitos já foi concluída.' : undefined}
-            >
-              <FileText className="h-4 w-4" />
-              Analisar
-            </button>
-            <button
-              onClick={() => onQa(task.uuid)}
-              disabled={busy || !canRunQa}
-              className="dashboard-button-secondary flex-1"
-              title={!canRunQa && hasTestPlan ? 'A etapa de QA já foi concluída.' : undefined}
-            >
-              <TestTube2 className="h-4 w-4" />
-              Validar
-            </button>
+            {isStory ? (
+              <>
+                <button
+                  onClick={() => onRequirements(task.uuid)}
+                  disabled={busy || !canRunRequirements}
+                  className="dashboard-button-primary flex-1"
+                  title={
+                    requirementsRunning
+                      ? 'Ja existe uma execucao de requisitos em andamento para esta task.'
+                      : !canRunRequirements
+                        ? 'A etapa de requisitos ja foi concluida.'
+                        : undefined
+                  }
+                >
+                  <FileText className="h-4 w-4" />
+                  {requirementsRunning ? 'Executando...' : 'Analisar'}
+                </button>
+                <button
+                  onClick={() => onQa(task.uuid)}
+                  disabled={busy || !canRunQa}
+                  className="dashboard-button-secondary flex-1"
+                  title={
+                    qaRunning
+                      ? 'Ja existe uma execucao de QA em andamento para esta task.'
+                      : !canRunQa && hasTestPlan
+                        ? 'A etapa de QA ja foi concluida.'
+                        : undefined
+                  }
+                >
+                  <TestTube2 className="h-4 w-4" />
+                  {qaRunning ? 'Executando...' : 'Validar'}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => onOpenDetail(task.uuid)}
+                  className="dashboard-button-secondary flex-1"
+                >
+                  <FileText className="h-4 w-4" />
+                  Abrir detalhes
+                </button>
+                <div className="flex flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-center text-xs font-medium text-slate-500">
+                  {isEpic ? 'Epic nao entra em requisitos/QA' : 'Tarefa tecnica fora do fluxo de refinamento'}
+                </div>
+              </>
+            )}
           </>
         ) : (
           <>
@@ -346,6 +400,11 @@ export default function ProjectsPage() {
       BOARD_COLUMNS.map((column) => ({
         ...column,
         tasks: tasks.filter((task) => task.status === column.key),
+        sections: TASK_TYPE_ORDER.map((type) => ({
+          type,
+          label: TASK_TYPE_META[type].label,
+          tasks: tasks.filter((task) => task.status === column.key && (task.taskType || 'task') === type),
+        })).filter((section) => section.tasks.length > 0),
       })),
     [tasks]
   );
@@ -490,6 +549,7 @@ export default function ProjectsPage() {
   const doneCount = tasks.filter((task) => task.status === 'done').length;
   const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
   const implementationBlockReason = architectureStatus?.blockers?.[0] || null;
+  const hasAgentGeneratedStories = tasks.some((task) => task.assigneeAgentName === 'requirements_analyst' || task.taskType === 'story');
 
   return (
     <AppShell
@@ -701,6 +761,26 @@ export default function ProjectsPage() {
                       {activeProject?.vision ||
                         'Selecione um projeto no catálogo para operar backlog, requisitos, QA e liberação técnica no mesmo board.'}
                     </p>
+                    {activeProjectUuid && !hasAgentGeneratedStories && (
+                      <div className="mt-5 flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/projects/${activeProjectUuid}`)}
+                          className="dashboard-button-primary"
+                        >
+                          <Sparkles className="h-4 w-4" />
+                          Criar user stories
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/projects/${activeProjectUuid}`)}
+                          className="dashboard-button-secondary"
+                        >
+                          <FileText className="h-4 w-4" />
+                          Abrir briefing do projeto
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid w-full gap-4 sm:grid-cols-3 xl:w-auto">
@@ -828,19 +908,35 @@ export default function ProjectsPage() {
                       <div className="h-[min(68vh,760px)] p-4">
                         <div className="flex h-full flex-col gap-4 overflow-y-auto pr-1">
                           <AnimatePresence mode="popLayout">
-                            {column.tasks.map((task) => (
-                              <TaskCard
-                                key={task.uuid}
-                                task={task}
-                                busy={saving}
-                                onRequirements={handleRunRequirements}
-                                onQa={handleRunQa}
-                                onOpenCodeStudio={handleOpenCodeStudio}
-                                onExportArtifacts={exportTaskArtifacts}
-                                onOpenDetail={(taskUuid) => navigate(`/projects/${activeProjectUuid}/tasks/${taskUuid}`)}
-                                implementationUnlocked={implementationUnlocked}
-                                implementationBlockReason={implementationBlockReason}
-                              />
+                            {column.sections.map((section) => (
+                              <motion.div
+                                key={`${column.key}-${section.type}`}
+                                layout
+                                initial={{ opacity: 0, y: 6 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="space-y-3"
+                              >
+                                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">
+                                    {section.label}
+                                  </p>
+                                  <span className="text-xs font-semibold text-slate-500">{section.tasks.length}</span>
+                                </div>
+                                {section.tasks.map((task) => (
+                                  <TaskCard
+                                    key={task.uuid}
+                                    task={task}
+                                    busy={saving}
+                                    onRequirements={handleRunRequirements}
+                                    onQa={handleRunQa}
+                                    onOpenCodeStudio={handleOpenCodeStudio}
+                                    onExportArtifacts={exportTaskArtifacts}
+                                    onOpenDetail={(taskUuid) => navigate(`/projects/${activeProjectUuid}/tasks/${taskUuid}`)}
+                                    implementationUnlocked={implementationUnlocked}
+                                    implementationBlockReason={implementationBlockReason}
+                                  />
+                                ))}
+                              </motion.div>
                             ))}
                           </AnimatePresence>
 

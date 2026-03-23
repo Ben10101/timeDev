@@ -89,12 +89,42 @@ def validate_qa_output(result):
     if missing:
         return False, f"Secoes ausentes: {', '.join(missing)}"
 
+    def extract_section_body(source, start_marker, next_markers):
+        start_index = source.find(start_marker)
+        if start_index == -1:
+            return ""
+
+        start_index += len(start_marker)
+        end_index = len(source)
+        for marker in next_markers:
+            marker_index = source.find(marker, start_index)
+            if marker_index != -1:
+                end_index = min(end_index, marker_index)
+        return source[start_index:end_index]
+
+    def count_numbered_items(section_text):
+        return len(
+            re.findall(
+                r"(?:^|\n)\s*(?:[-*]\s+)?(?:ct\s*0*\d+|\d+[\.\)])",
+                section_text,
+                re.IGNORECASE,
+            )
+        )
+
     happy_match = re.search(r"caminho feliz(.+?)(?:excecao|$)", normalized, re.DOTALL)
     exception_match = re.search(r"excecao(.+?)(?:casos de teste funcionais|$)", normalized, re.DOTALL)
-    cases_match = re.search(r"ct0?1", normalized)
+    functional_cases_section = extract_section_body(
+        normalized,
+        "casos de teste funcionais",
+        ["usabilidade e acessibilidade", "fim_do_plano_de_testes"],
+    )
+    cases_match = re.search(r"ct\s*0*1", functional_cases_section)
 
     happy_count = len(re.findall(r"(?:^|\n)\s*[1-5]\.", happy_match.group(1))) if happy_match else 0
     exception_count = len(re.findall(r"(?:^|\n)\s*[1-5]\.", exception_match.group(1))) if exception_match else 0
+    functional_cases_count = count_numbered_items(functional_cases_section)
+    action_count = len(re.findall(r"\bacao\b", functional_cases_section))
+    expected_result_count = len(re.findall(r"resultado esperado", functional_cases_section))
 
     if happy_count < 5:
         return False, "Menos de 5 cenarios de caminho feliz."
@@ -102,7 +132,11 @@ def validate_qa_output(result):
     if exception_count < 5:
         return False, "Menos de 5 cenarios de excecao."
 
-    if not cases_match:
+    has_structured_functional_cases = (
+        functional_cases_count >= 3 and action_count >= 3 and expected_result_count >= 3
+    )
+
+    if not cases_match and not has_structured_functional_cases:
         return False, "Casos de teste funcionais nao foram gerados."
 
     if "fim_do_plano_de_testes" not in normalized:

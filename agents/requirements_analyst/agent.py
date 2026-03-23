@@ -120,5 +120,5 @@ DIRETRIZES FINAIS:
                 "temperature": 0.1,
                 "num_predict": int(os.getenv("REQUIREMENTS_LLM_NUM_PREDICT", "1800")),
             },
-            max_retries=int(os.getenv("REQUIREMENTS_MAX_RETRIES", "3")),
+            max_retries=int(os.getenv("REQUIREMENTS_MAX_RETRIES", "1")),
         )

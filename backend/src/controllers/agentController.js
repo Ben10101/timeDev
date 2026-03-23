@@ -72,11 +72,29 @@ function hasBrokenEnding(content = '') {
   return /[:|*_\-\/(\[{,;]$/.test(text);
 }
 
-function assertArtifactCompleteness(agentName, content) {
-  const normalized = (content || '')
+function normalizeArtifactText(content = '') {
+  return String(content || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
+}
+
+function extractNormalizedArtifactSection(content = '', sectionTitle = '', nextSectionTitles = []) {
+  const normalized = normalizeArtifactText(content);
+  const escapedTitle = sectionTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const nextPattern = nextSectionTitles.length
+    ? `(?=\\n##+\\s+(?:${nextSectionTitles.map((title) => title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})|$)`
+    : '$';
+  const match = normalized.match(new RegExp(`##+\\s+${escapedTitle}\\s*([\\s\\S]*?)${nextPattern}`, 'i'));
+  return (match?.[1] || '').trim();
+}
+
+function countNumberedQaCases(section = '') {
+  return (section.match(/(?:^|\n)\s*(?:[-*]\s+)?(?:ct\s*0*\d+|\d+[\.\)])/gi) || []).length;
+}
+
+function assertArtifactCompleteness(agentName, content) {
+  const normalized = normalizeArtifactText(content);
 
   if (!content?.trim()) {
     throw new Error(`O agente ${agentName} retornou um artefato vazio.`);
@@ -89,8 +107,8 @@ function assertArtifactCompleteness(agentName, content) {
       'fluxo principal',
       'fluxos alternativos',
       'fluxos de excecao',
-      'regras de negócio',
-      'critérios de aceite',
+      'regras de negocio',
+      'criterios de aceite',
     ];
 
     for (const section of requiredSections) {
@@ -109,7 +127,7 @@ function assertArtifactCompleteness(agentName, content) {
       'estrategia de testes',
       'dados de teste',
       'riscos e metricas',
-      'cenários de teste',
+      'cenarios de teste',
       'casos de teste funcionais',
       'usabilidade e acessibilidade',
     ];
@@ -120,7 +138,17 @@ function assertArtifactCompleteness(agentName, content) {
       }
     }
 
-    if (!normalized.includes('ct01')) {
+    const functionalCasesSection = extractNormalizedArtifactSection(content, 'casos de teste funcionais', [
+      'usabilidade e acessibilidade',
+      'fim_do_plano_de_testes',
+    ]);
+    const hasCt01 = /ct\s*0*1/i.test(functionalCasesSection);
+    const numberedCases = countNumberedQaCases(functionalCasesSection);
+    const actionCount = (functionalCasesSection.match(/\bacao\b/g) || []).length;
+    const expectedResultCount = (functionalCasesSection.match(/resultado esperado/g) || []).length;
+    const hasStructuredFunctionalCases = numberedCases >= 3 && actionCount >= 3 && expectedResultCount >= 3;
+
+    if (!hasCt01 && !hasStructuredFunctionalCases) {
       throw new Error('O plano de testes foi retornado sem casos de teste funcionais completos.');
     }
   }

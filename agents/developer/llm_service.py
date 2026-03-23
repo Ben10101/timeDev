@@ -14,12 +14,23 @@ try:
 except Exception:
     pass
 
+GEMINI_SDK = None
+genai = None
+google_genai = None
+
 try:
-    import google.generativeai as genai
+    from google import genai as google_genai
+
+    GEMINI_SDK = "google-genai"
 except ImportError:
-    raise ImportError(
-        "A biblioteca do Google Gemini (google-generativeai) nao esta instalada. Rode: pip install -r requirements.txt"
-    )
+    try:
+        import google.generativeai as genai
+
+        GEMINI_SDK = "google-generativeai"
+    except ImportError:
+        raise ImportError(
+            "Nenhuma biblioteca Gemini foi encontrada. Rode: pip install -r requirements.txt"
+        )
 
 from dotenv import load_dotenv
 
@@ -43,13 +54,14 @@ except Exception as e:
     CACHE = None
     CACHE_ENABLED = False
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=True)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    if GEMINI_SDK == "google-generativeai":
+        genai.configure(api_key=GEMINI_API_KEY)
 
-SUPPORTED_PROVIDERS = ("gemini", "openai", "anthropic", "groq", "openrouter", "ollama")
+SUPPORTED_PROVIDERS = ("gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "openrouter", "ollama")
 
 
 def is_error_text_response(result: str) -> bool:
@@ -98,7 +110,7 @@ def get_provider_order():
             return [] if disable_ollama_fallback else ["ollama"]
         return [llm_provider, *others] if disable_ollama_fallback else [llm_provider, *others, "ollama"]
 
-    fallback_order = ["gemini", "openai", "anthropic", "groq", "openrouter", "ollama"]
+    fallback_order = ["gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "openrouter", "ollama"]
     return [provider for provider in fallback_order if not (disable_ollama_fallback and provider == "ollama")]
 
 
@@ -187,6 +199,18 @@ def generate_text_with_gemini(prompt, model):
     if not os.getenv("GEMINI_API_KEY"):
         raise RuntimeError("GEMINI_API_KEY nao configurada.")
 
+    if GEMINI_SDK == "google-genai":
+        client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config={"temperature": 0.7},
+        )
+        text = getattr(response, "text", None)
+        if text and str(text).strip():
+            return str(text).strip()
+        raise RuntimeError("Resposta vazia do Gemini.")
+
     generation_config = {"temperature": 0.7}
     model_instance = genai.GenerativeModel(model, generation_config=generation_config)
     response = model_instance.generate_content(prompt)
@@ -200,13 +224,120 @@ def generate_text_with_gemini(prompt, model):
     raise RuntimeError("Resposta vazia do Gemini.")
 
 
+def compact_prompt(prompt, ratio):
+    text = str(prompt or "").strip()
+    if ratio >= 0.98 or len(text) < 400:
+        return text
+
+    target_length = max(240, int(len(text) * max(0.35, min(ratio, 0.95))))
+    head_length = int(target_length * 0.72)
+    tail_length = max(80, target_length - head_length)
+    if head_length + tail_length >= len(text):
+        return text
+    return f"{text[:head_length].rstrip()}\n\n[...conteudo resumido automaticamente...]\n\n{text[-tail_length:].lstrip()}"
+
+
 def extract_text_from_openai_like(data):
     return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
+
+def parse_model_list(value):
+    if not value:
+        return []
+    if isinstance(value, (list, tuple)):
+        items = value
+    else:
+        items = re.split(r"[\n,;]+", str(value))
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def get_openrouter_model_candidates(primary_model):
+    candidates = []
+    for candidate in [primary_model, *parse_model_list(os.getenv("OPENROUTER_MODEL_FALLBACKS", ""))]:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def should_fallback_openrouter_model(error_message):
+    normalized = str(error_message or "").strip().lower()
+    if not normalized:
+        return False
+
+    patterns = (
+        r"prompt tokens limit exceeded",
+        r"context length",
+        r"context window",
+        r"maximum context length",
+        r"input.*too long",
+        r"token limit",
+        r"max tokens",
+        r"can only afford",
+        r"capacity",
+        r"temporarily unavailable",
+        r"no endpoints found",
+    )
+    return any(re.search(pattern, normalized, re.I) for pattern in patterns)
+
+
+def generate_text_with_openrouter_model(prompt, model, api_key, options_override=None):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "HTTP-Referer": os.getenv("OPENROUTER_APP_URL") or os.getenv("VITE_FRONTEND_URL") or "http://localhost:5173",
+        "X-Title": os.getenv("OPENROUTER_APP_TITLE") or "Factory OS",
+    }
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": (options_override or {}).get("temperature", 0.7),
+        "max_tokens": max(64, int((options_override or {}).get("num_predict", 800))),
+    }
+
+    attempts = [payload]
+    tried_prompt_compaction = False
+
+    while attempts:
+        current_payload = attempts.pop(0)
+        status, data = http_post_json("https://openrouter.ai/api/v1/chat/completions", current_payload, headers=headers, timeout=120)
+        if status < 400:
+            return extract_text_from_openai_like(data)
+
+        error_message = extract_error_message(data)
+        affordable_match = re.search(r"can only afford\s+(\d+)", error_message or "", re.I)
+        if affordable_match:
+            affordable_tokens = int(affordable_match.group(1))
+            if affordable_tokens >= 64 and affordable_tokens < current_payload["max_tokens"]:
+                attempts.append({
+                    **current_payload,
+                    "max_tokens": max(64, affordable_tokens - 16),
+                })
+                continue
+
+        prompt_limit_match = re.search(r"Prompt tokens limit exceeded:\s*(\d+)\s*>\s*(\d+)", error_message or "", re.I)
+        if prompt_limit_match and not tried_prompt_compaction:
+            requested_tokens = max(1, int(prompt_limit_match.group(1)))
+            limit_tokens = max(1, int(prompt_limit_match.group(2)))
+            ratio = min(0.9, limit_tokens / requested_tokens)
+            attempts.append({
+                **current_payload,
+                "messages": [{
+                    "role": "user",
+                    "content": compact_prompt(prompt, ratio),
+                }],
+            })
+            tried_prompt_compaction = True
+            continue
+
+        raise RuntimeError(error_message)
+
+    raise RuntimeError("Falha inesperada ao gerar texto com OpenRouter.")
 
 
 def generate_text_with_openai_compatible(provider, prompt, model, api_key, options_override=None):
     base_urls = {
         "openai": "https://api.openai.com/v1/chat/completions",
+        "deepseek": "https://api.deepseek.com/chat/completions",
+        "nvidia": "https://integrate.api.nvidia.com/v1/chat/completions",
         "groq": "https://api.groq.com/openai/v1/chat/completions",
         "openrouter": "https://openrouter.ai/api/v1/chat/completions",
     }
@@ -214,8 +345,19 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
         "Authorization": f"Bearer {api_key}",
     }
     if provider == "openrouter":
-        headers["HTTP-Referer"] = os.getenv("OPENROUTER_APP_URL") or os.getenv("VITE_FRONTEND_URL") or "http://localhost:5173"
-        headers["X-Title"] = os.getenv("OPENROUTER_APP_TITLE") or "Factory OS"
+        candidates = get_openrouter_model_candidates(model)
+        openrouter_errors = []
+        for index, candidate_model in enumerate(candidates):
+            try:
+                print(f"[LLM Service] OpenRouter tentando modelo: {candidate_model}", file=sys.stderr)
+                return generate_text_with_openrouter_model(prompt, candidate_model, api_key, options_override)
+            except Exception as error:
+                error_message = str(error)
+                openrouter_errors.append(f"{candidate_model}: {error_message}")
+                if should_fallback_openrouter_model(error_message) and index < len(candidates) - 1:
+                    print(f"[LLM Service] OpenRouter trocando para fallback apos falha em {candidate_model}: {error_message}", file=sys.stderr)
+                    continue
+                raise RuntimeError(" | ".join(openrouter_errors))
 
     payload = {
         "model": model,
@@ -225,24 +367,10 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
     }
 
     status, data = http_post_json(base_urls[provider], payload, headers=headers, timeout=120)
-    if status >= 400:
-        error_message = extract_error_message(data)
-        if provider == "openrouter":
-            affordable_match = re.search(r"can only afford\s+(\d+)", error_message or "", re.I)
-            if affordable_match:
-                affordable_tokens = int(affordable_match.group(1))
-                if affordable_tokens >= 64 and affordable_tokens < payload["max_tokens"]:
-                    retry_payload = {
-                        **payload,
-                        "max_tokens": max(64, affordable_tokens - 16),
-                    }
-                    retry_status, retry_data = http_post_json(base_urls[provider], retry_payload, headers=headers, timeout=120)
-                    if retry_status < 400:
-                        return extract_text_from_openai_like(retry_data)
-                    error_message = extract_error_message(retry_data)
-        raise RuntimeError(error_message)
+    if status < 400:
+        return extract_text_from_openai_like(data)
 
-    return extract_text_from_openai_like(data)
+    raise RuntimeError(extract_error_message(data))
 
 
 def extract_text_from_anthropic(data):
@@ -296,6 +424,18 @@ def generate_text_from_provider(provider, prompt, options_override=None, model_o
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY nao configurada.")
         return generate_text_with_anthropic(prompt, os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"), api_key, options_override)
+
+    if provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY nao configurada.")
+        return generate_text_with_openai_compatible("deepseek", prompt, os.getenv("DEEPSEEK_MODEL", "deepseek-chat"), api_key, options_override)
+
+    if provider == "nvidia":
+        api_key = os.getenv("NVIDIA_API_KEY")
+        if not api_key:
+            raise RuntimeError("NVIDIA_API_KEY nao configurada.")
+        return generate_text_with_openai_compatible("nvidia", prompt, os.getenv("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b"), api_key, options_override)
 
     if provider == "groq":
         api_key = os.getenv("GROQ_API_KEY")

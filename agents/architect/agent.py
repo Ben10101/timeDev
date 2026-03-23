@@ -105,7 +105,7 @@ REGRAS FINAIS
                     "temperature": 0.1,
                     "num_predict": int(os.getenv("ARCHITECT_LLM_NUM_PREDICT", "1700")),
                 },
-                max_retries=int(os.getenv("ARCHITECT_MAX_RETRIES", "3")),
+                max_retries=int(os.getenv("ARCHITECT_MAX_RETRIES", "1")),
             )
         finally:
             if previous_timeout is None:

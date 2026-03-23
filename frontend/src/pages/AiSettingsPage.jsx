@@ -7,6 +7,8 @@ const PROVIDER_OPTIONS = [
   { value: 'ollama', label: 'Ollama' },
   { value: 'gemini', label: 'Gemini' },
   { value: 'openai', label: 'OpenAI' },
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'nvidia', label: 'NVIDIA' },
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'groq', label: 'Groq' },
   { value: 'openrouter', label: 'OpenRouter' },
@@ -17,9 +19,21 @@ const EMPTY_SETTINGS = {
   ollama: { enabled: true, host: 'http://127.0.0.1:11434', model: 'gemma3:4b' },
   gemini: { enabled: false, apiKey: '', model: 'gemini-2.0-flash' },
   openai: { enabled: false, apiKey: '', model: 'gpt-4.1-mini' },
+  deepseek: { enabled: false, apiKey: '', model: 'deepseek-chat' },
+  nvidia: { enabled: false, apiKey: '', model: 'qwen/qwen3.5-122b-a10b' },
   anthropic: { enabled: false, apiKey: '', model: 'claude-3-5-sonnet-latest' },
   groq: { enabled: false, apiKey: '', model: 'llama-3.3-70b-versatile' },
-  openrouter: { enabled: false, apiKey: '', model: 'openai/gpt-4.1-mini' },
+  openrouter: { enabled: false, apiKey: '', model: 'openai/gpt-4.1-mini', fallbackModels: [] },
+};
+
+const OPENROUTER_FREE_PRESET = {
+  model: 'openrouter/free',
+  fallbackModels: [
+    'openai/gpt-oss-120b:free',
+    'qwen/qwen3-coder:free',
+    'deepseek/deepseek-r1-0528-qwen3-8b:free',
+    'z-ai/glm-4.5-air:free',
+  ],
 };
 
 function Field({ label, children, hint }) {
@@ -39,6 +53,15 @@ function TextInput(props) {
     <input
       {...props}
       className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-[#102a72]/40 focus:ring-2 focus:ring-[#102a72]/10"
+    />
+  );
+}
+
+function TextArea(props) {
+  return (
+    <textarea
+      {...props}
+      className="min-h-[120px] w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-[#102a72]/40 focus:ring-2 focus:ring-[#102a72]/10"
     />
   );
 }
@@ -120,7 +143,7 @@ export default function AiSettingsPage() {
         setRuntime(runtimeSummary);
       } catch (loadError) {
         if (!active) return;
-        setError(loadError.response?.data?.message || loadError.message || 'Não foi possível carregar as configurações de IA.');
+        setError(loadError.response?.data?.message || loadError.message || 'Nao foi possivel carregar as configuracoes de IA.');
       } finally {
         if (active) setLoading(false);
       }
@@ -142,9 +165,22 @@ export default function AiSettingsPage() {
       { label: 'Prompt', value: runtime.promptVersion || 'v1' },
       { label: 'Release', value: runtime.platformVersion || '1.0.0' },
       { label: 'Gemini', value: runtime.hasGeminiKey ? 'Configurado' : 'Sem chave' },
-      { label: 'Ollama', value: runtime.ollamaHost ? `${runtime.ollamaModel} @ ${runtime.ollamaHost}` : 'Não configurado' },
+      { label: 'DeepSeek', value: runtime.hasDeepSeekKey ? runtime.deepSeekModel || 'Configurado' : 'Sem chave' },
+      { label: 'NVIDIA', value: runtime.hasNvidiaKey ? runtime.nvidiaModel || 'Configurado' : 'Sem chave' },
+      { label: 'Ollama', value: runtime.ollamaHost ? `${runtime.ollamaModel} @ ${runtime.ollamaHost}` : 'Nao configurado' },
+      {
+        label: 'OpenRouter',
+        value: runtime.openRouterModel
+          ? `${runtime.openRouterModel}${runtime.openRouterFallbackModels?.length ? ` +${runtime.openRouterFallbackModels.length} fallback(s)` : ''}`
+          : 'Nao configurado',
+      },
     ];
   }, [runtime]);
+
+  const openRouterFallbackText = useMemo(
+    () => (settings.openrouter?.fallbackModels || []).join('\n'),
+    [settings.openrouter?.fallbackModels]
+  );
 
   function patchProvider(key, field, value) {
     setSettings((current) => ({
@@ -154,6 +190,21 @@ export default function AiSettingsPage() {
         [field]: value,
       },
     }));
+  }
+
+  function applyOpenRouterFreePreset() {
+    setSettings((current) => ({
+      ...current,
+      providerPreference: current.providerPreference === 'auto' ? current.providerPreference : 'openrouter',
+      openrouter: {
+        ...current.openrouter,
+        enabled: true,
+        model: OPENROUTER_FREE_PRESET.model,
+        fallbackModels: OPENROUTER_FREE_PRESET.fallbackModels,
+      },
+    }));
+    setSuccess('Preset de modelos gratis do OpenRouter aplicado. Informe sua API key e teste a configuracao.');
+    setError('');
   }
 
   async function handleSave(event) {
@@ -169,7 +220,7 @@ export default function AiSettingsPage() {
       setRuntime(runtimeSummary);
       setSuccess('Configuracoes salvas. Os proximos agentes usarao essas credenciais.');
     } catch (saveError) {
-      setError(saveError.response?.data?.message || saveError.message || 'Não foi possível salvar as configurações de IA.');
+      setError(saveError.response?.data?.message || saveError.message || 'Nao foi possivel salvar as configuracoes de IA.');
     } finally {
       setSaving(false);
     }
@@ -198,7 +249,8 @@ export default function AiSettingsPage() {
         const runtimeSummary = await getAiRuntimeSummary();
         setSettings({ ...EMPTY_SETTINGS, ...saved });
         setRuntime(runtimeSummary);
-        setSuccess(`${provider === 'ollama' ? 'Ollama' : provider} validado e ativado com sucesso.`);
+        const providerLabel = provider === 'ollama' ? 'Ollama' : provider === 'deepseek' ? 'DeepSeek' : provider;
+        setSuccess(`${providerLabel} validado e ativado com sucesso.`);
       }
 
       setTestResults((current) => ({ ...current, [provider]: result }));
@@ -207,7 +259,7 @@ export default function AiSettingsPage() {
         ...current,
         [provider]: {
           ok: false,
-          message: testError.response?.data?.message || `Não foi possível testar ${provider}.`,
+          message: testError.response?.data?.message || `Nao foi possivel testar ${provider}.`,
           meta: {
             detail: testError.response?.data?.detail || testError.response?.data?.meta?.detail || testError.message,
           },
@@ -291,7 +343,7 @@ export default function AiSettingsPage() {
                 disabled={testingProvider === 'ollama'}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {testingProvider === 'ollama' ? 'Testando...' : 'Testar conexão'}
+                {testingProvider === 'ollama' ? 'Testando...' : 'Testar conexao'}
               </button>
             </div>
             <TestFeedback result={testResults.ollama} />
@@ -312,7 +364,7 @@ export default function AiSettingsPage() {
                   placeholder="AIza..."
                 />
               </Field>
-              <Field label="Modelo padrão">
+              <Field label="Modelo padrao">
                 <TextInput
                   value={settings.gemini?.model || ''}
                   onChange={(event) => patchProvider('gemini', 'model', event.target.value)}
@@ -333,13 +385,13 @@ export default function AiSettingsPage() {
             <TestFeedback result={testResults.gemini} />
           </ProviderCard>
 
-          <ProviderCard title="OpenAI" description="Área pronta para cadastrar chave e modelo da OpenAI.">
+          <ProviderCard title="OpenAI" description="Area pronta para cadastrar chave e modelo da OpenAI.">
             <Toggle checked={Boolean(settings.openai?.enabled)} onChange={(value) => patchProvider('openai', 'enabled', value)} label={settings.openai?.enabled ? 'Ativo' : 'Inativo'} />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.openai?.apiKey || ''} onChange={(event) => patchProvider('openai', 'apiKey', event.target.value)} placeholder="sk-..." />
               </Field>
-              <Field label="Modelo padrão">
+              <Field label="Modelo padrao">
                 <TextInput value={settings.openai?.model || ''} onChange={(event) => patchProvider('openai', 'model', event.target.value)} placeholder="gpt-4.1-mini" />
               </Field>
             </div>
@@ -356,13 +408,59 @@ export default function AiSettingsPage() {
             <TestFeedback result={testResults.openai} />
           </ProviderCard>
 
-          <ProviderCard title="Anthropic" description="Área pronta para cadastrar chave e modelo da Anthropic.">
+          <ProviderCard title="DeepSeek" description="Use a API oficial da DeepSeek em modo compativel com chat completions.">
+            <Toggle checked={Boolean(settings.deepseek?.enabled)} onChange={(value) => patchProvider('deepseek', 'enabled', value)} label={settings.deepseek?.enabled ? 'Ativo' : 'Inativo'} />
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="API Key">
+                <TextInput type="password" value={settings.deepseek?.apiKey || ''} onChange={(event) => patchProvider('deepseek', 'apiKey', event.target.value)} placeholder="sk-..." />
+              </Field>
+              <Field label="Modelo padrao">
+                <TextInput value={settings.deepseek?.model || ''} onChange={(event) => patchProvider('deepseek', 'model', event.target.value)} placeholder="deepseek-chat" />
+              </Field>
+            </div>
+            <div className="flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => handleTestProvider('deepseek')}
+                disabled={testingProvider === 'deepseek'}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {testingProvider === 'deepseek' ? 'Testando...' : 'Testar chave'}
+              </button>
+            </div>
+            <TestFeedback result={testResults.deepseek} />
+          </ProviderCard>
+
+          <ProviderCard title="NVIDIA NIM" description="Use a API da NVIDIA com modelos servidos pelo endpoint integrate chat completions.">
+            <Toggle checked={Boolean(settings.nvidia?.enabled)} onChange={(value) => patchProvider('nvidia', 'enabled', value)} label={settings.nvidia?.enabled ? 'Ativo' : 'Inativo'} />
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="API Key">
+                <TextInput type="password" value={settings.nvidia?.apiKey || ''} onChange={(event) => patchProvider('nvidia', 'apiKey', event.target.value)} placeholder="nvapi-..." />
+              </Field>
+              <Field label="Modelo padrao">
+                <TextInput value={settings.nvidia?.model || ''} onChange={(event) => patchProvider('nvidia', 'model', event.target.value)} placeholder="qwen/qwen3.5-122b-a10b" />
+              </Field>
+            </div>
+            <div className="flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => handleTestProvider('nvidia')}
+                disabled={testingProvider === 'nvidia'}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {testingProvider === 'nvidia' ? 'Testando...' : 'Testar chave'}
+              </button>
+            </div>
+            <TestFeedback result={testResults.nvidia} />
+          </ProviderCard>
+
+          <ProviderCard title="Anthropic" description="Area pronta para cadastrar chave e modelo da Anthropic.">
             <Toggle checked={Boolean(settings.anthropic?.enabled)} onChange={(value) => patchProvider('anthropic', 'enabled', value)} label={settings.anthropic?.enabled ? 'Ativo' : 'Inativo'} />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.anthropic?.apiKey || ''} onChange={(event) => patchProvider('anthropic', 'apiKey', event.target.value)} placeholder="sk-ant-..." />
               </Field>
-              <Field label="Modelo padrão">
+              <Field label="Modelo padrao">
                 <TextInput value={settings.anthropic?.model || ''} onChange={(event) => patchProvider('anthropic', 'model', event.target.value)} placeholder="claude-3-5-sonnet-latest" />
               </Field>
             </div>
@@ -379,13 +477,13 @@ export default function AiSettingsPage() {
             <TestFeedback result={testResults.anthropic} />
           </ProviderCard>
 
-          <ProviderCard title="Groq" description="Área pronta para cadastrar chave e modelo do Groq.">
+          <ProviderCard title="Groq" description="Area pronta para cadastrar chave e modelo do Groq.">
             <Toggle checked={Boolean(settings.groq?.enabled)} onChange={(value) => patchProvider('groq', 'enabled', value)} label={settings.groq?.enabled ? 'Ativo' : 'Inativo'} />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.groq?.apiKey || ''} onChange={(event) => patchProvider('groq', 'apiKey', event.target.value)} placeholder="gsk_..." />
               </Field>
-              <Field label="Modelo padrão">
+              <Field label="Modelo padrao">
                 <TextInput value={settings.groq?.model || ''} onChange={(event) => patchProvider('groq', 'model', event.target.value)} placeholder="llama-3.3-70b-versatile" />
               </Field>
             </div>
@@ -402,16 +500,45 @@ export default function AiSettingsPage() {
             <TestFeedback result={testResults.groq} />
           </ProviderCard>
 
-          <ProviderCard title="OpenRouter" description="Área pronta para cadastrar chave e modelo do OpenRouter.">
+          <ProviderCard title="OpenRouter" description="Area pronta para cadastrar chave e modelo do OpenRouter.">
             <Toggle checked={Boolean(settings.openrouter?.enabled)} onChange={(value) => patchProvider('openrouter', 'enabled', value)} label={settings.openrouter?.enabled ? 'Ativo' : 'Inativo'} />
+            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-sky-900">Usar modelos free</p>
+                <p className="text-xs text-sky-700">Preenche automaticamente o router gratis e tres fallbacks gratuitos para coding.</p>
+              </div>
+              <button
+                type="button"
+                onClick={applyOpenRouterFreePreset}
+                className="rounded-2xl border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-800 transition hover:bg-sky-100"
+              >
+                Aplicar preset free
+              </button>
+            </div>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.openrouter?.apiKey || ''} onChange={(event) => patchProvider('openrouter', 'apiKey', event.target.value)} placeholder="sk-or-..." />
               </Field>
-              <Field label="Modelo padrão">
+              <Field label="Modelo padrao">
                 <TextInput value={settings.openrouter?.model || ''} onChange={(event) => patchProvider('openrouter', 'model', event.target.value)} placeholder="openai/gpt-4.1-mini" />
               </Field>
             </div>
+            <Field label="Modelos de fallback" hint="Use um modelo por linha. Se o principal atingir limite de tokens, contexto ou capacidade, a plataforma tenta os proximos com a mesma API key.">
+              <TextArea
+                value={openRouterFallbackText}
+                onChange={(event) =>
+                  patchProvider(
+                    'openrouter',
+                    'fallbackModels',
+                    event.target.value
+                      .split(/\r?\n|,|;/)
+                      .map((item) => item.trim())
+                      .filter(Boolean)
+                  )
+                }
+                placeholder={'openai/gpt-4.1-mini\nanthropic/claude-3.5-sonnet\nmeta-llama/llama-3.3-70b-instruct'}
+              />
+            </Field>
             <div className="flex items-center justify-end">
               <button
                 type="button"
@@ -434,7 +561,7 @@ export default function AiSettingsPage() {
               disabled={loading || saving}
               className="rounded-2xl bg-[#102a72] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#102a72]/20 transition hover:bg-[#0c2058] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {saving ? 'Salvando...' : 'Salvar configurações'}
+              {saving ? 'Salvando...' : 'Salvar configuracoes'}
             </button>
           </div>
         </form>

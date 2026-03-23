@@ -80,32 +80,34 @@ Historia:
 Resumo estrutural dos requisitos:
 {requirement_summary}
 
-Responda em portugues com as secoes abaixo, de forma direta e implementavel:
+Responda em portugues e use EXATAMENTE estes titulos de secao em Markdown, nesta ordem:
 
-1. Estrategia de testes
+## Estrategia de testes
 Inclua testes unitarios, integracao, API, UI e E2E em no maximo 6 bullets.
 
-2. Dados de teste sugeridos
+## Dados de teste
 Inclua dados validos, invalidos, limites e cenarios de falha.
 
-3. Riscos e metricas
+## Riscos e metricas
 Liste cobertura esperada, riscos criticos e severidade.
 
-4. Cenarios de teste
+## Cenarios de teste
 Gere exatamente 5 cenarios de caminho feliz e 5 cenarios de excecao.
 
-5. Casos de teste funcionais
-Para cada caso, use:
-- Acao
-- Resultado esperado
+## Casos de teste funcionais
+Gere pelo menos 3 casos numerados.
+Para cada caso, use explicitamente as linhas:
+- Acao:
+- Resultado esperado:
 
-6. Usabilidade e acessibilidade
-Considere heuristicas de Nielsen, leis de UX e WCAG.
+## Usabilidade e acessibilidade
+Liste checks objetivos cobrindo heuristicas de Nielsen, leis de UX e WCAG.
 
 Regras finais:
 - Nao invente escopo fora da historia.
 - Seja especifico, mas evite texto excessivamente longo.
 - Limite a resposta a aproximadamente 900 palavras.
+- Nao omita nenhuma das secoes obrigatorias acima.
 - Encerre OBRIGATORIAMENTE a resposta com a linha exata: FIM_DO_PLANO_DE_TESTES
 """
 
@@ -119,7 +121,7 @@ Regras finais:
                     "temperature": 0.1,
                     "num_predict": int(os.getenv("QA_OLLAMA_NUM_PREDICT", "1500")),
                 },
-                max_retries=int(os.getenv("QA_MAX_RETRIES", "3")),
+                max_retries=int(os.getenv("QA_MAX_RETRIES", "1")),
             )
         finally:
             if previous_timeout is None:
