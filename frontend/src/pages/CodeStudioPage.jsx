@@ -597,7 +597,7 @@ export default function CodeStudioPage() {
                   <Hammer className="h-4 w-4" />
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Codigo</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Entrega</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ? 'Liberado' : 'Bloqueado'}</p>
                 </div>
               </div>

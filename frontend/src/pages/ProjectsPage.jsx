@@ -663,7 +663,7 @@ export default function ProjectsPage() {
                       label="Nome do workspace"
                       value={bootstrapForm.workspaceName}
                       onChange={(e) => setBootstrapForm((prev) => ({ ...prev, workspaceName: e.target.value }))}
-                      placeholder="Factory Hub"
+                      placeholder="Aligna Workspace"
                       icon={Layout}
                     />
                     <button disabled={saving} className="dashboard-button-primary mt-2 w-full">

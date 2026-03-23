@@ -1,410 +1,263 @@
-# 🏭 AI Software Factory - Gera Projetos Reais e Executáveis
+# Aligna
 
-**AI Software Factory** é uma plataforma inteligente que gera **projetos completos e funcionais** a partir de uma simples descrição de ideia.
+**Aligna ajuda times a alinhar e validar requisitos antes do desenvolvimento.**
 
-## ✨ O Que Você Recebe
+## Why Aligna
 
-Ao descrever uma ideia, a factory gera tudo pronto para rodar:
+A maioria dos problemas de software nasce antes da implementacao. O Aligna ajuda a garantir clareza antes do codigo.
 
-✅ **Frontend React** completo com Vite + TailwindCSS
-✅ **Backend Node.js/Express** funcional
-✅ **Documentação completa** (Backlog, Requisitos, Arquitetura)
-✅ **Estrutura real de arquivos** pronta para desenvolvimento
-✅ **Download em ZIP** - Execute localmente em segundos
-- 🧪 **Testes** - Plano de testes, cenários e estratégias de QA
+Em vez de pular da ideia direto para a implementacao, o produto transforma uma necessidade inicial em um pacote mais claro, verificavel e menos ambiguo para produto, engenharia e QA.
 
-Este é um **MVP funcional** pronto para ser expandido em uma solução SaaS completa.
+## What problem it solves
 
----
+Times sofrem com:
 
-## 🏗️ Arquitetura do Projeto
+- retrabalho causado por requisitos vagos
+- historias mal especificadas
+- criterios de aceite incompletos
+- regras de negocio implícitas
+- cenarios de teste pensados tarde demais
 
-### Estrutura de Pastas
+O Aligna reduz esse desalinhamento antes do desenvolvimento.
 
-```
-ai-software-factory/
-├── frontend/                 # React + Vite
-│   ├── src/
-│   │   ├── components/      # Componentes React
-│   │   ├── pages/           # Páginas da aplicação
-│   │   ├── services/        # Serviços de API
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── package.json
-│   ├── vite.config.js
-│   └── tailwind.config.js
-│
-├── backend/                  # Node.js + Express
-│   ├── src/
-│   │   ├── controllers/     # Controladores
-│   │   ├── routes/          # Rotas da API
-│   │   ├── services/        # Serviços
-│   │   └── server.js
-│   └── package.json
-│
-├── agents/                   # Agentes Python
-│   ├── project_manager/     # Gera backlog
-│   ├── requirements_analyst/# Gera requisitos
-│   ├── architect/           # Define arquitetura
-│   ├── developer/           # Gera código
-│   ├── qa_engineer/         # Gera testes
-│   └── __init__.py
-│
-├── orchestrator/            # Orquestrador Python
-│   ├── factory.py           # Executa o pipeline
-│   ├── workflow.py          # Define as etapas
-│   └── __init__.py
-│
-├── prompts/                 # Instruções para agentes
-│   ├── pm_prompt.txt
-│   ├── requirements_prompt.txt
-│   ├── architect_prompt.txt
-│   ├── developer_prompt.txt
-│   └── qa_prompt.txt
-│
-├── outputs/                 # Artefatos gerados
-│   └── projects/
-│       └── [project-id]/
-│           ├── backlog.md
-│           ├── requirements.md
-│           ├── architecture.md
-│           ├── code_structure.md
-│           └── tests.md
-│
-├── scripts/                 # Scripts de automação
-│   ├── run_factory.py      # Executa a factory
-│   └── start_services.py   # Inicia serviços
-│
-├── docs/                    # Documentação adicional
-│   └── ARCHITECTURE.md
-│
-└── README.md               # Este arquivo
-```
+## Core flow
 
----
+Entrada:
 
-## 🛠️ Stack Tecnológico
+- uma ideia
+- uma feature
+- uma necessidade de negocio
+
+Saida:
+
+- user story refinada
+- criterios de aceite
+- regras de negocio
+- cenarios de teste
+- score de clareza
+- alertas de ambiguidade
+
+## Main product experience
+
+1. O usuario descreve a necessidade na tela principal
+2. O Aligna analisa a entrada
+3. O produto devolve um pacote estruturado para alinhamento antes do desenvolvimento
+4. O time pode seguir para projetos, handoff tecnico e governanca quando fizer sentido
+
+## Clarity score
+
+O produto avalia a entrada em quatro dimensoes principais:
+
+- `clarity`
+- `completeness`
+- `testability`
+- `ambiguity`
+
+Observacao:
+
+- `clarity`, `completeness` e `testability` usam a logica "quanto maior, melhor"
+- `ambiguity` representa risco semantico: quanto menor, melhor
+- `overall` consolida essas leituras em um score unico
+
+## Ambiguity alerts
+
+O Aligna sinaliza problemas comuns como:
+
+- termos vagos
+- ator indefinido
+- objetivo de negocio ausente
+- fluxo sem excecao
+- regras de negocio incompletas
+- contexto insuficiente
+
+## Stack
 
 ### Frontend
-- **React 18.2** - Biblioteca de UI
-- **Vite 5.0** - Build tool rápido
-- **TailwindCSS 3.3** - Framework CSS
-- **Axios 1.6** - Cliente HTTP
-- **React Router 6.20** - Roteamento
+
+- React
+- Vite
+- Tailwind CSS
+- Framer Motion
+- Axios
 
 ### Backend
-- **Node.js 18+** - Runtime JavaScript
-- **Express 4.18** - Framework web
-- **CORS** - Compartilhamento de recurso entre origens
-- **UUID** - Gerador de IDs únicos
 
-### Agentes (Python)
-- **Python 3.8+** - Linguagem dos agentes
-- Agentes modulares para cada responsabilidade
-- JSON para formatação de output
+- Node.js
+- Express
+- Prisma
+- MySQL
 
----
+### AI runtime
 
-## 🚀 Quick Start
+- Python agent layer
+- multiple provider configuration
+- OpenAI / Anthropic / Gemini / Groq / OpenRouter / Ollama support
 
-### Pré-requisitos
+## Repository structure
 
-- Node.js 18+ e npm
-- Python 3.8+
-
-### 1. Clonar o Repositório
-
-```bash
-git clone https://github.com/seu-usuario/ai-software-factory.git
-cd ai-software-factory
+```text
+frontend/                 main product UI
+backend/                  main API and services
+agents/                   agent implementations
+orchestrator/             legacy orchestration compatibility layer
+tests/                    root-level smoke and agent tests
+scripts/maintenance/      maintenance and local support scripts
+scripts/windows/          Windows helper scripts
+experiments/              archived non-canonical implementations
+docs/                     product and repository documentation
+generated-projects/       generated example output
 ```
 
-### 2. Instalar Dependências do Frontend
+More detail:
+
+- canonical architecture: [docs/ALIGNA_ARCHITECTURE.md](docs/ALIGNA_ARCHITECTURE.md)
+- repository audit: [docs/REPOSITORY_AUDIT.md](docs/REPOSITORY_AUDIT.md)
+
+## Run locally
+
+### 1. Install dependencies
+
+Backend:
+
+```bash
+cd backend
+npm install
+```
+
+Frontend:
 
 ```bash
 cd frontend
 npm install
-cd ..
 ```
 
-### 3. Instalar Dependências do Backend
+Python dependencies, if you want to run the legacy/agent layer locally:
 
 ```bash
-cd backend
-npm install
-cd ..
+pip install -r requirements.txt
 ```
 
-### 4. Verificar Python (Agentes)
+### 2. Configure environment
 
-```bash
-python --version  # Deve ser 3.8+
-```
+Create and adjust your local `.env` at the repository root with at least:
 
-### 5. Iniciar os Serviços
+- database connection
+- auth secrets
+- optional AI provider keys
 
-#### Terminal 1 - Backend (Node.js)
+### 3. Start the backend
+
 ```bash
 cd backend
 npm run dev
-# Backend rodando em http://localhost:3001
 ```
 
-#### Terminal 2 - Frontend (React)
+### 4. Start the frontend
+
 ```bash
 cd frontend
 npm run dev
-# Frontend rodando em http://localhost:5173
 ```
 
-### 6. Usar a Aplicação
+### 5. Open the app
 
-1. Abra o navegador em `http://localhost:5173`
-2. Digite a ideia de um novo projeto
-3. Clique em "Gerar Projeto"
-4. Aguarde o processamento pelos agentes
-5. Veja os resultados nas abas (Backlog, Requisitos, Arquitetura, Código, Testes)
+Frontend:
 
----
+- `http://localhost:5173`
 
-## 📋 Fluxo da Aplicação
+Backend API:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ 1. Usuário descreve ideia no Frontend                  │
-└─────────────────────────────┬───────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ 2. Frontend envia POST /api/generate-project            │
-└─────────────────────────────┬───────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ 3. Backend Node.js recebe requisição                    │
-└─────────────────────────────┬───────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ 4. Backend chama orchestrator.py                        │
-└─────────────────────────────┬───────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        │                     │                     │
-        ▼                     ▼                     ▼
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│ Project      │      │ Requirements │      │ Architect    │
-│ Manager      │      │ Analyst      │      │              │
-│              │      │              │      │              │
-│ → Backlog    │      │ → Requisitos │      │ → Arquitetura│
-└──────────────┘      └──────────────┘      └──────────────┘
-        │                     │                     │
-        └─────────────────────┼─────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        │                     │                     │
-        ▼                     ▼                     ▼
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│ Developer    │      │ QA Engineer  │      │ Salva em     │
-│              │      │              │      │ outputs/     │
-│ → Código     │      │ → Testes     │      │              │
-└──────────────┘      └──────────────┘      └──────────────┘
-        │                     │                     │
-        └─────────────────────┼─────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ 5. Backend retorna JSON com todos os artefatos         │
-└─────────────────────────────┬───────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ 6. Frontend mostra resultados em abas                  │
-└─────────────────────────────────────────────────────────┘
-```
+- `http://localhost:3001/api`
 
----
+Health:
 
-## 🤖 Agentes da Fábrica
+- `http://localhost:3001/health`
 
-### 1️⃣ Project Manager
-**Responsabilidade**: Gerar backlog e estruturar o projeto
+## Main API endpoint for the new MVP
 
-- Recebe: Ideia da aplicação
-- Processa: Quebra em épicos e histórias de usuário
-- Retorna: Backlog estruturado com tarefas
-
-### 2️⃣ Requirements Analyst
-**Responsabilidade**: Analisar e detalhar requisitos
-
-- Recebe: Ideia + Backlog
-- Processa: Define RF e RNF, cria casos de uso
-- Retorna: Especificação completa de requisitos
-
-### 3️⃣ Architect
-**Responsabilidade**: Definir a arquitetura técnica
-
-- Recebe: Ideia + Requisitos
-- Processa: Seleciona stack, design de componentes
-- Retorna: Arquitetura técnica documentada
-
-### 4️⃣ Developer
-**Responsabilidade**: Gerar estrutura de código
-
-- Recebe: Ideia + Arquitetura
-- Processa: Cria estrutura de pastas, templates de código
-- Retorna: Código inicial e estrutura do projeto
-
-### 5️⃣ QA Engineer
-**Responsabilidade**: Criar plano de testes
-
-- Recebe: Ideia + Código
-- Processa: Define estratégia de testes e cenários
-- Retorna: Plano completo de QA e testes
-
----
-
-## 📁 Endpoints da API
-
-### Gerar Novo Projeto
+Analyze alignment:
 
 ```http
-POST /api/generate-project
-Content-Type: application/json
-
-{
-  "idea": "descrição do projeto"
-}
+POST /api/alignment/analyze
 ```
 
-**Resposta:**
+Example payload:
+
 ```json
 {
-  "projectId": "uuid-aqui",
-  "timestamp": "2024-01-01T10:00:00Z",
-  "backlog": "conteúdo gerado...",
-  "requirements": "conteúdo gerado...",
-  "architecture": "conteúdo gerado...",
-  "code": "conteúdo gerado...",
-  "tests": "conteúdo gerado..."
+  "input": "Como gerente de operacoes, preciso aprovar reembolsos acima de R$ 500 com dupla validacao para reduzir fraude."
 }
 ```
 
----
+Example response shape:
 
-## 🧪 Executar Testes
-
-### Backend
-
-```bash
-cd backend
-npm test
+```json
+{
+  "input_summary": "",
+  "user_story": "",
+  "acceptance_criteria": [],
+  "business_rules": [],
+  "test_scenarios": [],
+  "clarity_score": {
+    "overall": 0,
+    "clarity": 0,
+    "completeness": 0,
+    "testability": 0,
+    "ambiguity": 0
+  },
+  "ambiguity_alerts": []
+}
 ```
 
-### Frontend
+## Screenshots
 
-```bash
-cd frontend
-npm test
+Add product screenshots here:
+
+- `docs/screenshots/home-aligna.png`
+- `docs/screenshots/alignment-output.png`
+- `docs/screenshots/projects-board.png`
+
+Suggested placeholders:
+
+```text
+[ Screenshot: Home with alignment input ]
+[ Screenshot: Clarity score and ambiguity alerts ]
+[ Screenshot: Project board and handoff flow ]
 ```
 
-### Agentes Python
+## Roadmap
 
-```bash
-python scripts/run_factory.py
-```
+### Now
 
----
+- clear alignment-first positioning
+- standardized requirement output
+- clarity score
+- ambiguity alerts
+- cleaner repository structure
 
-## 📚 Documentação Adicional
+### Next
 
-- [Arquitetura Detalhada](docs/ARCHITECTURE.md)
-- [Guia de Contribuição](docs/CONTRIBUTING.md)
-- [API Documentation](docs/API.md)
-- [Installation Guide](docs/INSTALL.md)
+- richer project-to-alignment traceability
+- benchmark across domains
+- stronger historical analytics
+- broader visual regression and deeper E2E coverage
 
----
+### Later
 
-## 🎯 Roadmap Futuro
+- stronger release governance
+- automated remediation playbooks
+- broader requirement patterns by domain
 
-### MVP 1.0 (Atual)
-- [x] Frontend com React
-- [x] Backend com Node.js
-- [x] 5 Agentes Python
-- [x] Geração de artefatos básicos
-- [x] Interface de abas
+## Product positioning
 
-### V2.0 (Próximo)
-- [ ] Integração com modelos de IA (OpenAI, Claude)
-- [ ] Persistência de projetos em banco de dados
-- [ ] Autenticação de usuários
-- [ ] Dashboard de projetos anteriores
-- [ ] Refinamento iterativo de artefatos
+Aligna is no longer presented as a generic full software factory first.
 
-### V3.0
-- [ ] Colaboração em tempo real
-- [ ] Versions de projetos
-- [ ] Exportação de código executável
-- [ ] Deploy automático
-- [ ] Marketplace de templates
+The product now emphasizes:
 
-### SaaS
-- [ ] Planos de preço
-- [ ] Equipes colaborativas
-- [ ] Análise de uso
-- [ ] Suporte 24/7
-- [ ] Integrações (GitHub, GitLab, etc)
+- alignment
+- clarity
+- validation
+- predictability
+- less rework before development
 
----
-
-## 🐛 Troubleshooting
-
-### Erro: "Port 3001 is already in use"
-```bash
-# Mude a porta no backend/.env
-PORT=3002
-```
-
-### Erro: "Python not found"
-```bash
-# Verifique a instalação
-python --version
-
-# No Windows, pode ser necessário usar python3
-python3 scripts/run_factory.py
-```
-
-### Erro de CORS
-Certifique-se de que o backend está rodando em `http://localhost:3001` e o frontend pode acessá-lo.
-
----
-
-## 📄 Licença
-
-Este projeto está licenciado sob a MIT License - veja o arquivo [LICENSE](LICENSE) para detalhes.
-
----
-
-## 👥 Contribuições
-
-Contribuições são bem-vindas! Por favor, consulte [CONTRIBUTING.md](docs/CONTRIBUTING.md) para orientações sobre como contribuir.
-
----
-
-## 📞 Suporte
-
-Para suporte, dúvidas ou feedback:
-- abra uma issue no GitHub
-- envie um email para: seu-email@example.com
-
----
-
-## 🙏 Agradecimentos
-
-Desenvolvido como um projeto MVP para demonstrar a integração de múltiplos agentes de IA em uma plataforma de geração automática de software.
-
----
-
-**Versão**: 1.0.0  
-**Data**: Janeiro 2024  
-**Autor**: Seu Nome  
+Broader implementation capabilities can remain available as supporting surfaces, but they are not the main story of the product anymore.

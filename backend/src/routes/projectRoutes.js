@@ -4,6 +4,7 @@ import { generateProjectController } from '../controllers/projectController.js'
 
 const router = express.Router()
 
+// Legacy broad-factory endpoint kept only for backward compatibility.
 router.post('/generate-project', generateProjectController)
 // router.get('/download-project/:projectId', downloadProjectController)
 

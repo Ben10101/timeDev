@@ -854,7 +854,7 @@ async function ensureSystemWorkspaceAndUser() {
   const workspaceName = 'Pipeline Workspace';
 
   const result = await bootstrapWorkspaceAndUser({
-    userName: 'Factory System',
+    userName: 'Aligna System',
     email,
     workspaceName,
   });

@@ -187,6 +187,11 @@ export async function getActiveAlerts(params = {}) {
   return response.data
 }
 
+export async function analyzeAlignment(input) {
+  const response = await apiClient.post('/alignment/analyze', { input })
+  return response.data
+}
+
 export const generateProject = async (idea) => {
   try {
     const response = await apiClient.post('/generate-project', {
@@ -325,6 +330,7 @@ export default {
   getGovernanceOverview,
   getOperationalHistory,
   getActiveAlerts,
+  analyzeAlignment,
   generateProject,
   bootstrapWorkspace,
   listProjects,

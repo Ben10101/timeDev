@@ -1,7 +1,7 @@
 {
   "name": "ai-software-factory-backend",
   "version": "1.0.0",
-  "description": "Backend for AI Software Factory",
+  "description": "Backend for Aligna",
   "main": "src/server.js",
   "type": "module",
   "scripts": {

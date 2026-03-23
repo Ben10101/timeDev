@@ -1,15 +1,19 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { Activity, AlertCircle, ArrowRight, Bot, Briefcase, Braces, CheckCircle2, Clock3, Cpu, Plus, Settings, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
-import AppShell from '../components/AppShell';
 import {
-  getAiOperationsOverview,
-  getApiErrorMessage,
-  getOperationalHealth,
-  listAllTasks,
-  listProjects,
-} from '../services/api';
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  FileCheck2,
+  ListChecks,
+  ShieldAlert,
+  Sparkles,
+  Target,
+  TestTube2,
+} from 'lucide-react';
+import AppShell from '../components/AppShell';
+import { analyzeAlignment, getApiErrorMessage } from '../services/api';
 
 const fade = (delay = 0) => ({
   initial: { opacity: 0, y: 12 },
@@ -17,411 +21,281 @@ const fade = (delay = 0) => ({
   transition: { duration: 0.3, delay, ease: 'easeOut' },
 });
 
-const STATUS_META = {
-  completed: {
-    badge: 'bg-emerald-50 text-emerald-700',
-    dot: 'bg-emerald-500',
-    label: 'Concluido',
-    iconBg: 'bg-emerald-50 text-emerald-600',
-  },
-  running: {
-    badge: 'bg-blue-50 text-blue-700',
-    dot: 'bg-blue-500 animate-pulse',
-    label: 'Em execucao',
-    iconBg: 'bg-blue-50 text-blue-700',
-  },
-  failed: {
-    badge: 'bg-rose-50 text-rose-700',
-    dot: 'bg-rose-500',
-    label: 'Falhou',
-    iconBg: 'bg-rose-50 text-rose-700',
-  },
-  pending: {
-    badge: 'bg-slate-100 text-slate-700',
-    dot: 'bg-slate-400',
-    label: 'Pendente',
-    iconBg: 'bg-slate-100 text-slate-600',
-  },
-};
-
-const TOOL_LINKS = [
-  { label: 'Projetos', to: '/projects', icon: Briefcase },
-  { label: 'Codigo', to: '/code-studio', icon: Braces },
-  { label: 'Governanca', to: '/governance', icon: ShieldCheck },
-  { label: 'IAs', to: '/settings/ai', icon: Settings },
+const EXAMPLE_PROMPTS = [
+  'Como gerente de operacoes, preciso aprovar reembolsos acima de R$ 500 com dupla validacao para reduzir fraude.',
+  'Quero permitir que clientes acompanhem o status do pedido por notificacoes e timeline no portal.',
+  'Precisamos de um fluxo para cadastrar fornecedores com documentos obrigatorios, aprovacao e bloqueio por pendencias.',
 ];
 
-function StatCard({ label, value, hint, icon: Icon, color, bg, delay = 0 }) {
-  return (
-    <motion.div
-      {...fade(delay)}
-      className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-    >
-      <div className="flex items-start justify-between">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ backgroundColor: bg, color }}>
-          <Icon className="h-5 w-5" strokeWidth={2} />
-        </div>
-        <TrendingUp className="h-4 w-4 text-slate-300" strokeWidth={2} />
-      </div>
-      <div className="mt-5">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</p>
-        <p className="mt-1 text-3xl font-bold tracking-tight text-slate-900">{value}</p>
-        <p className="mt-2 text-sm text-slate-500">{hint}</p>
-      </div>
-    </motion.div>
-  );
-}
+const SCORE_META = [
+  { key: 'overall', label: 'Score geral', icon: Sparkles, hint: 'Visao consolidada da entrada' },
+  { key: 'clarity', label: 'Clareza', icon: Target, hint: 'Objetivo e linguagem objetiva' },
+  { key: 'completeness', label: 'Completude', icon: FileCheck2, hint: 'Contexto, regra e resultado' },
+  { key: 'testability', label: 'Testabilidade', icon: TestTube2, hint: 'Base para QA e aceite' },
+  { key: 'ambiguity', label: 'Ambiguidade', icon: ShieldAlert, hint: 'Risco semantico; menor e melhor' },
+];
 
-function QuickAction({ label, description, icon: Icon, to, navigate, delay = 0 }) {
+function ScoreCard({ label, value, hint, icon: Icon, inverse = false }) {
+  const tone = inverse
+    ? value >= 60
+      ? 'border-rose-200 bg-rose-50 text-rose-700'
+      : value >= 30
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : value >= 75
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : value >= 55
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-rose-200 bg-rose-50 text-rose-700';
+
   return (
-    <motion.button
-      {...fade(delay)}
-      onClick={() => navigate(to)}
-      className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#102a72]/20 hover:shadow-md"
-    >
+    <div className={`rounded-2xl border px-4 py-4 ${tone}`}>
       <div className="flex items-center justify-between">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition-all group-hover:bg-[#102a72]/10 group-hover:text-[#102a72]">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/70">
           <Icon className="h-4.5 w-4.5" strokeWidth={2} />
         </div>
-        <ArrowRight className="h-4 w-4 text-slate-300 transition-all group-hover:translate-x-0.5 group-hover:text-slate-500" />
+        <span className="text-2xl font-bold">{value}</span>
       </div>
-      <p className="mt-4 text-sm font-semibold text-slate-900">{label}</p>
-      <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
-    </motion.button>
+      <p className="mt-4 text-sm font-semibold">{label}</p>
+      <p className="mt-1 text-xs leading-5 opacity-90">{hint}</p>
+    </div>
   );
 }
 
-function RunRow({ run, delay = 0 }) {
-  const statusKey = STATUS_META[run.status] ? run.status : 'pending';
-  const meta = STATUS_META[statusKey];
-
+function OutputBlock({ title, icon: Icon, items, emptyText }) {
   return (
-    <motion.div
-      {...fade(delay)}
-      className="flex items-start gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm"
-    >
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${meta.iconBg}`}>
-        <Bot className="h-4.5 w-4.5" strokeWidth={2} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-sm font-semibold text-slate-900">{run.agentName}</p>
-          <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold ${meta.badge}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
-            {meta.label}
-          </span>
-          {run.runtimeMeta?.providerOrder?.[0] && (
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">
-              {run.runtimeMeta.providerOrder[0]}
-            </span>
-          )}
+    <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#102a72]/10 text-[#102a72]">
+          <Icon className="h-4.5 w-4.5" strokeWidth={2} />
         </div>
-        <p className="mt-1 truncate text-sm text-slate-600">{run.task?.title || run.project?.name || 'Execucao de plataforma'}</p>
-        <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
-          <span>{run.project?.name || 'Sem projeto'}</span>
-          <span>{run.totalTokens || 0} tokens</span>
-          <span>{run.durationSeconds != null ? `${run.durationSeconds}s` : 'Em andamento'}</span>
-          {run.costUsd ? <span>US$ {run.costUsd.toFixed(4)}</span> : null}
-        </div>
-        {run.errorMessage ? <p className="mt-2 line-clamp-2 text-xs text-rose-600">{run.errorMessage}</p> : null}
+        <h2 className="text-base font-bold text-slate-900">{title}</h2>
       </div>
-    </motion.div>
+      <div className="space-y-3 p-5">
+        {items?.length ? (
+          items.map((item, index) => (
+            <div key={`${title}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
+              {typeof item === 'string' ? item : item.message}
+              {typeof item === 'object' && item.recommendation ? (
+                <p className="mt-2 text-xs text-slate-500">Proxima acao: {item.recommendation}</p>
+              ) : null}
+            </div>
+          ))
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+            {emptyText}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
-  const [projects, setProjects] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [health, setHealth] = useState(null);
-  const [operations, setOperations] = useState(null);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
 
-  useEffect(() => {
-    let active = true;
+  const scoreCards = useMemo(() => {
+    if (!result?.clarity_score) return [];
+    return SCORE_META.map((item) => ({
+      ...item,
+      value: result.clarity_score[item.key] ?? 0,
+      inverse: item.key === 'ambiguity',
+    }));
+  }, [result]);
 
-    async function loadDashboard() {
-      try {
-        setLoading(true);
-        setLoadError('');
-        const [projectsResult, tasksResult, healthResult, operationsResult] = await Promise.allSettled([
-          listProjects(),
-          listAllTasks(),
-          getOperationalHealth(),
-          getAiOperationsOverview(),
-        ]);
+  async function handleAnalyze(exampleText) {
+    const nextInput = typeof exampleText === 'string' ? exampleText : input;
 
-        if (!active) return;
-
-        const projectsData = projectsResult.status === 'fulfilled' ? projectsResult.value : [];
-        const tasksData = tasksResult.status === 'fulfilled' ? tasksResult.value : [];
-        const healthData = healthResult.status === 'fulfilled' ? healthResult.value : null;
-        const operationsData = operationsResult.status === 'fulfilled' ? operationsResult.value : null;
-
-        setProjects(Array.isArray(projectsData) ? projectsData : []);
-        setTasks(Array.isArray(tasksData) ? tasksData : []);
-        setHealth(healthData);
-        setOperations(operationsData);
-
-        const primaryError = [projectsResult, tasksResult, healthResult].find((result) => result.status === 'rejected');
-        if (primaryError) {
-          setLoadError(getApiErrorMessage(primaryError.reason, 'Nao foi possivel carregar o dashboard.'));
-        } else if ([operationsResult].some((result) => result.status === 'rejected')) {
-          setLoadError('Parte da observabilidade premium nao esta disponivel no momento, mas o restante do dashboard foi carregado.');
-        }
-      } catch (error) {
-        if (!active) return;
-        setLoadError(getApiErrorMessage(error, 'Nao foi possivel carregar o dashboard.'));
-      } finally {
-        if (active) setLoading(false);
-      }
+    if (!nextInput.trim()) {
+      setError('Descreva uma ideia, feature ou necessidade antes de processar.');
+      return;
     }
 
-    loadDashboard();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const stats = useMemo(() => {
-    const totalProjects = projects.length;
-    const totalTasks = tasks.length;
-    const activeTasks = tasks.filter((task) => ['todo', 'in_progress', 'in_review', 'qa'].includes(task.status)).length;
-    const completedTasks = tasks.filter((task) => task.status === 'done').length;
-    const failedRuns = operations?.summary?.failedRuns || 0;
-    const runningRuns = operations?.summary?.runningRuns || 0;
-
-    return {
-      totalProjects,
-      totalTasks,
-      activeTasks,
-      completedTasks,
-      failedRuns,
-      runningRuns,
-    };
-  }, [projects, tasks, operations]);
-
-  const topProjects = useMemo(() => {
-    return [...projects]
-      .sort((a, b) => {
-        const aTasks = a._count?.tasks || 0;
-        const bTasks = b._count?.tasks || 0;
-        return bTasks - aTasks;
-      })
-      .slice(0, 4);
-  }, [projects]);
-
-  const recentRuns = operations?.recentRuns || [];
-  const healthySystem = health?.status === 'ok' && (operations?.summary?.failedRuns || 0) === 0;
+    try {
+      setLoading(true);
+      setError('');
+      if (typeof exampleText === 'string') {
+        setInput(exampleText);
+      }
+      const analysis = await analyzeAlignment(nextInput);
+      setResult(analysis);
+    } catch (analysisError) {
+      setError(getApiErrorMessage(analysisError, 'Nao foi possivel analisar a clareza da solicitacao.'));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <AppShell
-      eyebrow="Visao Executiva"
-      title="Factory OS"
-      description="Monitore saude, readiness, riscos e operacao da fabrica em uma leitura executiva unica."
+      eyebrow="Alinhamento antes do desenvolvimento"
+      title="Aligna"
+      description="Transforme uma ideia inicial em user story, criterios de aceite, regras de negocio, cenarios de teste e alertas de ambiguidade."
       actions={
-        <button
-          onClick={() => navigate('/projects')}
-          className="inline-flex items-center gap-2 rounded-xl bg-[#102a72] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0c205a] hover:shadow-md"
-        >
-          <Plus className="h-4 w-4" strokeWidth={2.5} />
-          Novo Projeto
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setInput(EXAMPLE_PROMPTS[0])}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all hover:border-slate-300 hover:bg-slate-50"
+          >
+            <Sparkles className="h-4 w-4" strokeWidth={2.2} />
+            Usar exemplo
+          </button>
+          <button
+            onClick={() => navigate('/projects')}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#102a72] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0c205a] hover:shadow-md"
+          >
+            <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
+            Abrir projetos
+          </button>
+        </div>
       }
     >
       <div className="space-y-8">
-        {loadError ? (
-          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">{loadError}</div>
-        ) : null}
-
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            label="Projetos ativos"
-            value={stats.totalProjects}
-            hint="Workspaces e iniciativas em acompanhamento"
-            icon={Briefcase}
-            color="#102a72"
-            bg="#102a7215"
-          />
-          <StatCard
-            label="Tasks abertas"
-            value={stats.activeTasks}
-            hint={`${stats.totalTasks} tasks no total`}
-            icon={Clock3}
-            color="#7c3aed"
-            bg="#7c3aed15"
-            delay={0.05}
-          />
-          <StatCard
-            label="Tasks concluidas"
-            value={stats.completedTasks}
-            hint="Historias que ja passaram por todas as etapas"
-            icon={CheckCircle2}
-            color="#059669"
-            bg="#05966915"
-            delay={0.1}
-          />
-          <StatCard
-            label="Runs com falha"
-            value={stats.failedRuns}
-            hint={`${stats.runningRuns} execucoes em andamento agora`}
-            icon={AlertCircle}
-            color="#dc2626"
-            bg="#dc262615"
-            delay={0.15}
-          />
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.7fr_1fr]">
-          <motion.section
-            {...fade(0.2)}
-            className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
-          >
-            <div className="border-b border-slate-200 px-6 py-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Operacao de IA</p>
-                  <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">Execucoes recentes</h2>
-                  <p className="mt-1 text-sm text-slate-500">Dados reais da plataforma, sem feed mockado.</p>
-                </div>
+        <motion.section {...fade(0.05)} className="rounded-[28px] border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-6 py-5">
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Fluxo principal</p>
+            <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">Descreva a necessidade e valide antes de desenvolver</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+              O Aligna ajuda times a eliminar ambiguidade, reduzir retrabalho e chegar no desenvolvimento com requisitos muito mais claros.
+            </p>
+          </div>
+          <div className="grid gap-6 p-6 xl:grid-cols-[1.5fr_0.9fr]">
+            <div className="space-y-4">
+              <textarea
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder="Exemplo: Como gerente de operacoes, preciso aprovar pedidos acima de R$ 500 com dupla validacao para reduzir fraude e manter rastreabilidade."
+                className="min-h-[220px] w-full rounded-3xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#102a72]/40 focus:bg-white focus:ring-2 focus:ring-[#102a72]/10"
+              />
+              <div className="flex flex-wrap gap-3">
                 <button
-                  onClick={() => navigate('/code-studio')}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition-all hover:border-slate-300 hover:bg-white"
+                  onClick={() => handleAnalyze()}
+                  disabled={loading}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-[#102a72] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#0c205a] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <Cpu className="h-4 w-4" strokeWidth={2} />
-                  Abrir Codigo
+                  <Sparkles className="h-4 w-4" strokeWidth={2.2} />
+                  {loading ? 'Processando...' : 'Gerar alinhamento'}
+                </button>
+                <button
+                  onClick={() => {
+                    setInput('');
+                    setResult(null);
+                    setError('');
+                  }}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  Limpar
                 </button>
               </div>
+              {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
             </div>
-            <div className="space-y-3 p-6">
-              {loading ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                  Carregando execucoes...
-                </div>
-              ) : recentRuns.length ? (
-                recentRuns.slice(0, 6).map((run, index) => <RunRow key={run.uuid} run={run} delay={0.24 + index * 0.04} />)
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                  Nenhuma execucao recente encontrada para este usuario.
-                </div>
-              )}
-            </div>
-          </motion.section>
 
-          <div className="space-y-6">
-            <motion.section
-              {...fade(0.25)}
-              className="rounded-3xl border border-slate-200 bg-white shadow-sm"
-            >
-              <div className="border-b border-slate-200 px-5 py-4">
-                <h2 className="text-sm font-bold text-slate-900">Acoes rapidas</h2>
-                <p className="mt-1 text-xs text-slate-500">Entradas principais do produto</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3 p-4">
-                {TOOL_LINKS.map((tool, index) => (
-                  <QuickAction
-                    key={tool.label}
-                    label={tool.label}
-                    description={
-                      tool.label === 'Projetos'
-                        ? 'Criar, revisar e governar iniciativas'
-                        : tool.label === 'Codigo'
-                            ? 'Gerar e validar a aplicacao'
-                            : tool.label === 'Governanca'
-                              ? 'Auditoria, readiness e alertas'
-                              : 'Configurar providers e fallback'
-                    }
-                    icon={tool.icon}
-                    to={tool.to}
-                    navigate={navigate}
-                    delay={0.28 + index * 0.04}
-                  />
-                ))}
-              </div>
-            </motion.section>
-
-            <motion.section
-              {...fade(0.3)}
-              className={`rounded-3xl border px-5 py-5 shadow-sm ${
-                healthySystem ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <div
-                  className={`flex h-10 w-10 items-center justify-center rounded-xl ${
-                    healthySystem ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                  }`}
-                >
-                  <ShieldCheck className="h-5 w-5" strokeWidth={2} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-semibold ${healthySystem ? 'text-emerald-900' : 'text-amber-900'}`}>
-                    {healthySystem ? 'Plataforma saudavel' : 'Atencao operacional'}
-                  </p>
-                  <p className={`mt-1 text-xs leading-5 ${healthySystem ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    Banco: {health?.database || 'desconhecido'} · Ambiente: {health?.environment || 'desconhecido'} · Uptime:{' '}
-                    {health?.uptimeSeconds != null ? `${health.uptimeSeconds}s` : 'n/d'}
-                  </p>
-                </div>
-              </div>
-            </motion.section>
-          </div>
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
-          <motion.section {...fade(0.34)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Projetos</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Maiores workspaces</h2>
-            </div>
-            <div className="space-y-3 p-6">
-              {topProjects.length ? (
-                topProjects.map((project, index) => (
-                  <motion.button
-                    key={project.uuid}
-                    {...fade(0.4 + index * 0.04)}
-                    onClick={() => navigate(`/projects/${project.uuid}`)}
-                    className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition-all hover:border-slate-300 hover:bg-white"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-900">{project.name}</p>
-                      <p className="mt-1 text-xs text-slate-500">{project._count?.tasks || 0} tasks registradas</p>
+            <div className="space-y-4">
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">O que voce recebe</p>
+                <div className="mt-4 space-y-3">
+                  {[
+                    'User story pronta para refinamento',
+                    'Criterios de aceite acionaveis',
+                    'Regras de negocio para alinhamento',
+                    'Cenarios de teste para QA',
+                    'Score de clareza e alertas de ambiguidade',
+                  ].map((item) => (
+                    <div key={item} className="flex items-start gap-3 rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" strokeWidth={2.4} />
+                      <span>{item}</span>
                     </div>
-                    <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={2} />
-                  </motion.button>
-                ))
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                  Nenhum projeto criado ainda.
+                  ))}
                 </div>
-              )}
-            </div>
-          </motion.section>
+              </div>
 
-          <motion.section {...fade(0.38)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Operacao</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Indicadores principais</h2>
-            </div>
-            <div className="space-y-3 p-6">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                <p className="text-sm font-semibold text-slate-900">Runs totais</p>
-                <p className="mt-1 text-xs leading-5 text-slate-600">
-                  {operations?.summary?.totalRuns || 0} execucoes registradas, com {operations?.summary?.successRatePercent || 0}% de sucesso.
-                </p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                <p className="text-sm font-semibold text-slate-900">Confiabilidade</p>
-                <p className="mt-1 text-xs leading-5 text-slate-600">
-                  P95 de {operations?.summary?.p95RunDurationSeconds || 0}s e {operations?.summary?.failedRuns || 0} falhas recentes.
-                </p>
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-sm font-semibold text-slate-900">Exemplos rapidos</p>
+                <div className="mt-3 space-y-2">
+                  {EXAMPLE_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      onClick={() => handleAnalyze(prompt)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-xs leading-5 text-slate-600 transition hover:border-[#102a72]/20 hover:text-slate-900"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </motion.section>
-        </div>
+          </div>
+        </motion.section>
+
+        {result ? (
+          <div className="space-y-6">
+            <motion.section {...fade(0.12)} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Resumo refinado</p>
+                  <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">Pacote principal do Aligna</h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">{result.input_summary}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => navigate('/projects')}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                  >
+                    Abrir projetos
+                  </button>
+                  <button
+                    onClick={() => navigate('/code-studio')}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                  >
+                    Handoff tecnico
+                  </button>
+                </div>
+              </div>
+              <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 px-5 py-5">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">User Story</p>
+                <p className="mt-3 text-base leading-7 text-slate-800">{result.user_story}</p>
+              </div>
+            </motion.section>
+
+            <motion.section {...fade(0.16)} className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              {scoreCards.map((card) => (
+                <ScoreCard key={card.key} label={card.label} value={card.value} hint={card.hint} icon={card.icon} inverse={card.inverse} />
+              ))}
+            </motion.section>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <OutputBlock
+                title="Criterios de Aceite"
+                icon={ListChecks}
+                items={result.acceptance_criteria}
+                emptyText="Nenhum criterio foi extraido."
+              />
+              <OutputBlock
+                title="Regras de Negocio"
+                icon={Target}
+                items={result.business_rules}
+                emptyText="Nenhuma regra foi extraida."
+              />
+              <OutputBlock
+                title="Cenarios de Teste"
+                icon={TestTube2}
+                items={result.test_scenarios}
+                emptyText="Nenhum cenario foi sugerido."
+              />
+              <OutputBlock
+                title="Alertas de Ambiguidade"
+                icon={AlertTriangle}
+                items={result.ambiguity_alerts}
+                emptyText="Nenhum alerta relevante encontrado."
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
     </AppShell>
   );
 }
-

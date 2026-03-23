@@ -10,27 +10,28 @@ import {
   LogOut,
   Settings,
   User,
-  Database,
+  Compass,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const NAV_SECTIONS = [
   {
-    label: 'Visao',
-    items: [{ label: 'Inicio', hint: 'Painel executivo', to: '/', icon: Home }],
+    label: 'Produto',
+    items: [{ label: 'Aligna', hint: 'Alinhamento inicial', to: '/', icon: Home }],
   },
   {
     label: 'Execucao',
     items: [
       { label: 'Projetos', hint: 'Board operacional', to: '/projects', icon: Briefcase },
-      { label: 'Codigo', hint: 'Entrega tecnica', to: '/code-studio', icon: Braces },
+      { label: 'Entrega', hint: 'Handoff tecnico', to: '/code-studio', icon: Braces },
     ],
   },
   {
     label: 'Governanca',
     items: [
       { label: 'IA', hint: 'Runtime e policy', to: '/settings/ai', icon: Settings },
-      { label: 'Governanca', hint: 'Readiness e auditoria', to: '/governance', icon: Database },
+      { label: 'Governanca', hint: 'Readiness e auditoria', to: '/governance', icon: ShieldCheck },
     ],
   },
 ];
@@ -77,13 +78,13 @@ export default function AppShell({ title, eyebrow, description, actions, sidebar
       <aside className="fixed inset-y-0 left-0 z-40 flex w-60 flex-col bg-[#0A1128] text-white">
         <div className="flex h-16 items-center gap-3 border-b border-white/[0.07] px-5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#102a72] shadow-lg shadow-[#102a72]/40">
-            <Database className="h-4 w-4 text-blue-300" strokeWidth={2.5} />
+            <Compass className="h-4 w-4 text-blue-300" strokeWidth={2.5} />
           </div>
           <div>
             <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.25em] text-blue-400/80 leading-none">
-              Platform v2.0
+              Product Workspace
             </p>
-            <span className="text-sm font-bold leading-none text-white">Factory OS</span>
+            <span className="text-sm font-bold leading-none text-white">Aligna</span>
           </div>
         </div>
 
@@ -99,25 +100,6 @@ export default function AppShell({ title, eyebrow, description, actions, sidebar
             </div>
           ))}
         </nav>
-
-        <div className="mx-3 mb-3 rounded-xl border border-white/[0.07] bg-white/[0.04] p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-[9px] font-bold uppercase tracking-[0.25em] text-slate-500">Agentes</p>
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
-          </div>
-          {[
-            { tag: 'PM', label: 'Gerente de Produto', color: 'bg-blue-500' },
-            { tag: 'REQ', label: 'Requisitos', color: 'bg-indigo-500' },
-            { tag: 'QA', label: 'Qualidade', color: 'bg-violet-500' },
-          ].map((agent) => (
-            <div key={agent.tag} className="flex items-center gap-2.5 py-1">
-              <div className={`flex h-5 w-5 items-center justify-center rounded text-[9px] font-black text-white ${agent.color}`}>
-                {agent.tag[0]}
-              </div>
-              <span className="text-[11px] text-slate-400">{agent.label}</span>
-            </div>
-          ))}
-        </div>
 
         <div className="border-t border-white/[0.07] px-3 py-3">
           <div className="flex items-center gap-2.5 rounded-lg px-2 py-2">
@@ -147,7 +129,7 @@ export default function AppShell({ title, eyebrow, description, actions, sidebar
               type="text"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar projetos, tarefas..."
+              placeholder="Buscar projetos, analises e tarefas..."
               className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#102a72]/40 focus:bg-white focus:ring-2 focus:ring-[#102a72]/10"
             />
           </div>

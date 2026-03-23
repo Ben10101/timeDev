@@ -1,7 +1,7 @@
 {
   "name": "ai-software-factory-frontend",
   "version": "1.0.0",
-  "description": "Frontend for AI Software Factory",
+  "description": "Frontend for Aligna",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -135,8 +135,8 @@ export default function AuthPage() {
                 <Building2 className="h-6 w-6" />
               </div>
               <div>
-                <h2 className="text-xl font-bold tracking-tight text-slate-900">AI Software Factory</h2>
-                <div className="text-[12px] font-medium text-slate-500 uppercase tracking-widest mt-1">Platform v2.0</div>
+                <h2 className="text-xl font-bold tracking-tight text-slate-900">Aligna</h2>
+                <div className="text-[12px] font-medium text-slate-500 uppercase tracking-widest mt-1">Alignment Workspace</div>
               </div>
             </div>
 
@@ -147,8 +147,8 @@ export default function AuthPage() {
             </h1>
             <p className="text-[15px] font-medium text-slate-500">
               {mode === 'login'
-                ? 'Insira suas credenciais para acessar a plataforma.'
-                : 'Cadastre sua conta e comece a gerar valor em segundos.'}
+                ? 'Entre para alinhar requisitos antes do desenvolvimento.'
+                : 'Crie seu workspace e comece a validar requisitos com clareza.'}
             </p>
           </motion.div>
 
@@ -209,7 +209,7 @@ export default function AuthPage() {
                     disabled={saving}
                     className="group relative mt-4 flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-[#102a72] px-4 py-4 text-[15px] font-semibold tracking-wide text-white shadow-[0_4px_14px_0_rgba(16,42,114,0.39)] transition-all hover:bg-[#0c205a] hover:shadow-[0_6px_20px_rgba(16,42,114,0.23)] hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-70"
                   >
-                    {saving ? 'Acessando plataforma...' : 'Entrar na plataforma'}
+                    {saving ? 'Acessando Aligna...' : 'Entrar no Aligna'}
                     {!saving && (
                       <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" strokeWidth={3} />
                     )}

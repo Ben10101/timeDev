@@ -220,7 +220,7 @@ export async function testOpenRouterConnection(settings) {
   const apiKey = settings?.openrouter?.apiKey;
   const model = settings?.openrouter?.model || 'openai/gpt-4.1-mini';
   const referer = process.env.OPENROUTER_APP_URL || process.env.VITE_FRONTEND_URL || 'http://localhost:5173';
-  const title = process.env.OPENROUTER_APP_TITLE || 'Factory OS';
+  const title = process.env.OPENROUTER_APP_TITLE || 'Aligna';
 
   if (!apiKey?.trim()) {
     return failResult('Informe uma API key da OpenRouter para testar.');

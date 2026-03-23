@@ -63,6 +63,23 @@ async function main() {
     throw new Error('Sessao autenticada nao retornou o usuario esperado.');
   }
 
+  const alignment = await request('/alignment/analyze', {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({
+      input: 'Como gerente de operacoes, preciso aprovar reembolsos acima de R$ 500 com dupla validacao para reduzir fraude.',
+    }),
+  });
+
+  if (
+    !alignment.response.ok ||
+    !alignment.data?.user_story ||
+    !Array.isArray(alignment.data?.acceptance_criteria) ||
+    !alignment.data?.clarity_score
+  ) {
+    throw new Error(`Falha ao validar o fluxo principal do Aligna: ${JSON.stringify(alignment.data)}`);
+  }
+
   const createdProject = await request('/projects', {
     method: 'POST',
     headers: authHeaders,
