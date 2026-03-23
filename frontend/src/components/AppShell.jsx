@@ -28,7 +28,10 @@ const NAV_SECTIONS = [
   },
   {
     label: 'Governanca',
-    items: [{ label: 'IA', hint: 'Runtime e policy', to: '/settings/ai', icon: Settings }],
+    items: [
+      { label: 'IA', hint: 'Runtime e policy', to: '/settings/ai', icon: Settings },
+      { label: 'Governanca', hint: 'Readiness e auditoria', to: '/governance', icon: Database },
+    ],
   },
 ];
 

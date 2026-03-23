@@ -10,6 +10,7 @@ import BacklogKanban from './pages/BacklogKanban';
 import GlobalBacklogPage from './pages/GlobalBacklogPage';
 import AiSettingsPage from './pages/AiSettingsPage';
 import CodeStudioPage from './pages/CodeStudioPage';
+import GovernancePage from './pages/GovernancePage';
 
 function App() {
   return (
@@ -86,6 +87,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <AiSettingsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/governance"
+            element={
+              <ProtectedRoute>
+                <GovernancePage />
               </ProtectedRoute>
             }
           />

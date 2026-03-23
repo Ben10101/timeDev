@@ -1,32 +1,12 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import {
-  Activity,
-  AlertCircle,
-  ArrowRight,
-  Bot,
-  Briefcase,
-  Braces,
-  CheckCircle2,
-  Clock3,
-  Cpu,
-  Plus,
-  Settings,
-  ShieldCheck,
-  Sparkles,
-  TrendingUp,
-} from 'lucide-react';
+import { Activity, AlertCircle, ArrowRight, Bot, Briefcase, Braces, CheckCircle2, Clock3, Cpu, Plus, Settings, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import {
-  getActiveAlerts,
-  getAuditTrail,
   getAiOperationsOverview,
   getApiErrorMessage,
-  getGovernanceOverview,
   getOperationalHealth,
-  getOperationalHistory,
-  getProductionReadiness,
   listAllTasks,
   listProjects,
 } from '../services/api';
@@ -67,6 +47,7 @@ const STATUS_META = {
 const TOOL_LINKS = [
   { label: 'Projetos', to: '/projects', icon: Briefcase },
   { label: 'Codigo', to: '/code-studio', icon: Braces },
+  { label: 'Governanca', to: '/governance', icon: ShieldCheck },
   { label: 'IAs', to: '/settings/ai', icon: Settings },
 ];
 
@@ -156,11 +137,6 @@ export default function HomePage() {
   const [tasks, setTasks] = useState([]);
   const [health, setHealth] = useState(null);
   const [operations, setOperations] = useState(null);
-  const [readiness, setReadiness] = useState(null);
-  const [auditTrail, setAuditTrail] = useState([]);
-  const [governance, setGovernance] = useState(null);
-  const [history, setHistory] = useState(null);
-  const [activeAlerts, setActiveAlerts] = useState([]);
 
   useEffect(() => {
     let active = true;
@@ -169,16 +145,11 @@ export default function HomePage() {
       try {
         setLoading(true);
         setLoadError('');
-        const [projectsResult, tasksResult, healthResult, operationsResult, readinessResult, auditResult, governanceResult, historyResult, alertsResult] = await Promise.allSettled([
+        const [projectsResult, tasksResult, healthResult, operationsResult] = await Promise.allSettled([
           listProjects(),
           listAllTasks(),
           getOperationalHealth(),
           getAiOperationsOverview(),
-          getProductionReadiness(),
-          getAuditTrail({ limit: 8 }),
-          getGovernanceOverview(),
-          getOperationalHistory({ days: 7 }),
-          getActiveAlerts(),
         ]);
 
         if (!active) return;
@@ -187,26 +158,16 @@ export default function HomePage() {
         const tasksData = tasksResult.status === 'fulfilled' ? tasksResult.value : [];
         const healthData = healthResult.status === 'fulfilled' ? healthResult.value : null;
         const operationsData = operationsResult.status === 'fulfilled' ? operationsResult.value : null;
-        const readinessData = readinessResult.status === 'fulfilled' ? readinessResult.value : null;
-        const auditData = auditResult.status === 'fulfilled' ? auditResult.value : [];
-        const governanceData = governanceResult.status === 'fulfilled' ? governanceResult.value : null;
-        const historyData = historyResult.status === 'fulfilled' ? historyResult.value : null;
-        const alertsData = alertsResult.status === 'fulfilled' ? alertsResult.value : [];
 
         setProjects(Array.isArray(projectsData) ? projectsData : []);
         setTasks(Array.isArray(tasksData) ? tasksData : []);
         setHealth(healthData);
         setOperations(operationsData);
-        setReadiness(readinessData);
-        setAuditTrail(Array.isArray(auditData) ? auditData : []);
-        setGovernance(governanceData);
-        setHistory(historyData);
-        setActiveAlerts(Array.isArray(alertsData) ? alertsData : []);
 
         const primaryError = [projectsResult, tasksResult, healthResult].find((result) => result.status === 'rejected');
         if (primaryError) {
           setLoadError(getApiErrorMessage(primaryError.reason, 'Nao foi possivel carregar o dashboard.'));
-        } else if ([operationsResult, readinessResult, auditResult, governanceResult, historyResult, alertsResult].some((result) => result.status === 'rejected')) {
+        } else if ([operationsResult].some((result) => result.status === 'rejected')) {
           setLoadError('Parte da observabilidade premium nao esta disponivel no momento, mas o restante do dashboard foi carregado.');
         }
       } catch (error) {
@@ -252,12 +213,7 @@ export default function HomePage() {
   }, [projects]);
 
   const recentRuns = operations?.recentRuns || [];
-  const alerts = operations?.alerts || [];
   const healthySystem = health?.status === 'ok' && (operations?.summary?.failedRuns || 0) === 0;
-  const topFailingAgents = operations?.reliability?.topFailingAgents || [];
-  const staleRunningRuns = operations?.reliability?.staleRunningRuns || [];
-  const readinessWarnings = readiness?.checks?.filter((check) => check.status !== 'ok') || [];
-  const historySeries = history?.series || [];
 
   return (
     <AppShell
@@ -372,7 +328,9 @@ export default function HomePage() {
                         ? 'Criar, revisar e governar iniciativas'
                         : tool.label === 'Codigo'
                             ? 'Gerar e validar a aplicacao'
-                            : 'Configurar providers e fallback'
+                            : tool.label === 'Governanca'
+                              ? 'Auditoria, readiness e alertas'
+                              : 'Configurar providers e fallback'
                     }
                     icon={tool.icon}
                     to={tool.to}
@@ -411,33 +369,8 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-[1.1fr_1.1fr_0.8fr]">
+        <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
           <motion.section {...fade(0.34)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Pipeline</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Saude da operacao</h2>
-            </div>
-            <div className="grid grid-cols-2 gap-3 p-6">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Runs totais</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{operations?.summary?.totalRuns || 0}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Falhas recentes</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{operations?.summary?.failedRuns || 0}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Taxa de sucesso</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{operations?.summary?.successRatePercent || 0}%</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">P95 duracao</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{operations?.summary?.p95RunDurationSeconds || 0}s</p>
-              </div>
-            </div>
-          </motion.section>
-
-          <motion.section {...fade(0.38)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Projetos</p>
               <h2 className="mt-2 text-xl font-bold text-slate-900">Maiores workspaces</h2>
@@ -466,273 +399,27 @@ export default function HomePage() {
             </div>
           </motion.section>
 
-          <motion.section {...fade(0.42)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <motion.section {...fade(0.38)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Confiabilidade</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Pontos de atencao</h2>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Operacao</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Indicadores principais</h2>
             </div>
             <div className="space-y-3 p-6">
-              {staleRunningRuns.length ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
-                  <p className="text-sm font-semibold text-rose-900">Runs travados detectados</p>
-                  <p className="mt-1 text-xs leading-5 text-rose-700">
-                    {staleRunningRuns.length} execucoes estao rodando ha mais de 10 minutos.
-                  </p>
-                </div>
-              ) : null}
-              {topFailingAgents.slice(0, 2).map((agent) => (
-                <div key={agent.agentName} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                  <p className="text-sm font-semibold text-slate-900">{agent.agentName}</p>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">
-                    {agent.failed} falhas em {agent.runs} runs · {agent.failureRate}% de falha.
-                  </p>
-                </div>
-              ))}
-              {alerts.length ? (
-                alerts.map((alert, index) => (
-                  <motion.div
-                    key={alert.code}
-                    {...fade(0.46 + index * 0.04)}
-                    className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-                        <AlertCircle className="h-4 w-4" strokeWidth={2} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-amber-900">{alert.code.replace(/_/g, ' ')}</p>
-                        <p className="mt-1 text-xs leading-5 text-amber-700">{alert.message}</p>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))
-              ) : (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-6 text-sm text-emerald-800">
-                  Nenhum alerta relevante no momento. A operacao esta estavel.
-                </div>
-              )}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-sm font-semibold text-slate-900">Runs totais</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  {operations?.summary?.totalRuns || 0} execucoes registradas, com {operations?.summary?.successRatePercent || 0}% de sucesso.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-sm font-semibold text-slate-900">Confiabilidade</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  P95 de {operations?.summary?.p95RunDurationSeconds || 0}s e {operations?.summary?.failedRuns || 0} falhas recentes.
+                </p>
+              </div>
             </div>
           </motion.section>
         </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
-          <motion.section {...fade(0.44)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Historico</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Ultimos 7 dias da operacao</h2>
-            </div>
-            <div className="grid gap-3 p-6 md:grid-cols-2 xl:grid-cols-4">
-              {historySeries.slice(-4).map((day) => (
-                <div key={day.date} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{day.date}</p>
-                  <p className="mt-2 text-2xl font-bold text-slate-900">{day.totalRuns}</p>
-                  <p className="mt-1 text-xs text-slate-500">{day.successRatePercent}% sucesso · {day.estimatedTokens} tokens</p>
-                </div>
-              ))}
-            </div>
-          </motion.section>
-
-          <motion.section {...fade(0.46)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Alertas ativos</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Playbooks sugeridos</h2>
-            </div>
-            <div className="space-y-3 p-6">
-              {activeAlerts.length ? activeAlerts.slice(0, 4).map((alert) => (
-                <div key={alert.code} className={`rounded-2xl border px-4 py-4 ${alert.severity === 'high' ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`}>
-                  <p className={`text-sm font-semibold ${alert.severity === 'high' ? 'text-rose-900' : 'text-amber-900'}`}>{alert.message}</p>
-                  <p className={`mt-1 text-xs ${alert.severity === 'high' ? 'text-rose-700' : 'text-amber-700'}`}>{alert.recommendedAction}</p>
-                </div>
-              )) : (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
-                  Nenhum alerta ativo no momento.
-                </div>
-              )}
-            </div>
-          </motion.section>
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-          <motion.section {...fade(0.46)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Readiness</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Prontidao de producao</h2>
-            </div>
-            <div className="grid gap-3 p-6 md:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Status</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{readiness?.status || 'n/a'}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Checks</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{readiness?.checks?.length || 0}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Auditoria</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{readiness?.governance?.recentAuditEntries || 0}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Providers API</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">
-                  {Object.values(readiness?.providersConfigured || {}).filter(Boolean).length}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Versao</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">
-                  v{readiness?.release?.version || 'n/a'} · {readiness?.release?.channel || 'n/a'}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Policy IA</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">
-                  {readiness?.governance?.implementationRemoteOnly ? 'Somente APIs remotas' : 'Fallback local permitido'}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Cookie seguro</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">
-                  {readiness?.security?.secureRefreshCookie ? 'Ativo' : 'Desenvolvimento'}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Rate limit sensivel</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">
-                  {readiness?.security?.rateLimitSensitive?.limit || 0} req / {Math.round((readiness?.security?.rateLimitSensitive?.windowMs || 0) / 1000)}s
-                </p>
-              </div>
-            </div>
-            <div className="space-y-3 px-6 pb-6">
-              {(readiness?.alerts || []).slice(0, 2).map((alert) => (
-                <div key={alert.code} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
-                  <p className="text-sm font-semibold text-rose-900">{alert.code.replace(/_/g, ' ')}</p>
-                  <p className="mt-1 text-xs text-rose-700">{alert.message}</p>
-                </div>
-              ))}
-              {readinessWarnings.length ? readinessWarnings.slice(0, 4).map((check) => (
-                <div key={check.code} className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                  <p className="text-sm font-semibold text-amber-900">{check.label}</p>
-                  <p className="mt-1 text-xs text-amber-700">Status: {check.status}</p>
-                </div>
-              )) : (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
-                  Nenhum ponto critico de readiness detectado no momento.
-                </div>
-              )}
-            </div>
-          </motion.section>
-
-          <motion.section {...fade(0.5)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Auditoria</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Acoes criticas recentes</h2>
-            </div>
-            <div className="space-y-3 p-6">
-              {auditTrail.length ? auditTrail.map((entry, index) => (
-                <motion.div key={`${entry.timestamp}-${index}`} {...fade(0.52 + index * 0.03)} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
-                      {entry.actionType}
-                    </span>
-                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${entry.success ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
-                      {entry.success ? 'ok' : 'falha'}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{entry.method} {entry.path}</p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {entry.userEmail || 'Usuario desconhecido'} · {entry.durationMs}ms · {new Date(entry.timestamp).toLocaleString('pt-BR')}
-                  </p>
-                </motion.div>
-              )) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                  Nenhuma acao auditada registrada ainda.
-                </div>
-              )}
-            </div>
-          </motion.section>
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1fr_1fr_1fr]">
-          <motion.section {...fade(0.54)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Governanca</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Acoes mais frequentes</h2>
-            </div>
-            <div className="space-y-3 p-6">
-              {(governance?.topActionTypes || []).slice(0, 4).map((item) => (
-                <div key={item.actionType} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                  <p className="text-sm font-semibold text-slate-900">{item.actionType}</p>
-                  <p className="mt-1 text-xs text-slate-500">{item.total} eventos · {item.averageDurationMs}ms medio</p>
-                </div>
-              ))}
-            </div>
-          </motion.section>
-
-          <motion.section {...fade(0.58)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Hotspots</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Falhas recorrentes</h2>
-            </div>
-            <div className="space-y-3 p-6">
-              {(governance?.failureHotspots || []).length ? (governance.failureHotspots.slice(0, 4).map((item) => (
-                <div key={item.actionType} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
-                  <p className="text-sm font-semibold text-rose-900">{item.actionType}</p>
-                  <p className="mt-1 text-xs text-rose-700">{item.failures} falhas · {item.failureRatePercent}% de falha</p>
-                </div>
-              ))) : (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
-                  Nenhum hotspot de falha relevante no recorte recente.
-                </div>
-              )}
-            </div>
-          </motion.section>
-
-          <motion.section {...fade(0.62)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Latencia</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Rotas mais lentas</h2>
-            </div>
-            <div className="space-y-3 p-6">
-              {(governance?.latencyHotspots || []).slice(0, 4).map((item) => (
-                <div key={item.actionType} className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                  <p className="text-sm font-semibold text-amber-900">{item.actionType}</p>
-                  <p className="mt-1 text-xs text-amber-700">{item.averageDurationMs}ms medio · {item.total} eventos</p>
-                </div>
-              ))}
-            </div>
-          </motion.section>
-        </div>
-
-        <motion.section
-          {...fade(0.5)}
-          className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0A1128] text-white shadow-xl"
-        >
-          <div className="grid gap-6 px-8 py-8 lg:grid-cols-[1.3fr_0.7fr]">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-200/90">Factory Maturity</p>
-              <h2 className="mt-3 text-3xl font-bold tracking-tight">Sua plataforma ja opera como uma fabrica real de software assistida por IA.</h2>
-              <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-200">
-                O proximo salto nao e adicionar mais telas. Agora o foco e reforcar qualidade, confiabilidade e governanca
-                da geracao. Hoje voce ja tem backlog, requisitos, QA, arquitetura, codigo e observabilidade na mesma esteira.
-              </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-              {[
-                { label: 'Arquitetura + codigo', value: 'ativo', icon: Sparkles },
-                { label: 'Observabilidade', value: operations?.summary?.totalRuns || 0, icon: Activity },
-                { label: 'Beta v1.0', value: 'pronto', icon: ShieldCheck },
-              ].map((item) => (
-                <div key={item.label} className="rounded-2xl border border-white/10 bg-slate-900/55 p-4 backdrop-blur-sm">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-blue-100">
-                    <item.icon className="h-4.5 w-4.5" strokeWidth={2} />
-                  </div>
-                  <p className="mt-3 text-xs uppercase tracking-[0.2em] text-blue-100/80">{item.label}</p>
-                  <p className="mt-1 text-2xl font-bold text-white">{item.value}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </motion.section>
       </div>
     </AppShell>
   );
