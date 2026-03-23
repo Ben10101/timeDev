@@ -1,15 +1,15 @@
-# Testes do AI Software Factory
+# Testes do Aligna
 
 ## Como testar
 
 ### Opcao 1: teste direto dos agentes
 ```bash
-python test_agents_direct.py
+python tests/test_agents_direct.py
 ```
 
 ### Opcao 2: atalho no Windows
 ```bash
-run_test.bat
+scripts/windows/run_test.bat
 ```
 
 ### Opcao 3: teste completo da aplicacao
@@ -29,14 +29,14 @@ Abra `http://localhost:5173`.
 
 ## Arquivos mantidos
 
-- `test_agents_direct.py`
-- `run_test.bat`
-- `test_cache.py`
-- `test_pipeline_cache.py`
-- `test_ollama.py`
-- `test_ollama_full.py`
-- `test_qa_engineer.py`
-- `test_architect.py`
+- `tests/test_agents_direct.py`
+- `scripts/windows/run_test.bat`
+- `tests/test_cache.py`
+- `tests/test_pipeline_cache.py`
+- `tests/test_ollama.py`
+- `tests/test_ollama_full.py`
+- `tests/test_qa_engineer.py`
+- `tests/test_architect.py`
 
 ## Observacao
 

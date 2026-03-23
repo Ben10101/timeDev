@@ -4,9 +4,11 @@ build/
 *.pyc
 __pycache__/
 *.egg-info/
+.venv/
 .env
 .env.local
 .vscode/
+.cursor/
 .idea/
 *.swp
 *.swo
@@ -19,6 +21,9 @@ npm-debug.log*
 outputs/
 backend/outputs/
 .cache/
+coverage/
+*.tmp
+*.temp
 tmp_req.txt
 pydantic-coreerror
 test_results.json
@@ -33,3 +38,4 @@ generated-projects/*/node_modules/
 generated-projects/*/apps/*/dist/
 generated-projects/*/apps/*/node_modules/
 generated-projects/*/packages/*/node_modules/
+generated-projects/*/coverage/
