@@ -1328,6 +1328,86 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
   };
 }
 
+export async function getProjectDocumentationBundle(projectUuid, userUuid = null) {
+  const [project, tasks, architectureStatus] = await Promise.all([
+    getProjectByUuid(projectUuid, userUuid),
+    listProjectTasks(projectUuid, {}, userUuid),
+    getProjectArchitectureStatus(projectUuid, userUuid),
+  ]);
+
+  if (!project) {
+    throw new Error('Projeto não encontrado.');
+  }
+
+  const backlogTask = await prisma.task.findFirst({
+    where: {
+      projectId: project.id,
+      title: stageTaskConfig.project_manager.title,
+    },
+    select: {
+      uuid: true,
+      artifacts: {
+        where: {
+          artifactType: 'backlog',
+          artifactScope: 'refinement',
+          isCurrent: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      },
+    },
+  });
+
+  const backlogArtifact = backlogTask?.artifacts?.[0] || null;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    project: {
+      uuid: project.uuid,
+      name: project.name,
+      description: project.description,
+      vision: project.vision,
+      status: project.status,
+      workspace: project.workspace,
+      creator: project.creator,
+      intakeConfig: project.intakeConfig || null,
+    },
+    summary: {
+      totalTasks: tasks.length,
+      totalEpics: tasks.filter((task) => task.taskType === 'epic').length,
+      totalStories: tasks.filter((task) => task.taskType === 'story').length,
+      totalTechnicalTasks: tasks.filter((task) => task.taskType === 'task').length,
+      refinedStories: architectureStatus.refinedStories || 0,
+      storiesWithTestPlan: tasks.filter((task) =>
+        (task.artifacts || []).some((artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent)
+      ).length,
+      hasBacklog: Boolean(backlogArtifact),
+      hasArchitecture: Boolean(architectureStatus.architectureArtifact),
+    },
+    backlogArtifact,
+    architectureArtifact: architectureStatus.architectureArtifact || null,
+    architectureStatus,
+    tasks: tasks.map((task) => ({
+      uuid: task.uuid,
+      title: task.title,
+      description: task.description,
+      taskType: task.taskType,
+      status: task.status,
+      priority: task.priority,
+      assigneeAgentName: task.assigneeAgentName,
+      artifacts: (task.artifacts || []).map((artifact) => ({
+        uuid: artifact.uuid,
+        artifactType: artifact.artifactType,
+        title: artifact.title,
+        content: artifact.content,
+        version: artifact.version,
+        createdAt: artifact.createdAt,
+        isCurrent: artifact.isCurrent,
+      })),
+    })),
+  };
+}
+
 export async function ensureStageTask(projectUuid, agentName) {
   const config = stageTaskConfig[agentName];
   if (!config) return null;

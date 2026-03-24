@@ -30,6 +30,7 @@ import {
   runTaskQa,
   runTaskRequirements,
 } from '../services/api';
+import { exportProjectDocumentationPdf } from '../utils/projectDocumentationExport';
 
 const BOARD_COLUMNS = [
   { key: 'backlog', label: 'Backlog', icon: Layout },
@@ -320,6 +321,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generatingArchitecture, setGeneratingArchitecture] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [error, setError] = useState(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [bootstrapForm, setBootstrapForm] = useState(EMPTY_BOOTSTRAP);
@@ -537,6 +539,19 @@ export default function ProjectsPage() {
       setError(getApiErrorMessage(submitError, 'Não foi possível gerar a arquitetura do projeto.'));
     } finally {
       setGeneratingArchitecture(false);
+    }
+  }
+
+  async function handleExportPdf() {
+    if (!activeProjectUuid) return;
+    setExportingPdf(true);
+    setError(null);
+    try {
+      await exportProjectDocumentationPdf(activeProjectUuid);
+    } catch (exportError) {
+      setError(getApiErrorMessage(exportError, 'Não foi possível exportar a documentação em PDF.'));
+    } finally {
+      setExportingPdf(false);
     }
   }
 
@@ -778,6 +793,19 @@ export default function ProjectsPage() {
                         >
                           <FileText className="h-4 w-4" />
                           Abrir briefing do projeto
+                        </button>
+                      </div>
+                    )}
+                    {activeProjectUuid && (
+                      <div className="mt-5 flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          onClick={handleExportPdf}
+                          disabled={exportingPdf}
+                          className="dashboard-button-secondary"
+                        >
+                          <Download className="h-4 w-4" />
+                          {exportingPdf ? 'Preparando PDF...' : 'Exportar documentação'}
                         </button>
                       </div>
                     )}

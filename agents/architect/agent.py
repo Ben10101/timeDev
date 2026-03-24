@@ -63,7 +63,8 @@ INSTRUCOES CRITICAS
 - Evite listas gigantes e texto redundante
 - Considere que as historias refinadas ja estao resumidas; extraia padroes e consolidacoes
 
-RESPONDA EM MARKDOWN USANDO EXATAMENTE ESTA ESTRUTURA
+RESPONDA EM MARKDOWN USANDO EXATAMENTE ESTA ESTRUTURA.
+NAO JUNTE OU RENOMEIE SECOES.
 
 # ARQUITETURA DO PROJETO
 
@@ -84,7 +85,9 @@ RESPONDA EM MARKDOWN USANDO EXATAMENTE ESTA ESTRUTURA
 
 ## Padroes de Design
 
-## Estrategia de Deploy e Seguranca
+## Estrategia de Deploy
+
+## Seguranca
 
 ## Sequencia Recomendada de Implementacao
 
@@ -92,6 +95,7 @@ REGRAS FINAIS
 - Nao saia do escopo das historias refinadas
 - Nao devolva JSON
 - Mantenha a resposta enxuta, mas suficiente para orientar implementacao
+- Entregue todas as secoes obrigatorias, mesmo que algumas sejam curtas
 - Encerre OBRIGATORIAMENTE a resposta com a linha exata: FIM_DA_ARQUITETURA
 """
 

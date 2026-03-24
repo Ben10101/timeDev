@@ -9,6 +9,7 @@ import {
   getProjectArchitectureStatus,
   listProjectTasks,
 } from '../services/api';
+import { exportProjectDocumentationPdf } from '../utils/projectDocumentationExport';
 
 const STORY_SHORTCUT_EXAMPLES = [
   {
@@ -54,6 +55,7 @@ export default function ProjectOverviewPage() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [generatingArchitecture, setGeneratingArchitecture] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
   const [form, setForm] = useState({
@@ -179,6 +181,19 @@ export default function ProjectOverviewPage() {
     }
   }
 
+  async function handleExportPdf() {
+    setExportingPdf(true);
+    setError(null);
+
+    try {
+      await exportProjectDocumentationPdf(projectUuid);
+    } catch (exportError) {
+      setError(getApiErrorMessage(exportError, 'Não foi possível exportar a documentação em PDF.'));
+    } finally {
+      setExportingPdf(false);
+    }
+  }
+
   return (
     <AppShell
       eyebrow="Visão do Projeto"
@@ -188,6 +203,14 @@ export default function ProjectOverviewPage() {
         <div className="flex flex-col gap-3 sm:flex-row">
           <button onClick={() => navigate('/projects')} className="dashboard-button-secondary w-full sm:w-auto">
             Voltar para projetos
+          </button>
+          <button
+            type="button"
+            onClick={handleExportPdf}
+            disabled={loading || exportingPdf}
+            className="dashboard-button-secondary w-full sm:w-auto"
+          >
+            {exportingPdf ? 'Preparando PDF...' : 'Exportar PDF'}
           </button>
           <button onClick={() => navigate(`/projects?project=${projectUuid}`)} className="dashboard-button-primary w-full sm:w-auto">
             Abrir board

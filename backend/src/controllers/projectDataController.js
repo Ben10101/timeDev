@@ -11,6 +11,7 @@ import {
   finishAgentRun,
   getDefaultWorkspaceForUserUuid,
   getProjectArchitectureStatus,
+  getProjectDocumentationBundle,
   getProjectByUuid,
   getTaskByUuid,
   importBacklogTasks,
@@ -375,6 +376,16 @@ export async function getProjectArchitectureStatusController(req, res, next) {
     await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
     const status = await getProjectArchitectureStatus(req.params.projectUuid, req.authUser.uuid);
     res.json(serializeBigInts(status));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getProjectDocumentationBundleController(req, res, next) {
+  try {
+    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    const bundle = await getProjectDocumentationBundle(req.params.projectUuid, req.authUser.uuid);
+    res.json(serializeBigInts(bundle));
   } catch (error) {
     next(error);
   }

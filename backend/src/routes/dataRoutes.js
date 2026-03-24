@@ -11,6 +11,7 @@ import {
   generateProjectBacklogController,
   getProjectController,
   getProjectArchitectureStatusController,
+  getProjectDocumentationBundleController,
   getTaskController,
   importBacklogTasksController,
   listProjectsController,
@@ -27,6 +28,7 @@ router.post('/pipeline-project', ensurePipelineProjectController);
 router.get('/projects', listProjectsController);
 router.post('/projects', createProjectController);
 router.get('/projects/:projectUuid', getProjectController);
+router.get('/projects/:projectUuid/documentation', getProjectDocumentationBundleController);
 router.get('/projects/:projectUuid/architecture/status', getProjectArchitectureStatusController);
 router.get('/projects/:projectUuid/tasks', listProjectTasksController);
 router.get('/tasks', listAllTasksController);
