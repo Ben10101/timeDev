@@ -80,6 +80,7 @@ def validate_qa_output(result):
         "estrategia de testes",
         "dados de teste",
         "riscos e metricas",
+        "qualidade nao funcional",
         "cenarios de teste",
         "casos de teste funcionais",
         "usabilidade e acessibilidade",
@@ -118,13 +119,33 @@ def validate_qa_output(result):
         "casos de teste funcionais",
         ["usabilidade e acessibilidade", "fim_do_plano_de_testes"],
     )
+    scenarios_section = extract_section_body(
+        normalized,
+        "cenarios de teste",
+        ["casos de teste funcionais", "usabilidade e acessibilidade"],
+    )
+    non_functional_section = extract_section_body(
+        normalized,
+        "qualidade nao funcional",
+        ["cenarios de teste", "casos de teste funcionais"],
+    )
     cases_match = re.search(r"ct\s*0*1", functional_cases_section)
 
-    happy_count = len(re.findall(r"(?:^|\n)\s*[1-5]\.", happy_match.group(1))) if happy_match else 0
-    exception_count = len(re.findall(r"(?:^|\n)\s*[1-5]\.", exception_match.group(1))) if exception_match else 0
+    happy_count = len(re.findall(r"(?:^|\n)\s*(?:[-*]\s+)?(?:[1-5]\.|\d+\.)", happy_match.group(1))) if happy_match else 0
+    exception_count = len(re.findall(r"(?:^|\n)\s*(?:[-*]\s+)?(?:[1-5]\.|\d+\.)", exception_match.group(1))) if exception_match else 0
+    if happy_count == 0 and happy_match:
+        happy_count = len(re.findall(r"caminho feliz", happy_match.group(1), re.IGNORECASE))
+    if exception_count == 0 and exception_match:
+        exception_count = len(re.findall(r"excecao", exception_match.group(1), re.IGNORECASE))
+    if happy_count < 5 and scenarios_section:
+        happy_count = max(happy_count, len(re.findall(r"caminho feliz", scenarios_section, re.IGNORECASE)))
+    if exception_count < 5 and scenarios_section:
+        exception_count = max(exception_count, len(re.findall(r"excecao", scenarios_section, re.IGNORECASE)))
     functional_cases_count = count_numbered_items(functional_cases_section)
     action_count = len(re.findall(r"\bacao\b", functional_cases_section))
     expected_result_count = len(re.findall(r"resultado esperado", functional_cases_section))
+    if functional_cases_count == 0:
+        functional_cases_count = min(action_count, expected_result_count)
 
     if happy_count < 5:
         return False, "Menos de 5 cenarios de caminho feliz."
@@ -135,9 +156,16 @@ def validate_qa_output(result):
     has_structured_functional_cases = (
         functional_cases_count >= 3 and action_count >= 3 and expected_result_count >= 3
     )
+    non_functional_keywords = ["performance", "seguranca", "confiabilidade", "observabilidade"]
+    covered_non_functional_topics = sum(
+        1 for keyword in non_functional_keywords if keyword in non_functional_section
+    )
 
     if not cases_match and not has_structured_functional_cases:
         return False, "Casos de teste funcionais nao foram gerados."
+
+    if covered_non_functional_topics < 3:
+        return False, "Cobertura nao funcional insuficiente."
 
     if "fim_do_plano_de_testes" not in normalized:
         return False, "Marcador final do plano de testes nao foi encontrado."
@@ -181,14 +209,39 @@ def validate_architecture_output(result):
         "arquitetura do projeto",
         "visao geral",
         "stack tecnologico",
+        "modulos e responsabilidades",
         "diagrama de arquitetura",
         "estrutura de diretorios",
-        "padroes de design",
-        "estrategia de deploy",
-        "seguranca",
+        "modelo de dados",
+        "contratos e integracoes",
+        "observabilidade e operacao",
+        "riscos tecnicos e trade-offs",
+        "sequencia recomendada de implementacao",
     ]
 
     missing = [section for section in required_sections if section not in normalized]
+
+    has_design_section = any(
+        marker in normalized
+        for marker in [
+            "padroes de design",
+            "padroes arquiteturais",
+            "boas praticas arquiteturais",
+        ]
+    )
+    if not has_design_section:
+        missing.append("padroes de design")
+
+    has_combined_deploy_security_section = "estrategia de deploy e seguranca" in normalized
+    has_deploy_section = has_combined_deploy_security_section or "estrategia de deploy" in normalized
+    has_security_section = has_combined_deploy_security_section or "seguranca" in normalized
+
+    if not has_deploy_section:
+        missing.append("estrategia de deploy")
+
+    if not has_security_section:
+        missing.append("seguranca")
+
     if missing:
         return False, f"Secoes ausentes: {', '.join(missing)}"
 

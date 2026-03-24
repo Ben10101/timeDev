@@ -251,6 +251,16 @@ def parse_model_list(value):
     return [str(item).strip() for item in items if str(item).strip()]
 
 
+def get_provider_timeout_seconds(provider, default_timeout=120):
+    specific_key = f"{str(provider or '').upper()}_REQUEST_TIMEOUT_SECONDS"
+    candidate = os.getenv(specific_key) or os.getenv("LLM_REQUEST_TIMEOUT_SECONDS")
+    try:
+        timeout = int(candidate) if candidate else int(default_timeout)
+    except Exception:
+        timeout = int(default_timeout)
+    return max(30, timeout)
+
+
 def get_openrouter_model_candidates(primary_model):
     candidates = []
     for candidate in [primary_model, *parse_model_list(os.getenv("OPENROUTER_MODEL_FALLBACKS", ""))]:
@@ -298,7 +308,12 @@ def generate_text_with_openrouter_model(prompt, model, api_key, options_override
 
     while attempts:
         current_payload = attempts.pop(0)
-        status, data = http_post_json("https://openrouter.ai/api/v1/chat/completions", current_payload, headers=headers, timeout=120)
+        status, data = http_post_json(
+            "https://openrouter.ai/api/v1/chat/completions",
+            current_payload,
+            headers=headers,
+            timeout=get_provider_timeout_seconds("openrouter", 180),
+        )
         if status < 400:
             return extract_text_from_openai_like(data)
 
@@ -366,7 +381,12 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
         "max_tokens": max(64, int((options_override or {}).get("num_predict", 800))),
     }
 
-    status, data = http_post_json(base_urls[provider], payload, headers=headers, timeout=120)
+    status, data = http_post_json(
+        base_urls[provider],
+        payload,
+        headers=headers,
+        timeout=get_provider_timeout_seconds(provider, 180 if provider == "nvidia" else 120),
+    )
     if status < 400:
         return extract_text_from_openai_like(data)
 
@@ -392,7 +412,12 @@ def generate_text_with_anthropic(prompt, model, api_key, options_override=None):
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
     }
-    status, data = http_post_json("https://api.anthropic.com/v1/messages", payload, headers=headers, timeout=120)
+    status, data = http_post_json(
+        "https://api.anthropic.com/v1/messages",
+        payload,
+        headers=headers,
+        timeout=get_provider_timeout_seconds("anthropic", 180),
+    )
     if status >= 400:
         raise RuntimeError(extract_error_message(data))
 

@@ -127,6 +127,7 @@ function assertArtifactCompleteness(agentName, content) {
       'estrategia de testes',
       'dados de teste',
       'riscos e metricas',
+      'qualidade nao funcional',
       'cenarios de teste',
       'casos de teste funcionais',
       'usabilidade e acessibilidade',
@@ -147,9 +148,21 @@ function assertArtifactCompleteness(agentName, content) {
     const actionCount = (functionalCasesSection.match(/\bacao\b/g) || []).length;
     const expectedResultCount = (functionalCasesSection.match(/resultado esperado/g) || []).length;
     const hasStructuredFunctionalCases = numberedCases >= 3 && actionCount >= 3 && expectedResultCount >= 3;
+    const nonFunctionalSection = extractNormalizedArtifactSection(content, 'qualidade nao funcional', [
+      'cenarios de teste',
+      'casos de teste funcionais',
+    ]);
+    const nonFunctionalKeywords = ['performance', 'seguranca', 'confiabilidade', 'observabilidade'];
+    const coveredNonFunctionalTopics = nonFunctionalKeywords.filter((keyword) =>
+      nonFunctionalSection.includes(keyword)
+    ).length;
 
     if (!hasCt01 && !hasStructuredFunctionalCases) {
       throw new Error('O plano de testes foi retornado sem casos de teste funcionais completos.');
+    }
+
+    if (coveredNonFunctionalTopics < 3) {
+      throw new Error('O plano de testes foi retornado com cobertura nao funcional insuficiente.');
     }
   }
 
