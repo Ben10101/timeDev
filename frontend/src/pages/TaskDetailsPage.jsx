@@ -14,6 +14,7 @@ import {
   runTaskImplementation,
   runTaskRequirements,
 } from '../services/api';
+import { getAgentLabel } from '../utils/agentLabels';
 
 function formatDate(value) {
   if (!value) return 'Sem data';
@@ -98,6 +99,53 @@ function getFallbackStatusAfterUnblock(task) {
   return fallback?.toStatus || 'todo';
 }
 
+const TASK_TYPE_LABELS = {
+  epic: 'Épico',
+  story: 'Story',
+  task: 'Task técnica',
+  agent_job: 'Job do agente',
+};
+
+const TASK_STATUS_LABELS = {
+  todo: 'A fazer',
+  in_progress: 'Em andamento',
+  blocked: 'Bloqueada',
+  in_review: 'Em revisão',
+  qa: 'QA',
+  done: 'Concluída',
+};
+
+function getTaskTypeLabel(taskType) {
+  return TASK_TYPE_LABELS[taskType] || taskType || 'Task';
+}
+
+function getTaskStatusLabel(status) {
+  return TASK_STATUS_LABELS[status] || status || 'Sem status';
+}
+
+function getTaskStageHint(task, architectureStatus, hasRequirements, hasTestPlan, isDone, implementationStatus) {
+  if (!task) return 'Carregando contexto da task...';
+  if (task.status === 'blocked') {
+    return getLatestStatusHistoryNote(task, 'blocked') || 'A task está bloqueada e precisa de desbloqueio manual.';
+  }
+  if (!hasRequirements) {
+    return 'Próximo passo: gerar requisitos para transformar o briefing em algo refinado.';
+  }
+  if (!hasTestPlan) {
+    return 'Próximo passo: rodar QA e consolidar o plano de testes.';
+  }
+  if (!architectureStatus?.canGenerateCode) {
+    return architectureStatus?.blockers?.[0] || 'A implementação ainda depende da arquitetura aprovada.';
+  }
+  if (!isDone) {
+    return 'A task está pronta para avançar para implementação técnica.';
+  }
+  if (implementationStatus) {
+    return 'A implementação já foi iniciada. Use a aba Desenvolvimento para acompanhar os artefatos.';
+  }
+  return 'Use Gerar código para iniciar a implementação técnica.';
+}
+
 export default function TaskDetailsPage() {
   const { projectUuid, taskUuid } = useParams();
   const navigate = useNavigate();
@@ -114,6 +162,7 @@ export default function TaskDetailsPage() {
   const [taskOwnerUuid, setTaskOwnerUuid] = useState('');
   const [taskDueDate, setTaskDueDate] = useState('');
   const [blockReason, setBlockReason] = useState('');
+  const [actionLoading, setActionLoading] = useState(null);
   const bootstrapContext = JSON.parse(localStorage.getItem('factory_bootstrap_context') || 'null');
   const taskHasRequirements = hasCurrentArtifact(task, 'requirements');
   const taskHasTestPlan = hasCurrentArtifact(task, 'test_plan');
@@ -124,12 +173,20 @@ export default function TaskDetailsPage() {
   const qaRunning = isTaskAgentRunning(task, 'qa_engineer');
   const canRunRequirements = !taskIsBlocked && !taskHasRequirements && !requirementsRunning;
   const canRunQa = !taskIsBlocked && taskHasRequirements && !taskHasTestPlan && !qaRunning;
+  const taskTypeLabel = getTaskTypeLabel(task?.taskType);
+  const taskStatusLabel = getTaskStatusLabel(task?.status);
+  const latestComment = task?.comments?.[0] || null;
+  const latestHistory = task?.statusHistory?.[0] || null;
+  const latestRun = task?.agentRuns?.[0] || null;
   const reviewReport = parseJsonContent(implementationStatus?.reviewArtifact?.content);
   const fixPlanReport = parseJsonContent(implementationStatus?.fixPlanArtifact?.content);
   const buildReport = parseJsonContent(implementationStatus?.buildReportArtifact?.content);
   const testReport = parseJsonContent(implementationStatus?.testReportArtifact?.content);
   const lintReport = parseJsonContent(implementationStatus?.lintReportArtifact?.content);
   const implementationSummary = reviewReport?.summary || null;
+  const stageHint = getTaskStageHint(task, architectureStatus, taskHasRequirements, taskHasTestPlan, taskIsDone, implementationStatus);
+  const activeArtifactForEdit =
+    editingArtifactId != null ? task?.artifacts?.find((artifact) => artifact.id === editingArtifactId) || null : null;
 
   async function loadTask() {
     setLoading(true);
@@ -168,11 +225,25 @@ export default function TaskDetailsPage() {
     loadTask();
   }, [taskUuid]);
 
+  useEffect(() => {
+    if (!editingArtifactId) return undefined;
+
+    function handleEscape(event) {
+      if (event.key === 'Escape') {
+        handleCancelArtifactEdit();
+      }
+    }
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [editingArtifactId]);
+
   async function handleCommentSubmit(e) {
     e.preventDefault();
     if (!commentBody.trim()) return;
 
     setSaving(true);
+    setActionLoading('comment');
     setError(null);
     try {
       await createTaskComment(taskUuid, {
@@ -186,11 +257,13 @@ export default function TaskDetailsPage() {
 
     } finally {
       setSaving(false);
+      setActionLoading(null);
     }
   }
 
   async function handleRunRequirements() {
     setSaving(true);
+    setActionLoading('requirements');
     setError(null);
     try {
       await runTaskRequirements(taskUuid, {
@@ -202,11 +275,13 @@ export default function TaskDetailsPage() {
 
     } finally {
       setSaving(false);
+      setActionLoading(null);
     }
   }
 
   async function handleRunQa() {
     setSaving(true);
+    setActionLoading('qa');
     setError(null);
     try {
       await runTaskQa(taskUuid, {
@@ -218,11 +293,13 @@ export default function TaskDetailsPage() {
 
     } finally {
       setSaving(false);
+      setActionLoading(null);
     }
   }
 
   async function handleGenerateCode() {
     setSaving(true);
+    setActionLoading('code');
     setError(null);
     try {
       await bootstrapGeneratedApp(projectUuid);
@@ -233,6 +310,7 @@ export default function TaskDetailsPage() {
 
     } finally {
       setSaving(false);
+      setActionLoading(null);
     }
   }
 
@@ -252,6 +330,7 @@ export default function TaskDetailsPage() {
 
   async function handleSaveArtifactEdit(artifact) {
     setSaving(true);
+    setActionLoading('artifact');
     setError(null);
     try {
       await createTaskArtifact(taskUuid, {
@@ -268,11 +347,13 @@ export default function TaskDetailsPage() {
 
     } finally {
       setSaving(false);
+      setActionLoading(null);
     }
   }
 
   async function handleSaveTaskMeta() {
     setSaving(true);
+    setActionLoading('meta');
     setError(null);
     try {
       await updateTask(taskUuid, {
@@ -285,11 +366,13 @@ export default function TaskDetailsPage() {
       setError(getApiErrorMessage(submitError, 'Não foi possível salvar os dados da task.'));
     } finally {
       setSaving(false);
+      setActionLoading(null);
     }
   }
 
   async function handleToggleBlockTask() {
     setSaving(true);
+    setActionLoading(taskIsBlocked ? 'unblock' : 'block');
     setError(null);
     try {
       if (taskIsBlocked) {
@@ -310,6 +393,7 @@ export default function TaskDetailsPage() {
       setError(getApiErrorMessage(submitError, 'Não foi possível atualizar o bloqueio da task.'));
     } finally {
       setSaving(false);
+      setActionLoading(null);
     }
   }
 
@@ -339,7 +423,11 @@ export default function TaskDetailsPage() {
                   : undefined
             }
           >
-            {requirementsRunning ? 'Requisitos em execucao' : 'Refinar com Requisitos'}
+            {actionLoading === 'requirements'
+              ? 'Refinando...'
+              : requirementsRunning
+                ? 'Requisitos em execucao'
+                : 'Refinar com Requisitos'}
           </button>
           <button
             onClick={handleRunQa}
@@ -353,7 +441,11 @@ export default function TaskDetailsPage() {
                   : undefined
             }
           >
-            {qaRunning ? 'QA em execucao' : 'Executar QA'}
+            {actionLoading === 'qa'
+              ? 'Executando QA...'
+              : qaRunning
+                ? 'QA em execucao'
+                : 'Executar QA'}
           </button>
           {taskIsDone && (
             <button
@@ -361,7 +453,7 @@ export default function TaskDetailsPage() {
               disabled={loading}
               className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
             >
-              Gerar código
+              Abrir Code Studio
             </button>
           )}
           <button
@@ -375,23 +467,66 @@ export default function TaskDetailsPage() {
       sidebar={
         <>
           <section className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Resumo</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Visão rápida</p>
             {task ? (
-              <div className="mt-4 space-y-3 text-sm text-slate-700">
-                <p><strong>Projeto:</strong> {task.project?.name}</p>
-                <p><strong>Task UUID:</strong> {task.uuid}</p>
-                <p><strong>Status:</strong> {task.status}</p>
-                <p><strong>Prioridade:</strong> {task.priority}</p>
-                <p><strong>Responsável:</strong> {task.assigneeAgentName || task.assigneeUser?.name || 'Sem responsável'}</p>
-                <p><strong>Prazo:</strong> {formatDate(task.dueDate)}</p>
-                {taskIsBlocked && (
-                  <p><strong>Bloqueio:</strong> {getLatestStatusHistoryNote(task, 'blocked') || 'Sem observação registrada'}</p>
-                )}
-                <p><strong>Criada em:</strong> {formatDate(task.createdAt)}</p>
-                <p><strong>Tempo em execução:</strong> {formatElapsed(task.timing?.cycleTimeSeconds)}</p>
-                <p><strong>Tempo em requisitos:</strong> {formatElapsed(task.timing?.requirementsTimeSeconds)}</p>
-                <p><strong>Tempo em QA:</strong> {formatElapsed(task.timing?.qaTimeSeconds)}</p>
-                <p><strong>Implementação:</strong> {implementationStatus?.status || 'Não iniciada'}</p>
+              <div className="mt-4 space-y-4">
+                <div className="rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
+                      {taskTypeLabel}
+                    </span>
+                    <span className="rounded-full bg-[#fff5d9] px-3 py-1 text-xs font-semibold text-[#8a6a1f]">
+                      {taskStatusLabel}
+                    </span>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                      Prioridade {task.priority || 'n/d'}
+                    </span>
+                  </div>
+                  <div className="mt-4 space-y-2 text-sm text-slate-700">
+                    <p><strong>Projeto:</strong> {task.project?.name}</p>
+                    <p><strong>Responsável:</strong> {task.assigneeUser?.name || task.assigneeAgentLabel || getAgentLabel(task.assigneeAgentName, 'Sem responsável')}</p>
+                    <p><strong>Prazo:</strong> {formatDate(task.dueDate)}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Próxima ação</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">{stageHint}</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-500">
+                    <div className="rounded-2xl bg-white p-3">
+                      <p className="font-semibold uppercase tracking-[0.14em] text-slate-400">Requisitos</p>
+                      <p className="mt-1 font-medium text-slate-700">{taskHasRequirements ? 'Disponível' : 'Pendente'}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-3">
+                      <p className="font-semibold uppercase tracking-[0.14em] text-slate-400">QA</p>
+                      <p className="mt-1 font-medium text-slate-700">{taskHasTestPlan ? 'Disponível' : 'Pendente'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Última atividade</p>
+                  <div className="mt-3 space-y-3 text-sm text-slate-700">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Comentário</p>
+                      <p className="mt-1 text-slate-700">{latestComment?.body || 'Sem comentários ainda.'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Mudança</p>
+                      <p className="mt-1 text-slate-700">
+                        {latestHistory
+                          ? `${latestHistory.fromStatus || 'novo'} → ${latestHistory.toStatus}`
+                          : 'Sem histórico de status ainda.'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Execução</p>
+                      <p className="mt-1 text-slate-700">
+                        {latestRun ? `${latestRun.agentLabel || getAgentLabel(latestRun.agentName)} • ${latestRun.status}` : 'Nenhuma execução registrada.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
               <p className="mt-4 text-sm text-slate-500">Carregando...</p>
@@ -429,90 +564,146 @@ export default function TaskDetailsPage() {
           </div>
         ) : task ? (
           <>
-            <div className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Descrição</p>
-              <h2 className="mt-3 font-serif text-2xl font-semibold text-slate-900 sm:text-3xl">{task.title}</h2>
-              <p className="mt-4 text-sm leading-7 text-slate-600">{task.description || 'Sem descrição cadastrada.'}</p>
-            </div>
-
-            <div className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Gestão da task</p>
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <label className="block">
-                  <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Responsável</span>
-                  <select
-                    value={taskOwnerUuid}
-                    onChange={(event) => setTaskOwnerUuid(event.target.value)}
-                    className="dashboard-input"
-                  >
-                    <option value="">Sem responsável</option>
-                    {(task.project?.members || []).map((member) => (
-                      <option key={member.user.uuid} value={member.user.uuid}>
-                        {member.user.name || member.user.email}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Prazo</span>
-                  <input
-                    type="date"
-                    value={taskDueDate}
-                    onChange={(event) => setTaskDueDate(event.target.value)}
-                    className="dashboard-input"
-                  />
-                </label>
-              </div>
-              <div className="mt-4 rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
-                <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Bloqueio</p>
-                <p className="mt-2 text-sm text-slate-600">
-                  {taskIsBlocked
-                    ? 'Essa task está bloqueada. Você pode liberar o fluxo abaixo.'
-                    : 'Marque um motivo para bloquear a task quando houver dependência externa ou impedimento.'}
-                </p>
-                {!taskIsBlocked && (
-                  <label className="mt-4 block">
-                    <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">
-                      Motivo do bloqueio
-                    </span>
-                    <textarea
-                      value={blockReason}
-                      onChange={(event) => setBlockReason(event.target.value)}
-                      placeholder="Ex.: aguardando validação do financeiro"
-                      rows={3}
-                      className="dashboard-input resize-none"
-                    />
-                  </label>
-                )}
-                {taskIsBlocked && (
-                  <div className="mt-4 rounded-2xl bg-white p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-500">Motivo atual</p>
-                    <p className="mt-2 text-sm leading-6 text-slate-700">
-                      {getLatestStatusHistoryNote(task, 'blocked') || 'Bloqueio sem observação registrada.'}
-                    </p>
+            <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+              <div className="space-y-6">
+                <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Resumo da task</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">{taskTypeLabel}</span>
+                    <span className="rounded-full bg-[#fff5d9] px-3 py-1 text-xs font-semibold text-[#8a6a1f]">{taskStatusLabel}</span>
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{task.priority || 'Sem prioridade'}</span>
                   </div>
-                )}
-                <div className="mt-4 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleToggleBlockTask}
-                    disabled={saving || loading}
-                    className={taskIsBlocked ? 'dashboard-button-secondary' : 'dashboard-button-primary'}
-                  >
-                    {taskIsBlocked ? 'Desbloquear tarefa' : 'Bloquear tarefa'}
-                  </button>
-                </div>
+                  <h2 className="mt-4 font-serif text-2xl font-semibold text-slate-900 sm:text-3xl">{task.title}</h2>
+                  <p className="mt-4 text-sm leading-7 text-slate-600">{task.description || 'Sem descrição cadastrada.'}</p>
+                  <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Responsável</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{task.assigneeUser?.name || task.assigneeAgentLabel || getAgentLabel(task.assigneeAgentName, 'Sem responsável')}</p>
+                    </article>
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Prazo</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{formatDate(task.dueDate)}</p>
+                    </article>
+                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Status</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{taskStatusLabel}</p>
+                    </article>
+                  </div>
+                </section>
+
+                <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Gestão da task</p>
+                      <p className="mt-2 text-sm text-slate-500">Responsável, prazo e bloqueio em um só lugar.</p>
+                    </div>
+                    <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
+                      {taskIsBlocked ? 'Bloqueada' : 'Em fluxo'}
+                    </span>
+                  </div>
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Responsável</span>
+                      <select
+                        value={taskOwnerUuid}
+                        onChange={(event) => setTaskOwnerUuid(event.target.value)}
+                        className="dashboard-input"
+                      >
+                        <option value="">Sem responsável</option>
+                        {(task.project?.members || []).map((member) => (
+                          <option key={member.user.uuid} value={member.user.uuid}>
+                            {member.user.name || member.user.email}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Prazo</span>
+                      <input
+                        type="date"
+                        value={taskDueDate}
+                        onChange={(event) => setTaskDueDate(event.target.value)}
+                        className="dashboard-input"
+                      />
+                    </label>
+                  </div>
+                  <div className="mt-4 rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Bloqueio</p>
+                    <p className="mt-2 text-sm text-slate-600">
+                      {taskIsBlocked
+                        ? 'Essa task está bloqueada. Desbloqueie quando a dependência estiver resolvida.'
+                        : 'Use o bloqueio para sinalizar dependências externas ou impedimentos reais.'}
+                    </p>
+                    {!taskIsBlocked && (
+                      <label className="mt-4 block">
+                        <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">
+                          Motivo do bloqueio
+                        </span>
+                        <textarea
+                          value={blockReason}
+                          onChange={(event) => setBlockReason(event.target.value)}
+                          placeholder="Ex.: aguardando validação do financeiro"
+                          rows={3}
+                          className="dashboard-input resize-none"
+                        />
+                      </label>
+                    )}
+                    {taskIsBlocked && (
+                      <div className="mt-4 rounded-2xl bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-500">Motivo atual</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-700">
+                          {getLatestStatusHistoryNote(task, 'blocked') || 'Bloqueio sem observação registrada.'}
+                        </p>
+                      </div>
+                    )}
+                    <div className="mt-4 flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleToggleBlockTask}
+                        disabled={saving || loading}
+                        className={taskIsBlocked ? 'dashboard-button-secondary' : 'dashboard-button-primary'}
+                      >
+                        {actionLoading === 'block'
+                          ? 'Bloqueando...'
+                          : actionLoading === 'unblock'
+                            ? 'Desbloqueando...'
+                            : taskIsBlocked
+                              ? 'Desbloquear tarefa'
+                              : 'Bloquear tarefa'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveTaskMeta}
+                        disabled={saving || loading}
+                        className="dashboard-button-primary"
+                      >
+                        {actionLoading === 'meta' ? 'Salvando...' : 'Salvar gestão da task'}
+                      </button>
+                    </div>
+                  </div>
+                </section>
               </div>
-              <div className="mt-4 flex justify-end">
-                <button
-                  type="button"
-                  onClick={handleSaveTaskMeta}
-                  disabled={saving || loading}
-                  className="dashboard-button-primary"
-                >
-                  Salvar gestão da task
-                </button>
-              </div>
+
+              <aside className="space-y-6">
+                <section className="rounded-[32px] border border-slate-200 bg-[#faf8f2] p-6 shadow-[0_20px_60px_rgba(23,50,43,0.06)]">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Direção da task</p>
+                  <p className="mt-3 text-sm leading-7 text-slate-600">{stageHint}</p>
+                  <div className="mt-5 grid gap-3 text-sm">
+                    <div className="rounded-2xl bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Requisitos</p>
+                      <p className="mt-2 font-medium text-slate-700">{taskHasRequirements ? 'Já gerados' : 'Ainda não gerados'}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">QA</p>
+                      <p className="mt-2 font-medium text-slate-700">{taskHasTestPlan ? 'Já gerado' : 'Ainda não gerado'}</p>
+                    </div>
+                    <div className="rounded-2xl bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Implementação</p>
+                      <p className="mt-2 font-medium text-slate-700">{implementationUnlocked ? 'Liberada' : 'Aguardando arquitetura'}</p>
+                    </div>
+                  </div>
+                </section>
+              </aside>
             </div>
 
             <section className="rounded-[32px] border border-slate-200 bg-white/88 p-3 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
@@ -605,7 +796,7 @@ export default function TaskDetailsPage() {
                       )}
                     </div>
                     <button disabled={saving || !commentBody.trim()} className="w-full rounded-2xl bg-[#17322b] px-4 py-3 text-sm font-semibold text-white hover:bg-[#214338] disabled:opacity-50 sm:w-auto">
-                      Adicionar comentário
+                      {actionLoading === 'comment' ? 'Adicionando...' : 'Adicionar comentário'}
                     </button>
                   </form>
 
@@ -665,49 +856,22 @@ export default function TaskDetailsPage() {
                           {artifact.isApproved ? 'Aprovado' : 'Pendente'}
                         </span>
                       </div>
-                      {editingArtifactId === artifact.id ? (
-                        <div className="mt-4 space-y-3">
-                          <textarea
-                            value={artifactDraft}
-                            onChange={(e) => setArtifactDraft(e.target.value)}
-                            rows="12"
-                            className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-xs leading-6 text-slate-700 outline-none transition focus:border-[#8aac55] focus:ring-4 focus:ring-[#dff0b8]"
-                          />
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleSaveArtifactEdit(artifact)}
-                              disabled={saving || !artifactDraft.trim()}
-                              className="rounded-2xl bg-[#17322b] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#214338] disabled:opacity-50"
-                            >
-                              Salvar nova versão
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleCancelArtifactEdit}
-                              className="rounded-2xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                            >
-                              Cancelar
-                            </button>
-                          </div>
+                      <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap rounded-2xl bg-white p-4 text-xs leading-6 text-slate-600">
+                        {artifact.content}
+                      </pre>
+                      {artifact.isCurrent && (
+                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-xs leading-5 text-slate-500">
+                            Abra em tela focada para revisar o conteúdo e salvar uma nova versão sem poluir a leitura da aba.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => handleStartArtifactEdit(artifact)}
+                            className="rounded-2xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            Editar artefato
+                          </button>
                         </div>
-                      ) : (
-                        <>
-                          <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap rounded-2xl bg-white p-4 text-xs leading-6 text-slate-600">
-                            {artifact.content}
-                          </pre>
-                          {artifact.isCurrent && (
-                            <div className="mt-3">
-                              <button
-                                type="button"
-                                onClick={() => handleStartArtifactEdit(artifact)}
-                                className="rounded-2xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                              >
-                                Editar artefato
-                              </button>
-                            </div>
-                          )}
-                        </>
                       )}
                     </article>
                   ))}
@@ -993,7 +1157,7 @@ export default function TaskDetailsPage() {
                 <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Última execução</p>
                   <p className="mt-2 text-sm font-semibold text-slate-900">
-                    {task.agentRuns?.[0]?.agentName || 'Sem execuções'}
+                    {task.agentRuns?.[0]?.agentLabel || getAgentLabel(task.agentRuns?.[0]?.agentName, 'Sem execuções')}
                   </p>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
                     {task.agentRuns?.[0]
@@ -1016,7 +1180,7 @@ export default function TaskDetailsPage() {
                   <article key={run.id} className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <p className="text-sm font-semibold text-slate-900">{run.agentName}</p>
+                        <p className="text-sm font-semibold text-slate-900">{run.agentLabel || getAgentLabel(run.agentName)}</p>
                         <p className="mt-1 text-xs text-slate-500">
                           {run.status} • {formatElapsed(run.startedAt ? Math.round((new Date(run.finishedAt || Date.now()).getTime() - new Date(run.startedAt).getTime()) / 1000) : 0)}
                         </p>
@@ -1070,6 +1234,72 @@ export default function TaskDetailsPage() {
           </>
         ) : null}
       </section>
+      {activeArtifactForEdit ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
+          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Editar artefato</p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-900">{activeArtifactForEdit.title}</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  {activeArtifactForEdit.artifactType} • v{activeArtifactForEdit.version}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelArtifactEdit}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="grid flex-1 gap-0 overflow-hidden lg:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)]">
+              <div className="border-b border-slate-200 bg-[#faf8f2] p-6 lg:border-b-0 lg:border-r">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Versão atual</p>
+                <pre className="mt-4 max-h-[58vh] overflow-auto whitespace-pre-wrap rounded-2xl bg-white p-4 text-xs leading-6 text-slate-600">
+                  {activeArtifactForEdit.content}
+                </pre>
+              </div>
+              <div className="flex min-h-0 flex-col p-6">
+                <div className="mb-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Nova versão</p>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Revise o conteúdo, ajuste o que precisar e salve uma nova versão do artefato.
+                  </p>
+                </div>
+                <textarea
+                  value={artifactDraft}
+                  onChange={(e) => setArtifactDraft(e.target.value)}
+                  rows="20"
+                  className="min-h-[360px] flex-1 resize-none rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-700 outline-none transition focus:border-[#8aac55] focus:ring-4 focus:ring-[#dff0b8]"
+                />
+                <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-slate-500">
+                    O salvamento cria uma nova versão e mantém o histórico do artefato.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCancelArtifactEdit}
+                      className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveArtifactEdit(activeArtifactForEdit)}
+                      disabled={saving || !artifactDraft.trim()}
+                      className="rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#214338] disabled:opacity-50"
+                    >
+                      {actionLoading === 'artifact' ? 'Salvando...' : 'Salvar nova versão'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }

@@ -185,7 +185,7 @@ export async function runAgentController(req, res) {
     }
 
     await ensurePipelineProject(payload.project_id, payload.idea, req.authUser.uuid);
-    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: agent });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(payload.project_id, agent, payloadWithRuntime);
 
@@ -266,7 +266,7 @@ export async function runRequirementsForTaskController(req, res) {
       },
     };
 
-    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'requirements_analyst' });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(task.project.uuid, 'requirements_analyst', payloadWithRuntime);
     const result = await runSingleAgent('requirements_analyst', payloadWithRuntime, { envOverrides });
@@ -390,7 +390,7 @@ export async function runQaForTaskController(req, res) {
       requirement_summary: requirementSummary,
     };
 
-    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'qa_engineer' });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(task.project.uuid, 'qa_engineer', payloadWithRuntime);
     const result = await runSingleAgent('qa_engineer', payloadWithRuntime, { envOverrides });

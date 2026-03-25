@@ -1,7 +1,9 @@
 import {
   assertProjectAccess,
+  assertProjectPermission,
   assertTaskAccess,
   assertWorkspaceAccess,
+  addProjectMember,
   approveCurrentArchitectureArtifact,
   createAgentRunStart,
   createProject,
@@ -20,7 +22,9 @@ import {
   listProjectTasks,
   listAllTasks,
   persistAgentResult,
+  removeProjectMember,
   updateProjectBrief,
+  updateProjectMemberRole,
   updateTask,
 } from '../services/projectDataService.js';
 import { runSingleAgent } from '../services/orchestratorService.js';
@@ -103,7 +107,7 @@ export async function listProjectsController(req, res, next) {
 
 export async function bootstrapController(_req, res) {
   res.status(410).json({
-    message: 'Bootstrap público desativado. Use /api/auth/register para criar sua conta com segurança.',
+    message: 'Bootstrap pÃºblico desativado. Use /api/auth/register para criar sua conta com seguranÃ§a.',
   });
 }
 
@@ -112,7 +116,7 @@ export async function getProjectController(req, res, next) {
     const project = await getProjectByUuid(req.params.projectUuid, req.authUser.uuid);
 
     if (!project) {
-      return res.status(404).json({ message: 'Projeto não encontrado.' });
+      return res.status(404).json({ message: 'Projeto nÃ£o encontrado.' });
     }
 
     res.json(serializeBigInts(project));
@@ -150,7 +154,7 @@ export async function createProjectController(req, res, next) {
 
     if (!workspace?.uuid) {
       return res.status(400).json({
-        message: 'Nenhum workspace disponível para este usuário.',
+        message: 'Nenhum workspace disponÃ­vel para este usuÃ¡rio.',
       });
     }
 
@@ -177,7 +181,7 @@ export async function createProjectController(req, res, next) {
 
 export async function updateProjectBriefController(req, res, next) {
   try {
-    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
 
     const { description, vision, intakeConfig } = req.body || {};
     const project = await updateProjectBrief(req.params.projectUuid, {
@@ -234,7 +238,7 @@ export async function createTaskController(req, res, next) {
       });
     }
 
-    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'editor');
 
     const task = await createTask(req.params.projectUuid, {
       ...req.body,
@@ -251,6 +255,10 @@ export async function createTaskController(req, res, next) {
 export async function updateTaskController(req, res, next) {
   try {
     await assertTaskAccess(req.params.taskUuid, req.authUser.uuid);
+    if (req.body?.status || req.body?.assigneeUserUuid !== undefined || req.body?.dueDate !== undefined || req.body?.title || req.body?.description) {
+      const existingTask = await getTaskByUuid(req.params.taskUuid, req.authUser.uuid);
+      await assertProjectPermission(existingTask.project.uuid, req.authUser.uuid, 'editor');
+    }
 
     const task = await updateTask(req.params.taskUuid, {
       ...req.body,
@@ -267,7 +275,7 @@ export async function getTaskController(req, res, next) {
     const task = await getTaskByUuid(req.params.taskUuid, req.authUser.uuid);
 
     if (!task) {
-      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+      return res.status(404).json({ message: 'Tarefa nÃ£o encontrada.' });
     }
 
     res.json(serializeBigInts(task));
@@ -285,6 +293,8 @@ export async function createTaskCommentController(req, res, next) {
     }
 
     await assertTaskAccess(req.params.taskUuid, req.authUser.uuid);
+    const existingTask = await getTaskByUuid(req.params.taskUuid, req.authUser.uuid);
+    await assertProjectPermission(existingTask.project.uuid, req.authUser.uuid, 'editor');
 
     const comment = await createTaskComment(req.params.taskUuid, {
       ...req.body,
@@ -314,7 +324,7 @@ export async function ensurePipelineProjectController(req, res, next) {
 export async function importBacklogTasksController(req, res, next) {
   try {
     const { backlogMarkdown } = req.body;
-    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
 
     const tasks = await importBacklogTasks(req.params.projectUuid, backlogMarkdown);
     res.status(201).json(serializeBigInts(tasks));
@@ -334,13 +344,15 @@ export async function generateProjectBacklogController(req, res, next) {
       return res.status(400).json({ message: 'idea e obrigatorio.' });
     }
 
-    await assertProjectAccess(projectUuid, req.authUser.uuid);
+    await assertProjectPermission(projectUuid, req.authUser.uuid, 'manager');
 
     await updateProjectBrief(projectUuid, {
       description,
       vision,
       intakeConfig: {
         idea: idea.trim(),
+        objective: answers?.objective || '',
+        audience: answers?.audience || '',
         answers: answers || {},
         lastGeneratedAt: new Date().toISOString(),
       },
@@ -352,7 +364,7 @@ export async function generateProjectBacklogController(req, res, next) {
       answers: {},
     };
 
-    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'project_manager' });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(projectUuid, 'project_manager', payloadWithRuntime);
     const result = await runSingleAgent('project_manager', payloadWithRuntime, { envOverrides });
@@ -391,7 +403,7 @@ export async function generateProjectBacklogController(req, res, next) {
 
 export async function getProjectArchitectureStatusController(req, res, next) {
   try {
-    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
     const status = await getProjectArchitectureStatus(req.params.projectUuid, req.authUser.uuid);
     res.json(serializeBigInts(status));
   } catch (error) {
@@ -401,11 +413,11 @@ export async function getProjectArchitectureStatusController(req, res, next) {
 
 export async function getProjectDocumentationBundleController(req, res, next) {
   try {
-    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
     const architectureStatus = await getProjectArchitectureStatus(req.params.projectUuid, req.authUser.uuid);
-    if (architectureStatus?.hasArchitecture && !architectureStatus?.architectureNeedsRefresh && !architectureStatus?.architectureApproved) {
+    if (architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved) {
       return res.status(409).json({
-        message: 'A documentação final só pode ser exportada depois da aprovação humana da arquitetura atual.',
+        message: 'A documentaÃ§Ã£o final sÃ³ pode ser exportada depois da aprovaÃ§Ã£o humana da arquitetura atual.',
         architectureStatus: serializeBigInts(architectureStatus),
       });
     }
@@ -438,7 +450,7 @@ export async function generateProjectArchitectureController(req, res, next) {
 
   try {
     const { projectUuid } = req.params;
-    await assertProjectAccess(projectUuid, req.authUser.uuid);
+    await assertProjectPermission(projectUuid, req.authUser.uuid, 'manager');
 
     const [project, tasks, architectureStatus] = await Promise.all([
       getProjectByUuid(projectUuid, req.authUser.uuid),
@@ -448,7 +460,14 @@ export async function generateProjectArchitectureController(req, res, next) {
 
     if (!architectureStatus.allStoriesRefined) {
       return res.status(400).json({
-        message: 'A arquitetura só pode ser gerada quando todas as histórias estiverem refinadas.',
+        message: 'A arquitetura so pode ser gerada quando todas as historias estiverem refinadas.',
+        architectureStatus: serializeBigInts(architectureStatus),
+      });
+    }
+
+    if (architectureStatus.hasArchitecture) {
+      return res.status(409).json({
+        message: 'A arquitetura deste projeto jÃ¡ foi gerada e nÃ£o pode ser executada novamente.',
         architectureStatus: serializeBigInts(architectureStatus),
       });
     }
@@ -541,6 +560,8 @@ export async function createTaskArtifactController(req, res, next) {
     }
 
     await assertTaskAccess(req.params.taskUuid, req.authUser.uuid);
+    const existingTask = await getTaskByUuid(req.params.taskUuid, req.authUser.uuid);
+    await assertProjectPermission(existingTask.project.uuid, req.authUser.uuid, 'editor');
 
     const artifact = await createTaskArtifact(req.params.taskUuid, {
       ...req.body,
@@ -548,6 +569,38 @@ export async function createTaskArtifactController(req, res, next) {
       createdByUserId: req.authUser.id,
     });
     res.status(201).json(serializeBigInts(artifact));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function addProjectMemberController(req, res, next) {
+  try {
+    const project = await addProjectMember(req.params.projectUuid, req.body || {}, req.authUser.uuid);
+    res.status(201).json(serializeBigInts(project));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateProjectMemberController(req, res, next) {
+  try {
+    const project = await updateProjectMemberRole(
+      req.params.projectUuid,
+      req.params.memberUuid,
+      req.body || {},
+      req.authUser.uuid
+    );
+    res.json(serializeBigInts(project));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function removeProjectMemberController(req, res, next) {
+  try {
+    const project = await removeProjectMember(req.params.projectUuid, req.params.memberUuid, req.authUser.uuid);
+    res.json(serializeBigInts(project));
   } catch (error) {
     next(error);
   }

@@ -16,6 +16,14 @@ const PROVIDER_OPTIONS = [
 
 const EMPTY_SETTINGS = {
   providerPreference: 'auto',
+  agentAliases: {
+    project_manager: 'PM Agent',
+    requirements_analyst: 'Requirements Agent',
+    qa_engineer: 'QA Agent',
+    architect: 'Architect Agent',
+    developer: 'Developer Agent',
+    implementation_architect: 'UI Agent',
+  },
   ollama: { enabled: true, host: 'http://127.0.0.1:11434', model: 'gemma3:4b' },
   gemini: { enabled: false, apiKey: '', model: 'gemini-2.0-flash' },
   openai: { enabled: false, apiKey: '', model: 'gpt-4.1-mini' },
@@ -312,6 +320,78 @@ export default function AiSettingsPage() {
                 ))}
               </select>
             </Field>
+          </section>
+
+          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/60">
+            <div className="mb-5">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#102a72]">Agentes</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Apelidos exibidos na interface</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Personalize como cada agente aparece no board, no detalhe da task e em outras areas operacionais.
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <Field label="Project Manager">
+                <TextInput
+                  value={settings.agentAliases?.project_manager || ''}
+                  onChange={(event) => setSettings((current) => ({
+                    ...current,
+                    agentAliases: { ...current.agentAliases, project_manager: event.target.value },
+                  }))}
+                  placeholder="PM Agent"
+                />
+              </Field>
+              <Field label="Requirements Analyst">
+                <TextInput
+                  value={settings.agentAliases?.requirements_analyst || ''}
+                  onChange={(event) => setSettings((current) => ({
+                    ...current,
+                    agentAliases: { ...current.agentAliases, requirements_analyst: event.target.value },
+                  }))}
+                  placeholder="Requirements Agent"
+                />
+              </Field>
+              <Field label="QA Engineer">
+                <TextInput
+                  value={settings.agentAliases?.qa_engineer || ''}
+                  onChange={(event) => setSettings((current) => ({
+                    ...current,
+                    agentAliases: { ...current.agentAliases, qa_engineer: event.target.value },
+                  }))}
+                  placeholder="QA Agent"
+                />
+              </Field>
+              <Field label="Architect">
+                <TextInput
+                  value={settings.agentAliases?.architect || ''}
+                  onChange={(event) => setSettings((current) => ({
+                    ...current,
+                    agentAliases: { ...current.agentAliases, architect: event.target.value },
+                  }))}
+                  placeholder="Architect Agent"
+                />
+              </Field>
+              <Field label="Developer">
+                <TextInput
+                  value={settings.agentAliases?.developer || ''}
+                  onChange={(event) => setSettings((current) => ({
+                    ...current,
+                    agentAliases: { ...current.agentAliases, developer: event.target.value },
+                  }))}
+                  placeholder="Developer Agent"
+                />
+              </Field>
+              <Field label="UI de Implementacao">
+                <TextInput
+                  value={settings.agentAliases?.implementation_architect || ''}
+                  onChange={(event) => setSettings((current) => ({
+                    ...current,
+                    agentAliases: { ...current.agentAliases, implementation_architect: event.target.value },
+                  }))}
+                  placeholder="UI Agent"
+                />
+              </Field>
+            </div>
           </section>
 
           <ProviderCard title="Ollama local" description="Use um modelo rodando na sua maquina ou em outro host Ollama." supported>

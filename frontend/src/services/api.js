@@ -223,6 +223,21 @@ export const updateProjectBrief = async (projectUuid, payload) => {
   return response.data
 }
 
+export const addProjectMember = async (projectUuid, payload) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/members`, payload)
+  return response.data
+}
+
+export const updateProjectMember = async (projectUuid, memberUuid, payload) => {
+  const response = await apiClient.patch(`/projects/${projectUuid}/members/${memberUuid}`, payload)
+  return response.data
+}
+
+export const removeProjectMember = async (projectUuid, memberUuid) => {
+  const response = await apiClient.delete(`/projects/${projectUuid}/members/${memberUuid}`)
+  return response.data
+}
+
 export const getProjectDocumentationBundle = async (projectUuid) => {
   const response = await apiClient.get(`/projects/${projectUuid}/documentation`)
   return response.data
@@ -351,6 +366,9 @@ export default {
   listProjects,
   getProject,
   updateProjectBrief,
+  addProjectMember,
+  updateProjectMember,
+  removeProjectMember,
   getProjectDocumentationBundle,
   listProjectTasks,
   createProject,

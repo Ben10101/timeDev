@@ -12,6 +12,7 @@ import {
   Hammer,
   Layers3,
   RefreshCw,
+  Search,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
@@ -87,6 +88,77 @@ function downloadMarkdownFile(filename, content) {
   URL.revokeObjectURL(url);
 }
 
+function getArchitectureStateLabel(architectureStatus) {
+  if (!architectureStatus?.hasArchitecture) return 'Pendente';
+  if (architectureStatus?.architectureNeedsRefresh) return 'Desatualizada';
+  if (architectureStatus?.architectureApproved) return 'Aprovada';
+  return 'Pendente de aprovação';
+}
+
+function getCodeStudioNextStep({ selectedProject, architectureStatus, readyTasks, integratedTasks, generatedApp }) {
+  if (!selectedProject) {
+    return {
+      title: 'Escolha um projeto para abrir o handoff técnico',
+      message: 'Selecione um projeto na lista para ver arquitetura, stories prontas, geração da aplicação e detalhes de implementação.',
+      tone: 'slate',
+    };
+  }
+
+  if (!architectureStatus?.hasArchitecture) {
+    return {
+      title: 'A arquitetura ainda não foi gerada',
+      message: 'Finalize o refinamento das histórias e gere a arquitetura antes de iniciar a aplicação base.',
+      tone: 'amber',
+    };
+  }
+
+  if (architectureStatus?.architectureNeedsRefresh) {
+    return {
+      title: 'A arquitetura precisa ser atualizada',
+      message: 'Novos refinamentos deixaram o desenho técnico desatualizado. Regere a arquitetura antes de continuar.',
+      tone: 'amber',
+    };
+  }
+
+  if (!architectureStatus?.architectureApproved) {
+    return {
+      title: 'Falta aprovação humana da arquitetura',
+      message: 'A implementação continua bloqueada até que a arquitetura atual seja revisada e aprovada.',
+      tone: 'amber',
+    };
+  }
+
+  if (!readyTasks.length) {
+    return {
+      title: 'Ainda não existem stories prontas para código',
+      message: 'Conclua requisitos e QA das histórias que destravam a implementação antes de gerar a aplicação.',
+      tone: 'blue',
+    };
+  }
+
+  if (!generatedApp?.rootPath) {
+    return {
+      title: 'A aplicação base está pronta para nascer',
+      message: 'O projeto já pode materializar a estrutura técnica e começar a integrar as stories concluídas.',
+      tone: 'blue',
+    };
+  }
+
+  if (integratedTasks.length < readyTasks.length) {
+    return {
+      title: 'Existem stories prontas aguardando integração',
+      message: `${readyTasks.length - integratedTasks.length} histórias já podem seguir para implementação técnica.`,
+      tone: 'blue',
+    };
+  }
+
+  return {
+    title: 'A entrega técnica está sincronizada',
+    message: 'Arquitetura aprovada, aplicação base disponível e stories prontas já integradas.',
+    tone: 'emerald',
+  };
+}
+
 export default function CodeStudioPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -103,6 +175,8 @@ export default function CodeStudioPage() {
   const [copyFeedback, setCopyFeedback] = useState('');
   const [operationsOverview, setOperationsOverview] = useState(null);
   const [health, setHealth] = useState(null);
+  const [projectQuery, setProjectQuery] = useState('');
+  const [readyTaskQuery, setReadyTaskQuery] = useState('');
 
   const selectedProjectUuid = searchParams.get('project');
   const selectedTaskUuid = searchParams.get('task');
@@ -275,6 +349,34 @@ export default function CodeStudioPage() {
     [readyTasks, implementationMap]
   );
   const selectedImplementation = selectedTaskUuid ? implementationMap[selectedTaskUuid] : null;
+  const filteredProjects = useMemo(() => {
+    const query = projectQuery.trim().toLowerCase();
+    if (!query) return projects;
+    return projects.filter((project) =>
+      `${project.name} ${project.description || ''}`.toLowerCase().includes(query)
+    );
+  }, [projectQuery, projects]);
+  const filteredReadyTasks = useMemo(() => {
+    const query = readyTaskQuery.trim().toLowerCase();
+    if (!query) return readyTasks;
+    return readyTasks.filter((task) =>
+      `${task.title} ${task.description || ''}`.toLowerCase().includes(query)
+    );
+  }, [readyTaskQuery, readyTasks]);
+  const architectureStateLabel = getArchitectureStateLabel(architectureStatus);
+  const nextStep = getCodeStudioNextStep({
+    selectedProject,
+    architectureStatus,
+    readyTasks,
+    integratedTasks,
+    generatedApp,
+  });
+  const nextStepTone =
+    nextStep.tone === 'emerald'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : nextStep.tone === 'amber'
+        ? 'border-amber-200 bg-amber-50 text-amber-800'
+        : 'border-blue-200 bg-blue-50 text-[#102a72]';
 
   return (
     <AppShell
@@ -296,16 +398,17 @@ export default function CodeStudioPage() {
         <>
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Prontidao</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Próximo passo</p>
             </div>
             <div className="space-y-3 p-4 text-sm text-slate-700">
-              <p><strong>Projeto:</strong> {selectedProject?.name || 'Selecione um projeto'}</p>
-              <p><strong>Historias refinadas:</strong> {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0}</p>
-              <p><strong>Arquitetura:</strong> {architectureStatus?.hasArchitecture ? (architectureStatus?.architectureNeedsRefresh ? 'Desatualizada' : architectureStatus?.architectureApproved ? 'Aprovada' : 'Pendente de aprovação') : 'Pendente'}</p>
-              <p><strong>Implementação:</strong> {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
-              <p><strong>Saude API:</strong> {health?.status || 'n/a'}</p>
-              <p><strong>Banco:</strong> {health?.database || 'n/a'}</p>
-              <p><strong>Policy version:</strong> {operationsOverview?.recentRuns?.[0]?.runtimeMeta?.policyVersion || 'v1'}</p>
+              <p className="text-sm font-semibold text-slate-900">{nextStep.title}</p>
+              <p className="leading-6 text-slate-600">{nextStep.message}</p>
+              <div className={`rounded-2xl border px-4 py-3 ${nextStepTone}`}>
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em]">Estado atual</p>
+                <p className="mt-2 text-sm font-semibold">
+                  {selectedProject?.name || 'Nenhum projeto selecionado'} · Arquitetura {architectureStateLabel}
+                </p>
+              </div>
             </div>
           </section>
 
@@ -317,6 +420,8 @@ export default function CodeStudioPage() {
               <p><strong>Status:</strong> {generatedApp?.status || 'Ainda não gerado'}</p>
               <p><strong>Stack:</strong> {generatedApp?.stackPreset || 'Full stack padrao'}</p>
               <p><strong>Local:</strong> {generatedApp?.rootPath || 'Será criado quando a arquitetura ou a implementação rodar.'}</p>
+              <p><strong>Stories prontas:</strong> {readyTasks.length}</p>
+              <p><strong>Integradas:</strong> {integratedTasks.length}</p>
             </div>
           </section>
 
@@ -333,7 +438,8 @@ export default function CodeStudioPage() {
               <p><strong>Custo estimado:</strong> {Number(operationsOverview?.summary?.totalCostUsd || 0).toFixed(4)} USD</p>
               <p><strong>Acima do budget:</strong> {operationsOverview?.summary?.overBudgetRuns || 0}</p>
               <p><strong>Runs travados:</strong> {operationsOverview?.summary?.staleRunningRuns || 0}</p>
-              <p><strong>Prompt version:</strong> {operationsOverview?.recentRuns?.[0]?.runtimeMeta?.promptVersion || 'v1'}</p>
+              <p><strong>Saude API:</strong> {health?.status || 'n/a'}</p>
+              <p><strong>Banco:</strong> {health?.database || 'n/a'}</p>
               <button onClick={() => navigate('/governance')} className="dashboard-button-secondary w-full justify-center">
                 <ShieldCheck className="h-4 w-4" />
                 Abrir Governanca
@@ -347,11 +453,18 @@ export default function CodeStudioPage() {
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
           <div className="grid gap-8 px-8 py-8 lg:grid-cols-[1.3fr_0.7fr]">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Entrega assistida</p>
-              <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">Gere a aplicação com arquitetura, validação e leitura técnica no mesmo lugar.</h2>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Workspace de entrega</p>
+              <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">
+                {selectedProject ? `Code Studio de ${selectedProject.name}` : 'Escolha um projeto para entrar no handoff técnico'}
+              </h2>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
-                O Code Studio mostra se o projeto está pronto, quantas histórias já foram integradas e quais riscos ainda restam antes de gerar código.
+                Centralize arquitetura, stories prontas, aplicação base e observabilidade técnica em uma área pensada para o momento de implementar.
               </p>
+              <div className={`mt-6 rounded-2xl border px-5 py-4 ${nextStepTone}`}>
+                <p className="text-[10px] font-bold uppercase tracking-[0.24em]">O que fazer agora</p>
+                <p className="mt-2 text-base font-semibold">{nextStep.title}</p>
+                <p className="mt-2 text-sm leading-6">{nextStep.message}</p>
+              </div>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   onClick={handleGenerateApplication}
@@ -375,7 +488,7 @@ export default function CodeStudioPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Arquitetura</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">
-                  {architectureStatus?.hasArchitecture ? (architectureStatus?.architectureNeedsRefresh ? 'Desatualizada' : architectureStatus?.architectureApproved ? 'Aprovada' : 'Pendente de aprovação') : 'Pendente'}
+                  {architectureStateLabel}
                 </p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -391,18 +504,18 @@ export default function CodeStudioPage() {
         </section>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard icon={Layers3} label="Projeto" value={selectedProject ? 'selecionado' : 'nenhum'} hint={selectedProject?.name || 'Escolha um workspace'} tone="blue" />
+          <MetricCard icon={Layers3} label="Projeto ativo" value={selectedProject ? 'pronto' : 'pendente'} hint={selectedProject?.name || 'Escolha um projeto para começar'} tone="blue" />
           <MetricCard icon={Braces} label="App base" value={generatedApp?.status || 'pendente'} hint={generatedApp?.rootPath || 'Será materializado na geração'} tone="emerald" />
-          <MetricCard icon={Activity} label="Confiabilidade" value={`${operationsOverview?.summary?.successRatePercent || 0}%`} hint={`${operationsOverview?.summary?.failedRuns || 0} falhas recentes`} tone="amber" />
-          <MetricCard icon={Cpu} label="P95 / custo" value={`${operationsOverview?.summary?.p95RunDurationSeconds || 0}s`} hint={`US$ ${Number(operationsOverview?.summary?.totalCostUsd || 0).toFixed(4)} · ${operationsOverview?.summary?.totalEstimatedTokens || 0} tokens`} tone="slate" />
+          <MetricCard icon={CheckCircle2} label="Stories prontas" value={readyTasks.length} hint={`${integratedTasks.length} já integradas`} tone="amber" />
+          <MetricCard icon={Cpu} label="Pipeline IA" value={`${operationsOverview?.summary?.p95RunDurationSeconds || 0}s`} hint={`${operationsOverview?.summary?.successRatePercent || 0}% de sucesso · ${operationsOverview?.summary?.failedRuns || 0} falhas`} tone="slate" />
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Leitura técnica</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Prontidao para gerar e integrar</h2>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Checklist técnico</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">O que já destravou a implementação</h2>
               </div>
             </div>
             <div className="grid gap-4 p-6 md:grid-cols-2">
@@ -448,8 +561,8 @@ export default function CodeStudioPage() {
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Governanca</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Acesso rapido</h2>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Acesso rápido</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Governança e trilha operacional</h2>
               </div>
             </div>
             <div className="p-6">
@@ -509,13 +622,22 @@ export default function CodeStudioPage() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Projetos</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Escolha onde gerar codigo</h2>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Escolha o projeto para abrir o Code Studio</h2>
+              </div>
+              <div className="relative w-full max-w-sm">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={projectQuery}
+                  onChange={(event) => setProjectQuery(event.target.value)}
+                  placeholder="Buscar projeto..."
+                  className="dashboard-input pl-10"
+                />
               </div>
             </div>
           </div>
 
           <div className="grid gap-4 p-6 md:grid-cols-2 xl:grid-cols-3">
-            {projects.map((project) => (
+            {filteredProjects.map((project) => (
               <button
                 key={project.uuid}
                 onClick={() => {
@@ -535,8 +657,16 @@ export default function CodeStudioPage() {
                   <FolderGit2 className="h-4 w-4 text-slate-400" />
                 </div>
                 <p className="mt-3 text-sm leading-6 text-slate-500">{project.description || 'Sem descrição consolidada.'}</p>
+                <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  {project.uuid === selectedProjectUuid ? 'Projeto aberto no studio' : 'Clique para abrir o contexto técnico'}
+                </p>
               </button>
             ))}
+            {!filteredProjects.length && (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500 md:col-span-2 xl:col-span-3">
+                Nenhum projeto encontrado com esse termo.
+              </div>
+            )}
           </div>
         </section>
 
@@ -696,9 +826,20 @@ export default function CodeStudioPage() {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Implementação por história</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Stories prontas para codigo</h2>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Stories prontas para código</h2>
               </div>
-              <span className="dashboard-badge bg-slate-100 text-slate-600">{readyTasks.length} tasks prontas</span>
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+                <div className="relative min-w-[260px]">
+                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={readyTaskQuery}
+                    onChange={(event) => setReadyTaskQuery(event.target.value)}
+                    placeholder="Buscar story pronta..."
+                    className="dashboard-input pl-10"
+                  />
+                </div>
+                <span className="dashboard-badge bg-slate-100 text-slate-600">{readyTasks.length} stories prontas</span>
+              </div>
             </div>
           </div>
 
@@ -706,7 +847,7 @@ export default function CodeStudioPage() {
             {loading ? (
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">Carregando estágio técnico...</div>
             ) : readyTasks.length ? (
-              readyTasks.map((task) => {
+              filteredReadyTasks.map((task) => {
                 const implementation = implementationMap[task.uuid] || null;
                 const isSelected = selectedTaskUuid === task.uuid;
 
@@ -757,6 +898,14 @@ export default function CodeStudioPage() {
                         Ver detalhes técnicos
                       </button>
                       <button
+                        onClick={() => handleRunImplementation(task.uuid)}
+                        disabled={runningTaskUuid === task.uuid || !architectureStatus?.canGenerateCode}
+                        className="dashboard-button-primary"
+                      >
+                        <Hammer className="h-4 w-4" />
+                        {runningTaskUuid === task.uuid ? 'Integrando...' : implementation?.status === 'integrated' ? 'Regerar integração' : 'Integrar story'}
+                      </button>
+                      <button
                         onClick={() => navigate(`/projects/${selectedProjectUuid}/tasks/${task.uuid}`)}
                         className="dashboard-button-secondary"
                       >
@@ -769,6 +918,11 @@ export default function CodeStudioPage() {
             ) : (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
                 Nenhuma task está pronta para implementação ainda. Finalize requisitos e QA primeiro.
+              </div>
+            )}
+            {!loading && readyTasks.length > 0 && !filteredReadyTasks.length && (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500 xl:col-span-2">
+                Nenhuma story pronta combina com a busca atual.
               </div>
             )}
           </div>
@@ -851,6 +1005,19 @@ export default function CodeStudioPage() {
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          </section>
+        )}
+        {!selectedTaskUuid && readyTasks.length > 0 && (
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Detalhe técnico</p>
+              <h2 className="mt-2 text-2xl font-bold text-slate-900">Selecione uma story para aprofundar</h2>
+            </div>
+            <div className="p-6">
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
+                Abra uma das stories prontas acima para ver score, arquivos gerados, achados e rastreabilidade da implementação.
               </div>
             </div>
           </section>

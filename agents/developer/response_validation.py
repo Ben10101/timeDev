@@ -181,24 +181,53 @@ def validate_backlog_output(result):
     required_sections = [
         "backlog do projeto",
         "visao geral",
-        "epicos",
         "historias de usuario",
-        "tarefas tecnicas iniciais",
     ]
 
     missing = [section for section in required_sections if section not in normalized]
     if missing:
         return False, f"Secoes ausentes: {', '.join(missing)}"
 
-    story_count = len(re.findall(r"\bcomo\b", normalized))
-    if story_count < 10:
-        return False, "Quantidade insuficiente de historias de usuario."
-
-    if "fim_do_backlog" not in normalized:
-        return False, "Marcador final do backlog nao foi encontrado."
+    story_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if re.search(r"^(?:[-*]\s*)?(?:(?:us|story)-\d+\s*\|\s*|\d+[\.\)]\s*)?como\b", line.strip(), re.IGNORECASE)
+    ]
 
     if has_truncated_ending(text):
         return False, "Resposta aparenta ter sido cortada no final."
+
+    if len(story_lines) < 15:
+        return False, "Foram geradas poucas historias de usuario. O minimo esperado e 15."
+
+    if len(story_lines) > 25:
+        return False, "Foram geradas historias demais. O maximo esperado e 25."
+
+    personas = set()
+    generic_user_count = 0
+    for line in story_lines:
+        match = re.search(r"como\s+([^,|]+)", line, re.IGNORECASE)
+        if match:
+            persona = match.group(1).strip().lower()
+            personas.add(persona)
+            if re.search(r"\b(um|uma)\s+usuario\b", persona):
+                generic_user_count += 1
+
+    if len(story_lines) >= 3 and len(personas) < 2:
+        return False, "Historias com pouca diversidade de personas."
+
+    if len(story_lines) >= 3 and generic_user_count > max(1, len(story_lines) // 3):
+        return False, 'Historias ainda estao genericas demais ("Como um usuario").'
+
+    context_count = len(re.findall(r"\bcontexto\s*:", normalized))
+    value_count = len(re.findall(r"\bvalor\s*:", normalized))
+    acceptance_count = len(re.findall(r"\bcriterios de aceite\s*:", normalized))
+
+    if story_lines and (context_count == 0 or value_count == 0 or acceptance_count == 0):
+        return False, "Stories sem estrutura enriquecida de contexto, valor e aceite."
+
+    # O marcador final continua sendo desejavel, mas nao deve derrubar um backlog
+    # estruturalmente completo quando o modelo apenas esquece a linha final.
 
     return True, None
 

@@ -102,8 +102,8 @@ export default function ProjectOverviewPage() {
       setArchitectureStatus(nextArchitectureStatus);
       setForm({
         idea: projectData?.intakeConfig?.idea || projectData?.description || '',
-        objective: projectData?.intakeConfig?.objective || '',
-        audience: projectData?.intakeConfig?.audience || '',
+        objective: projectData?.intakeConfig?.objective || projectData?.intakeConfig?.answers?.objective || '',
+        audience: projectData?.intakeConfig?.audience || projectData?.intakeConfig?.answers?.audience || '',
         mainFlows: projectData?.intakeConfig?.answers?.mainFlows || '',
         constraints: projectData?.intakeConfig?.answers?.constraints || '',
       });
@@ -147,6 +147,13 @@ export default function ProjectOverviewPage() {
       setTasks(response.tasks || []);
       const nextArchitectureStatus = await getProjectArchitectureStatus(projectUuid);
       setArchitectureStatus(nextArchitectureStatus);
+      setForm({
+        idea: response.project?.intakeConfig?.idea || form.idea,
+        objective: response.project?.intakeConfig?.objective || response.project?.intakeConfig?.answers?.objective || form.objective,
+        audience: response.project?.intakeConfig?.audience || response.project?.intakeConfig?.answers?.audience || form.audience,
+        mainFlows: response.project?.intakeConfig?.answers?.mainFlows || form.mainFlows,
+        constraints: response.project?.intakeConfig?.answers?.constraints || form.constraints,
+      });
       setSuccessMessage('User stories geradas e enviadas direto para o board.');
     } catch (submitError) {
       setError(getApiErrorMessage(submitError, 'Não foi possível gerar o backlog do projeto.'));
@@ -217,7 +224,7 @@ export default function ProjectOverviewPage() {
     <AppShell
       eyebrow="Visão do Projeto"
       title={project?.name || 'Projeto'}
-      description="Descreva a iniciativa, gere user stories com o PM Agent e depois entre no board com as tasks persistidas."
+      description="Descreva a iniciativa, gere user stories com o PM Agent e siga para o board com as tasks prontas."
       actions={
         <div className="flex flex-col gap-3 sm:flex-row">
           <button onClick={() => navigate('/projects')} className="dashboard-button-secondary w-full sm:w-auto">
@@ -229,9 +236,9 @@ export default function ProjectOverviewPage() {
           <button
             type="button"
             onClick={handleExportPdf}
-            disabled={loading || exportingPdf || (architectureStatus?.hasArchitecture && !architectureStatus?.architectureNeedsRefresh && !architectureStatus?.architectureApproved)}
+            disabled={loading || exportingPdf || (architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved)}
             className="dashboard-button-secondary w-full sm:w-auto"
-            title={architectureStatus?.hasArchitecture && !architectureStatus?.architectureNeedsRefresh && !architectureStatus?.architectureApproved ? 'A exportação final depende da aprovação humana da arquitetura.' : undefined}
+            title={architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved ? 'A exportação final depende da aprovação humana da arquitetura.' : undefined}
           >
             {exportingPdf ? 'Preparando PDF...' : 'Exportar PDF'}
           </button>
@@ -262,13 +269,20 @@ export default function ProjectOverviewPage() {
           </section>
 
           <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Proximos passos</p>
-            <ol className="mt-4 space-y-4 text-sm text-slate-700">
-              <li>1. Estruture a ideia do projeto com contexto suficiente para o PM.</li>
-              <li>2. Gere o backlog inicial e revise as histórias no board.</li>
-              <li>3. Refine todas as histórias com Requisitos e QA.</li>
-              <li>4. Gere a arquitetura do projeto para liberar implementação.</li>
-            </ol>
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Próxima ação</p>
+            <p className="mt-3 text-sm leading-7 text-slate-700">
+              Depois de gerar as stories, abra o planejamento para manter roadmap, riscos e timeline em um lugar mais limpo.
+            </p>
+            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              {riskCount} riscos · {impedimentCount} impedimentos
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate(`/projects/${projectUuid}/planning`)}
+              className="dashboard-button-secondary mt-4 w-full"
+            >
+              Abrir planejamento
+            </button>
           </section>
         </>
       }
@@ -281,13 +295,9 @@ export default function ProjectOverviewPage() {
             O briefing foi bloqueado porque o backlog deste projeto ja foi gerado. Depois dessa etapa, os campos ficam somente leitura para preservar o contexto original.
           </div>
         )}
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
-          O planejamento agora vive na aba própria <strong>Planejamento</strong>. Aqui a visão geral fica focada em briefing, stories e gate de arquitetura.
-        </div>
-
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Resumo</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing</p>
           </div>
           <div className="grid gap-4 p-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
@@ -314,46 +324,21 @@ export default function ProjectOverviewPage() {
 
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Resumo do planejamento</p>
-            <h3 className="mt-2 text-2xl font-bold text-slate-900">O plano agora fica em uma aba própria</h3>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-              Abra a aba Planejamento para editar roadmap, riscos, impedimentos e timeline sem misturar isso com briefing e arquitetura.
-            </p>
-          </div>
-
-          <div className="grid gap-4 p-6 md:grid-cols-3">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Marco atual</p>
-              <p className="mt-3 text-sm leading-6 text-slate-700">{project?.intakeConfig?.roadmap?.milestone || 'Não definido ainda.'}</p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Riscos</p>
-              <p className="mt-3 text-3xl font-bold text-slate-900">{riskCount}</p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Impedimentos</p>
-              <p className="mt-3 text-3xl font-bold text-slate-900">{impedimentCount}</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="dashboard-panel">
-          <div className="dashboard-panel-header">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Arquitetura</p>
-                <h3 className="mt-2 text-2xl font-bold text-slate-900">Gate antes da implementação</h3>
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Arquitetura</p>
+            <h3 className="mt-2 text-2xl font-bold text-slate-900">Arquitetura e aprovação</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                  A arquitetura do projeto só pode ser gerada quando todas as histórias tiverem requisitos refinados. A implementação e a exportação final ficam bloqueadas até essa etapa existir, estar atualizada e receber aprovação humana.
+                  Gere a arquitetura só quando o backlog estiver maduro. Depois, faça a aprovação humana para liberar implementação e exportação final.
                 </p>
               </div>
               <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                 <button
                   type="button"
                   onClick={handleApproveArchitecture}
-                  disabled={loading || approvingArchitecture || !architectureStatus?.hasArchitecture || architectureStatus?.architectureNeedsRefresh || architectureStatus?.architectureApproved}
+                  disabled={loading || approvingArchitecture || !architectureStatus?.hasArchitecture || architectureStatus?.architectureApproved}
                   className="dashboard-button-secondary w-full sm:w-auto"
-                  title={!architectureStatus?.hasArchitecture ? 'Gere a arquitetura antes de aprovar.' : architectureStatus?.architectureNeedsRefresh ? 'Regere a arquitetura antes de aprovar.' : architectureStatus?.architectureApproved ? 'A arquitetura atual já foi aprovada.' : undefined}
+                  title={!architectureStatus?.hasArchitecture ? 'Gere a arquitetura antes de aprovar.' : architectureStatus?.architectureApproved ? 'A arquitetura atual já foi aprovada.' : undefined}
                 >
                   {approvingArchitecture ? 'Aprovando...' : architectureStatus?.architectureApproved ? 'Arquitetura aprovada' : 'Aprovar arquitetura'}
                 </button>
@@ -370,7 +355,7 @@ export default function ProjectOverviewPage() {
             </div>
           </div>
 
-          <div className="grid gap-4 p-6 lg:grid-cols-3">
+          <div className="grid gap-4 p-6 lg:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Histórias refinadas</p>
               <p className="mt-3 text-3xl font-bold text-slate-900">
@@ -381,11 +366,9 @@ export default function ProjectOverviewPage() {
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Arquitetura</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.hasArchitecture
-                  ? architectureStatus?.architectureNeedsRefresh
-                    ? 'Desatualizada'
-                    : architectureStatus?.architectureApproved
-                      ? 'Aprovada'
-                      : 'Pendente de aprovação'
+                  ? architectureStatus?.architectureApproved
+                    ? 'Aprovada'
+                    : 'Pendente de aprovação'
                   : 'Pendente'}
               </p>
             </div>
@@ -395,16 +378,14 @@ export default function ProjectOverviewPage() {
                 {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 lg:col-span-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Aprovação humana</p>
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-600">Aprovação humana</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.hasArchitecture
-                  ? architectureStatus?.architectureNeedsRefresh
-                    ? 'Arquitetura desatualizada'
-                    : architectureStatus?.architectureApproved
-                      ? 'Aprovada'
-                      : 'Pendente de aprovação'
-                  : 'Aguardando arquitetura'}
+                  ? architectureStatus?.architectureApproved
+                    ? 'Aprovada'
+                    : 'Pendente'
+                  : 'Aguardando'}
               </p>
             </div>
           </div>
@@ -421,9 +402,9 @@ export default function ProjectOverviewPage() {
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">
             <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing do projeto</p>
-            <h3 className="mt-2 text-2xl font-bold text-slate-900">Atalho para gerar user stories</h3>
+            <h3 className="mt-2 text-2xl font-bold text-slate-900">Gerar user stories</h3>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-              Em vez de montar tudo no board manualmente, descreva o produto com contexto suficiente e o PM Agent transforma isso em user stories acionaveis.
+              Descreva o produto com contexto suficiente e o PM Agent transforma isso em user stories acionáveis para o board.
             </p>
           </div>
 
@@ -431,10 +412,10 @@ export default function ProjectOverviewPage() {
             <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div className="max-w-3xl">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Atalho rapido</p>
-                  <h4 className="mt-2 text-xl font-bold text-slate-900">Escreva como se estivesse pedindo o produto para um PM senior</h4>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Atalho rápido</p>
+                  <h4 className="mt-2 text-xl font-bold text-slate-900">Escreva como se estivesse pedindo o produto para um PM sênior</h4>
                   <p className="mt-2 text-sm leading-7 text-slate-600">
-                    Quanto melhor o contexto sobre usuario, objetivo, fluxo e restricoes, melhores ficam as historias criadas.
+                    Quanto melhor o contexto sobre usuário, objetivo, fluxo e restrições, melhores ficam as histórias criadas.
                   </p>
                 </div>
                 {!isBriefingLocked && (
@@ -463,14 +444,14 @@ export default function ProjectOverviewPage() {
                   <p className="mt-2 text-sm font-semibold text-slate-900">{ideaLength} caracteres</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Saida esperada</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Saída esperada</p>
                   <p className="mt-2 text-sm font-semibold text-slate-900">Stories prontas para refinamento</p>
                 </div>
               </div>
             </div>
             <div className="lg:col-span-2">
               <TextAreaField
-                label="Ideia do projeto"
+                label="Problema que resolve"
                 value={form.idea}
                 onChange={(event) => setForm((prev) => ({ ...prev, idea: event.target.value }))}
                 placeholder="Descreva o produto, o problema que ele resolve e o resultado esperado."
@@ -487,10 +468,10 @@ export default function ProjectOverviewPage() {
               disabled={isBriefingLocked}
             />
             <TextAreaField
-                label="Público ou operação atendida"
+              label="Quem usa"
               value={form.audience}
               onChange={(event) => setForm((prev) => ({ ...prev, audience: event.target.value }))}
-                placeholder="Quem usa isso e em qual contexto?"
+              placeholder="Quem usa isso e em qual contexto?"
               rows={3}
               disabled={isBriefingLocked}
             />
@@ -515,7 +496,7 @@ export default function ProjectOverviewPage() {
                 Recarregar projeto
               </button>
               <button disabled={generating || loading || isBriefingLocked} className="dashboard-button-primary w-full sm:w-auto">
-                {isBriefingLocked ? 'User stories ja geradas' : generating ? 'Gerando user stories...' : 'Gerar user stories agora'}
+                {isBriefingLocked ? 'User stories já geradas' : generating ? 'Gerando user stories...' : 'Gerar user stories agora'}
               </button>
             </div>
           </form>
@@ -526,7 +507,7 @@ export default function ProjectOverviewPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">User stories geradas</p>
-                <h3 className="mt-2 text-xl font-bold text-slate-900">Stories que vao aparecer no board</h3>
+                <h3 className="mt-2 text-xl font-bold text-slate-900">Stories que vão aparecer no board</h3>
               </div>
               <span className="rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600">
                 {tasks.length} tasks

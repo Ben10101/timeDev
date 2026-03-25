@@ -2,6 +2,14 @@ import { prisma } from '../lib/prisma.js';
 
 const DEFAULT_AI_SETTINGS = {
   providerPreference: 'auto',
+  agentAliases: {
+    project_manager: 'PM Agent',
+    requirements_analyst: 'Requirements Agent',
+    qa_engineer: 'QA Agent',
+    architect: 'Architect Agent',
+    developer: 'Developer Agent',
+    implementation_architect: 'UI Agent',
+  },
   ollama: {
     enabled: true,
     host: 'http://127.0.0.1:11434',
@@ -45,8 +53,18 @@ const DEFAULT_AI_SETTINGS = {
   },
 };
 
+function normalizeAgentAliases(value = {}, fallback = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const normalized = { ...fallback };
+
+  for (const [key, alias] of Object.entries(source)) {
+    normalized[key] = String(alias || '').trim() || fallback[key] || key;
+  }
+
+  return normalized;
+}
+
 const REMOTE_PROVIDER_KEYS = ['gemini', 'openai', 'deepseek', 'nvidia', 'anthropic', 'groq', 'openrouter'];
-const ARCHITECT_PROVIDER_PRIORITY = ['anthropic', 'openai', 'deepseek', 'nvidia', 'groq', 'gemini', 'openrouter', 'ollama'];
 
 function normalizeProviderSettings(current = {}, fallback = {}) {
   return {
@@ -72,40 +90,12 @@ function normalizeModelList(value) {
   return [];
 }
 
-function isOpenRouterFreeConfiguration(settings = {}) {
-  const primaryModel = String(settings.openrouter?.model || '').trim().toLowerCase();
-  const fallbackModels = normalizeModelList(settings.openrouter?.fallbackModels).map((item) => item.toLowerCase());
-  const allModels = [primaryModel, ...fallbackModels].filter(Boolean);
-
-  return allModels.some((model) => model === 'openrouter/free' || model.includes(':free'));
-}
-
-function pickArchitectProvider(settings, providerOrder = [], includeLocalFallback = true) {
-  const candidates = providerOrder.filter(Boolean);
-
-  for (const provider of ARCHITECT_PROVIDER_PRIORITY) {
-    if (!candidates.includes(provider)) continue;
-    if (provider === 'openrouter' && isOpenRouterFreeConfiguration(settings)) continue;
-    if (provider === 'gemini' && !settings.gemini?.apiKey) continue;
-    return provider;
-  }
-
-  if (candidates.includes('openrouter')) {
-    return 'openrouter';
-  }
-
-  if (includeLocalFallback && candidates.includes('ollama')) {
-    return 'ollama';
-  }
-
-  return candidates[0] || null;
-}
-
 export function normalizeAiSettings(input = {}) {
   const normalizedOpenRouter = normalizeProviderSettings(input.openrouter, DEFAULT_AI_SETTINGS.openrouter);
 
   return {
     providerPreference: input.providerPreference || DEFAULT_AI_SETTINGS.providerPreference,
+    agentAliases: normalizeAgentAliases(input.agentAliases, DEFAULT_AI_SETTINGS.agentAliases),
     ollama: normalizeProviderSettings(input.ollama, DEFAULT_AI_SETTINGS.ollama),
     gemini: normalizeProviderSettings(input.gemini, DEFAULT_AI_SETTINGS.gemini),
     openai: normalizeProviderSettings(input.openai, DEFAULT_AI_SETTINGS.openai),
@@ -134,6 +124,7 @@ export async function updateAiSettingsForUser(userUuid, input = {}) {
   const nextSettings = normalizeAiSettings({
     ...current,
     ...input,
+    agentAliases: { ...current.agentAliases, ...(input.agentAliases || {}) },
     ollama: { ...current.ollama, ...(input.ollama || {}) },
     gemini: { ...current.gemini, ...(input.gemini || {}) },
     openai: { ...current.openai, ...(input.openai || {}) },
@@ -189,13 +180,6 @@ export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
 
   if (agentName) {
     env.AI_AGENT_NAME = agentName;
-  }
-
-  if (agentName === 'architect') {
-    const architectProvider = pickArchitectProvider(settings, providerOrder, includeLocalFallback);
-    if (architectProvider) {
-      env.AI_PROVIDER_ORDER_ARCHITECT = architectProvider;
-    }
   }
 
   if (settings.gemini?.enabled && settings.gemini?.apiKey) env.GEMINI_API_KEY = settings.gemini.apiKey;

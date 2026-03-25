@@ -1437,7 +1437,7 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
 
   try {
     const envOverrides = userUuid
-      ? await buildRuntimeAiEnvForUser(userUuid)
+      ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'implementation_architect' })
       : { AI_DISABLE_OLLAMA_FALLBACK: '0' };
     const aiResult = await generateImplementationUi({
       taskTitle: task.title,
@@ -1811,10 +1811,6 @@ async function getProjectArchitectureSource(projectUuid) {
 
   if (!architectureStatus.hasArchitecture || !architectureStatus.architectureArtifact?.content) {
     throw new Error('A arquitetura do projeto precisa ser gerada antes de liberar implementacao.');
-  }
-
-  if (architectureStatus.architectureNeedsRefresh) {
-    throw new Error('A arquitetura do projeto esta desatualizada. Gere a arquitetura novamente antes de implementar.');
   }
 
   return architectureStatus.architectureArtifact.content;

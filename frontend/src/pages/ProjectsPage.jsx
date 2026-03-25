@@ -33,6 +33,7 @@ import {
   runTaskRequirements,
 } from '../services/api';
 import { exportProjectDocumentationPdf } from '../utils/projectDocumentationExport';
+import { getAgentLabel } from '../utils/agentLabels';
 
 const BOARD_COLUMNS = [
   { key: 'backlog', label: 'Backlog', icon: Layout },
@@ -44,13 +45,6 @@ const BOARD_COLUMNS = [
   { key: 'done', label: 'Concluído', icon: CheckCircle2 },
 ];
 
-const TASK_TYPE_ORDER = ['epic', 'story', 'task'];
-const TASK_TYPE_META = {
-  epic: { label: 'Epics' },
-  story: { label: 'Stories' },
-  task: { label: 'Tecnicas' },
-};
-
 const EMPTY_BOOTSTRAP = { userName: '', email: '', workspaceName: '' };
 const EMPTY_PROJECT = { name: '', description: '', vision: '' };
 const EMPTY_TASK = {
@@ -58,7 +52,7 @@ const EMPTY_TASK = {
   description: '',
   status: 'backlog',
   priority: 'medium',
-  taskType: 'task',
+  taskType: 'story',
   assigneeType: 'agent',
   assigneeAgentName: 'requirements_analyst',
 };
@@ -210,7 +204,13 @@ function TaskCard({
     story: 'Story',
     task: 'Tecnica',
   };
+  const typeGuidance = {
+    epic: 'Épico de planejamento. Abra os detalhes para ver o desdobramento em stories.',
+    story: 'Story pronta para refinamento e validação.',
+    task: 'Tarefa técnica fora da esteira de requisitos/QA.',
+  };
   const blockReason = getLatestStatusHistoryNote(task, 'blocked');
+  const taskDescription = task.description || typeGuidance[task.taskType] || 'Sem contexto adicional registrado para esta task.';
 
   return (
     <motion.div
@@ -248,12 +248,12 @@ function TaskCard({
         </div>
 
         <p className="text-sm leading-6 text-slate-500">
-          {task.description || 'Sem contexto adicional registrado para esta task.'}
+          {taskDescription}
         </p>
 
         <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600 sm:grid-cols-2">
           <p>
-            <span className="font-semibold text-slate-500">Responsável:</span> {task.assigneeUser?.name || task.assigneeAgentName || 'Sem responsável'}
+            <span className="font-semibold text-slate-500">Responsável:</span> {task.assigneeUser?.name || task.assigneeAgentLabel || getAgentLabel(task.assigneeAgentName, 'Sem responsável')}
           </p>
           <p>
             <span className="font-semibold text-slate-500">Prazo:</span> {formatShortDate(task.dueDate)}
@@ -286,7 +286,7 @@ function TaskCard({
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Agente</p>
-            <p className="mt-1 text-sm font-semibold text-slate-800">{task.assigneeAgentName || 'Agente'}</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">{task.assigneeAgentLabel || getAgentLabel(task.assigneeAgentName)}</p>
           </div>
           <div className="rounded-lg bg-slate-50 px-3 py-2 text-right">
             <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Tempo de ciclo</p>
@@ -341,7 +341,7 @@ function TaskCard({
                   Abrir detalhes
                 </button>
                 <div className="flex flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-center text-xs font-medium text-slate-500">
-                  {isEpic ? 'Epic nao entra em requisitos/QA' : 'Tarefa tecnica fora do fluxo de refinamento'}
+                  {isEpic ? 'Épico de planejamento' : 'Tarefa técnica fora do fluxo de refinamento'}
                 </div>
               </>
             )}
@@ -385,6 +385,7 @@ export default function ProjectsPage() {
   const [exportingPdf, setExportingPdf] = useState(false);
   const [error, setError] = useState(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
+  const [projectSearch, setProjectSearch] = useState('');
   const [bootstrapForm, setBootstrapForm] = useState(EMPTY_BOOTSTRAP);
   const [projectForm, setProjectForm] = useState(EMPTY_PROJECT);
   const [taskForm, setTaskForm] = useState(EMPTY_TASK);
@@ -394,10 +395,11 @@ export default function ProjectsPage() {
   const roadmapPhases = getRoadmapPhases(activeProject);
   const riskRegister = getRiskRegister(activeProject);
   const projectTimeline = getProjectTimeline(activeProject);
+  const storyTasks = tasks.filter((task) => (task.taskType || 'story') === 'story');
   const taskLoadByAssignee = useMemo(() => {
     const loadMap = new Map();
 
-    tasks.forEach((task) => {
+    storyTasks.forEach((task) => {
       const assignee = task.assigneeUser?.name || task.assigneeAgentName || 'Sem responsável';
       const current = loadMap.get(assignee) || { assignee, total: 0, overdue: 0, dueSoon: 0 };
       const dueDate = task.dueDate ? new Date(task.dueDate) : null;
@@ -417,7 +419,7 @@ export default function ProjectsPage() {
     });
 
     return Array.from(loadMap.values()).sort((a, b) => b.total - a.total);
-  }, [tasks]);
+  }, [storyTasks]);
   const overdueTasks = useMemo(
     () =>
       tasks
@@ -433,6 +435,14 @@ export default function ProjectsPage() {
         .slice(0, 4),
     [tasks]
   );
+  const filteredProjects = useMemo(() => {
+    const query = projectSearch.trim().toLowerCase();
+    if (!query) return projects;
+    return projects.filter((project) => {
+      const searchable = `${project.name} ${project.description || ''} ${project.vision || ''}`.toLowerCase();
+      return searchable.includes(query);
+    });
+  }, [projectSearch, projects]);
 
   useEffect(() => {
     const preferredProjectUuid = searchParams.get('project');
@@ -511,14 +521,15 @@ export default function ProjectsPage() {
     () =>
       BOARD_COLUMNS.map((column) => ({
         ...column,
-        tasks: tasks.filter((task) => task.status === column.key),
-        sections: TASK_TYPE_ORDER.map((type) => ({
-          type,
-          label: TASK_TYPE_META[type].label,
-          tasks: tasks.filter((task) => task.status === column.key && (task.taskType || 'task') === type),
-        })).filter((section) => section.tasks.length > 0),
+        tasks: storyTasks
+          .filter((task) => task.status === column.key)
+          .slice()
+          .sort((a, b) => {
+            const priorityRank = { high: 0, medium: 1, low: 2 };
+            return (priorityRank[a.priority] ?? 1) - (priorityRank[b.priority] ?? 1);
+          }),
       })),
-    [tasks]
+    [storyTasks]
   );
 
   const canCreateProject = Boolean(bootstrapContext?.workspace?.uuid && bootstrapContext?.user?.uuid);
@@ -686,12 +697,12 @@ export default function ProjectsPage() {
     navigate(`/code-studio?project=${activeProjectUuid}&task=${taskUuid}`);
   }
 
-  const qaCount = tasks.filter((task) => hasCurrentArtifact(task, 'test_plan')).length;
-  const doneCount = tasks.filter((task) => task.status === 'done').length;
-  const overallProgress = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0;
+  const qaCount = storyTasks.filter((task) => hasCurrentArtifact(task, 'test_plan')).length;
+  const doneCount = storyTasks.filter((task) => task.status === 'done').length;
+  const overallProgress = storyTasks.length ? Math.round((doneCount / storyTasks.length) * 100) : 0;
   const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
   const implementationBlockReason = architectureStatus?.blockers?.[0] || null;
-  const hasAgentGeneratedStories = tasks.some((task) => task.assigneeAgentName === 'requirements_analyst' || task.taskType === 'story');
+  const hasAgentGeneratedStories = storyTasks.some((task) => task.assigneeAgentName === 'requirements_analyst' || task.taskType === 'story');
 
   return (
     <AppShell
@@ -731,25 +742,34 @@ export default function ProjectsPage() {
                       <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#102a72] text-white">
                         <LayoutDashboard className="h-4 w-4" />
                       </div>
-                      <h3 className="text-sm font-bold text-slate-900">Catalogo</h3>
+                      <h3 className="text-sm font-bold text-slate-900">Catálogo de projetos</h3>
                     </div>
                     <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400">
-                      Inventarios ativos
+                      Projetos disponíveis
                     </p>
                   </div>
                   <button
                     onClick={() => setShowProjectForm(!showProjectForm)}
-                    className={showProjectForm ? 'dashboard-button-secondary px-3' : 'dashboard-button-primary px-3'}
+                    className={showProjectForm ? 'dashboard-button-secondary px-4' : 'dashboard-button-primary px-4'}
                   >
                     <Plus className={`h-4 w-4 transition-transform ${showProjectForm ? 'rotate-45' : ''}`} />
+                    <span>{showProjectForm ? 'Fechar' : 'Novo projeto'}</span>
                   </button>
                 </div>
               </div>
 
               <div className="space-y-3 p-4">
+                <div className="mb-3">
+                  <input
+                    value={projectSearch}
+                    onChange={(event) => setProjectSearch(event.target.value)}
+                    placeholder="Buscar projeto..."
+                    className="dashboard-input"
+                  />
+                </div>
                 <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
                   <AnimatePresence mode="popLayout">
-                    {projects.map((project) => (
+                    {filteredProjects.map((project) => (
                       <motion.button
                         key={project.uuid}
                         layout
@@ -777,14 +797,14 @@ export default function ProjectsPage() {
                     ))}
                   </AnimatePresence>
 
-                  {!projects.length && !loading && (
+                  {!filteredProjects.length && !loading && (
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-12 text-center">
                       <LayoutDashboard className="mx-auto h-8 w-8 text-slate-300" />
                       <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-                        Nenhum projeto ainda
+                        Nenhum projeto encontrado
                       </p>
                       <p className="mt-2 text-sm leading-6 text-slate-500">
-                        Clique em <span className="font-semibold text-slate-700">+</span> ou use o workspace para criar o primeiro projeto.
+                        Clique em <span className="font-semibold text-slate-700">Novo projeto</span> ou ajuste a busca.
                       </p>
                     </div>
                   )}
@@ -804,6 +824,12 @@ export default function ProjectsPage() {
                         value={projectForm.name}
                         onChange={(e) => setProjectForm((prev) => ({ ...prev, name: e.target.value }))}
                         placeholder="Ex.: Plataforma de EAD"
+                      />
+                      <TextInput
+                        label="Resumo curto"
+                        value={projectForm.description}
+                        onChange={(e) => setProjectForm((prev) => ({ ...prev, description: e.target.value }))}
+                        placeholder="Uma frase para orientar o time..."
                       />
                       <TextArea
                         label="Visão do produto"
@@ -828,7 +854,7 @@ export default function ProjectsPage() {
                     <Users className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">Equipe base</h3>
+                    <h3 className="text-sm font-bold text-slate-900">Conta ativa</h3>
                     <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400">
                       Autenticação
                     </p>
@@ -840,7 +866,7 @@ export default function ProjectsPage() {
                 {bootstrapContext ? (
                   <div className="space-y-3">
                     <div className="rounded-xl border border-slate-200 bg-white p-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Diretor</p>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Usuário</p>
                       <p className="mt-2 text-sm font-semibold text-slate-900">{bootstrapContext.user.name}</p>
                       <p className="mt-1 text-xs text-slate-500">{bootstrapContext.user.email}</p>
                     </div>
@@ -855,14 +881,14 @@ export default function ProjectsPage() {
                       label="Identidade do diretor"
                       value={bootstrapForm.userName}
                       onChange={(e) => setBootstrapForm((prev) => ({ ...prev, userName: e.target.value }))}
-                      placeholder="Nome do responsavel"
+                        placeholder="Seu nome"
                       icon={Users}
                     />
                     <TextInput
-                      label="Contato"
+                        label="E-mail"
                       value={bootstrapForm.email}
                       onChange={(e) => setBootstrapForm((prev) => ({ ...prev, email: e.target.value }))}
-                      placeholder="ops@factory.studio"
+                        placeholder="voce@exemplo.com"
                     />
                     <TextInput
                       label="Nome do workspace"
@@ -891,13 +917,13 @@ export default function ProjectsPage() {
                       </div>
                       <div className="min-w-0">
                         <h2 className="truncate text-4xl font-bold tracking-tight text-slate-900">
-                          {activeProject?.name || 'Studio Hub'}
+                          {activeProject?.name || 'Selecione um projeto'}
                         </h2>
                         <div className="mt-2">
                           {activeProject ? (
                             <span className="dashboard-badge bg-emerald-50 text-emerald-700">Operacional</span>
                           ) : (
-                            <span className="dashboard-badge bg-slate-100 text-slate-500">Aguardando selecao</span>
+                            <span className="dashboard-badge bg-slate-100 text-slate-500">Selecione um projeto</span>
                           )}
                         </div>
                       </div>
@@ -908,15 +934,15 @@ export default function ProjectsPage() {
                     </p>
                     {roadmap?.milestone && (
                       <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Marco do projeto</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Objetivo principal</p>
                         <p className="mt-2 text-sm font-semibold text-slate-900">{roadmap.milestone}</p>
                         <p className="mt-2 text-xs leading-6 text-slate-500">
                           Este é o objetivo principal que guia a evolução do projeto nesta fase.
                         </p>
                       </div>
                     )}
-                    {activeProjectUuid && !hasAgentGeneratedStories && (
-                      <div className="mt-5 flex flex-wrap gap-3">
+                      {activeProjectUuid && !hasAgentGeneratedStories && (
+                        <div className="mt-5 flex flex-wrap gap-3">
                         <button
                           type="button"
                           onClick={() => navigate(`/projects/${activeProjectUuid}`)}
@@ -974,9 +1000,9 @@ export default function ProjectsPage() {
 
                     <div className="grid w-full gap-4 sm:grid-cols-3 xl:w-auto">
                       {[
-                        { label: 'Tasks', value: tasks.length, icon: LayoutDashboard, tone: 'bg-slate-50 text-slate-900' },
+                        { label: 'Stories', value: storyTasks.length, icon: LayoutDashboard, tone: 'bg-slate-50 text-slate-900' },
                         { label: 'Em QA', value: qaCount, icon: Sparkles, tone: 'bg-blue-50 text-[#102a72]' },
-                        { label: 'Concluidas', value: doneCount, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
+                        { label: 'Concluídas', value: doneCount, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
                     ].map((stat) => (
                       <div key={stat.label} className="min-w-[160px] rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                         <div className="flex items-center justify-between">
@@ -996,7 +1022,7 @@ export default function ProjectsPage() {
                     {roadmapPhases.map((phase, index) => {
                       const phaseLabel = `Fase ${index + 1}`;
                       const phaseStatus = index === 0 ? 'Prioridade atual' : index === 1 ? 'Próxima etapa' : 'Planejada';
-                      const phaseProgress = getRoadmapPhaseProgress(index, doneCount, tasks.length);
+                      const phaseProgress = getRoadmapPhaseProgress(index, doneCount, storyTasks.length);
                       return (
                         <div key={`${phase.order || index}-${phase.title}`} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                           <div className="flex items-center justify-between gap-3">
@@ -1033,7 +1059,7 @@ export default function ProjectsPage() {
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Progresso geral</p>
                       <p className="mt-2 text-sm font-semibold text-slate-900">
-                        {doneCount} de {tasks.length || 0} tasks concluídas
+                         {doneCount} de {storyTasks.length || 0} stories concluídas
                       </p>
                     </div>
                     <span className="text-3xl font-bold tracking-tight text-slate-900">{overallProgress}%</span>
@@ -1047,7 +1073,7 @@ export default function ProjectsPage() {
                   <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Riscos e impedimentos</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Riscos do projeto</p>
                         <p className="mt-2 text-sm font-semibold text-slate-900">
                           {riskRegister.impediments?.[0] || riskRegister.risks?.[0] || 'Ainda sem riscos registrados'}
                         </p>
@@ -1073,7 +1099,7 @@ export default function ProjectsPage() {
                   <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Timeline</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Linha do tempo</p>
                         <p className="mt-2 text-sm font-semibold text-slate-900">
                           {projectTimeline.startDate || 'Início não definido'} → {projectTimeline.targetDate || 'meta não definida'}
                         </p>
@@ -1214,41 +1240,32 @@ export default function ProjectsPage() {
 
               <div className="-mx-2 overflow-x-auto px-2 pb-4">
                 <div className="flex min-w-max gap-6">
-                {groupedColumns.map((column) => (
-                  <div key={column.key} className="w-[340px] flex-none space-y-4 xl:w-[360px]">
-                    <div className="dashboard-panel">
-                      <div className="dashboard-panel-header">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
-                            <column.icon className="h-4.5 w-4.5" />
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-bold text-slate-900">{column.label}</h4>
-                              <p className="mt-1 text-xs text-slate-500">{column.tasks.length} tasks</p>
+                  {groupedColumns.map((column) => (
+                    <div key={column.key} className="w-[340px] flex-none space-y-4 xl:w-[360px]">
+                      <div className="dashboard-panel">
+                        <div className="dashboard-panel-header">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                              <column.icon className="h-4.5 w-4.5" />
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-bold text-slate-900">{column.label}</h4>
+                              <p className="mt-1 text-xs text-slate-500">{column.tasks.length} stories</p>
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="h-[min(68vh,760px)] p-4">
-                        <div className="flex h-full flex-col gap-4 overflow-y-auto pr-1">
-                          <AnimatePresence mode="popLayout">
-                            {column.sections.map((section) => (
-                              <motion.div
-                                key={`${column.key}-${section.type}`}
-                                layout
-                                initial={{ opacity: 0, y: 6 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="space-y-3"
-                              >
-                                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">
-                                    {section.label}
-                                  </p>
-                                  <span className="text-xs font-semibold text-slate-500">{section.tasks.length}</span>
-                                </div>
-                                {section.tasks.map((task) => (
+                        <div className="h-[min(68vh,760px)] p-4">
+                          <div className="flex h-full flex-col gap-4 overflow-y-auto pr-1">
+                            <AnimatePresence mode="popLayout">
+                              {column.tasks.map((task) => (
+                                <motion.div
+                                  key={task.uuid}
+                                  layout
+                                  initial={{ opacity: 0, y: 6 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                >
                                   <TaskCard
-                                    key={task.uuid}
                                     task={task}
                                     busy={saving}
                                     onRequirements={handleRunRequirements}
@@ -1259,29 +1276,28 @@ export default function ProjectsPage() {
                                     implementationUnlocked={implementationUnlocked}
                                     implementationBlockReason={implementationBlockReason}
                                   />
-                                ))}
-                              </motion.div>
-                            ))}
-                          </AnimatePresence>
+                                </motion.div>
+                              ))}
+                            </AnimatePresence>
 
-                          {!column.tasks.length && (
-                            <motion.div
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white text-center"
-                            >
-                              <Plus className="h-8 w-8 text-slate-300" />
-                              <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-                                Coluna vazia
-                              </p>
-                              <p className="mt-2 text-sm text-slate-500">Pronta para receber novas tasks</p>
-                            </motion.div>
-                          )}
+                            {!column.tasks.length && (
+                              <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white text-center"
+                              >
+                                <Plus className="h-8 w-8 text-slate-300" />
+                                <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
+                                  Coluna vazia
+                                </p>
+                                <p className="mt-2 text-sm text-slate-500">Pronta para receber novas stories</p>
+                              </motion.div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
                 </div>
               </div>
             </section>

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { estimateTokenCount } from '../utils/aiRunMetrics.js';
+import { DEFAULT_AI_SETTINGS, getAiSettingsForUser } from './aiSettingsService.js';
 
 const taskListInclude = {
   assigneeUser: { select: { uuid: true, name: true, email: true } },
@@ -113,13 +114,19 @@ function buildTaskTiming(task) {
   };
 }
 
-function enrichTask(task) {
+function getAgentDisplayName(agentName, agentAliases = DEFAULT_AI_SETTINGS.agentAliases) {
+  if (!agentName) return null;
+  return agentAliases?.[agentName] || agentName;
+}
+
+function enrichTask(task, agentAliases = DEFAULT_AI_SETTINGS.agentAliases) {
   if (!task) return task;
   const latestAgentRun = (task.agentRuns || [])[0] || null;
   const processingError =
     latestAgentRun?.status === 'failed'
       ? {
           agentName: latestAgentRun.agentName,
+          agentLabel: getAgentDisplayName(latestAgentRun.agentName, agentAliases),
           message: latestAgentRun.errorMessage || 'Falha ao processar a task.',
           happenedAt: latestAgentRun.finishedAt || latestAgentRun.createdAt || null,
         }
@@ -127,13 +134,30 @@ function enrichTask(task) {
 
   return {
     ...task,
-    timing: buildTaskTiming(task),
-    latestAgentRun,
+    assigneeAgentLabel: getAgentDisplayName(task.assigneeAgentName, agentAliases),
+    timing: {
+      ...buildTaskTiming(task),
+      byAgent: (buildTaskTiming(task).byAgent || []).map((item) => ({
+        ...item,
+        agentLabel: getAgentDisplayName(item.agentName, agentAliases),
+      })),
+    },
+    latestAgentRun: latestAgentRun
+      ? {
+          ...latestAgentRun,
+          agentLabel: getAgentDisplayName(latestAgentRun.agentName, agentAliases),
+        }
+      : null,
+    agentRuns: (task.agentRuns || []).map((run) => ({
+      ...run,
+      agentLabel: getAgentDisplayName(run.agentName, agentAliases),
+    })),
     processingError,
   };
 }
 
 const workflowOrder = ['backlog', 'todo', 'in_progress', 'in_review', 'qa', 'done'];
+const projectRoleOrder = ['viewer', 'editor', 'manager', 'owner'];
 
 function hasCurrentArtifact(task, artifactType) {
   return (task.artifacts || []).some((artifact) => artifact.artifactType === artifactType && artifact.isCurrent);
@@ -148,11 +172,11 @@ function validateTaskStatusTransition(existingTask, nextStatus) {
   const nextIndex = workflowOrder.indexOf(nextStatus);
 
   if (currentIndex !== -1 && nextIndex !== -1 && nextIndex < currentIndex) {
-    throw new Error('Não é permitido voltar a tarefa para uma etapa anterior.');
+    throw new Error('NÃ£o Ã© permitido voltar a tarefa para uma etapa anterior.');
   }
 
   if (nextStatus === 'qa' && !hasCurrentArtifact(existingTask, 'requirements')) {
-    throw new Error('A tarefa só pode seguir para QA depois que os requisitos estiverem processados.');
+    throw new Error('A tarefa sÃ³ pode seguir para QA depois que os requisitos estiverem processados.');
   }
 }
 
@@ -186,6 +210,87 @@ function buildProjectAccessFilter(userUuid) {
       },
     ],
   };
+}
+
+function getProjectRoleRank(role) {
+  const index = projectRoleOrder.indexOf(role || 'viewer');
+  return index === -1 ? 0 : index;
+}
+
+function buildProjectPermissions(currentUserRole = 'viewer') {
+  const roleRank = getProjectRoleRank(currentUserRole);
+  return {
+    canViewProject: roleRank >= getProjectRoleRank('viewer'),
+    canEditProject: roleRank >= getProjectRoleRank('manager'),
+    canManageMembers: roleRank >= getProjectRoleRank('manager'),
+    canCreateTask: roleRank >= getProjectRoleRank('editor'),
+    canEditTask: roleRank >= getProjectRoleRank('editor'),
+    canRunAgents: roleRank >= getProjectRoleRank('editor'),
+    canApproveArchitecture: roleRank >= getProjectRoleRank('manager'),
+  };
+}
+
+function resolveCurrentUserProjectRole(project, userUuid) {
+  if (!userUuid || !project) return 'viewer';
+  if (project.creator?.uuid === userUuid) return 'owner';
+  if (project.workspace?.ownerUser?.uuid === userUuid) return 'owner';
+
+  const membership = (project.members || []).find((member) => member.user?.uuid === userUuid);
+  return membership?.projectRole || 'viewer';
+}
+
+function enrichProjectAccess(project, userUuid = null) {
+  if (!project) return project;
+
+  const currentUserRole = resolveCurrentUserProjectRole(project, userUuid);
+  return {
+    ...project,
+    currentUserRole,
+    permissions: buildProjectPermissions(currentUserRole),
+  };
+}
+
+export async function assertProjectPermission(projectUuid, userUuid, minimumRole = 'viewer') {
+  const project = await prisma.project.findFirst({
+    where: {
+      uuid: projectUuid,
+      ...buildProjectAccessFilter(userUuid),
+    },
+    select: {
+      id: true,
+      uuid: true,
+      createdBy: true,
+      creator: {
+        select: { uuid: true },
+      },
+      workspace: {
+        select: {
+          uuid: true,
+          ownerUser: {
+            select: { uuid: true },
+          },
+        },
+      },
+      members: {
+        include: {
+          user: {
+            select: { uuid: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!project) {
+    throw new Error('Projeto nÃ£o encontrado ou sem permissÃ£o de acesso.');
+  }
+
+  const currentUserRole = resolveCurrentUserProjectRole(project, userUuid);
+  if (getProjectRoleRank(currentUserRole) < getProjectRoleRank(minimumRole)) {
+    throw new Error('VocÃª nÃ£o tem permissÃ£o para executar esta aÃ§Ã£o neste projeto.');
+  }
+
+  return enrichProjectAccess(project, userUuid);
 }
 
 export async function getDefaultWorkspaceForUserUuid(userUuid) {
@@ -256,7 +361,7 @@ export async function assertWorkspaceAccess(workspaceUuid, userUuid) {
   });
 
   if (!workspace) {
-    throw new Error('Workspace não encontrado ou sem permissão de acesso.');
+    throw new Error('Workspace nÃ£o encontrado ou sem permissÃ£o de acesso.');
   }
 
   return workspace;
@@ -272,7 +377,7 @@ export async function assertProjectAccess(projectUuid, userUuid) {
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado ou sem permissão de acesso.');
+    throw new Error('Projeto nÃ£o encontrado ou sem permissÃ£o de acesso.');
   }
 
   return project;
@@ -290,14 +395,14 @@ export async function assertTaskAccess(taskUuid, userUuid) {
   });
 
   if (!task) {
-    throw new Error('Tarefa não encontrada ou sem permissão de acesso.');
+    throw new Error('Tarefa nÃ£o encontrada ou sem permissÃ£o de acesso.');
   }
 
   return task;
 }
 
 export async function listProjects(userUuid = null) {
-  return prisma.project.findMany({
+  const projects = await prisma.project.findMany({
     where: buildProjectAccessFilter(userUuid),
     orderBy: { createdAt: 'desc' },
     select: {
@@ -311,17 +416,43 @@ export async function listProjects(userUuid = null) {
       templateKey: true,
       intakeConfig: true,
       workspace: {
-        select: { uuid: true, name: true, slug: true },
+        select: {
+          uuid: true,
+          name: true,
+          slug: true,
+          ownerUser: {
+            select: { uuid: true },
+          },
+        },
       },
       creator: {
         select: { uuid: true, name: true, email: true },
       },
-      intakeConfig: true,
+      ...(userUuid
+        ? {
+            members: {
+              where: {
+                user: {
+                  is: {
+                    uuid: userUuid,
+                  },
+                },
+              },
+              include: {
+                user: {
+                  select: { uuid: true },
+                },
+              },
+            },
+          }
+        : {}),
       _count: {
         select: { tasks: true, agentRuns: true },
       },
     },
   });
+
+  return projects.map((project) => enrichProjectAccess(project, userUuid));
 }
 
 export async function bootstrapWorkspaceAndUser({ userName, email, workspaceName, passwordHash = null, failIfUserExists = false }) {
@@ -354,7 +485,7 @@ export async function bootstrapWorkspaceAndUser({ userName, email, workspaceName
       });
     } else {
       if (failIfUserExists) {
-        throw new Error('Já existe um usuário com este e-mail.');
+        throw new Error('JÃ¡ existe um usuÃ¡rio com este e-mail.');
       }
 
       if (!user.passwordHash && passwordHash) {
@@ -401,7 +532,7 @@ export async function bootstrapWorkspaceAndUser({ userName, email, workspaceName
 }
 
 export async function getProjectByUuid(projectUuid, userUuid = null) {
-  return prisma.project.findFirst({
+  const project = await prisma.project.findFirst({
     where: {
       uuid: projectUuid,
       ...buildProjectAccessFilter(userUuid),
@@ -417,7 +548,14 @@ export async function getProjectByUuid(projectUuid, userUuid = null) {
       templateKey: true,
       intakeConfig: true,
       workspace: {
-        select: { uuid: true, name: true, slug: true },
+        select: {
+          uuid: true,
+          name: true,
+          slug: true,
+          ownerUser: {
+            select: { uuid: true },
+          },
+        },
       },
       creator: {
         select: { uuid: true, name: true, email: true },
@@ -444,6 +582,8 @@ export async function getProjectByUuid(projectUuid, userUuid = null) {
       },
     },
   });
+
+  return enrichProjectAccess(project, userUuid);
 }
 
 export async function updateProjectBrief(projectUuid, input = {}) {
@@ -453,7 +593,7 @@ export async function updateProjectBrief(projectUuid, input = {}) {
   });
 
   if (!existingProject) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
   return prisma.project.update({
@@ -470,6 +610,135 @@ export async function updateProjectBrief(projectUuid, input = {}) {
           : undefined,
     },
   });
+}
+
+export async function addProjectMember(projectUuid, { email, projectRole = 'editor' }, actorUserUuid) {
+  const access = await assertProjectPermission(projectUuid, actorUserUuid, 'manager');
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+
+  if (!normalizedEmail) {
+    throw new Error('Informe o e-mail do membro que deve entrar no projeto.');
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+    select: { id: true, uuid: true, name: true, email: true },
+  });
+
+  if (!user) {
+    throw new Error('Nenhum usuÃ¡rio encontrado com este e-mail.');
+  }
+
+  const existingMember = await prisma.projectMember.findFirst({
+    where: {
+      projectId: access.id,
+      userId: user.id,
+    },
+    select: { id: true },
+  });
+
+  if (existingMember) {
+    throw new Error('Este usuÃ¡rio jÃ¡ faz parte do projeto.');
+  }
+
+  await prisma.projectMember.create({
+    data: {
+      projectId: access.id,
+      userId: user.id,
+      projectRole,
+    },
+  });
+
+  return getProjectByUuid(projectUuid, actorUserUuid);
+}
+
+export async function updateProjectMemberRole(projectUuid, memberUuid, { projectRole }, actorUserUuid) {
+  const access = await assertProjectPermission(projectUuid, actorUserUuid, 'manager');
+
+  const member = await prisma.projectMember.findFirst({
+    where: {
+      project: {
+        is: {
+          id: access.id,
+        },
+      },
+      user: {
+        is: {
+          uuid: memberUuid,
+        },
+      },
+    },
+    include: {
+      user: {
+        select: { uuid: true },
+      },
+    },
+  });
+
+  if (!member) {
+    throw new Error('Membro nÃ£o encontrado neste projeto.');
+  }
+
+  const actorRole = access.currentUserRole;
+  if (member.projectRole === 'owner' && actorRole !== 'owner') {
+    throw new Error('Somente o owner do projeto pode alterar outro owner.');
+  }
+
+  await prisma.projectMember.update({
+    where: { id: member.id },
+    data: { projectRole },
+  });
+
+  return getProjectByUuid(projectUuid, actorUserUuid);
+}
+
+export async function removeProjectMember(projectUuid, memberUuid, actorUserUuid) {
+  const access = await assertProjectPermission(projectUuid, actorUserUuid, 'manager');
+
+  const member = await prisma.projectMember.findFirst({
+    where: {
+      project: {
+        is: {
+          id: access.id,
+        },
+      },
+      user: {
+        is: {
+          uuid: memberUuid,
+        },
+      },
+    },
+    include: {
+      user: {
+        select: { uuid: true },
+      },
+    },
+  });
+
+  if (!member) {
+    throw new Error('Membro nÃ£o encontrado neste projeto.');
+  }
+
+  const ownerCount = await prisma.projectMember.count({
+    where: {
+      projectId: access.id,
+      projectRole: 'owner',
+    },
+  });
+
+  if (member.projectRole === 'owner' && ownerCount <= 1) {
+    throw new Error('O projeto precisa manter pelo menos um owner.');
+  }
+
+  if (member.projectRole === 'owner' && access.currentUserRole !== 'owner') {
+    throw new Error('Somente o owner do projeto pode remover outro owner.');
+  }
+
+  await prisma.projectMember.delete({
+    where: { id: member.id },
+  });
+
+  return getProjectByUuid(projectUuid, actorUserUuid);
 }
 
 export async function createProject({
@@ -493,11 +762,11 @@ export async function createProject({
   ]);
 
   if (!workspace) {
-    throw new Error('Workspace não encontrado.');
+    throw new Error('Workspace nÃ£o encontrado.');
   }
 
   if (!user) {
-    throw new Error('Usuário criador não encontrado.');
+    throw new Error('UsuÃ¡rio criador nÃ£o encontrado.');
   }
 
   const slugBase =
@@ -567,7 +836,7 @@ export async function listProjectTasks(projectUuid, { status, parentTaskUuid } =
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
   let parentTaskId;
@@ -578,7 +847,7 @@ export async function listProjectTasks(projectUuid, { status, parentTaskUuid } =
     });
 
     if (!parentTask || parentTask.projectId !== project.id) {
-      throw new Error('Tarefa pai não encontrada neste projeto.');
+      throw new Error('Tarefa pai nÃ£o encontrada neste projeto.');
     }
     parentTaskId = parentTask.id;
   }
@@ -601,7 +870,8 @@ export async function listProjectTasks(projectUuid, { status, parentTaskUuid } =
     },
   });
 
-  return tasks.map(enrichTask);
+  const agentAliases = userUuid ? (await getAiSettingsForUser(userUuid)).agentAliases : DEFAULT_AI_SETTINGS.agentAliases;
+  return tasks.map((task) => enrichTask(task, agentAliases));
 }
 
 export async function listAllTasks({ status } = {}, userUuid = null) {
@@ -627,7 +897,8 @@ export async function listAllTasks({ status } = {}, userUuid = null) {
     },
   });
 
-  return tasks.map(enrichTask);
+  const agentAliases = userUuid ? (await getAiSettingsForUser(userUuid)).agentAliases : DEFAULT_AI_SETTINGS.agentAliases;
+  return tasks.map((task) => enrichTask(task, agentAliases));
 }
 
 export async function getTaskByUuid(taskUuid, userUuid = null) {
@@ -645,7 +916,14 @@ export async function getTaskByUuid(taskUuid, userUuid = null) {
     include: taskDetailInclude,
   });
 
-  return enrichTask(task);
+  const agentAliases = userUuid ? (await getAiSettingsForUser(userUuid)).agentAliases : DEFAULT_AI_SETTINGS.agentAliases;
+  const enrichedTask = enrichTask(task, agentAliases);
+
+  if (enrichedTask?.project) {
+    enrichedTask.project = enrichProjectAccess(enrichedTask.project, userUuid);
+  }
+
+  return enrichedTask;
 }
 
 export async function createTask(projectUuid, input) {
@@ -655,7 +933,7 @@ export async function createTask(projectUuid, input) {
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
   const [creator, reporter, assigneeUser, parentTask] = await Promise.all([
@@ -678,19 +956,19 @@ export async function createTask(projectUuid, input) {
   ]);
 
   if (!creator) {
-    throw new Error('Usuário criador da tarefa não encontrado.');
+    throw new Error('UsuÃ¡rio criador da tarefa nÃ£o encontrado.');
   }
 
   if (input.reporterUserUuid && !reporter) {
-    throw new Error('Usuário reporter não encontrado.');
+    throw new Error('UsuÃ¡rio reporter nÃ£o encontrado.');
   }
 
   if (input.assigneeUserUuid && !assigneeUser) {
-    throw new Error('Usuário responsável não encontrado.');
+    throw new Error('UsuÃ¡rio responsÃ¡vel nÃ£o encontrado.');
   }
 
   if (input.parentTaskUuid && (!parentTask || parentTask.projectId !== project.id)) {
-    throw new Error('Tarefa pai não encontrada neste projeto.');
+    throw new Error('Tarefa pai nÃ£o encontrada neste projeto.');
   }
 
   const task = await prisma.task.create({
@@ -751,7 +1029,7 @@ export async function updateTask(taskUuid, input) {
   });
 
   if (!existingTask) {
-    throw new Error('Tarefa não encontrada.');
+    throw new Error('Tarefa nÃ£o encontrada.');
   }
 
   const [assigneeUser, reporterUser, changedByUser, parentTask] = await Promise.all([
@@ -773,15 +1051,15 @@ export async function updateTask(taskUuid, input) {
   ]);
 
   if (input.assigneeUserUuid && !assigneeUser) {
-    throw new Error('Usuário responsável não encontrado.');
+    throw new Error('UsuÃ¡rio responsÃ¡vel nÃ£o encontrado.');
   }
 
   if (input.reporterUserUuid && !reporterUser) {
-    throw new Error('Usuário reporter não encontrado.');
+    throw new Error('UsuÃ¡rio reporter nÃ£o encontrado.');
   }
 
   if (input.parentTaskUuid && (!parentTask || parentTask.projectId !== existingTask.projectId)) {
-    throw new Error('Tarefa pai não encontrada neste projeto.');
+    throw new Error('Tarefa pai nÃ£o encontrada neste projeto.');
   }
 
   const data = {};
@@ -862,7 +1140,7 @@ export async function createTaskComment(taskUuid, input) {
   });
 
   if (!task) {
-    throw new Error('Tarefa não encontrada.');
+    throw new Error('Tarefa nÃ£o encontrada.');
   }
 
   let authorUser = null;
@@ -873,7 +1151,7 @@ export async function createTaskComment(taskUuid, input) {
     });
 
     if (!authorUser) {
-      throw new Error('Usuário autor não encontrado.');
+      throw new Error('UsuÃ¡rio autor nÃ£o encontrado.');
     }
   }
 
@@ -926,7 +1204,7 @@ export async function ensurePipelineProject(projectUuid, idea = 'Pipeline Projec
     });
 
     if (!authUser) {
-      throw new Error('Usuário autenticado não encontrado.');
+      throw new Error('UsuÃ¡rio autenticado nÃ£o encontrado.');
     }
 
     workspace = await getDefaultWorkspaceForUserUuid(userUuid);
@@ -952,19 +1230,79 @@ export async function ensurePipelineProject(projectUuid, idea = 'Pipeline Projec
   });
 }
 
+function normalizeBacklogLine(line) {
+  return String(line || '')
+    .replace(/^[-*]\s*/, '')
+    .replace(/\*\*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseStoryTitle(line) {
+  const normalized = normalizeBacklogLine(line);
+  const withPrefix = normalized.match(/^(?:US-\d+|H\d+|Story-\d+|\d+)\s*\|\s*(Como\b.+)$/i);
+  if (withPrefix) {
+    return withPrefix[1].trim();
+  }
+
+  if (/^Como\b/i.test(normalized) && normalized.includes('eu quero')) {
+    return normalized;
+  }
+
+  return null;
+}
+
 function extractStoriesFromBacklog(backlogMarkdown) {
   if (!backlogMarkdown) return [];
 
   return backlogMarkdown
     .split('\n')
-    .filter((line) => line.trim().match(/^[-*]?\s*\d*\.?\s*(?:\*\*)?Como\b/i))
-    .map((text) =>
-      text
-        .replace(/^[-*]?\s*\d*\.?\s*(?:\*\*)?/, '')
-        .replace(/\*\*/g, '')
-        .trim()
-    )
+    .map((line) => parseStoryTitle(line))
     .filter(Boolean);
+}
+
+function extractStructuredStoriesFromBacklog(sectionContent) {
+  if (!sectionContent) return [];
+
+  const stories = [];
+  const lines = String(sectionContent).split('\n');
+  let currentStory = null;
+
+  function pushCurrentStory() {
+    if (!currentStory?.title) return;
+    stories.push({
+      title: currentStory.title.trim(),
+      description: currentStory.details.join('\n').trim() || null,
+    });
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (currentStory) {
+        currentStory.details.push('');
+      }
+      continue;
+    }
+
+    const title = parseStoryTitle(line);
+    if (title) {
+      pushCurrentStory();
+      currentStory = {
+        title,
+        details: [],
+      };
+      continue;
+    }
+
+    if (currentStory) {
+      const cleaned = line.replace(/^[-*]\s+/, '').trim();
+      currentStory.details.push(cleaned);
+    }
+  }
+
+  pushCurrentStory();
+  return stories.filter((story) => story.title);
 }
 
 function extractMarkdownSection(content, sectionTitle) {
@@ -986,22 +1324,25 @@ function extractBulletLines(sectionContent, { onlyStories = false } = {}) {
     .filter((line) => /^[-*]?\s*\d*\.?\s*(?:\*\*)?/.test(line))
     .map((line) => line.replace(/^[-*]?\s*\d*\.?\s*(?:\*\*)?/, '').replace(/\*\*/g, '').trim())
     .filter(Boolean)
-    .filter((line) => (onlyStories ? /^Como\b/i.test(line) : true));
+    .filter((line) => {
+      if (!onlyStories) return true;
+      return /^(?:US-\d+\s*\|\s*)?Como\b/i.test(line);
+    })
+    .map((line) => line.replace(/^US-\d+\s*\|\s*/i, '').trim());
 }
 
 function extractBacklogItems(backlogMarkdown) {
   if (!backlogMarkdown) {
-    return { epics: [], stories: [], technicalTasks: [] };
+    return { stories: [] };
   }
 
-  const epics = extractBulletLines(extractMarkdownSection(backlogMarkdown, 'Epicos'));
-  const stories = extractBulletLines(extractMarkdownSection(backlogMarkdown, 'Historias de Usuario'), { onlyStories: true });
-  const technicalTasks = extractBulletLines(extractMarkdownSection(backlogMarkdown, 'Tarefas Tecnicas Iniciais'));
+  const structuredStories = extractStructuredStoriesFromBacklog(extractMarkdownSection(backlogMarkdown, 'Historias de Usuario'));
+  const stories = structuredStories.length
+    ? structuredStories
+    : extractStoriesFromBacklog(backlogMarkdown).map((title) => ({ title, description: null }));
 
   return {
-    epics,
-    stories: stories.length ? stories : extractStoriesFromBacklog(backlogMarkdown),
-    technicalTasks,
+    stories,
   };
 }
 
@@ -1010,41 +1351,26 @@ export async function importBacklogTasks(projectUuid, backlogMarkdown) {
     where: { uuid: projectUuid },
     include: {
       creator: { select: { id: true } },
-      tasks: { select: { id: true, title: true } },
+      tasks: { select: { id: true, title: true, taskType: true } },
     },
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
-  const { epics, stories, technicalTasks } = extractBacklogItems(backlogMarkdown);
-  const existingTitles = new Set(project.tasks.map((task) => task.title.trim()));
+  const { stories } = extractBacklogItems(backlogMarkdown);
+  const existingTitles = new Set(project.tasks.filter((task) => task.taskType === 'story').map((task) => task.title.trim()));
 
   const itemsToCreate = [
-    ...epics.map((title, index) => ({
-      title,
-      taskType: 'epic',
-      assigneeType: 'unassigned',
-      assigneeAgentName: null,
-      position: index,
-      note: 'Epic importado do backlog',
-    })),
-    ...stories.map((title, index) => ({
-      title,
+    ...stories.map((story, index) => ({
+      title: story.title,
       taskType: 'story',
       assigneeType: 'agent',
       assigneeAgentName: 'requirements_analyst',
-      position: epics.length + index,
-      note: 'Story importada do backlog',
-    })),
-    ...technicalTasks.map((title, index) => ({
-      title,
-      taskType: 'task',
-      assigneeType: 'unassigned',
-      assigneeAgentName: null,
-      position: epics.length + stories.length + index,
-      note: 'Tarefa tecnica importada do backlog',
+      position: index,
+      description: story.description,
+      note: 'Story refinada importada do backlog',
     })),
   ];
 
@@ -1056,7 +1382,7 @@ export async function importBacklogTasks(projectUuid, backlogMarkdown) {
         uuid: randomUUID(),
         projectId: project.id,
         title: item.title,
-        description: null,
+        description: item.description || null,
         taskType: item.taskType,
         status: 'backlog',
         priority: 'medium',
@@ -1086,7 +1412,7 @@ export async function createTaskArtifact(taskUuid, input) {
   });
 
   if (!task) {
-    throw new Error('Tarefa não encontrada.');
+    throw new Error('Tarefa nÃ£o encontrada.');
   }
 
   await prisma.taskArtifact.updateMany({
@@ -1176,7 +1502,7 @@ async function getProjectRecordByUuid(projectUuid) {
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
   return project;
@@ -1210,18 +1536,22 @@ function buildArchitectureBlockers({
   const blockers = [];
 
   if (!totalStories) {
-    blockers.push('Crie e refine pelo menos uma história antes de gerar a arquitetura.');
+    blockers.push('Crie e refine pelo menos uma historia antes de gerar a arquitetura.');
+  }
+
+  if (hasArchitecture) {
+    blockers.push('A arquitetura deste projeto ja foi gerada. Para preservar a trilha tecnica, essa etapa nao pode ser executada novamente.');
   }
 
   if (pendingStories > 0) {
-    blockers.push(`Ainda faltam ${pendingStories} histórias com requisitos refinados.`);
+    blockers.push(`Ainda faltam ${pendingStories} historias com requisitos refinados.`);
   }
 
   if (!hasArchitecture) {
-    blockers.push('A arquitetura do projeto ainda não foi gerada.');
+    blockers.push('A arquitetura do projeto ainda nao foi gerada.');
   }
 
-  if (architectureNeedsRefresh) {
+  if (!hasArchitecture && architectureNeedsRefresh) {
     blockers.push('A arquitetura atual ficou desatualizada depois de novos refinamentos.');
   }
 
@@ -1282,7 +1612,7 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
   const architectureTask = await prisma.task.findFirst({
@@ -1325,24 +1655,12 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
   const pendingStories = pendingTasks.length;
   const allStoriesRefined = totalStories > 0 && pendingStories === 0;
 
-  const latestRequirementsAt = refinedTasks.reduce((latest, task) => {
-    const requirementsArtifact = task.artifacts.find(
-      (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent
-    );
-    if (!requirementsArtifact?.createdAt) return latest;
-    return !latest || new Date(requirementsArtifact.createdAt) > new Date(latest)
-      ? requirementsArtifact.createdAt
-      : latest;
-  }, null);
-
   const architectureArtifact = architectureTask?.artifacts?.[0] || null;
   const hasArchitecture = Boolean(architectureArtifact);
   const architectureApproved = Boolean(architectureArtifact?.isApproved);
-  const architectureNeedsRefresh =
-    Boolean(architectureArtifact?.createdAt && latestRequirementsAt) &&
-    new Date(architectureArtifact.createdAt) < new Date(latestRequirementsAt);
-  const canGenerateArchitecture = allStoriesRefined;
-  const canGenerateCode = allStoriesRefined && hasArchitecture && !architectureNeedsRefresh && architectureApproved;
+  const architectureNeedsRefresh = false;
+  const canGenerateArchitecture = allStoriesRefined && !hasArchitecture;
+  const canGenerateCode = allStoriesRefined && hasArchitecture && architectureApproved;
   const blockers = buildArchitectureBlockers({
     totalStories,
     pendingStories,
@@ -1391,7 +1709,7 @@ export async function approveCurrentArchitectureArtifact(projectUuid, approvedBy
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
   const approvedByUser = await prisma.user.findUnique({
@@ -1400,7 +1718,7 @@ export async function approveCurrentArchitectureArtifact(projectUuid, approvedBy
   });
 
   if (!approvedByUser?.id) {
-    throw new Error('Usuário aprovador não encontrado.');
+    throw new Error('UsuÃ¡rio aprovador nÃ£o encontrado.');
   }
 
   const architectureTask = await prisma.task.findFirst({
@@ -1430,7 +1748,7 @@ export async function approveCurrentArchitectureArtifact(projectUuid, approvedBy
 
   const currentArtifact = architectureTask?.artifacts?.[0];
   if (!architectureTask || !currentArtifact) {
-    throw new Error('Nenhum artefato de arquitetura atual encontrado para aprovação.');
+    throw new Error('Nenhum artefato de arquitetura atual encontrado para aprovaÃ§Ã£o.');
   }
 
   const approvedArtifact = await prisma.taskArtifact.update({
@@ -1469,7 +1787,7 @@ export async function getProjectDocumentationBundle(projectUuid, userUuid = null
   ]);
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
   const backlogTask = await prisma.task.findFirst({
@@ -1591,7 +1909,7 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto nÃ£o encontrado.');
   }
 
   let taskId = null;
@@ -1670,7 +1988,7 @@ export async function restoreTaskAfterAgentFailure(taskUuid, previousState, { ch
   });
 
   if (!existingTask) {
-    throw new Error('Tarefa não encontrada.');
+    throw new Error('Tarefa nÃ£o encontrada.');
   }
 
   const changedByUser = changedByUserUuid

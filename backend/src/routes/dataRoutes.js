@@ -7,6 +7,7 @@ import {
   createTaskCommentController,
   createTaskController,
   approveProjectArchitectureController,
+  addProjectMemberController,
   ensurePipelineProjectController,
   generateProjectArchitectureController,
   generateProjectBacklogController,
@@ -18,6 +19,8 @@ import {
   listProjectsController,
   listProjectTasksController,
   listAllTasksController,
+  removeProjectMemberController,
+  updateProjectMemberController,
   updateProjectBriefController,
   updateTaskController,
 } from '../controllers/projectDataController.js';
@@ -31,6 +34,9 @@ router.get('/projects', listProjectsController);
 router.post('/projects', createProjectController);
 router.get('/projects/:projectUuid', getProjectController);
 router.patch('/projects/:projectUuid/brief', updateProjectBriefController);
+router.post('/projects/:projectUuid/members', addProjectMemberController);
+router.patch('/projects/:projectUuid/members/:memberUuid', updateProjectMemberController);
+router.delete('/projects/:projectUuid/members/:memberUuid', removeProjectMemberController);
 router.get('/projects/:projectUuid/documentation', getProjectDocumentationBundleController);
 router.get('/projects/:projectUuid/architecture/status', getProjectArchitectureStatusController);
 router.post('/projects/:projectUuid/architecture/approve', approveProjectArchitectureController);
