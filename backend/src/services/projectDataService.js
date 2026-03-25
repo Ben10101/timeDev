@@ -326,7 +326,7 @@ export async function listProjects(userUuid = null) {
 
 export async function bootstrapWorkspaceAndUser({ userName, email, workspaceName, passwordHash = null, failIfUserExists = false }) {
   const normalizedEmail = email.trim().toLowerCase();
-  const normalizedWorkspaceName = workspaceName.trim();
+  const normalizedWorkspaceName = workspaceName?.trim() || 'Meu Workspace';
   const workspaceSlug =
     normalizedWorkspaceName
       .toLowerCase()

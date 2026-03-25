@@ -440,6 +440,12 @@ export default function ProjectsPage() {
   }, [searchParams]);
 
   useEffect(() => {
+    if (searchParams.get('openCreate') === '1') {
+      setShowProjectForm(true);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
     const intervalId = setInterval(() => {
       loadProjects(activeProjectUuid, { silent: true });
       if (activeProjectUuid) {
@@ -772,10 +778,13 @@ export default function ProjectsPage() {
                   </AnimatePresence>
 
                   {!projects.length && !loading && (
-                    <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-12 text-center">
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-12 text-center">
                       <LayoutDashboard className="mx-auto h-8 w-8 text-slate-300" />
                       <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-                        Nenhum projeto
+                        Nenhum projeto ainda
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-slate-500">
+                        Clique em <span className="font-semibold text-slate-700">+</span> ou use o workspace para criar o primeiro projeto.
                       </p>
                     </div>
                   )}

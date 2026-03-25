@@ -102,8 +102,8 @@ function createRefreshToken() {
 }
 
 export async function registerUserWithWorkspace({ name, email, password, workspaceName }) {
-  if (!name?.trim() || !email?.trim() || !password?.trim() || !workspaceName?.trim()) {
-    throw createAuthError('name, email, password e workspaceName sao obrigatorios.', 400);
+  if (!name?.trim() || !email?.trim() || !password?.trim()) {
+    throw createAuthError('name, email e password sao obrigatorios.', 400);
   }
 
   if (password.length < 8) {
@@ -111,10 +111,11 @@ export async function registerUserWithWorkspace({ name, email, password, workspa
   }
 
   const passwordHash = await hashPassword(password);
+  const resolvedWorkspaceName = workspaceName?.trim() || 'Meu Workspace';
   const { user } = await bootstrapWorkspaceAndUser({
     userName: name,
     email,
-    workspaceName,
+    workspaceName: resolvedWorkspaceName,
     passwordHash,
     failIfUserExists: true,
   });

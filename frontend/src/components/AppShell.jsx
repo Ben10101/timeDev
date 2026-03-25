@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Briefcase,
   Braces,
+  LayoutGrid,
   Search,
   Bell,
   ChevronRight,
@@ -16,10 +17,16 @@ import { useAuth } from '../contexts/AuthContext';
 
 const NAV_SECTIONS = [
   {
+    label: 'Workspace',
+    items: [
+      { label: 'Visão geral', hint: 'Portfólio multi-projetos', to: '/workspace', icon: LayoutGrid },
+    ],
+  },
+  {
     label: 'Execução',
     items: [
       { label: 'Projetos', hint: 'Board operacional', to: '/projects', icon: Briefcase },
-      { label: 'Entrega', hint: 'Handoff técnico', to: '/code-studio', icon: Braces },
+      { label: 'Code Studio', hint: 'Handoff técnico', to: '/code-studio', icon: Braces },
     ],
   },
   {
@@ -33,7 +40,7 @@ const NAV_SECTIONS = [
 
 function NavItem({ item }) {
   const location = useLocation();
-  const active = location.pathname.startsWith(item.to);
+  const active = `${location.pathname}${location.search}`.startsWith(item.to);
   const Icon = item.icon;
 
   return (
@@ -58,7 +65,14 @@ function NavItem({ item }) {
   );
 }
 
-export default function AppShell({ title, eyebrow, description, actions, sidebar, children }) {
+export default function AppShell({
+  title,
+  eyebrow,
+  description,
+  actions,
+  sidebar,
+  children,
+}) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');

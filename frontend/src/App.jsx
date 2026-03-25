@@ -2,6 +2,8 @@ import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-d
 import ProtectedRoute from './components/ProtectedRoute';
 import AuthPage from './pages/AuthPage';
 import ProjectOverviewPage from './pages/ProjectOverviewPage';
+import ProjectPlanningPage from './pages/ProjectPlanningPage';
+import WorkspacePage from './pages/WorkspacePage';
 import ProjectsPage from './pages/ProjectsPage';
 import ResultsPage from './pages/ResultsPage';
 import TaskDetailsPage from './pages/TaskDetailsPage';
@@ -20,11 +22,20 @@ function App() {
             path="/"
             element={
               <ProtectedRoute>
-                <Navigate to="/projects" replace />
+                <Navigate to="/workspace" replace />
               </ProtectedRoute>
             }
           />
           <Route path="/auth" element={<AuthPage />} />
+          <Route path="/auth/register" element={<AuthPage />} />
+          <Route
+            path="/workspace"
+            element={
+              <ProtectedRoute>
+                <WorkspacePage />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/projects"
             element={
@@ -38,6 +49,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <ProjectOverviewPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/projects/:projectUuid/planning"
+            element={
+              <ProtectedRoute>
+                <ProjectPlanningPage />
               </ProtectedRoute>
             }
           />
