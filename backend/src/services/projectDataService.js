@@ -10,13 +10,35 @@ const taskListInclude = {
     where: { isCurrent: true, artifactScope: 'refinement' },
     orderBy: { createdAt: 'desc' },
   },
+  statusHistory: {
+    orderBy: { changedAt: 'desc' },
+    select: {
+      id: true,
+      fromStatus: true,
+      toStatus: true,
+      note: true,
+      changedAt: true,
+    },
+  },
   _count: { select: { artifacts: true, comments: true, checklistItems: true } },
 };
 
 const taskDetailInclude = {
   ...taskListInclude,
   project: {
-    select: { uuid: true, name: true, slug: true, status: true },
+    select: {
+      uuid: true,
+      name: true,
+      slug: true,
+      status: true,
+      members: {
+        include: {
+          user: {
+            select: { uuid: true, name: true, email: true },
+          },
+        },
+      },
+    },
   },
   comments: {
     orderBy: { createdAt: 'desc' },
@@ -278,13 +300,23 @@ export async function listProjects(userUuid = null) {
   return prisma.project.findMany({
     where: buildProjectAccessFilter(userUuid),
     orderBy: { createdAt: 'desc' },
-    include: {
+    select: {
+      id: true,
+      uuid: true,
+      name: true,
+      slug: true,
+      description: true,
+      vision: true,
+      startMode: true,
+      templateKey: true,
+      intakeConfig: true,
       workspace: {
         select: { uuid: true, name: true, slug: true },
       },
       creator: {
         select: { uuid: true, name: true, email: true },
       },
+      intakeConfig: true,
       _count: {
         select: { tasks: true, agentRuns: true },
       },
@@ -374,7 +406,16 @@ export async function getProjectByUuid(projectUuid, userUuid = null) {
       uuid: projectUuid,
       ...buildProjectAccessFilter(userUuid),
     },
-    include: {
+    select: {
+      id: true,
+      uuid: true,
+      name: true,
+      slug: true,
+      description: true,
+      vision: true,
+      startMode: true,
+      templateKey: true,
+      intakeConfig: true,
       workspace: {
         select: { uuid: true, name: true, slug: true },
       },

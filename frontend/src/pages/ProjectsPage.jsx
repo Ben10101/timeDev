@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   AlertCircle,
   CheckCircle2,
+  Ban,
   Clock,
   Download,
   ExternalLink,
@@ -21,6 +22,7 @@ import {
   bootstrapWorkspace,
   createProject,
   createTask,
+  approveProjectArchitecture,
   generateProjectArchitecture,
   getApiErrorMessage,
   getProjectArchitectureStatus,
@@ -37,6 +39,7 @@ const BOARD_COLUMNS = [
   { key: 'todo', label: 'A Fazer', icon: Clock },
   { key: 'in_progress', label: 'Em Progresso', icon: Sparkles },
   { key: 'in_review', label: 'Em Revisão', icon: AlertCircle },
+  { key: 'blocked', label: 'Bloqueado', icon: Ban },
   { key: 'qa', label: 'Qualidade', icon: TestTube2 },
   { key: 'done', label: 'Concluído', icon: CheckCircle2 },
 ];
@@ -72,8 +75,43 @@ function formatElapsed(seconds) {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
+function formatShortDate(value) {
+  if (!value) return 'Sem prazo';
+  return new Date(value).toLocaleDateString('pt-BR');
+}
+
+function getRoadmapPhases(project) {
+  return project?.intakeConfig?.roadmap?.phases || [];
+}
+
+function getRiskRegister(project) {
+  return project?.intakeConfig?.riskRegister || null;
+}
+
+function getProjectTimeline(project) {
+  return project?.intakeConfig?.timeline || null;
+}
+
+function getRoadmapPhaseProgress(index, totalDone, totalTasks) {
+  if (!totalTasks) return index === 0 ? 15 : 0;
+
+  if (totalDone === 0) {
+    return index === 0 ? 10 : 0;
+  }
+
+  const base = Math.round((totalDone / totalTasks) * 100);
+  const offsets = [0, -20, -40];
+  return Math.max(0, Math.min(100, base + (offsets[index] || 0)));
+}
+
 function hasCurrentArtifact(task, artifactType) {
   return (task?.artifacts || []).some((artifact) => artifact.artifactType === artifactType && artifact.isCurrent);
+}
+
+function getLatestStatusHistoryNote(task, toStatus = null) {
+  const history = task?.statusHistory || [];
+  const entry = toStatus ? history.find((item) => item.toStatus === toStatus) : history[0];
+  return entry?.note || '';
 }
 
 function isTaskAgentRunning(task, agentName = null) {
@@ -152,13 +190,14 @@ function TaskCard({
   const hasRequirements = hasCurrentArtifact(task, 'requirements');
   const hasTestPlan = hasCurrentArtifact(task, 'test_plan');
   const isDone = task.status === 'done';
+  const isBlocked = task.status === 'blocked';
   const processingError = task.processingError;
   const isStory = task.taskType === 'story';
   const isEpic = task.taskType === 'epic';
   const requirementsRunning = isTaskAgentRunning(task, 'requirements_analyst');
   const qaRunning = isTaskAgentRunning(task, 'qa_engineer');
-  const canRunRequirements = isStory && !hasRequirements && !requirementsRunning;
-  const canRunQa = isStory && hasRequirements && !hasTestPlan && !qaRunning;
+  const canRunRequirements = isStory && !isBlocked && !hasRequirements && !requirementsRunning;
+  const canRunQa = isStory && !isBlocked && hasRequirements && !hasTestPlan && !qaRunning;
   const canRunImplementation = Boolean(implementationUnlocked);
 
   const priorityColors = {
@@ -171,6 +210,7 @@ function TaskCard({
     story: 'Story',
     task: 'Tecnica',
   };
+  const blockReason = getLatestStatusHistoryNote(task, 'blocked');
 
   return (
     <motion.div
@@ -190,6 +230,11 @@ function TaskCard({
               <span className="dashboard-badge bg-slate-100 text-slate-600">
                 {typeLabels[task.taskType] || task.taskType || 'Task'}
               </span>
+              {isBlocked && (
+                <span className="dashboard-badge bg-rose-50 text-rose-700">
+                  Bloqueada
+                </span>
+              )}
               <span className="text-[11px] font-semibold text-slate-400">#{task.uuid?.split('-')[0]}</span>
             </div>
             <h3 className="mt-3 text-sm font-semibold leading-6 text-slate-900">{task.title}</h3>
@@ -205,6 +250,22 @@ function TaskCard({
         <p className="text-sm leading-6 text-slate-500">
           {task.description || 'Sem contexto adicional registrado para esta task.'}
         </p>
+
+        <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600 sm:grid-cols-2">
+          <p>
+            <span className="font-semibold text-slate-500">Responsável:</span> {task.assigneeUser?.name || task.assigneeAgentName || 'Sem responsável'}
+          </p>
+          <p>
+            <span className="font-semibold text-slate-500">Prazo:</span> {formatShortDate(task.dueDate)}
+          </p>
+        </div>
+
+        {isBlocked && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Motivo do bloqueio</p>
+            <p className="mt-1 text-sm font-medium text-rose-700">{blockReason || 'Bloqueio sem observação registrada.'}</p>
+          </div>
+        )}
 
         {processingError && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
@@ -329,6 +390,49 @@ export default function ProjectsPage() {
   const [taskForm, setTaskForm] = useState(EMPTY_TASK);
 
   const activeProject = projects.find((project) => project.uuid === activeProjectUuid) || null;
+  const roadmap = activeProject?.intakeConfig?.roadmap || null;
+  const roadmapPhases = getRoadmapPhases(activeProject);
+  const riskRegister = getRiskRegister(activeProject);
+  const projectTimeline = getProjectTimeline(activeProject);
+  const taskLoadByAssignee = useMemo(() => {
+    const loadMap = new Map();
+
+    tasks.forEach((task) => {
+      const assignee = task.assigneeUser?.name || task.assigneeAgentName || 'Sem responsável';
+      const current = loadMap.get(assignee) || { assignee, total: 0, overdue: 0, dueSoon: 0 };
+      const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+      const isDone = task.status === 'done';
+      const today = new Date();
+      const sevenDays = new Date();
+      sevenDays.setDate(today.getDate() + 7);
+
+      current.total += 1;
+      if (!isDone && dueDate && dueDate < today) {
+        current.overdue += 1;
+      }
+      if (!isDone && dueDate && dueDate >= today && dueDate <= sevenDays) {
+        current.dueSoon += 1;
+      }
+      loadMap.set(assignee, current);
+    });
+
+    return Array.from(loadMap.values()).sort((a, b) => b.total - a.total);
+  }, [tasks]);
+  const overdueTasks = useMemo(
+    () =>
+      tasks
+        .filter((task) => task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date())
+        .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)),
+    [tasks]
+  );
+  const upcomingTasks = useMemo(
+    () =>
+      tasks
+        .filter((task) => task.dueDate && task.status !== 'done')
+        .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
+        .slice(0, 4),
+    [tasks]
+  );
 
   useEffect(() => {
     const preferredProjectUuid = searchParams.get('project');
@@ -542,6 +646,22 @@ export default function ProjectsPage() {
     }
   }
 
+  async function handleApproveArchitecture() {
+    if (!activeProjectUuid) return;
+
+    setSaving(true);
+    setError(null);
+    try {
+      await approveProjectArchitecture(activeProjectUuid);
+      await loadArchitectureStatus(activeProjectUuid, { silent: true });
+      await loadProjects(activeProjectUuid, { silent: true });
+    } catch (approveError) {
+      setError(getApiErrorMessage(approveError, 'Não foi possível aprovar a arquitetura atual.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleExportPdf() {
     if (!activeProjectUuid) return;
     setExportingPdf(true);
@@ -562,6 +682,7 @@ export default function ProjectsPage() {
 
   const qaCount = tasks.filter((task) => hasCurrentArtifact(task, 'test_plan')).length;
   const doneCount = tasks.filter((task) => task.status === 'done').length;
+  const overallProgress = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0;
   const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
   const implementationBlockReason = architectureStatus?.blockers?.[0] || null;
   const hasAgentGeneratedStories = tasks.some((task) => task.assigneeAgentName === 'requirements_analyst' || task.taskType === 'story');
@@ -776,6 +897,15 @@ export default function ProjectsPage() {
                       {activeProject?.vision ||
                         'Selecione um projeto no catálogo para operar backlog, requisitos, QA e liberação técnica no mesmo board.'}
                     </p>
+                    {roadmap?.milestone && (
+                      <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Marco do projeto</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">{roadmap.milestone}</p>
+                        <p className="mt-2 text-xs leading-6 text-slate-500">
+                          Este é o objetivo principal que guia a evolução do projeto nesta fase.
+                        </p>
+                      </div>
+                    )}
                     {activeProjectUuid && !hasAgentGeneratedStories && (
                       <div className="mt-5 flex flex-wrap gap-3">
                         <button
@@ -800,6 +930,28 @@ export default function ProjectsPage() {
                       <div className="mt-5 flex flex-wrap gap-3">
                         <button
                           type="button"
+                          onClick={handleApproveArchitecture}
+                          disabled={
+                            saving ||
+                            !architectureStatus?.hasArchitecture ||
+                            architectureStatus?.architectureNeedsRefresh ||
+                            architectureStatus?.architectureApproved
+                          }
+                          className="dashboard-button-primary"
+                          title={
+                            !architectureStatus?.hasArchitecture
+                              ? 'Gere a arquitetura antes de aprovar.'
+                              : architectureStatus?.architectureNeedsRefresh
+                                ? 'Regere a arquitetura antes de aprovar.'
+                                : architectureStatus?.architectureApproved
+                                  ? 'A arquitetura atual já foi aprovada.'
+                                  : undefined
+                          }
+                        >
+                          {architectureStatus?.architectureApproved ? 'Arquitetura aprovada' : 'Aprovar arquitetura'}
+                        </button>
+                        <button
+                          type="button"
                           onClick={handleExportPdf}
                           disabled={exportingPdf}
                           className="dashboard-button-secondary"
@@ -811,11 +963,11 @@ export default function ProjectsPage() {
                     )}
                   </div>
 
-                  <div className="grid w-full gap-4 sm:grid-cols-3 xl:w-auto">
-                    {[
-                      { label: 'Tasks', value: tasks.length, icon: LayoutDashboard, tone: 'bg-slate-50 text-slate-900' },
-                      { label: 'Em QA', value: qaCount, icon: Sparkles, tone: 'bg-blue-50 text-[#102a72]' },
-                      { label: 'Concluidas', value: doneCount, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
+                    <div className="grid w-full gap-4 sm:grid-cols-3 xl:w-auto">
+                      {[
+                        { label: 'Tasks', value: tasks.length, icon: LayoutDashboard, tone: 'bg-slate-50 text-slate-900' },
+                        { label: 'Em QA', value: qaCount, icon: Sparkles, tone: 'bg-blue-50 text-[#102a72]' },
+                        { label: 'Concluidas', value: doneCount, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
                     ].map((stat) => (
                       <div key={stat.label} className="min-w-[160px] rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                         <div className="flex items-center justify-between">
@@ -829,6 +981,141 @@ export default function ProjectsPage() {
                     ))}
                   </div>
                 </div>
+
+                {roadmapPhases.length > 0 && (
+                  <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {roadmapPhases.map((phase, index) => {
+                      const phaseLabel = `Fase ${index + 1}`;
+                      const phaseStatus = index === 0 ? 'Prioridade atual' : index === 1 ? 'Próxima etapa' : 'Planejada';
+                      const phaseProgress = getRoadmapPhaseProgress(index, doneCount, tasks.length);
+                      return (
+                        <div key={`${phase.order || index}-${phase.title}`} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">{phaseLabel}</p>
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                              {phaseStatus}
+                            </span>
+                          </div>
+                          <p className="mt-3 text-sm font-semibold text-slate-900">{phase.title}</p>
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className={`h-full rounded-full ${index === 0 ? 'bg-[#102a72]' : index === 1 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                              style={{ width: `${phaseProgress}%` }}
+                            />
+                          </div>
+                          <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                            <span>Progresso estimado</span>
+                            <span className="font-semibold text-slate-700">{phaseProgress}%</span>
+                          </div>
+                          <p className="mt-2 text-xs leading-6 text-slate-500">
+                            {index === 0
+                              ? 'Base operacional, rastreabilidade e controle do fluxo.'
+                              : index === 1
+                                ? 'Colaboração, relatórios e acompanhamento gerencial.'
+                                : 'Escala, integrações e governança avançada.'}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Progresso geral</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {doneCount} de {tasks.length || 0} tasks concluídas
+                      </p>
+                    </div>
+                    <span className="text-3xl font-bold tracking-tight text-slate-900">{overallProgress}%</span>
+                  </div>
+                  <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${overallProgress}%` }} />
+                  </div>
+                </div>
+
+                {riskRegister && (
+                  <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Riscos e impedimentos</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">
+                          {riskRegister.impediments?.[0] || riskRegister.risks?.[0] || 'Ainda sem riscos registrados'}
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-rose-600">
+                        {riskRegister.risks?.length || 0} riscos · {riskRegister.impediments?.length || 0} impedimentos
+                      </span>
+                    </div>
+                    {riskRegister.risks?.length > 1 && (
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {riskRegister.risks.slice(0, 3).map((risk, index) => (
+                          <div key={`risk-${index}`} className="rounded-xl border border-rose-200 bg-white p-4">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-rose-500">Risco {index + 1}</p>
+                            <p className="mt-2 text-sm leading-6 text-slate-700">{risk}</p>
+                          </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+                {projectTimeline && (
+                  <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Timeline</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">
+                          {projectTimeline.startDate || 'Início não definido'} → {projectTimeline.targetDate || 'meta não definida'}
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#102a72]">
+                        {projectTimeline.weeklyCapacity ? `${projectTimeline.weeklyCapacity} tasks/semana` : 'Capacidade não definida'}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-xl border border-blue-200 bg-white p-4">
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Atrasadas</p>
+                        <p className="mt-2 text-2xl font-bold text-slate-900">{overdueTasks.length}</p>
+                      </div>
+                      <div className="rounded-xl border border-blue-200 bg-white p-4">
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Próximos prazos</p>
+                        <p className="mt-2 text-2xl font-bold text-slate-900">{upcomingTasks.length}</p>
+                      </div>
+                      <div className="rounded-xl border border-blue-200 bg-white p-4 xl:col-span-2">
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Meta do plano</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-700">
+                          {projectTimeline.targetDate
+                            ? 'Essa data serve como referência para acompanhamento do ritmo do projeto e negociação de prazo.'
+                            : 'Defina uma meta de entrega para deixar o plano mais previsível.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {taskLoadByAssignee.length > 0 && (
+                  <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Capacidade</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">Carga por responsável</p>
+                      </div>
+                      <span className="text-xs text-slate-500">{taskLoadByAssignee.length} pessoas/atores</span>
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {taskLoadByAssignee.slice(0, 6).map((item) => (
+                        <div key={item.assignee} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                          <p className="text-sm font-semibold text-slate-900">{item.assignee}</p>
+                          <p className="mt-2 text-xs text-slate-500">
+                            {item.total} tasks · {item.overdue} atrasadas · {item.dueSoon} vencendo
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="border-t border-slate-200 p-6">

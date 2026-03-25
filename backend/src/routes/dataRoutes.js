@@ -18,6 +18,7 @@ import {
   listProjectsController,
   listProjectTasksController,
   listAllTasksController,
+  updateProjectBriefController,
   updateTaskController,
 } from '../controllers/projectDataController.js';
 
@@ -29,6 +30,7 @@ router.post('/pipeline-project', ensurePipelineProjectController);
 router.get('/projects', listProjectsController);
 router.post('/projects', createProjectController);
 router.get('/projects/:projectUuid', getProjectController);
+router.patch('/projects/:projectUuid/brief', updateProjectBriefController);
 router.get('/projects/:projectUuid/documentation', getProjectDocumentationBundleController);
 router.get('/projects/:projectUuid/architecture/status', getProjectArchitectureStatusController);
 router.post('/projects/:projectUuid/architecture/approve', approveProjectArchitectureController);

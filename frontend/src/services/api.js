@@ -218,6 +218,11 @@ export const getProject = async (projectUuid) => {
   return response.data
 }
 
+export const updateProjectBrief = async (projectUuid, payload) => {
+  const response = await apiClient.patch(`/projects/${projectUuid}/brief`, payload)
+  return response.data
+}
+
 export const getProjectDocumentationBundle = async (projectUuid) => {
   const response = await apiClient.get(`/projects/${projectUuid}/documentation`)
   return response.data
@@ -345,6 +350,7 @@ export default {
   bootstrapWorkspace,
   listProjects,
   getProject,
+  updateProjectBrief,
   getProjectDocumentationBundle,
   listProjectTasks,
   createProject,

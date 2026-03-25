@@ -9,6 +9,7 @@ import {
   getProject,
   getProjectArchitectureStatus,
   listProjectTasks,
+  updateProjectBrief,
 } from '../services/api';
 import { exportProjectDocumentationPdf } from '../utils/projectDocumentationExport';
 
@@ -67,6 +68,24 @@ export default function ProjectOverviewPage() {
     mainFlows: '',
     constraints: '',
   });
+  const [roadmap, setRoadmap] = useState({
+    milestone: '',
+    phase1: '',
+    phase2: '',
+    phase3: '',
+  });
+  const [riskRegister, setRiskRegister] = useState({
+    risk1: '',
+    risk2: '',
+    risk3: '',
+    impediment1: '',
+    impediment2: '',
+  });
+  const [timeline, setTimeline] = useState({
+    startDate: '',
+    targetDate: '',
+    weeklyCapacity: '',
+  });
 
   const groupedStats = useMemo(
     () => ({
@@ -105,6 +124,24 @@ export default function ProjectOverviewPage() {
         audience: projectData?.intakeConfig?.audience || '',
         mainFlows: projectData?.intakeConfig?.answers?.mainFlows || '',
         constraints: projectData?.intakeConfig?.answers?.constraints || '',
+      });
+      setRoadmap({
+        milestone: projectData?.intakeConfig?.roadmap?.milestone || '',
+        phase1: projectData?.intakeConfig?.roadmap?.phases?.[0]?.title || '',
+        phase2: projectData?.intakeConfig?.roadmap?.phases?.[1]?.title || '',
+        phase3: projectData?.intakeConfig?.roadmap?.phases?.[2]?.title || '',
+      });
+      setRiskRegister({
+        risk1: projectData?.intakeConfig?.riskRegister?.risks?.[0] || '',
+        risk2: projectData?.intakeConfig?.riskRegister?.risks?.[1] || '',
+        risk3: projectData?.intakeConfig?.riskRegister?.risks?.[2] || '',
+        impediment1: projectData?.intakeConfig?.riskRegister?.impediments?.[0] || '',
+        impediment2: projectData?.intakeConfig?.riskRegister?.impediments?.[1] || '',
+      });
+      setTimeline({
+        startDate: projectData?.intakeConfig?.timeline?.startDate || '',
+        targetDate: projectData?.intakeConfig?.timeline?.targetDate || '',
+        weeklyCapacity: projectData?.intakeConfig?.timeline?.weeklyCapacity || '',
       });
     } catch (loadError) {
       if (loadError.response?.status === 404) {
@@ -196,6 +233,44 @@ export default function ProjectOverviewPage() {
       setError(getApiErrorMessage(approveError, 'Não foi possível aprovar a arquitetura atual.'));
     } finally {
       setApprovingArchitecture(false);
+    }
+  }
+
+  async function handleSaveRoadmap(event) {
+    event.preventDefault();
+    setError(null);
+    setSuccessMessage('');
+
+    try {
+      const nextIntakeConfig = {
+        ...(project?.intakeConfig || {}),
+        roadmap: {
+          milestone: roadmap.milestone.trim(),
+          phases: [
+            { order: 1, title: roadmap.phase1.trim() },
+            { order: 2, title: roadmap.phase2.trim() },
+            { order: 3, title: roadmap.phase3.trim() },
+          ].filter((phase) => phase.title),
+        },
+        riskRegister: {
+          risks: [riskRegister.risk1.trim(), riskRegister.risk2.trim(), riskRegister.risk3.trim()].filter(Boolean),
+          impediments: [riskRegister.impediment1.trim(), riskRegister.impediment2.trim()].filter(Boolean),
+        },
+        timeline: {
+          startDate: timeline.startDate || null,
+          targetDate: timeline.targetDate || null,
+          weeklyCapacity: timeline.weeklyCapacity ? Number(timeline.weeklyCapacity) : null,
+        },
+      };
+
+      const updatedProject = await updateProjectBrief(projectUuid, {
+        intakeConfig: nextIntakeConfig,
+      });
+
+      setProject(updatedProject);
+      setSuccessMessage('Roadmap do projeto salvo com sucesso.');
+    } catch (saveError) {
+      setError(getApiErrorMessage(saveError, 'Não foi possível salvar o roadmap do projeto.'));
     }
   }
 
@@ -302,6 +377,199 @@ export default function ProjectOverviewPage() {
                 <p><strong>Template:</strong> {project?.templateKey || 'Sem template'}</p>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="dashboard-panel">
+          <div className="dashboard-panel-header">
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Roadmap</p>
+            <h3 className="mt-2 text-2xl font-bold text-slate-900">Milestones da evolução do projeto</h3>
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+              Use essa área para registrar o próximo marco do produto e dividir a evolução em fases curtas e compreensíveis.
+            </p>
+          </div>
+
+          <form className="grid gap-4 p-6" onSubmit={handleSaveRoadmap}>
+            <TextAreaField
+              label="Marco principal"
+              value={roadmap.milestone}
+              onChange={(event) => setRoadmap((prev) => ({ ...prev, milestone: event.target.value }))}
+              placeholder="Ex.: liberar o fluxo completo de reembolsos com aprovação e relatório"
+              rows={3}
+              disabled={false}
+            />
+
+            <div className="grid gap-4 lg:grid-cols-3">
+              <TextAreaField
+                label="Fase 1"
+                value={roadmap.phase1}
+                onChange={(event) => setRoadmap((prev) => ({ ...prev, phase1: event.target.value }))}
+                placeholder="Base operacional e rastreabilidade"
+                rows={4}
+              />
+              <TextAreaField
+                label="Fase 2"
+                value={roadmap.phase2}
+                onChange={(event) => setRoadmap((prev) => ({ ...prev, phase2: event.target.value }))}
+                placeholder="Colaboração, relatórios e visões gerenciais"
+                rows={4}
+              />
+              <TextAreaField
+                label="Fase 3"
+                value={roadmap.phase3}
+                onChange={(event) => setRoadmap((prev) => ({ ...prev, phase3: event.target.value }))}
+                placeholder="Portfólio, integrações e governança avançada"
+                rows={4}
+              />
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Visualização rápida</p>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Marco</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{roadmap.milestone || 'Ainda não definido'}</p>
+                </div>
+                {[roadmap.phase1, roadmap.phase2, roadmap.phase3].map((phase, index) => (
+                  <div key={`phase-${index}`} className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Fase {index + 1}</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">{phase || 'Ainda não definido'}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button type="submit" className="dashboard-button-primary w-full sm:w-auto">
+                Salvar roadmap
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section className="dashboard-panel">
+          <div className="dashboard-panel-header">
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Riscos e impedimentos</p>
+            <h3 className="mt-2 text-2xl font-bold text-slate-900">O que pode atrasar a entrega</h3>
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+              Registre o que pode afetar prazo, qualidade ou disponibilidade para que o board tenha visão executiva do risco.
+            </p>
+          </div>
+
+          <div className="grid gap-4 p-6 lg:grid-cols-2">
+            <div className="space-y-4">
+              <TextAreaField
+                label="Risco 1"
+                value={riskRegister.risk1}
+                onChange={(event) => setRiskRegister((prev) => ({ ...prev, risk1: event.target.value }))}
+                placeholder="Ex.: dependência de API externa sem SLA claro"
+                rows={3}
+              />
+              <TextAreaField
+                label="Risco 2"
+                value={riskRegister.risk2}
+                onChange={(event) => setRiskRegister((prev) => ({ ...prev, risk2: event.target.value }))}
+                placeholder="Ex.: mudanças regulatórias no fluxo de aprovação"
+                rows={3}
+              />
+              <TextAreaField
+                label="Risco 3"
+                value={riskRegister.risk3}
+                onChange={(event) => setRiskRegister((prev) => ({ ...prev, risk3: event.target.value }))}
+                placeholder="Ex.: baixa cobertura de QA nos cenários críticos"
+                rows={3}
+              />
+            </div>
+
+            <div className="space-y-4">
+              <TextAreaField
+                label="Impedimento 1"
+                value={riskRegister.impediment1}
+                onChange={(event) => setRiskRegister((prev) => ({ ...prev, impediment1: event.target.value }))}
+                placeholder="Ex.: aguardando definição do financeiro"
+                rows={3}
+              />
+              <TextAreaField
+                label="Impedimento 2"
+                value={riskRegister.impediment2}
+                onChange={(event) => setRiskRegister((prev) => ({ ...prev, impediment2: event.target.value }))}
+                placeholder="Ex.: falta de acesso ao ambiente de homologação"
+                rows={3}
+              />
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Resumo rápido</p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Riscos</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">
+                      {[riskRegister.risk1, riskRegister.risk2, riskRegister.risk3].filter(Boolean).length}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Impedimentos</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">
+                      {[riskRegister.impediment1, riskRegister.impediment2].filter(Boolean).length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="dashboard-panel">
+          <div className="dashboard-panel-header">
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Timeline e capacidade</p>
+            <h3 className="mt-2 text-2xl font-bold text-slate-900">Janela de entrega e ritmo do time</h3>
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+              Registre o início, a meta de entrega e a capacidade semanal para dar mais previsibilidade ao board.
+            </p>
+          </div>
+
+          <div className="grid gap-4 p-6 lg:grid-cols-3">
+            <TextAreaField
+              label="Início do plano"
+              value={timeline.startDate}
+              onChange={(event) => setTimeline((prev) => ({ ...prev, startDate: event.target.value }))}
+              placeholder="AAAA-MM-DD"
+              rows={2}
+            />
+            <TextAreaField
+              label="Meta de entrega"
+              value={timeline.targetDate}
+              onChange={(event) => setTimeline((prev) => ({ ...prev, targetDate: event.target.value }))}
+              placeholder="AAAA-MM-DD"
+              rows={2}
+            />
+            <TextAreaField
+              label="Capacidade semanal"
+              value={timeline.weeklyCapacity}
+              onChange={(event) => setTimeline((prev) => ({ ...prev, weeklyCapacity: event.target.value }))}
+              placeholder="Ex.: 8 tasks"
+              rows={2}
+            />
+          </div>
+
+          <div className="grid gap-4 px-6 pb-6 lg:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Início</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{timeline.startDate || 'Não definido'}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Meta</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{timeline.targetDate || 'Não definido'}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Capacidade semanal</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{timeline.weeklyCapacity || 'Não definido'}</p>
+            </div>
+          </div>
+
+          <div className="flex justify-end px-6 pb-6">
+            <button type="button" onClick={handleSaveRoadmap} className="dashboard-button-primary w-full sm:w-auto">
+              Salvar planejamento
+            </button>
           </div>
         </section>
 

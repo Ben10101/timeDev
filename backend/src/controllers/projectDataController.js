@@ -175,6 +175,23 @@ export async function createProjectController(req, res, next) {
   }
 }
 
+export async function updateProjectBriefController(req, res, next) {
+  try {
+    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+
+    const { description, vision, intakeConfig } = req.body || {};
+    const project = await updateProjectBrief(req.params.projectUuid, {
+      description,
+      vision,
+      intakeConfig,
+    });
+
+    res.json(serializeBigInts(project));
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function listProjectTasksController(req, res, next) {
   try {
     const tasks = await listProjectTasks(

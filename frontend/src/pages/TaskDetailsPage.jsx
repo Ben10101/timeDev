@@ -9,6 +9,7 @@ import {
   getTask,
   getProjectArchitectureStatus,
   getTaskImplementationStatus,
+  updateTask,
   runTaskQa,
   runTaskImplementation,
   runTaskRequirements,
@@ -45,6 +46,58 @@ function parseJsonContent(rawContent) {
   }
 }
 
+const MENTION_PATTERN = /@([A-Za-z0-9._%+-]+)/g;
+
+function extractMentions(text) {
+  if (!text) return [];
+  return Array.from(new Set((text.match(MENTION_PATTERN) || []).map((match) => match.slice(1))));
+}
+
+function renderCommentBody(text) {
+  if (!text) return null;
+
+  const parts = [];
+  let lastIndex = 0;
+  text.replace(MENTION_PATTERN, (match, _mention, offset) => {
+    if (offset > lastIndex) {
+      parts.push({ type: 'text', value: text.slice(lastIndex, offset) });
+    }
+    parts.push({ type: 'mention', value: match });
+    lastIndex = offset + match.length;
+    return match;
+  });
+
+  if (lastIndex < text.length) {
+    parts.push({ type: 'text', value: text.slice(lastIndex) });
+  }
+
+  if (!parts.length) {
+    return text;
+  }
+
+  return parts.map((part, index) =>
+    part.type === 'mention' ? (
+      <span key={`${part.value}-${index}`} className="rounded bg-[#dff0b8] px-1.5 py-0.5 font-semibold text-[#17322b]">
+        {part.value}
+      </span>
+    ) : (
+      <span key={`${index}`}>{part.value}</span>
+    )
+  );
+}
+
+function getLatestStatusHistoryNote(task, toStatus = null) {
+  const history = task?.statusHistory || [];
+  const entry = toStatus ? history.find((item) => item.toStatus === toStatus) : history[0];
+  return entry?.note || '';
+}
+
+function getFallbackStatusAfterUnblock(task) {
+  const history = task?.statusHistory || [];
+  const fallback = history.find((item) => item.toStatus && item.toStatus !== 'blocked');
+  return fallback?.toStatus || 'todo';
+}
+
 export default function TaskDetailsPage() {
   const { projectUuid, taskUuid } = useParams();
   const navigate = useNavigate();
@@ -58,15 +111,19 @@ export default function TaskDetailsPage() {
   const [commentBody, setCommentBody] = useState('');
   const [editingArtifactId, setEditingArtifactId] = useState(null);
   const [artifactDraft, setArtifactDraft] = useState('');
+  const [taskOwnerUuid, setTaskOwnerUuid] = useState('');
+  const [taskDueDate, setTaskDueDate] = useState('');
+  const [blockReason, setBlockReason] = useState('');
   const bootstrapContext = JSON.parse(localStorage.getItem('factory_bootstrap_context') || 'null');
   const taskHasRequirements = hasCurrentArtifact(task, 'requirements');
   const taskHasTestPlan = hasCurrentArtifact(task, 'test_plan');
   const taskIsDone = task?.status === 'done';
+  const taskIsBlocked = task?.status === 'blocked';
   const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
   const requirementsRunning = isTaskAgentRunning(task, 'requirements_analyst');
   const qaRunning = isTaskAgentRunning(task, 'qa_engineer');
-  const canRunRequirements = !taskHasRequirements && !requirementsRunning;
-  const canRunQa = taskHasRequirements && !taskHasTestPlan && !qaRunning;
+  const canRunRequirements = !taskIsBlocked && !taskHasRequirements && !requirementsRunning;
+  const canRunQa = !taskIsBlocked && taskHasRequirements && !taskHasTestPlan && !qaRunning;
   const reviewReport = parseJsonContent(implementationStatus?.reviewArtifact?.content);
   const fixPlanReport = parseJsonContent(implementationStatus?.fixPlanArtifact?.content);
   const buildReport = parseJsonContent(implementationStatus?.buildReportArtifact?.content);
@@ -80,6 +137,9 @@ export default function TaskDetailsPage() {
     try {
       const result = await getTask(taskUuid);
       setTask(result);
+      setTaskOwnerUuid(result?.assigneeUser?.uuid || '');
+      setTaskDueDate(result?.dueDate ? String(result.dueDate).slice(0, 10) : '');
+      setBlockReason(result?.status === 'blocked' ? getLatestStatusHistoryNote(result, 'blocked') : '');
       const projectArchitecture = await getProjectArchitectureStatus(result.project.uuid);
       setArchitectureStatus(projectArchitecture);
 
@@ -211,6 +271,48 @@ export default function TaskDetailsPage() {
     }
   }
 
+  async function handleSaveTaskMeta() {
+    setSaving(true);
+    setError(null);
+    try {
+      await updateTask(taskUuid, {
+        assigneeUserUuid: taskOwnerUuid || null,
+        dueDate: taskDueDate || null,
+        changedByUserUuid: bootstrapContext?.user?.uuid,
+      });
+      await loadTask();
+    } catch (submitError) {
+      setError(getApiErrorMessage(submitError, 'Não foi possível salvar os dados da task.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleToggleBlockTask() {
+    setSaving(true);
+    setError(null);
+    try {
+      if (taskIsBlocked) {
+        await updateTask(taskUuid, {
+          status: getFallbackStatusAfterUnblock(task),
+          statusNote: 'Tarefa desbloqueada manualmente.',
+          changedByUserUuid: bootstrapContext?.user?.uuid,
+        });
+      } else {
+        await updateTask(taskUuid, {
+          status: 'blocked',
+          statusNote: blockReason.trim() || 'Tarefa bloqueada manualmente.',
+          changedByUserUuid: bootstrapContext?.user?.uuid,
+        });
+      }
+      await loadTask();
+    } catch (submitError) {
+      setError(getApiErrorMessage(submitError, 'Não foi possível atualizar o bloqueio da task.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const tabs = [
     { id: 'overview', label: 'Resumo' },
     { id: 'refinement', label: 'Refinamento' },
@@ -281,6 +383,10 @@ export default function TaskDetailsPage() {
                 <p><strong>Status:</strong> {task.status}</p>
                 <p><strong>Prioridade:</strong> {task.priority}</p>
                 <p><strong>Responsável:</strong> {task.assigneeAgentName || task.assigneeUser?.name || 'Sem responsável'}</p>
+                <p><strong>Prazo:</strong> {formatDate(task.dueDate)}</p>
+                {taskIsBlocked && (
+                  <p><strong>Bloqueio:</strong> {getLatestStatusHistoryNote(task, 'blocked') || 'Sem observação registrada'}</p>
+                )}
                 <p><strong>Criada em:</strong> {formatDate(task.createdAt)}</p>
                 <p><strong>Tempo em execução:</strong> {formatElapsed(task.timing?.cycleTimeSeconds)}</p>
                 <p><strong>Tempo em requisitos:</strong> {formatElapsed(task.timing?.requirementsTimeSeconds)}</p>
@@ -327,6 +433,86 @@ export default function TaskDetailsPage() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Descrição</p>
               <h2 className="mt-3 font-serif text-2xl font-semibold text-slate-900 sm:text-3xl">{task.title}</h2>
               <p className="mt-4 text-sm leading-7 text-slate-600">{task.description || 'Sem descrição cadastrada.'}</p>
+            </div>
+
+            <div className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Gestão da task</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Responsável</span>
+                  <select
+                    value={taskOwnerUuid}
+                    onChange={(event) => setTaskOwnerUuid(event.target.value)}
+                    className="dashboard-input"
+                  >
+                    <option value="">Sem responsável</option>
+                    {(task.project?.members || []).map((member) => (
+                      <option key={member.user.uuid} value={member.user.uuid}>
+                        {member.user.name || member.user.email}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Prazo</span>
+                  <input
+                    type="date"
+                    value={taskDueDate}
+                    onChange={(event) => setTaskDueDate(event.target.value)}
+                    className="dashboard-input"
+                  />
+                </label>
+              </div>
+              <div className="mt-4 rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Bloqueio</p>
+                <p className="mt-2 text-sm text-slate-600">
+                  {taskIsBlocked
+                    ? 'Essa task está bloqueada. Você pode liberar o fluxo abaixo.'
+                    : 'Marque um motivo para bloquear a task quando houver dependência externa ou impedimento.'}
+                </p>
+                {!taskIsBlocked && (
+                  <label className="mt-4 block">
+                    <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">
+                      Motivo do bloqueio
+                    </span>
+                    <textarea
+                      value={blockReason}
+                      onChange={(event) => setBlockReason(event.target.value)}
+                      placeholder="Ex.: aguardando validação do financeiro"
+                      rows={3}
+                      className="dashboard-input resize-none"
+                    />
+                  </label>
+                )}
+                {taskIsBlocked && (
+                  <div className="mt-4 rounded-2xl bg-white p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-500">Motivo atual</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-700">
+                      {getLatestStatusHistoryNote(task, 'blocked') || 'Bloqueio sem observação registrada.'}
+                    </p>
+                  </div>
+                )}
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleToggleBlockTask}
+                    disabled={saving || loading}
+                    className={taskIsBlocked ? 'dashboard-button-secondary' : 'dashboard-button-primary'}
+                  >
+                    {taskIsBlocked ? 'Desbloquear tarefa' : 'Bloquear tarefa'}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleSaveTaskMeta}
+                  disabled={saving || loading}
+                  className="dashboard-button-primary"
+                >
+                  Salvar gestão da task
+                </button>
+              </div>
             </div>
 
             <section className="rounded-[32px] border border-slate-200 bg-white/88 p-3 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
@@ -406,6 +592,18 @@ export default function TaskDetailsPage() {
                       placeholder="Registrar contexto, alinhamentos ou feedback sobre a task..."
                       className="w-full rounded-[22px] border border-slate-200 bg-[#faf8f2] px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-[#8aac55] focus:ring-4 focus:ring-[#dff0b8]"
                     />
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span className="font-semibold uppercase tracking-[0.18em] text-slate-400">Menções detectadas:</span>
+                      {extractMentions(commentBody).length ? (
+                        extractMentions(commentBody).map((mention) => (
+                          <span key={mention} className="rounded-full bg-[#eef5ef] px-2.5 py-1 font-semibold text-[#2f6c58]">
+                            @{mention}
+                          </span>
+                        ))
+                      ) : (
+                        <span>use @nome ou @email para sinalizar pessoas no comentário</span>
+                      )}
+                    </div>
                     <button disabled={saving || !commentBody.trim()} className="w-full rounded-2xl bg-[#17322b] px-4 py-3 text-sm font-semibold text-white hover:bg-[#214338] disabled:opacity-50 sm:w-auto">
                       Adicionar comentário
                     </button>
@@ -420,7 +618,16 @@ export default function TaskDetailsPage() {
                           </p>
                           <span className="text-xs text-slate-500">{formatDate(comment.createdAt)}</span>
                         </div>
-                        <p className="mt-3 text-sm leading-6 text-slate-600">{comment.body}</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-600">{renderCommentBody(comment.body)}</p>
+                        {extractMentions(comment.body).length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {extractMentions(comment.body).map((mention) => (
+                              <span key={`${comment.id}-${mention}`} className="rounded-full bg-[#dff0b8] px-2.5 py-1 text-xs font-semibold text-[#17322b]">
+                                @{mention}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </article>
                     ))}
                     {!task.comments?.length && (
@@ -755,6 +962,48 @@ export default function TaskDetailsPage() {
 
             {activeTab === 'history' && (
             <>
+            <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Atividade recente</p>
+                <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
+                  {((task.comments?.length || 0) + (task.statusHistory?.length || 0) + (task.agentRuns?.length || 0))} registros
+                </span>
+              </div>
+              <div className="mt-5 grid gap-4 md:grid-cols-3">
+                <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Último comentário</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {task.comments?.[0]?.authorUser?.name || task.comments?.[0]?.authorAgentName || 'Sem comentários'}
+                  </p>
+                  <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">
+                    {task.comments?.[0]?.body || 'Ainda não há comentários registrados.'}
+                  </p>
+                </article>
+                <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Última mudança</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {task.statusHistory?.[0]
+                      ? `${task.statusHistory[0].fromStatus || 'novo'} → ${task.statusHistory[0].toStatus}`
+                      : 'Sem mudanças registradas'}
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    {task.statusHistory?.[0]?.note || 'Sem observação registrada.'}
+                  </p>
+                </article>
+                <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Última execução</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {task.agentRuns?.[0]?.agentName || 'Sem execuções'}
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    {task.agentRuns?.[0]
+                      ? `${task.agentRuns[0].status} • ${formatDate(task.agentRuns[0].startedAt)}`
+                      : 'Nenhum agente executado ainda.'}
+                  </p>
+                </article>
+              </div>
+            </section>
+
             <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Execuções de agentes</p>
