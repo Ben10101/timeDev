@@ -224,16 +224,48 @@ REGRAS
         assembled = self._sanitize_section_body(assembled)
         return f"# ARQUITETURA DO PROJETO\n\n{assembled}\n\nFIM_DA_ARQUITETURA"
 
+    def _fallback_diagram_body(self):
+        return """```text
+[Frontend Web]
+      |
+      v
+[API / Backend]
+      |
+      +--> [Modulo de Chamados]
+      +--> [Modulo de Atendimento]
+      +--> [Modulo de Notificacoes]
+      +--> [Modulo de Relatorios]
+      |
+      +--> [Banco de Dados]
+      +--> [Storage de Arquivos]
+```"""
+
     def _sanitize_section_body(self, body):
         text = (body or "").strip()
         if not text:
             return ""
 
+        text = text.replace("---.", "---")
+        text = text.replace("```mermaid\n", "```mermaid\n")
+        text = re.sub(r"^\s*---\s*$", "", text, flags=re.MULTILINE)
+        text = re.sub(r"\n\s*---\s*\n", "\n\n", text)
+
+        if "```mermaid" in text and text.count("```") < 2:
+            text = self._fallback_diagram_body()
+
         if text.count("```") % 2 != 0:
             text = f"{text.rstrip()}\n```"
 
+        if "```mermaid" in text:
+            mermaid_block = re.search(r"```mermaid\s*([\s\S]*?)```", text, re.IGNORECASE)
+            if mermaid_block:
+                mermaid_body = mermaid_block.group(1).strip()
+                if len(mermaid_body.splitlines()) < 4 or mermaid_body.endswith(("->", "-->", "[")):
+                    text = self._fallback_diagram_body()
+
         text = re.sub(r"[ \t]+\n", "\n", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r"^\s*\.\s*$", "", text, flags=re.MULTILINE)
 
         last_line = text.splitlines()[-1].rstrip()
         if re.search(r"[:|*_\-/(\[{,;]$", last_line):

@@ -85,13 +85,23 @@ class ProjectManager:
             ]
         )
 
+    def _is_story_start_line(self, line):
+        candidate = (line or "").strip()
+        return bool(
+            re.search(
+                r"^(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?Como\b",
+                candidate,
+                re.IGNORECASE,
+            )
+        )
+
     def _extract_story_lines(self, content):
         stories = []
         current = []
 
         for raw_line in (content or "").splitlines():
             line = raw_line.rstrip()
-            if re.search(r"^\s*[-*]\s*US-\d+\s*\|\s*Como\b", line, re.IGNORECASE):
+            if self._is_story_start_line(line):
                 if current:
                     stories.append("\n".join(current).strip())
                 current = [line.strip()]
@@ -164,12 +174,41 @@ class ProjectManager:
 
     def _story_similarity_key(self, story_block):
         first_line = (story_block or "").splitlines()[0] if story_block else ""
-        normalized = re.sub(r"^\s*[-*]\s*US-\d+\s*\|\s*", "", first_line, flags=re.IGNORECASE).strip()
+        normalized = re.sub(
+            r"^\s*(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?",
+            "",
+            first_line,
+            flags=re.IGNORECASE,
+        ).strip()
         _, normalized = self._normalize_text(normalized)
         normalized = re.sub(r"\b(como|eu quero|para|um|uma|o|a|de|do|da|dos|das)\b", " ", normalized)
         normalized = re.sub(r"[^a-z0-9 ]+", " ", normalized)
         normalized = re.sub(r"\s+", " ", normalized).strip()
         return " ".join(normalized.split()[:10])
+
+    def _story_seed_title(self, story_block):
+        first_line = (story_block or "").splitlines()[0] if story_block else ""
+        return re.sub(
+            r"^\s*(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?",
+            "",
+            first_line,
+            flags=re.IGNORECASE,
+        ).strip()
+
+    def _story_has_strong_structure(self, story_block):
+        lines = [line.strip() for line in (story_block or "").splitlines() if line.strip()]
+        if self._looks_truncated_story(story_block):
+            return False
+
+        criteria_lines = [line for line in lines if re.match(r"^-?\s*(Dado|Quando|Entao)\b", line, re.IGNORECASE)]
+        if len(criteria_lines) < 3:
+            return False
+
+        title_line = lines[0] if lines else ""
+        if not re.search(r"\bComo\b.+\beu quero\b.+\bpara\b.+", title_line, re.IGNORECASE):
+            return False
+
+        return True
 
     def _dedupe_and_polish_stories(self, story_blocks):
         cleaned = []
@@ -189,6 +228,20 @@ class ProjectManager:
 
         return cleaned
 
+    def _validate_story_batch_quality(self, story_blocks, *, min_stories):
+        if len(story_blocks) < min_stories:
+            raise RuntimeError(
+                f"Lote final com poucas historias confiaveis ({len(story_blocks)}). Minimo esperado: {min_stories}."
+            )
+
+        invalid_blocks = [block for block in story_blocks if not self._story_has_strong_structure(block)]
+        if invalid_blocks:
+            raise RuntimeError("Curadoria final deixou historia com estrutura incompleta.")
+
+        keys = [self._story_similarity_key(block) for block in story_blocks]
+        if len(keys) != len(set(keys)):
+            raise RuntimeError("Curadoria final ainda deixou historias muito parecidas.")
+
     def _renumber_stories(self, story_blocks):
         normalized_blocks = []
         for index, story in enumerate(story_blocks, start=1):
@@ -196,7 +249,12 @@ class ProjectManager:
             if not lines:
                 continue
 
-            title_line = re.sub(r"^\s*[-*]\s*US-\d+\s*\|\s*", "", lines[0], flags=re.IGNORECASE).strip()
+            title_line = re.sub(
+                r"^\s*(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?",
+                "",
+                lines[0],
+                flags=re.IGNORECASE,
+            ).strip()
             rebuilt = [f"- US-{index:02d} | {title_line}"]
             rebuilt.extend([line.rstrip() for line in lines[1:]])
             normalized_blocks.append("\n".join(rebuilt).strip())
@@ -255,6 +313,8 @@ REGRAS DE CURADORIA
 - Prefira a versao mais forte e mais especifica quando houver sobreposicao.
 - Padronize personas em torno de: colaborador, atendente, gestor e administrador.
 - Nao deixe historias truncadas.
+- Elimine historias com criterio de aceite incompleto.
+- Nao deixe nenhuma historia terminar com frase cortada, titulo generico ou criterio pela metade.
 - Cada historia precisa manter:
   - titulo no formato "Como ..., eu quero ..., para ..."
   - Contexto
@@ -273,6 +333,224 @@ REGRAS DE CURADORIA
         if not curated_section:
             raise RuntimeError("Bloco de curadoria sem secao de historias.")
         return curated_section
+
+    def _generate_complementary_stories(self, base_context, existing_story_blocks, *, needed_count):
+        if needed_count <= 0:
+            return []
+
+        existing_titles = [
+            re.sub(
+                r"^\s*(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?",
+                "",
+                block.splitlines()[0],
+                flags=re.IGNORECASE,
+            ).strip()
+            for block in existing_story_blocks
+            if block.splitlines()
+        ]
+        existing_titles_text = "\n".join(f"- {title}" for title in existing_titles[:25])
+
+        prompt = f"""
+{base_context}
+
+HISTORIAS JA CONSOLIDADAS
+{existing_titles_text}
+
+TAREFA
+Gere APENAS a secao abaixo em Markdown:
+
+## Historias de Usuario
+
+REGRAS
+- Gere de {needed_count} a {max(needed_count + 2, needed_count)} historias COMPLEMENTARES.
+- Nao repita nem reformule historias ja consolidadas.
+- Foque nos fluxos que ainda costumam faltar em backlog inicial: administracao, governanca, relatorios, notificacoes, operacao e excecoes de negocio.
+- Cada historia precisa manter:
+  - titulo no formato "Como ..., eu quero ..., para ..."
+  - Contexto
+  - Valor
+  - Criterios de aceite com Dado / Quando / Entao
+- Nao invente escopo fora do briefing.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLOCK_COMPLEMENT_NUM_PREDICT", "700"),
+        )
+        complement_section = self._extract_section(result, "Historias de Usuario")
+        if not complement_section:
+            return []
+        return self._extract_story_lines(complement_section)
+
+    def _generate_thematic_stories(self, base_context, theme_label, instructions, *, target_range):
+        prompt = f"""
+{base_context}
+
+TEMA DESTA RODADA
+{theme_label}
+
+TAREFA
+Gere APENAS a secao abaixo em Markdown:
+
+## Historias de Usuario
+
+REGRAS
+- Gere de {target_range[0]} a {target_range[1]} historias.
+- Foque somente no tema desta rodada.
+- {instructions}
+- Cada historia precisa manter:
+  - titulo no formato "Como ..., eu quero ..., para ..."
+  - Contexto
+  - Valor
+  - Criterios de aceite com Dado / Quando / Entao
+- Nao invente escopo fora do briefing.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLOCK_THEME_NUM_PREDICT", "900"),
+        )
+        themed_section = self._extract_section(result, "Historias de Usuario")
+        if not themed_section:
+            return []
+        return self._extract_story_lines(themed_section)
+
+    def _expand_story_seeds(self, base_context, seed_titles):
+        titles = [title.strip() for title in seed_titles if title and title.strip()]
+        if not titles:
+            return []
+
+        titles_text = "\n".join(f"- {title}" for title in titles)
+        prompt = f"""
+{base_context}
+
+TITULOS DE HISTORIAS PARA EXPANDIR
+{titles_text}
+
+TAREFA
+Expanda esses titulos em historias completas e devolva APENAS:
+
+## Historias de Usuario
+
+REGRAS
+- Mantenha o mesmo sentido de cada titulo.
+- Nao crie titulos extras fora da lista.
+- Para cada historia, entregue:
+  - titulo no formato "Como ..., eu quero ..., para ..."
+  - Contexto
+  - Valor
+  - Criterios de aceite com Dado / Quando / Entao
+- Nao invente escopo fora do briefing.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLOCK_EXPAND_NUM_PREDICT", "900"),
+        )
+        expanded_section = self._extract_section(result, "Historias de Usuario")
+        if not expanded_section:
+            return []
+        return self._extract_story_lines(expanded_section)
+
+    def _ensure_minimum_story_count(self, base_context, story_blocks, *, min_stories, max_stories):
+        consolidated = list(story_blocks)
+
+        for _round in range(3):
+            if len(consolidated) >= min_stories:
+                break
+
+            complement_blocks = self._generate_complementary_stories(
+                base_context,
+                consolidated,
+                needed_count=max(min_stories - len(consolidated), 2),
+            )
+            if not complement_blocks:
+                break
+
+            updated = self._dedupe_and_polish_stories(consolidated + complement_blocks)
+            if len(updated) <= len(consolidated):
+                break
+
+            consolidated = updated[:max_stories]
+
+        return consolidated[:max_stories]
+
+    def _collect_story_blocks_incrementally(self, base_context, *, min_stories, max_stories):
+        themes = [
+            (
+                "Jornada principal e agendamento",
+                "Cubra descoberta de horarios, agendamento inicial, cadastro basico e confirmacao de consulta.",
+                (4, 6),
+            ),
+            (
+                "Recepcao e operacao diaria",
+                "Cubra recepcao, remarcacao, cancelamento, encaixe, fila e acompanhamento operacional.",
+                (4, 6),
+            ),
+            (
+                "Profissional e agenda clinica",
+                "Cubra visao do medico, disponibilidade, bloqueio de agenda e organizacao dos atendimentos.",
+                (3, 5),
+            ),
+            (
+                "Gestao, relatorios e governanca",
+                "Cubra relatorios, administracao, permissao, notificacoes, auditoria e controles de operacao.",
+                (3, 5),
+            ),
+        ]
+
+        consolidated = []
+        seed_titles = []
+        for theme_label, instructions, target_range in themes:
+            batch = self._generate_thematic_stories(
+                base_context,
+                theme_label,
+                instructions,
+                target_range=target_range,
+            )
+            for block in batch:
+                title = self._story_seed_title(block)
+                similarity_key = self._story_similarity_key(block)
+                if title and similarity_key and all(
+                    self._story_similarity_key(existing_title) != similarity_key for existing_title in seed_titles
+                ):
+                    seed_titles.append(title)
+            if batch:
+                consolidated = self._dedupe_and_polish_stories(consolidated + batch)
+            if len(consolidated) >= min_stories:
+                break
+
+        consolidated = self._ensure_minimum_story_count(
+            base_context,
+            consolidated,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )
+
+        if len(consolidated) < min_stories and seed_titles:
+            existing_keys = {self._story_similarity_key(block) for block in consolidated}
+            remaining_titles = []
+            seen_seed_keys = set()
+            for title in seed_titles:
+                key = self._story_similarity_key(title)
+                if not key or key in existing_keys or key in seen_seed_keys:
+                    continue
+                seen_seed_keys.add(key)
+                remaining_titles.append(title)
+
+            for start in range(0, len(remaining_titles), 4):
+                if len(consolidated) >= min_stories:
+                    break
+                batch_titles = remaining_titles[start:start + 4]
+                expanded = self._expand_story_seeds(base_context, batch_titles)
+                if expanded:
+                    consolidated = self._dedupe_and_polish_stories(consolidated + expanded)
+
+            consolidated = self._ensure_minimum_story_count(
+                base_context,
+                consolidated,
+                min_stories=min_stories,
+                max_stories=max_stories,
+            )
+
+        return consolidated[:max_stories]
 
     def _generate_multi_block_backlog(self, idea):
         compact_briefing = self._compact_briefing(idea)
@@ -317,58 +595,14 @@ Gere APENAS esta secao em Markdown:
                 if not overview:
                     raise RuntimeError("Bloco de visao geral sem conteudo.")
 
-                first_batch_prompt = f"""
-{base_context}
-
-Gere APENAS a secao abaixo em Markdown:
-
-## Historias de Usuario
-- Gere de 8 a 12 historias cobrindo abertura, classificacao, acompanhamento, colaboracao e atendimento.
-- Use o formato:
-  - US-01 | Como ..., eu quero ..., para ...
-    - Contexto: ...
-    - Valor: ...
-    - Criterios de aceite:
-      - Dado ...
-      - Quando ...
-      - Entao ...
-"""
-                first_batch_result = self._generate_block(
-                    first_batch_prompt,
-                    num_predict=os.getenv("PROJECT_MANAGER_BLOCK_STORIES_A_NUM_PREDICT", "1100"),
+                combined_story_blocks = self._collect_story_blocks_incrementally(
+                    base_context,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
                 )
-                first_batch_section = self._extract_section(first_batch_result, "Historias de Usuario")
-                first_batch_stories = self._extract_story_lines(first_batch_section)
-                if len(first_batch_stories) < 7:
-                    raise RuntimeError("Primeiro bloco de historias veio curto demais.")
+                if len(combined_story_blocks) < max(8, min_stories - 4):
+                    raise RuntimeError("As rodadas tematicas ainda geraram poucas historias confiaveis.")
 
-                second_batch_prompt = f"""
-{base_context}
-
-Gere APENAS a secao abaixo em Markdown:
-
-## Historias de Usuario
-- Gere de 7 a 13 historias complementares sem repetir as jornadas principais ja cobertas.
-- Foque em administracao, governanca, notificacoes, relatorios, redistribuicao, seguranca e operacao.
-- Use o formato:
-  - US-01 | Como ..., eu quero ..., para ...
-    - Contexto: ...
-    - Valor: ...
-    - Criterios de aceite:
-      - Dado ...
-      - Quando ...
-      - Entao ...
-"""
-                second_batch_result = self._generate_block(
-                    second_batch_prompt,
-                    num_predict=os.getenv("PROJECT_MANAGER_BLOCK_STORIES_B_NUM_PREDICT", "1100"),
-                )
-                second_batch_section = self._extract_section(second_batch_result, "Historias de Usuario")
-                second_batch_stories = self._extract_story_lines(second_batch_section)
-                if len(second_batch_stories) < 6:
-                    raise RuntimeError("Segundo bloco de historias veio curto demais.")
-
-                combined_story_blocks = self._dedupe_and_polish_stories(first_batch_stories + second_batch_stories)
                 if len(combined_story_blocks) >= min_stories:
                     curated_section = self._curate_story_batch(
                         base_context,
@@ -379,7 +613,16 @@ Gere APENAS a secao abaixo em Markdown:
                     combined_story_blocks = self._dedupe_and_polish_stories(
                         self._extract_story_lines(curated_section)
                     )
+
+                combined_story_blocks = self._ensure_minimum_story_count(
+                    base_context,
+                    combined_story_blocks,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
+
                 combined_story_blocks = combined_story_blocks[:max_stories]
+                self._validate_story_batch_quality(combined_story_blocks, min_stories=min_stories)
                 full_backlog = self._build_full_backlog(overview, combined_story_blocks)
 
                 story_count = self._extract_story_count(full_backlog)

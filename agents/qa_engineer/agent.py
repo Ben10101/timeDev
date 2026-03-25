@@ -82,6 +82,24 @@ class QAEngineer:
         normalized = result.strip().lower()
         return normalized.startswith("# documentacao gerada") or normalized.startswith("# documentacao gerada por ia")
 
+    def _sanitize_plan(self, plan_text):
+        text = (plan_text or "").strip()
+        if not text:
+            return ""
+
+        replacements = {
+            "O formulario deve salvar automaticamente o rascunho do chamado a cada 30 segundos durante o preenchimento.":
+                "Se houver autosave definido no produto, o comportamento deve ser validado de ponta a ponta.",
+            "A autenticacao do usuario deve ser verificada antes de permitir o envio do formulario.":
+                "Validar que o acesso ao fluxo respeita as regras de autenticacao e permissao definidas no produto.",
+        }
+
+        for source, target in replacements.items():
+            text = text.replace(source, target)
+
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
     def _extract_section(self, content, title):
         text, normalized_content = self._normalize_text(content)
         _, normalized_title = self._normalize_text(title)
@@ -146,6 +164,8 @@ Resumo estrutural dos requisitos:
 Regras gerais:
 - Responda em portugues.
 - Nao invente escopo fora da historia.
+- Nao invente comportamento de produto que nao esteja sustentado pelo requisito.
+- Se alguma regra nao estiver explicita no requisito, trate como ponto de verificacao ou risco, nunca como funcionalidade confirmada.
 - Seja especifico e economico em tokens.
 - Prefira bullets curtos e objetivos.
 - Nao inclua introducao nem conclusao.
@@ -170,6 +190,7 @@ Inclua dados validos, invalidos, limites e cenarios de falha em no maximo 5 bull
 
 ## Riscos e metricas
 Liste cobertura esperada, riscos criticos e severidade em no maximo 5 bullets.
+- Nao transforme risco em requisito.
 """
                 planning_result = self._generate_block(
                     planning_prompt,
@@ -222,6 +243,8 @@ Liste exatamente 4 bullets, um para cada topico abaixo, usando explicitamente es
 - Seguranca:
 - Confiabilidade:
 - Observabilidade:
+- Baseie os bullets no requisito e no fluxo descrito.
+- Se algo nao estiver explicito, escreva de forma neutra como verificacao operacional, sem inventar comportamento de produto.
 
 ## Usabilidade e acessibilidade
 Liste checks objetivos cobrindo heuristicas de Nielsen, leis de UX e WCAG em no maximo 4 bullets.
@@ -237,7 +260,7 @@ Liste checks objetivos cobrindo heuristicas de Nielsen, leis de UX e WCAG em no 
                         raise RuntimeError(f"Bloco de qualidade sem secao {title}.")
                     sections[title] = body
 
-                full_plan = self._build_full_plan(sections)
+                full_plan = self._sanitize_plan(self._build_full_plan(sections))
                 is_complete, reason = validate_qa_output(full_plan)
                 if is_complete:
                     return full_plan

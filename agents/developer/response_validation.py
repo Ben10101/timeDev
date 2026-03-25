@@ -46,6 +46,77 @@ def has_truncated_ending(value):
     return False
 
 
+def _extract_backlog_story_blocks(text):
+    stories = []
+    current = []
+
+    for raw_line in (text or "").splitlines():
+        line = raw_line.rstrip()
+        if re.search(
+            r"^\s*(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?Como\b",
+            line,
+            re.IGNORECASE,
+        ):
+            if current:
+                stories.append("\n".join(current).strip())
+            current = [line.strip()]
+            continue
+        if current:
+            current.append(line.strip())
+
+    if current:
+        stories.append("\n".join(current).strip())
+
+    return [story for story in stories if story]
+
+
+def _backlog_story_has_complete_structure(story_block):
+    lines = [line.strip() for line in (story_block or "").splitlines() if line.strip()]
+    if len(lines) < 4:
+      return False
+
+    title_line = lines[0]
+    if not re.search(r"\bComo\b.+\beu quero\b.+\bpara\b.+", title_line, re.IGNORECASE):
+        return False
+
+    if not any(re.match(r"^-?\s*Contexto\s*:", line, re.IGNORECASE) for line in lines[1:]):
+        return False
+
+    if not any(re.match(r"^-?\s*Valor\s*:", line, re.IGNORECASE) for line in lines[1:]):
+        return False
+
+    if not any(re.match(r"^-?\s*Criterios de aceite\s*:", line, re.IGNORECASE) for line in lines[1:]):
+        return False
+
+    criteria_lines = [line for line in lines[1:] if re.match(r"^-?\s*(Dado|Quando|Entao)\b", line, re.IGNORECASE)]
+    if len(criteria_lines) < 3:
+        return False
+
+    last_line = lines[-1].lower()
+    if re.search(r"[:;,(\[{/\-]$", last_line):
+        return False
+
+    if last_line == "fim_do_backlog":
+        return False
+
+    return True
+
+
+def _story_similarity_key(title_line):
+    normalized = re.sub(
+        r"^\s*(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?",
+        "",
+        title_line or "",
+        flags=re.IGNORECASE,
+    ).strip().lower()
+    normalized = unicodedata.normalize("NFD", normalized)
+    normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    normalized = re.sub(r"\b(como|eu quero|para|um|uma|o|a|de|do|da|dos|das)\b", " ", normalized)
+    normalized = re.sub(r"[^a-z0-9 ]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return " ".join(normalized.split()[:8])
+
+
 def validate_requirements_output(result):
     text, normalized = _normalize_text(result)
     required_sections = [
@@ -202,6 +273,19 @@ def validate_backlog_output(result):
 
     if len(story_lines) > 25:
         return False, "Foram geradas historias demais. O maximo esperado e 25."
+
+    story_blocks = _extract_backlog_story_blocks(text)
+    if len(story_blocks) != len(story_lines):
+        return False, "Nem todas as historias puderam ser consolidadas corretamente."
+
+    for story_block in story_blocks:
+        if not _backlog_story_has_complete_structure(story_block):
+            return False, "Existe historia com estrutura incompleta ou aparencia de truncamento."
+
+    similarity_keys = [_story_similarity_key(block.splitlines()[0]) for block in story_blocks]
+    duplicate_count = len(similarity_keys) - len(set(key for key in similarity_keys if key))
+    if duplicate_count > 0:
+        return False, "Foram detectadas historias muito parecidas ou duplicadas."
 
     personas = set()
     generic_user_count = 0
