@@ -1,12 +1,13 @@
 # Aligna
 
-**Aligna ajuda times a alinhar e validar requisitos antes do desenvolvimento.**
+**Aligna ajuda times a gerir projetos com IA, alinhando requisitos, QA e arquitetura antes da implementação.**
 
 ## Why Aligna
 
-A maioria dos problemas de software nasce antes da implementação. O Aligna ajuda a garantir clareza antes do código.
+A maioria dos problemas de software nasce antes da implementação. O Aligna ajuda a garantir clareza antes do código e mantém a gestão do projeto visível depois do kickoff.
 
 Em vez de pular da ideia direto para a implementação, o produto transforma uma necessidade inicial em um pacote mais claro, verificável e menos ambíguo para produto, engenharia e QA.
+Depois disso, a plataforma continua apoiando o board, a governança e a aprovação dos artefatos críticos.
 
 ## What problem it solves
 
@@ -42,7 +43,7 @@ Saida:
 1. O usuário descreve a necessidade na tela principal
 2. O Aligna analisa a entrada
 3. O produto devolve um pacote estruturado para alinhamento antes do desenvolvimento
-4. O time pode seguir para projetos, handoff técnico e governança quando fizer sentido
+4. O time pode seguir para projetos, board, aprovação e governança quando fizer sentido
 
 ## Clarity score
 
@@ -112,6 +113,7 @@ More detail:
 
 - canonical architecture: [docs/ALIGNA_ARCHITECTURE.md](docs/ALIGNA_ARCHITECTURE.md)
 - repository audit: [docs/REPOSITORY_AUDIT.md](docs/REPOSITORY_AUDIT.md)
+- product vision and roadmap: [docs/PRODUCT_VISION_ROADMAP.md](docs/PRODUCT_VISION_ROADMAP.md)
 
 ## Run locally
 

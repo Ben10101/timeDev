@@ -80,10 +80,20 @@ def is_error_text_response(result: str) -> bool:
 
 
 def get_provider_order():
-    disable_ollama_fallback = os.getenv("AI_DISABLE_OLLAMA_FALLBACK", "0").lower() in ("1", "true", "yes")
+    agent_name = str(os.getenv("AI_AGENT_NAME", "") or "").strip().lower()
+    agent_suffix = agent_name.upper().replace("-", "_") if agent_name else ""
+
+    disable_ollama_value = (
+        os.getenv(f"AI_DISABLE_OLLAMA_FALLBACK_{agent_suffix}") if agent_suffix else None
+    ) or os.getenv("AI_DISABLE_OLLAMA_FALLBACK", "0")
+    disable_ollama_fallback = str(disable_ollama_value).lower() in ("1", "true", "yes")
+
+    configured_order_value = (
+        os.getenv(f"AI_PROVIDER_ORDER_{agent_suffix}") if agent_suffix else None
+    ) or os.getenv("AI_PROVIDER_ORDER", "")
     configured_order = [
         item.strip().lower()
-        for item in os.getenv("AI_PROVIDER_ORDER", "").split(",")
+        for item in configured_order_value.split(",")
         if item.strip()
     ]
 

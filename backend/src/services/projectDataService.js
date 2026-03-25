@@ -1164,6 +1164,7 @@ function buildArchitectureBlockers({
   pendingStories,
   hasArchitecture,
   architectureNeedsRefresh,
+  architectureApproved,
 }) {
   const blockers = [];
 
@@ -1181,6 +1182,10 @@ function buildArchitectureBlockers({
 
   if (architectureNeedsRefresh) {
     blockers.push('A arquitetura atual ficou desatualizada depois de novos refinamentos.');
+  }
+
+  if (hasArchitecture && !architectureNeedsRefresh && !architectureApproved) {
+    blockers.push('A arquitetura atual precisa de aprovacao humana antes de liberar implementacao ou exportacao final.');
   }
 
   return blockers;
@@ -1259,6 +1264,8 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
           version: true,
           createdAt: true,
           isCurrent: true,
+          isApproved: true,
+          approvedAt: true,
         },
         orderBy: { createdAt: 'desc' },
         take: 1,
@@ -1289,16 +1296,18 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
 
   const architectureArtifact = architectureTask?.artifacts?.[0] || null;
   const hasArchitecture = Boolean(architectureArtifact);
+  const architectureApproved = Boolean(architectureArtifact?.isApproved);
   const architectureNeedsRefresh =
     Boolean(architectureArtifact?.createdAt && latestRequirementsAt) &&
     new Date(architectureArtifact.createdAt) < new Date(latestRequirementsAt);
   const canGenerateArchitecture = allStoriesRefined;
-  const canGenerateCode = allStoriesRefined && hasArchitecture && !architectureNeedsRefresh;
+  const canGenerateCode = allStoriesRefined && hasArchitecture && !architectureNeedsRefresh && architectureApproved;
   const blockers = buildArchitectureBlockers({
     totalStories,
     pendingStories,
     hasArchitecture,
     architectureNeedsRefresh,
+    architectureApproved,
   });
 
   return {
@@ -1310,6 +1319,7 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
     allStoriesRefined,
     canGenerateArchitecture,
     hasArchitecture,
+    architectureApproved,
     architectureNeedsRefresh,
     canGenerateCode,
     blockers,
@@ -1326,6 +1336,88 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
         }
       : null,
   };
+}
+
+export async function approveCurrentArchitectureArtifact(projectUuid, approvedByUserUuid) {
+  const project = await prisma.project.findFirst({
+    where: {
+      uuid: projectUuid,
+      ...buildProjectAccessFilter(approvedByUserUuid),
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!project) {
+    throw new Error('Projeto não encontrado.');
+  }
+
+  const approvedByUser = await prisma.user.findUnique({
+    where: { uuid: approvedByUserUuid },
+    select: { id: true },
+  });
+
+  if (!approvedByUser?.id) {
+    throw new Error('Usuário aprovador não encontrado.');
+  }
+
+  const architectureTask = await prisma.task.findFirst({
+    where: {
+      projectId: project.id,
+      title: stageTaskConfig.architect.title,
+    },
+    select: {
+      id: true,
+      status: true,
+      artifacts: {
+        where: {
+          artifactType: 'architecture',
+          artifactScope: 'refinement',
+          isCurrent: true,
+        },
+        select: {
+          id: true,
+          version: true,
+          isApproved: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      },
+    },
+  });
+
+  const currentArtifact = architectureTask?.artifacts?.[0];
+  if (!architectureTask || !currentArtifact) {
+    throw new Error('Nenhum artefato de arquitetura atual encontrado para aprovação.');
+  }
+
+  const approvedArtifact = await prisma.taskArtifact.update({
+    where: { id: currentArtifact.id },
+    data: {
+      isApproved: true,
+      approvedBy: approvedByUser.id,
+      approvedAt: new Date(),
+    },
+    select: {
+      uuid: true,
+      version: true,
+      isApproved: true,
+      approvedAt: true,
+    },
+  });
+
+  await prisma.taskStatusHistory.create({
+    data: {
+      taskId: architectureTask.id,
+      fromStatus: architectureTask.status,
+      toStatus: architectureTask.status,
+      changedByUserId: approvedByUser.id,
+      note: `Arquitetura aprovada manualmente (artefato v${approvedArtifact.version}).`,
+    },
+  });
+
+  return approvedArtifact;
 }
 
 export async function getProjectDocumentationBundle(projectUuid, userUuid = null) {

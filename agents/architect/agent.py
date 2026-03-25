@@ -155,10 +155,65 @@ class Architect:
 
         return result
 
+    def _collect_required_sections(self, content, titles):
+        sections = {}
+        missing = []
+        for title in titles:
+            body = self._extract_section(content, title)
+            if body:
+                sections[title] = body
+            else:
+                missing.append(title)
+        return sections, missing
+
+    def _repair_missing_sections(self, base_context, block_result, missing_titles, architecture_model):
+        if not missing_titles:
+            return {}
+
+        repaired_sections = {}
+        still_missing = []
+
+        for title in missing_titles:
+            repair_prompt = f"""
+{base_context}
+
+ARQUITETURA PARCIAL JA GERADA
+{block_result}
+
+TAREFA
+Complete somente a secao abaixo, em Markdown, usando exatamente o titulo informado.
+
+## {title}
+
+REGRAS
+- Nao inclua nenhuma outra secao.
+- Nao renomeie o titulo.
+- Entregue entre 3 e 6 bullets objetivos ou um bloco curto equivalente.
+- Se a secao for "Padroes de Design", cite explicitamente padroes, onde se aplicam e o motivo.
+- Se a secao for "Contratos e Integracoes", cite endpoints, eventos ou integracoes relevantes.
+- Se a secao for "Estrategia de Deploy", cubra ambientes, pipeline e rollout.
+- Se a secao for "Seguranca", cubra autenticacao, autorizacao, dados sensiveis e auditoria.
+"""
+            repair_result = self._generate_block(
+                repair_prompt,
+                architecture_model,
+                num_predict=os.getenv("ARCHITECT_BLOCK_REPAIR_NUM_PREDICT", "360"),
+            )
+            section_body = self._extract_section(repair_result, title)
+            if section_body:
+                repaired_sections[title] = section_body
+            else:
+                still_missing.append(title)
+
+        if still_missing:
+            raise RuntimeError(f"Reparo do bloco nao entregou secoes {', '.join(still_missing)}.")
+
+        return repaired_sections
+
     def _build_full_architecture(self, sections):
         ordered_sections = []
         for title in self.REQUIRED_SECTIONS:
-            body = (sections.get(title) or "").strip()
+            body = self._sanitize_section_body(sections.get(title) or "")
             if body:
                 ordered_sections.append(f"## {title}\n{body}")
 
@@ -166,7 +221,25 @@ class Architect:
         if not assembled:
             return "# ARQUITETURA DO PROJETO\n\nFIM_DA_ARQUITETURA"
 
+        assembled = self._sanitize_section_body(assembled)
         return f"# ARQUITETURA DO PROJETO\n\n{assembled}\n\nFIM_DA_ARQUITETURA"
+
+    def _sanitize_section_body(self, body):
+        text = (body or "").strip()
+        if not text:
+            return ""
+
+        if text.count("```") % 2 != 0:
+            text = f"{text.rstrip()}\n```"
+
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+        last_line = text.splitlines()[-1].rstrip()
+        if re.search(r"[:|*_\-/(\[{,;]$", last_line):
+            text = f"{text.rstrip()}.\n"
+
+        return text.strip()
 
     def _generate_multi_block_architecture(self, idea, compact_requirements, architecture_model):
         base_context = f"""
@@ -214,16 +287,18 @@ Use Mermaid ou ASCII curto.
                     architecture_model,
                     num_predict=os.getenv("ARCHITECT_BLOCK_FOUNDATION_NUM_PREDICT", "700"),
                 )
-                for title in [
+                foundation_titles = [
                     "Visao Geral",
                     "Stack Tecnologico",
                     "Modulos e Responsabilidades",
                     "Diagrama de Arquitetura",
-                ]:
-                    body = self._extract_section(foundation_result, title)
-                    if not body:
-                        raise RuntimeError(f"Bloco base sem secao {title}.")
-                    sections[title] = body
+                ]
+                foundation_sections, missing_foundation = self._collect_required_sections(foundation_result, foundation_titles)
+                if missing_foundation:
+                    foundation_sections.update(
+                        self._repair_missing_sections(base_context, foundation_result, missing_foundation, architecture_model)
+                    )
+                sections.update(foundation_sections)
 
                 design_prompt = f"""
 {base_context}
@@ -243,16 +318,18 @@ Gere APENAS estas secoes em Markdown:
                     architecture_model,
                     num_predict=os.getenv("ARCHITECT_BLOCK_DESIGN_NUM_PREDICT", "760"),
                 )
-                for title in [
+                design_titles = [
                     "Estrutura de Diretorios Sugerida",
                     "Modelo de Dados e Entidades Principais",
                     "Contratos e Integracoes",
                     "Padroes de Design",
-                ]:
-                    body = self._extract_section(design_result, title)
-                    if not body:
-                        raise RuntimeError(f"Bloco de design sem secao {title}.")
-                    sections[title] = body
+                ]
+                design_sections, missing_design = self._collect_required_sections(design_result, design_titles)
+                if missing_design:
+                    design_sections.update(
+                        self._repair_missing_sections(base_context, design_result, missing_design, architecture_model)
+                    )
+                sections.update(design_sections)
 
                 operations_prompt = f"""
 {base_context}
@@ -275,17 +352,19 @@ Cubra logs, metricas, alertas, suporte operacional e recovery.
                     architecture_model,
                     num_predict=os.getenv("ARCHITECT_BLOCK_OPERATIONS_NUM_PREDICT", "760"),
                 )
-                for title in [
+                operations_titles = [
                     "Observabilidade e Operacao",
                     "Estrategia de Deploy",
                     "Seguranca",
                     "Riscos Tecnicos e Trade-offs",
                     "Sequencia Recomendada de Implementacao",
-                ]:
-                    body = self._extract_section(operations_result, title)
-                    if not body:
-                        raise RuntimeError(f"Bloco operacional sem secao {title}.")
-                    sections[title] = body
+                ]
+                operations_sections, missing_operations = self._collect_required_sections(operations_result, operations_titles)
+                if missing_operations:
+                    operations_sections.update(
+                        self._repair_missing_sections(base_context, operations_result, missing_operations, architecture_model)
+                    )
+                sections.update(operations_sections)
 
                 full_architecture = self._build_full_architecture(sections)
                 is_complete, reason = validate_architecture_output(full_architecture)

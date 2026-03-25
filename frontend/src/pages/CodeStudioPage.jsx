@@ -301,7 +301,7 @@ export default function CodeStudioPage() {
             <div className="space-y-3 p-4 text-sm text-slate-700">
               <p><strong>Projeto:</strong> {selectedProject?.name || 'Selecione um projeto'}</p>
               <p><strong>Historias refinadas:</strong> {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0}</p>
-              <p><strong>Arquitetura:</strong> {architectureStatus?.hasArchitecture ? (architectureStatus?.architectureNeedsRefresh ? 'Desatualizada' : 'Pronta') : 'Pendente'}</p>
+              <p><strong>Arquitetura:</strong> {architectureStatus?.hasArchitecture ? (architectureStatus?.architectureNeedsRefresh ? 'Desatualizada' : architectureStatus?.architectureApproved ? 'Aprovada' : 'Pendente de aprovação') : 'Pendente'}</p>
               <p><strong>Implementação:</strong> {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
               <p><strong>Saude API:</strong> {health?.status || 'n/a'}</p>
               <p><strong>Banco:</strong> {health?.database || 'n/a'}</p>
@@ -375,7 +375,7 @@ export default function CodeStudioPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Arquitetura</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">
-                  {architectureStatus?.hasArchitecture ? (architectureStatus?.architectureNeedsRefresh ? 'Desatualizada' : 'Pronta') : 'Pendente'}
+                  {architectureStatus?.hasArchitecture ? (architectureStatus?.architectureNeedsRefresh ? 'Desatualizada' : architectureStatus?.architectureApproved ? 'Aprovada' : 'Pendente de aprovação') : 'Pendente'}
                 </p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -412,7 +412,9 @@ export default function CodeStudioPage() {
                   {architectureStatus?.hasArchitecture
                     ? architectureStatus?.architectureNeedsRefresh
                       ? 'Desatualizada'
-                      : 'Pronta'
+                      : architectureStatus?.architectureApproved
+                        ? 'Aprovada'
+                        : 'Pendente de aprovação'
                     : 'Pendente'}
                 </p>
               </div>
@@ -572,7 +574,9 @@ export default function CodeStudioPage() {
                     {architectureStatus?.hasArchitecture
                       ? architectureStatus?.architectureNeedsRefresh
                         ? 'Desatualizada'
-                        : 'Pronta'
+                        : architectureStatus?.architectureApproved
+                          ? 'Aprovada'
+                          : 'Pendente de aprovação'
                       : 'Pendente'}
                   </p>
                 </div>

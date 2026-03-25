@@ -2,6 +2,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import AppShell from '../components/AppShell';
 import {
+  approveProjectArchitecture,
   generateProjectArchitecture,
   generateProjectBacklog,
   getApiErrorMessage,
@@ -55,6 +56,7 @@ export default function ProjectOverviewPage() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [generatingArchitecture, setGeneratingArchitecture] = useState(false);
+  const [approvingArchitecture, setApprovingArchitecture] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
@@ -181,6 +183,22 @@ export default function ProjectOverviewPage() {
     }
   }
 
+  async function handleApproveArchitecture() {
+    setApprovingArchitecture(true);
+    setError(null);
+    setSuccessMessage('');
+
+    try {
+      const response = await approveProjectArchitecture(projectUuid);
+      setArchitectureStatus(response.architectureStatus);
+      setSuccessMessage('Arquitetura aprovada com sucesso. A implementação e a exportação final foram liberadas.');
+    } catch (approveError) {
+      setError(getApiErrorMessage(approveError, 'Não foi possível aprovar a arquitetura atual.'));
+    } finally {
+      setApprovingArchitecture(false);
+    }
+  }
+
   async function handleExportPdf() {
     setExportingPdf(true);
     setError(null);
@@ -207,8 +225,9 @@ export default function ProjectOverviewPage() {
           <button
             type="button"
             onClick={handleExportPdf}
-            disabled={loading || exportingPdf}
+            disabled={loading || exportingPdf || (architectureStatus?.hasArchitecture && !architectureStatus?.architectureNeedsRefresh && !architectureStatus?.architectureApproved)}
             className="dashboard-button-secondary w-full sm:w-auto"
+            title={architectureStatus?.hasArchitecture && !architectureStatus?.architectureNeedsRefresh && !architectureStatus?.architectureApproved ? 'A exportação final depende da aprovação humana da arquitetura.' : undefined}
           >
             {exportingPdf ? 'Preparando PDF...' : 'Exportar PDF'}
           </button>
@@ -293,18 +312,29 @@ export default function ProjectOverviewPage() {
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Arquitetura</p>
                 <h3 className="mt-2 text-2xl font-bold text-slate-900">Gate antes da implementação</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                  A arquitetura do projeto só pode ser gerada quando todas as histórias tiverem requisitos refinados. A implementação fica bloqueada até essa etapa existir e estar atualizada.
+                  A arquitetura do projeto só pode ser gerada quando todas as histórias tiverem requisitos refinados. A implementação e a exportação final ficam bloqueadas até essa etapa existir, estar atualizada e receber aprovação humana.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={handleGenerateArchitecture}
-                disabled={loading || generatingArchitecture || !architectureStatus?.canGenerateArchitecture}
-                className="dashboard-button-primary w-full sm:w-auto"
-                title={!architectureStatus?.canGenerateArchitecture ? architectureStatus?.blockers?.[0] : undefined}
-              >
-                {generatingArchitecture ? 'Gerando arquitetura...' : 'Gerar arquitetura do projeto'}
-              </button>
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+                <button
+                  type="button"
+                  onClick={handleApproveArchitecture}
+                  disabled={loading || approvingArchitecture || !architectureStatus?.hasArchitecture || architectureStatus?.architectureNeedsRefresh || architectureStatus?.architectureApproved}
+                  className="dashboard-button-secondary w-full sm:w-auto"
+                  title={!architectureStatus?.hasArchitecture ? 'Gere a arquitetura antes de aprovar.' : architectureStatus?.architectureNeedsRefresh ? 'Regere a arquitetura antes de aprovar.' : architectureStatus?.architectureApproved ? 'A arquitetura atual já foi aprovada.' : undefined}
+                >
+                  {approvingArchitecture ? 'Aprovando...' : architectureStatus?.architectureApproved ? 'Arquitetura aprovada' : 'Aprovar arquitetura'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGenerateArchitecture}
+                  disabled={loading || generatingArchitecture || !architectureStatus?.canGenerateArchitecture}
+                  className="dashboard-button-primary w-full sm:w-auto"
+                  title={!architectureStatus?.canGenerateArchitecture ? architectureStatus?.blockers?.[0] : undefined}
+                >
+                  {generatingArchitecture ? 'Gerando arquitetura...' : 'Gerar arquitetura do projeto'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -321,7 +351,9 @@ export default function ProjectOverviewPage() {
                 {architectureStatus?.hasArchitecture
                   ? architectureStatus?.architectureNeedsRefresh
                     ? 'Desatualizada'
-                    : 'Pronta'
+                    : architectureStatus?.architectureApproved
+                      ? 'Aprovada'
+                      : 'Pendente de aprovação'
                   : 'Pendente'}
               </p>
             </div>
@@ -329,6 +361,18 @@ export default function ProjectOverviewPage() {
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Implementação</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 lg:col-span-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Aprovação humana</p>
+              <p className="mt-3 text-lg font-bold text-slate-900">
+                {architectureStatus?.hasArchitecture
+                  ? architectureStatus?.architectureNeedsRefresh
+                    ? 'Arquitetura desatualizada'
+                    : architectureStatus?.architectureApproved
+                      ? 'Aprovada'
+                      : 'Pendente de aprovação'
+                  : 'Aguardando arquitetura'}
               </p>
             </div>
           </div>

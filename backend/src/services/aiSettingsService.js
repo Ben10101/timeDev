@@ -46,6 +46,7 @@ const DEFAULT_AI_SETTINGS = {
 };
 
 const REMOTE_PROVIDER_KEYS = ['gemini', 'openai', 'deepseek', 'nvidia', 'anthropic', 'groq', 'openrouter'];
+const ARCHITECT_PROVIDER_PRIORITY = ['anthropic', 'openai', 'deepseek', 'nvidia', 'groq', 'gemini', 'openrouter', 'ollama'];
 
 function normalizeProviderSettings(current = {}, fallback = {}) {
   return {
@@ -69,6 +70,35 @@ function normalizeModelList(value) {
   }
 
   return [];
+}
+
+function isOpenRouterFreeConfiguration(settings = {}) {
+  const primaryModel = String(settings.openrouter?.model || '').trim().toLowerCase();
+  const fallbackModels = normalizeModelList(settings.openrouter?.fallbackModels).map((item) => item.toLowerCase());
+  const allModels = [primaryModel, ...fallbackModels].filter(Boolean);
+
+  return allModels.some((model) => model === 'openrouter/free' || model.includes(':free'));
+}
+
+function pickArchitectProvider(settings, providerOrder = [], includeLocalFallback = true) {
+  const candidates = providerOrder.filter(Boolean);
+
+  for (const provider of ARCHITECT_PROVIDER_PRIORITY) {
+    if (!candidates.includes(provider)) continue;
+    if (provider === 'openrouter' && isOpenRouterFreeConfiguration(settings)) continue;
+    if (provider === 'gemini' && !settings.gemini?.apiKey) continue;
+    return provider;
+  }
+
+  if (candidates.includes('openrouter')) {
+    return 'openrouter';
+  }
+
+  if (includeLocalFallback && candidates.includes('ollama')) {
+    return 'ollama';
+  }
+
+  return candidates[0] || null;
 }
 
 export function normalizeAiSettings(input = {}) {
@@ -125,6 +155,7 @@ export async function updateAiSettingsForUser(userUuid, input = {}) {
 export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
   const settings = await getAiSettingsForUser(userUuid);
   const includeLocalFallback = options.includeLocalFallback !== false;
+  const agentName = String(options.agentName || '').trim().toLowerCase();
   const remoteProviders = REMOTE_PROVIDER_KEYS.filter(
     (providerKey) => settings[providerKey]?.enabled && settings[providerKey]?.apiKey
   );
@@ -155,6 +186,17 @@ export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
     OPENROUTER_MODEL: settings.openrouter?.model || DEFAULT_AI_SETTINGS.openrouter.model,
     OPENROUTER_MODEL_FALLBACKS: normalizeModelList(settings.openrouter?.fallbackModels).join(','),
   };
+
+  if (agentName) {
+    env.AI_AGENT_NAME = agentName;
+  }
+
+  if (agentName === 'architect') {
+    const architectProvider = pickArchitectProvider(settings, providerOrder, includeLocalFallback);
+    if (architectProvider) {
+      env.AI_PROVIDER_ORDER_ARCHITECT = architectProvider;
+    }
+  }
 
   if (settings.gemini?.enabled && settings.gemini?.apiKey) env.GEMINI_API_KEY = settings.gemini.apiKey;
   if (settings.openai?.enabled && settings.openai?.apiKey) env.OPENAI_API_KEY = settings.openai.apiKey;

@@ -6,6 +6,7 @@ import {
   createProjectController,
   createTaskCommentController,
   createTaskController,
+  approveProjectArchitectureController,
   ensurePipelineProjectController,
   generateProjectArchitectureController,
   generateProjectBacklogController,
@@ -30,6 +31,7 @@ router.post('/projects', createProjectController);
 router.get('/projects/:projectUuid', getProjectController);
 router.get('/projects/:projectUuid/documentation', getProjectDocumentationBundleController);
 router.get('/projects/:projectUuid/architecture/status', getProjectArchitectureStatusController);
+router.post('/projects/:projectUuid/architecture/approve', approveProjectArchitectureController);
 router.get('/projects/:projectUuid/tasks', listProjectTasksController);
 router.get('/tasks', listAllTasksController);
 router.post('/projects/:projectUuid/generate-backlog', generateProjectBacklogController);

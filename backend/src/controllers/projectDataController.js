@@ -2,6 +2,7 @@ import {
   assertProjectAccess,
   assertTaskAccess,
   assertWorkspaceAccess,
+  approveCurrentArchitectureArtifact,
   createAgentRunStart,
   createProject,
   createTask,
@@ -384,8 +385,32 @@ export async function getProjectArchitectureStatusController(req, res, next) {
 export async function getProjectDocumentationBundleController(req, res, next) {
   try {
     await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    const architectureStatus = await getProjectArchitectureStatus(req.params.projectUuid, req.authUser.uuid);
+    if (architectureStatus?.hasArchitecture && !architectureStatus?.architectureNeedsRefresh && !architectureStatus?.architectureApproved) {
+      return res.status(409).json({
+        message: 'A documentação final só pode ser exportada depois da aprovação humana da arquitetura atual.',
+        architectureStatus: serializeBigInts(architectureStatus),
+      });
+    }
     const bundle = await getProjectDocumentationBundle(req.params.projectUuid, req.authUser.uuid);
     res.json(serializeBigInts(bundle));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function approveProjectArchitectureController(req, res, next) {
+  try {
+    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    const artifact = await approveCurrentArchitectureArtifact(req.params.projectUuid, req.authUser.uuid);
+    const architectureStatus = await getProjectArchitectureStatus(req.params.projectUuid, req.authUser.uuid);
+    res.json(
+      serializeBigInts({
+        success: true,
+        artifact,
+        architectureStatus,
+      })
+    );
   } catch (error) {
     next(error);
   }
@@ -455,7 +480,7 @@ export async function generateProjectArchitectureController(req, res, next) {
       },
     };
 
-    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid);
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'architect' });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(projectUuid, 'architect', payloadWithRuntime);
     const result = await runSingleAgent('architect', payloadWithRuntime, { envOverrides });

@@ -253,6 +253,11 @@ export const generateProjectArchitecture = async (projectUuid) => {
   return response.data
 }
 
+export const approveProjectArchitecture = async (projectUuid) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/architecture/approve`)
+  return response.data
+}
+
 export const createTask = async (projectUuid, payload) => {
   const response = await apiClient.post(`/projects/${projectUuid}/tasks`, payload)
   return response.data
