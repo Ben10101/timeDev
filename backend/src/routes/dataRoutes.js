@@ -14,6 +14,7 @@ import {
   getProjectController,
   getProjectArchitectureStatusController,
   getProjectDocumentationBundleController,
+  getWorkspaceTeamSummaryController,
   getTaskController,
   importBacklogTasksController,
   listProjectsController,
@@ -30,6 +31,7 @@ const router = Router();
 router.post('/bootstrap', bootstrapController);
 router.use(requireAuth);
 router.post('/pipeline-project', ensurePipelineProjectController);
+router.get('/workspace/team', getWorkspaceTeamSummaryController);
 router.get('/projects', listProjectsController);
 router.post('/projects', createProjectController);
 router.get('/projects/:projectUuid', getProjectController);

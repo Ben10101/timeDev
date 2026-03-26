@@ -157,6 +157,9 @@ export default function ProjectPlanningPage() {
           <button onClick={() => navigate(`/projects/${projectUuid}`)} className="dashboard-button-secondary w-full sm:w-auto">
             Voltar ao overview
           </button>
+          <button onClick={() => navigate(`/projects/${projectUuid}/team`)} className="dashboard-button-secondary w-full sm:w-auto">
+            Abrir equipe
+          </button>
           <button onClick={() => navigate(`/projects?project=${projectUuid}`)} className="dashboard-button-primary w-full sm:w-auto">
             Abrir board
           </button>

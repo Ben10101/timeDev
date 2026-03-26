@@ -213,6 +213,11 @@ export const listProjects = async () => {
   return response.data
 }
 
+export const getWorkspaceTeamSummary = async (params = {}) => {
+  const response = await apiClient.get('/workspace/team', { params })
+  return response.data
+}
+
 export const getProject = async (projectUuid) => {
   const response = await apiClient.get(`/projects/${projectUuid}`)
   return response.data
@@ -364,6 +369,7 @@ export default {
   generateProject,
   bootstrapWorkspace,
   listProjects,
+  getWorkspaceTeamSummary,
   getProject,
   updateProjectBrief,
   addProjectMember,

@@ -367,6 +367,158 @@ export async function assertWorkspaceAccess(workspaceUuid, userUuid) {
   return workspace;
 }
 
+export async function getWorkspaceTeamSummary(userUuid, workspaceUuid = null) {
+  const workspace =
+    workspaceUuid
+      ? await assertWorkspaceAccess(workspaceUuid, userUuid)
+      : await getDefaultWorkspaceForUserUuid(userUuid);
+
+  if (!workspace?.uuid) {
+    throw new Error('Workspace não encontrado ou sem permissão de acesso.');
+  }
+
+  const workspaceRecord = await prisma.workspace.findUnique({
+    where: { uuid: workspace.uuid },
+    select: {
+      uuid: true,
+      name: true,
+      slug: true,
+      description: true,
+      ownerUser: {
+        select: { uuid: true, name: true, email: true },
+      },
+      projects: {
+        orderBy: { createdAt: 'asc' },
+        select: {
+          uuid: true,
+          name: true,
+          slug: true,
+          status: true,
+          creator: {
+            select: { uuid: true, name: true, email: true },
+          },
+          workspace: {
+            select: {
+              ownerUser: {
+                select: { uuid: true },
+              },
+            },
+          },
+          members: {
+            include: {
+              user: {
+                select: { uuid: true, name: true, email: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!workspaceRecord) {
+    throw new Error('Workspace não encontrado.');
+  }
+
+  const peopleMap = new Map();
+
+  for (const project of workspaceRecord.projects) {
+    const currentUserRole = resolveCurrentUserProjectRole(project, userUuid);
+    const permissions = buildProjectPermissions(currentUserRole);
+
+    for (const member of project.members || []) {
+      const memberUser = member.user;
+      if (!memberUser?.uuid) continue;
+
+      const current = peopleMap.get(memberUser.uuid) || {
+        user: memberUser,
+        workspaceOwner: workspaceRecord.ownerUser?.uuid === memberUser.uuid,
+        memberships: [],
+      };
+
+      current.memberships.push({
+        projectUuid: project.uuid,
+        projectName: project.name,
+        projectStatus: project.status,
+        projectRole: member.projectRole,
+        joinedAt: member.joinedAt,
+        currentUserRole,
+        permissions,
+      });
+
+      peopleMap.set(memberUser.uuid, current);
+    }
+  }
+
+  if (workspaceRecord.ownerUser?.uuid) {
+    const existingOwner = peopleMap.get(workspaceRecord.ownerUser.uuid);
+    if (existingOwner) {
+      existingOwner.workspaceOwner = true;
+      peopleMap.set(workspaceRecord.ownerUser.uuid, existingOwner);
+    } else {
+      peopleMap.set(workspaceRecord.ownerUser.uuid, {
+        user: workspaceRecord.ownerUser,
+        workspaceOwner: true,
+        memberships: [],
+      });
+    }
+  }
+
+  const members = Array.from(peopleMap.values())
+    .map((member) => ({
+      ...member,
+      memberships: [...member.memberships].sort((left, right) =>
+        String(left.projectName || '').localeCompare(String(right.projectName || ''), 'pt-BR')
+      ),
+    }))
+    .sort((left, right) => {
+      if (left.workspaceOwner !== right.workspaceOwner) {
+        return left.workspaceOwner ? -1 : 1;
+      }
+      return String(left.user?.name || left.user?.email || '').localeCompare(
+        String(right.user?.name || right.user?.email || ''),
+        'pt-BR'
+      );
+    });
+
+  return {
+    workspace: {
+      uuid: workspaceRecord.uuid,
+      name: workspaceRecord.name,
+      slug: workspaceRecord.slug,
+      description: workspaceRecord.description,
+      ownerUser: workspaceRecord.ownerUser,
+    },
+    canManageWorkspace: workspaceRecord.ownerUser?.uuid === userUuid,
+    projects: workspaceRecord.projects.map((project) => {
+      const currentUserRole = resolveCurrentUserProjectRole(project, userUuid);
+      return {
+        uuid: project.uuid,
+        name: project.name,
+        slug: project.slug,
+        status: project.status,
+        currentUserRole,
+        permissions: buildProjectPermissions(currentUserRole),
+        memberCount: project.members.length,
+      };
+    }),
+    members,
+    summary: {
+      totalProjects: workspaceRecord.projects.length,
+      totalPeople: members.length,
+      managers: members.filter((member) =>
+        member.memberships.some((membership) => ['owner', 'manager'].includes(membership.projectRole))
+      ).length,
+      contributors: members.filter((member) =>
+        member.memberships.some((membership) => membership.projectRole === 'editor')
+      ).length,
+      viewers: members.filter((member) =>
+        member.memberships.every((membership) => membership.projectRole === 'viewer')
+      ).length,
+    },
+  };
+}
+
 export async function assertProjectAccess(projectUuid, userUuid) {
   const project = await prisma.project.findFirst({
     where: {
@@ -1282,6 +1434,10 @@ function extractStructuredStoriesFromBacklog(sectionContent) {
       if (currentStory) {
         currentStory.details.push('');
       }
+      continue;
+    }
+
+    if (/^FIM_DO_BACKLOG$/i.test(line)) {
       continue;
     }
 

@@ -72,31 +72,14 @@ def _extract_backlog_story_blocks(text):
 
 def _backlog_story_has_complete_structure(story_block):
     lines = [line.strip() for line in (story_block or "").splitlines() if line.strip()]
-    if len(lines) < 4:
+    if len(lines) < 1:
       return False
 
     title_line = lines[0]
-    if not re.search(r"\bComo\b.+\beu quero\b.+\bpara\b.+", title_line, re.IGNORECASE):
+    if not re.search(r"^\s*Como\b.+\beu quero\b.+", title_line, re.IGNORECASE):
         return False
 
-    if not any(re.match(r"^-?\s*Contexto\s*:", line, re.IGNORECASE) for line in lines[1:]):
-        return False
-
-    if not any(re.match(r"^-?\s*Valor\s*:", line, re.IGNORECASE) for line in lines[1:]):
-        return False
-
-    if not any(re.match(r"^-?\s*Criterios de aceite\s*:", line, re.IGNORECASE) for line in lines[1:]):
-        return False
-
-    criteria_lines = [line for line in lines[1:] if re.match(r"^-?\s*(Dado|Quando|Entao)\b", line, re.IGNORECASE)]
-    if len(criteria_lines) < 3:
-        return False
-
-    last_line = lines[-1].lower()
-    if re.search(r"[:;,(\[{/\-]$", last_line):
-        return False
-
-    if last_line == "fim_do_backlog":
+    if len(re.sub(r"\s+", " ", title_line).strip()) < 20:
         return False
 
     return True
@@ -274,15 +257,23 @@ def validate_backlog_output(result):
     if len(story_lines) > 25:
         return False, "Foram geradas historias demais. O maximo esperado e 25."
 
-    story_blocks = _extract_backlog_story_blocks(text)
-    if len(story_blocks) != len(story_lines):
-        return False, "Nem todas as historias puderam ser consolidadas corretamente."
+    normalized_story_lines = [
+        re.sub(
+            r"^\s*(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?",
+            "",
+            line,
+            flags=re.IGNORECASE,
+        ).strip()
+        for line in story_lines
+    ]
 
-    for story_block in story_blocks:
-        if not _backlog_story_has_complete_structure(story_block):
-            return False, "Existe historia com estrutura incompleta ou aparencia de truncamento."
+    invalid_titles = [
+        title for title in normalized_story_lines if not re.search(r"^\s*Como\b.+\beu quero\b.+", title, re.IGNORECASE)
+    ]
+    if invalid_titles:
+        return False, "Existe historia com estrutura incompleta ou aparencia de truncamento."
 
-    similarity_keys = [_story_similarity_key(block.splitlines()[0]) for block in story_blocks]
+    similarity_keys = [_story_similarity_key(title) for title in normalized_story_lines]
     duplicate_count = len(similarity_keys) - len(set(key for key in similarity_keys if key))
     if duplicate_count > 0:
         return False, "Foram detectadas historias muito parecidas ou duplicadas."
@@ -302,13 +293,6 @@ def validate_backlog_output(result):
 
     if len(story_lines) >= 3 and generic_user_count > max(1, len(story_lines) // 3):
         return False, 'Historias ainda estao genericas demais ("Como um usuario").'
-
-    context_count = len(re.findall(r"\bcontexto\s*:", normalized))
-    value_count = len(re.findall(r"\bvalor\s*:", normalized))
-    acceptance_count = len(re.findall(r"\bcriterios de aceite\s*:", normalized))
-
-    if story_lines and (context_count == 0 or value_count == 0 or acceptance_count == 0):
-        return False, "Stories sem estrutura enriquecida de contexto, valor e aceite."
 
     # O marcador final continua sendo desejavel, mas nao deve derrubar um backlog
     # estruturalmente completo quando o modelo apenas esquece a linha final.

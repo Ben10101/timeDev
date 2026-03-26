@@ -163,6 +163,9 @@ export default function WorkspacePage() {
       description="Visão consolidada do portfólio, com leitura rápida da saúde, do planejamento e da execução de cada projeto."
       actions={
         <div className="flex flex-col gap-2 sm:flex-row">
+          <button onClick={() => navigate('/workspace/team')} className="dashboard-button-secondary w-full sm:w-auto">
+            Equipe do workspace
+          </button>
           <button onClick={() => navigate('/projects?openCreate=1')} className="dashboard-button-primary w-full sm:w-auto">
             Criar primeiro projeto
           </button>

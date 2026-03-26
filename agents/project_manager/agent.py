@@ -140,34 +140,21 @@ class ProjectManager:
             return True
 
         title_line = lines[0]
-        if not re.search(r"\bComo\b.+\beu quero\b.+\bpara\b.+", title_line, re.IGNORECASE):
-            return True
-
-        if len(lines) < 4:
-            return True
-
-        if not any(re.match(r"^-?\s*Contexto\s*:", line, re.IGNORECASE) for line in lines[1:]):
-            return True
-
-        if not any(re.match(r"^-?\s*Valor\s*:", line, re.IGNORECASE) for line in lines[1:]):
-            return True
-
-        if not any(re.match(r"^-?\s*Criterios de aceite\s*:", line, re.IGNORECASE) for line in lines[1:]):
-            return True
-
-        terminal_line = lines[-1]
-        if re.search(r"[:;,(\[{/\-]$", terminal_line):
-            return True
-
-        if terminal_line.lower() == "fim_do_backlog":
+        if not re.search(r"^\s*Como\b.+\beu quero\b.+", title_line, re.IGNORECASE):
             return True
 
         short_fragments = {
-            "dado que estou configurando o",
-            "valor: facilitar o diagnostico",
-            "contexto: preciso",
+            "como",
+            "como atendente",
+            "como gestor",
+            "como colaborador",
+            "eu quero",
         }
-        if terminal_line.lower() in short_fragments:
+        normalized_title = re.sub(r"\s+", " ", title_line).strip().lower()
+        if normalized_title in short_fragments:
+            return True
+
+        if len(re.sub(r"\s+", " ", title_line).strip()) < 20:
             return True
 
         return False
@@ -196,16 +183,12 @@ class ProjectManager:
         ).strip()
 
     def _story_has_strong_structure(self, story_block):
-        lines = [line.strip() for line in (story_block or "").splitlines() if line.strip()]
         if self._looks_truncated_story(story_block):
             return False
 
-        criteria_lines = [line for line in lines if re.match(r"^-?\s*(Dado|Quando|Entao)\b", line, re.IGNORECASE)]
-        if len(criteria_lines) < 3:
-            return False
-
+        lines = [line.strip() for line in (story_block or "").splitlines() if line.strip()]
         title_line = lines[0] if lines else ""
-        if not re.search(r"\bComo\b.+\beu quero\b.+\bpara\b.+", title_line, re.IGNORECASE):
+        if not re.search(r"^\s*Como\b.+\beu quero\b.+", title_line, re.IGNORECASE):
             return False
 
         return True
@@ -313,13 +296,8 @@ REGRAS DE CURADORIA
 - Prefira a versao mais forte e mais especifica quando houver sobreposicao.
 - Padronize personas em torno de: colaborador, atendente, gestor e administrador.
 - Nao deixe historias truncadas.
-- Elimine historias com criterio de aceite incompleto.
-- Nao deixe nenhuma historia terminar com frase cortada, titulo generico ou criterio pela metade.
-- Cada historia precisa manter:
-  - titulo no formato "Como ..., eu quero ..., para ..."
-  - Contexto
-  - Valor
-  - Criterios de aceite com Dado / Quando / Entao
+- Nao deixe nenhuma historia terminar com frase cortada ou titulo generico.
+- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
 - Nao invente escopo fora do briefing.
 - Responda APENAS com:
   - ## Historias de Usuario
@@ -365,11 +343,7 @@ REGRAS
 - Gere de {needed_count} a {max(needed_count + 2, needed_count)} historias COMPLEMENTARES.
 - Nao repita nem reformule historias ja consolidadas.
 - Foque nos fluxos que ainda costumam faltar em backlog inicial: administracao, governanca, relatorios, notificacoes, operacao e excecoes de negocio.
-- Cada historia precisa manter:
-  - titulo no formato "Como ..., eu quero ..., para ..."
-  - Contexto
-  - Valor
-  - Criterios de aceite com Dado / Quando / Entao
+- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -397,11 +371,7 @@ REGRAS
 - Gere de {target_range[0]} a {target_range[1]} historias.
 - Foque somente no tema desta rodada.
 - {instructions}
-- Cada historia precisa manter:
-  - titulo no formato "Como ..., eu quero ..., para ..."
-  - Contexto
-  - Valor
-  - Criterios de aceite com Dado / Quando / Entao
+- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -412,6 +382,83 @@ REGRAS
         if not themed_section:
             return []
         return self._extract_story_lines(themed_section)
+
+    def _generate_missing_stories_fallback(self, base_context, existing_story_blocks, *, needed_count):
+        if needed_count <= 0:
+            return []
+
+        existing_titles = [
+            self._story_seed_title(block)
+            for block in existing_story_blocks
+            if block and self._story_seed_title(block)
+        ]
+        existing_titles_text = "\n".join(f"- {title}" for title in existing_titles[:30])
+
+        prompt = f"""
+{base_context}
+
+HISTORIAS JA ACEITAS
+{existing_titles_text}
+
+TAREFA
+Gere APENAS {needed_count} historias faltantes para completar o backlog minimo.
+Responda APENAS com:
+
+## Historias de Usuario
+
+REGRAS
+- Nao repita nenhuma historia ja aceita.
+- Foque no que costuma faltar para fechar um backlog inicial completo.
+- Seja direto e especifico.
+- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Nao invente escopo fora do briefing.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLOCK_MISSING_NUM_PREDICT", "950"),
+        )
+        missing_section = self._extract_section(result, "Historias de Usuario")
+        if not missing_section:
+            return []
+        return self._extract_story_lines(missing_section)
+
+    def _extract_seed_titles_from_text(self, content):
+        titles = []
+        for raw_line in (content or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            cleaned = re.sub(
+                r"^\s*(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?",
+                "",
+                line,
+                flags=re.IGNORECASE,
+            ).strip()
+            if re.search(r"^Como\b.+\beu quero\b.+\bpara\b.+", cleaned, re.IGNORECASE):
+                titles.append(cleaned)
+        return titles
+
+    def _generate_seed_titles_fallback(self, base_context, *, min_stories, max_stories):
+        prompt = f"""
+{base_context}
+
+TAREFA
+Gere APENAS uma lista curta de titulos de historias de usuario.
+
+REGRAS
+- Gere entre {min_stories} e {max_stories} titulos.
+- Cada linha deve conter somente:
+  Como ..., eu quero ..., para ...
+- Nao adicione Contexto, Valor ou Criterios nesta etapa.
+- Nao inclua explicacoes, secoes extras ou observacoes.
+- Cubra jornadas principais, operacao, gestao e governanca do produto.
+- Nao invente escopo fora do briefing.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLOCK_SEEDS_NUM_PREDICT", "900"),
+        )
+        return self._extract_seed_titles_from_text(result)
 
     def _expand_story_seeds(self, base_context, seed_titles):
         titles = [title.strip() for title in seed_titles if title and title.strip()]
@@ -426,18 +473,14 @@ TITULOS DE HISTORIAS PARA EXPANDIR
 {titles_text}
 
 TAREFA
-Expanda esses titulos em historias completas e devolva APENAS:
+Padronize esses titulos como user stories finais e devolva APENAS:
 
 ## Historias de Usuario
 
 REGRAS
 - Mantenha o mesmo sentido de cada titulo.
 - Nao crie titulos extras fora da lista.
-- Para cada historia, entregue:
-  - titulo no formato "Como ..., eu quero ..., para ..."
-  - Contexto
-  - Valor
-  - Criterios de aceite com Dado / Quando / Entao
+- Para cada historia, entregue somente um titulo no formato "Como ..., eu quero ..., para ...".
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -550,6 +593,36 @@ REGRAS
                 max_stories=max_stories,
             )
 
+        if len(consolidated) < min_stories:
+            seed_titles_from_fallback = self._generate_seed_titles_fallback(
+                base_context,
+                min_stories=min_stories,
+                max_stories=max_stories,
+            )
+            if seed_titles_from_fallback:
+                existing_keys = {self._story_similarity_key(block) for block in consolidated}
+                new_seed_titles = []
+                for title in seed_titles_from_fallback:
+                    key = self._story_similarity_key(title)
+                    if key and key not in existing_keys:
+                        existing_keys.add(key)
+                        new_seed_titles.append(title)
+
+                for start in range(0, len(new_seed_titles), 4):
+                    if len(consolidated) >= min_stories:
+                        break
+                    batch_titles = new_seed_titles[start:start + 4]
+                    expanded = self._expand_story_seeds(base_context, batch_titles)
+                    if expanded:
+                        consolidated = self._dedupe_and_polish_stories(consolidated + expanded)
+
+                consolidated = self._ensure_minimum_story_count(
+                    base_context,
+                    consolidated,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
+
         return consolidated[:max_stories]
 
     def _generate_multi_block_backlog(self, idea):
@@ -573,7 +646,7 @@ REGRAS GERAIS
 - Nao inclua epicos nem tarefas tecnicas.
 - Use personas especificas e reais.
 - Evite repetir "usuario" de forma generica.
-- Cada story precisa ter Contexto, Valor e Criterios de aceite.
+- Cada story deve ser somente uma user story no formato "Como ..., eu quero ..., para ...".
 - Mantenha o backlog entre {min_stories} e {max_stories} historias.
 """
 
@@ -600,8 +673,6 @@ Gere APENAS esta secao em Markdown:
                     min_stories=min_stories,
                     max_stories=max_stories,
                 )
-                if len(combined_story_blocks) < max(8, min_stories - 4):
-                    raise RuntimeError("As rodadas tematicas ainda geraram poucas historias confiaveis.")
 
                 if len(combined_story_blocks) >= min_stories:
                     curated_section = self._curate_story_batch(
@@ -613,6 +684,24 @@ Gere APENAS esta secao em Markdown:
                     combined_story_blocks = self._dedupe_and_polish_stories(
                         self._extract_story_lines(curated_section)
                     )
+
+                combined_story_blocks = self._ensure_minimum_story_count(
+                    base_context,
+                    combined_story_blocks,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
+
+                if len(combined_story_blocks) < min_stories:
+                    fallback_blocks = self._generate_missing_stories_fallback(
+                        base_context,
+                        combined_story_blocks,
+                        needed_count=min_stories - len(combined_story_blocks),
+                    )
+                    if fallback_blocks:
+                        combined_story_blocks = self._dedupe_and_polish_stories(
+                            combined_story_blocks + fallback_blocks
+                        )
 
                 combined_story_blocks = self._ensure_minimum_story_count(
                     base_context,

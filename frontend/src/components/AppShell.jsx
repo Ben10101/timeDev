@@ -20,6 +20,7 @@ const NAV_SECTIONS = [
     label: 'Workspace',
     items: [
       { label: 'Visão geral', hint: 'Portfólio multi-projetos', to: '/workspace', icon: LayoutGrid },
+      { label: 'Equipe', hint: 'Pessoas e papéis', to: '/workspace/team', icon: User },
     ],
   },
   {

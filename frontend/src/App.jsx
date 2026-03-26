@@ -3,7 +3,9 @@ import ProtectedRoute from './components/ProtectedRoute';
 import AuthPage from './pages/AuthPage';
 import ProjectOverviewPage from './pages/ProjectOverviewPage';
 import ProjectPlanningPage from './pages/ProjectPlanningPage';
+import ProjectTeamPage from './pages/ProjectTeamPage';
 import WorkspacePage from './pages/WorkspacePage';
+import WorkspaceTeamPage from './pages/WorkspaceTeamPage';
 import ProjectsPage from './pages/ProjectsPage';
 import ResultsPage from './pages/ResultsPage';
 import TaskDetailsPage from './pages/TaskDetailsPage';
@@ -37,6 +39,14 @@ function App() {
             }
           />
           <Route
+            path="/workspace/team"
+            element={
+              <ProtectedRoute>
+                <WorkspaceTeamPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/projects"
             element={
               <ProtectedRoute>
@@ -57,6 +67,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <ProjectPlanningPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/projects/:projectUuid/team"
+            element={
+              <ProtectedRoute>
+                <ProjectTeamPage />
               </ProtectedRoute>
             }
           />

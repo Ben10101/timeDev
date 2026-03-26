@@ -17,6 +17,7 @@ import {
   getProjectDocumentationBundle,
   getProjectByUuid,
   getTaskByUuid,
+  getWorkspaceTeamSummary,
   importBacklogTasks,
   listProjects,
   listProjectTasks,
@@ -100,6 +101,15 @@ export async function listProjectsController(req, res, next) {
   try {
     const projects = await listProjects(req.authUser.uuid);
     res.json(serializeBigInts(projects));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getWorkspaceTeamSummaryController(req, res, next) {
+  try {
+    const summary = await getWorkspaceTeamSummary(req.authUser.uuid, req.query.workspaceUuid || null);
+    res.json(serializeBigInts(summary));
   } catch (error) {
     next(error);
   }
