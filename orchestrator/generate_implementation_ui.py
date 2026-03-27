@@ -33,63 +33,85 @@ def extract_json_block(raw_text: str):
 
 def fallback(payload):
     submit_label = payload.get("submitLabel") or "Salvar"
+    navigation_label = payload.get("navigationLabel") or "Operacao"
+    page_title = payload.get("pageTitle") or "Conduza esta operacao com clareza"
+    page_description = payload.get("pageDescription") or payload.get("summary") or "Centralize a acao principal em uma experiencia mais clara, confiavel e pronta para uso."
     return {
-        "navigationLabel": payload.get("navigationLabel") or "Feature",
-        "pageTitle": payload.get("pageTitle") or "Execute esta jornada",
-        "pageDescription": payload.get("pageDescription") or payload.get("summary") or "",
-        "heroEyebrow": payload.get("navigationLabel") or "Feature",
-        "heroTitle": payload.get("pageTitle") or "Execute esta jornada",
-        "heroDescription": payload.get("pageDescription") or payload.get("summary") or "",
-        "formCardTitle": "Dados principais",
-        "formCardDescription": "Preencha os dados essenciais para concluir a operacao com seguranca.",
+        "navigationLabel": navigation_label,
+        "pageTitle": page_title,
+        "pageDescription": page_description,
+        "heroEyebrow": navigation_label,
+        "heroTitle": page_title,
+        "heroDescription": page_description,
+        "formCardTitle": "Concluir operacao",
+        "formCardDescription": "Preencha as informacoes essenciais para concluir esta etapa com seguranca e contexto.",
         "submitLabel": submit_label,
         "highlights": [
-            "Fluxo pensado para reduzir duvidas no preenchimento.",
-            "Feedback claro ao concluir ou revisar a operacao."
+            "Fluxo desenhado para reduzir duvidas e acelerar a conclusao.",
+            "Leitura clara do que precisa ser feito agora.",
+            "Feedback visivel para acompanhar a operacao sem friccao.",
         ],
-        "recordsTitle": "Registros recentes",
-        "recordsEmptyState": "Nenhum registro disponivel ainda.",
+        "recordsTitle": "Atividade recente",
+        "recordsEmptyState": "Nenhuma movimentacao registrada ainda nesta area.",
     }
 
 
 def main():
     payload = json.load(sys.stdin)
-    has_repair_context = bool(payload.get("repairContext"))
+    has_repair_context = bool(payload.get("repairGoals"))
     output_budget = 280 if has_repair_context else 420
 
     prompt = f"""
 Voce e um especialista em UX writing e product design para interfaces SaaS premium.
 Sua tarefa e gerar apenas uma proposta curta de copy e estrutura visual para UMA tela de produto.
+Voce esta trabalhando em um gerador de interfaces reais, nao em um mock conceitual.
 
 Contexto da implementacao:
 - Titulo da task: {payload.get('taskTitle')}
 - Resumo: {payload.get('summary')}
+- Valor para o usuario: {payload.get('userValue')}
 - Rota frontend: {payload.get('frontendRoute')}
 - Template de tela: {payload.get('screenTemplate')}
+- Papel da tela: {payload.get('uiRole')}
+- Ator principal: {payload.get('actorLabel')}
 - Acao principal: {payload.get('submitLabel')}
 - Campos: {json.dumps(payload.get('fields', []), ensure_ascii=False)}
-- Objetivos de experiencia: {json.dumps(payload.get('experienceGoals', []), ensure_ascii=False)}
 - Estados de UI: {json.dumps(payload.get('uiStates', {}), ensure_ascii=False)}
-- Validacoes: {json.dumps(payload.get('validationSummary', []), ensure_ascii=False)}
-- Permissoes: {json.dumps(payload.get('permissions', {}), ensure_ascii=False)}
-- Memoria do projeto: {json.dumps(payload.get('projectMemory', {}), ensure_ascii=False)}
-- Contexto de reparo: {json.dumps(payload.get('repairContext'), ensure_ascii=False)}
+- Referencias de design: {json.dumps(payload.get('designReference', {}), ensure_ascii=False)}
+- Objetivos de reparo: {json.dumps(payload.get('repairGoals', {}), ensure_ascii=False)}
 
 Instrucoes:
-- Nao replique requisitos longos, QA, criterios de aceite ou documentacao na tela.
+- Trate esta tela como parte de um produto maduro, com clareza de hierarquia e sensacao de software pronto.
+- Prefira linguagem e estrutura de sistema profissional enterprise, com cara de painel operacional.
+- Nao replique requisitos longos, QA, criterios de aceite, documentacao, regras internas, passos tecnicos ou linguagem de governanca na tela.
 - Escreva como uma interface real de produto, curta e objetiva.
 - Mantenha linguagem em portugues do Brasil.
 - Priorize titulos curtos, orientados a usuario final.
 - Evite tom tecnico, burocratico ou academico.
 - Proponha uma tela com cara de produto pronto, nao de prototipo.
+- Defina um papel claro para a tela: operacao, configuracao, descoberta, acompanhamento ou cadastro orientado a valor.
+- O titulo principal deve comunicar valor ou tarefa principal, nunca soar como placeholder.
+- A descricao deve caber em uma leitura rapida e explicar o ganho para o usuario.
+- O card de formulario deve parecer uma acao importante, nao apenas um formulario generico.
+- O bloco lateral/lista deve parecer uma area viva do produto, com nome e estado vazio consistentes.
 - Se o template for `settings`, use copy de configuracao/autogestao.
 - Se o template for `wizard`, use copy de etapas e progressao.
 - Se o template for `dashboard`, use copy orientada a visao geral, metricas e acompanhamento.
 - Se o template for `crud`, use copy de cadastro/listagem com valor percebido.
+- Quando a tela tiver lista, pense em termos de operacao: busca, monitoramento, historico, fila, registros, acompanhamento.
 - Prefira textos que transmitam clareza, confianca e valor percebido.
 - Os highlights devem parecer beneficios reais da experiencia, nunca instrucoes internas do sistema.
 - Se houver memoria do projeto, reaproveite os padroes bem avaliados e evite repetir achados recorrentes.
-- Se houver contexto de reparo, use-o para evitar repetir os mesmos problemas da tentativa anterior.
+- Se houver referencias de design, prefira os padroes de mesmo dominio e template antes de inventar uma abordagem nova.
+- Se houver objetivos de reparo, use-os apenas para evitar repetir problemas de copy ou hierarquia.
+- Nao use na interface palavras como: criterio de aceite, requisito, regra de negocio, QA, validacao tecnica, arquitetura, rastreabilidade, permissao por perfil, passos da implementacao.
+- Evite qualquer um destes sinais de interface fraca:
+  - titulo generico como "Execute esta jornada" ou "Preencha os dados"
+  - descricoes vagas sem valor percebido
+  - highlights que so repetem validacao, sucesso ou erro
+  - nomes de lista como "Ultimos registros" quando houver nome melhor para o dominio
+  - estados vazios frios ou burocraticos
+- Se o dominio for pouco especifico, ainda assim escolha uma linguagem mais forte e comercialmente madura.
 - Retorne APENAS JSON valido, sem markdown.
 
 Formato:

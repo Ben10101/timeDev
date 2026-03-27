@@ -27,6 +27,7 @@ import {
   getTaskImplementationStatus,
   listProjects,
   listProjectTasks,
+  planTaskImplementation,
   runTaskImplementation,
 } from '../services/api';
 
@@ -76,6 +77,29 @@ function ScoreBadge({ value }) {
   return <span className={`dashboard-badge ${tone}`}>{Number.isFinite(numeric) ? `${numeric}/100` : 'sem score'}</span>;
 }
 
+function RiskBadge({ value }) {
+  const normalized = String(value || 'unknown');
+  const tone =
+    normalized === 'high'
+      ? 'bg-rose-50 text-rose-700'
+      : normalized === 'medium'
+        ? 'bg-amber-50 text-amber-700'
+        : normalized === 'low'
+          ? 'bg-emerald-50 text-emerald-700'
+          : 'bg-slate-100 text-slate-600';
+
+  const label =
+    normalized === 'high'
+      ? 'risco alto'
+      : normalized === 'medium'
+        ? 'risco medio'
+        : normalized === 'low'
+          ? 'risco baixo'
+          : 'risco n/a';
+
+  return <span className={`dashboard-badge ${tone}`}>{label}</span>;
+}
+
 function downloadMarkdownFile(filename, content) {
   const blob = new Blob([content || ''], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -88,6 +112,16 @@ function downloadMarkdownFile(filename, content) {
   URL.revokeObjectURL(url);
 }
 
+function parseJsonContent(content) {
+  if (!content) return null;
+
+  try {
+    return JSON.parse(content);
+  } catch {
+    return null;
+  }
+}
+
 function getArchitectureStateLabel(architectureStatus) {
   if (!architectureStatus?.hasArchitecture) return 'Pendente';
   if (architectureStatus?.architectureNeedsRefresh) return 'Desatualizada';
@@ -95,7 +129,7 @@ function getArchitectureStateLabel(architectureStatus) {
   return 'Pendente de aprovação';
 }
 
-function getCodeStudioNextStep({ selectedProject, architectureStatus, readyTasks, integratedTasks, generatedApp }) {
+function getCodeStudioNextStep({ selectedProject, architectureStatus, readyTasks, plannedTasks, integratedTasks, generatedApp }) {
   if (!selectedProject) {
     return {
       title: 'Escolha um projeto para abrir o handoff técnico',
@@ -144,6 +178,14 @@ function getCodeStudioNextStep({ selectedProject, architectureStatus, readyTasks
     };
   }
 
+  if (plannedTasks.length < readyTasks.length) {
+    return {
+      title: 'Existem stories prontas aguardando plano técnico',
+      message: `${readyTasks.length - plannedTasks.length} histórias ainda podem ganhar technical spec e plano antes da integração.`,
+      tone: 'blue',
+    };
+  }
+
   if (integratedTasks.length < readyTasks.length) {
     return {
       title: 'Existem stories prontas aguardando integração',
@@ -159,6 +201,100 @@ function getCodeStudioNextStep({ selectedProject, architectureStatus, readyTasks
   };
 }
 
+function normalizePlanningText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function getImplementationOrder(task, implementation) {
+  const source = normalizePlanningText(`${task?.title || ''} ${task?.description || ''}`);
+  const rules = [
+    {
+      stage: 'Fundação',
+      rank: 1,
+      reason: 'Cria base de acesso, identidade ou configuração central para outras jornadas.',
+      keywords: ['login', 'autentic', 'cadastro', 'conta', 'perfil', 'permiss', 'usuario', 'workspace', 'organiz'],
+    },
+    {
+      stage: 'Modelo e dados',
+      rank: 2,
+      reason: 'Define entidades, disponibilidade, cadastros centrais ou estrutura principal do domínio.',
+      keywords: ['paciente', 'cliente', 'medico', 'profissional', 'agenda', 'disponibilidade', 'categoria', 'centro de custo', 'registro', 'cadastro de', 'configur'],
+    },
+    {
+      stage: 'Fluxo principal',
+      rank: 3,
+      reason: 'Entrega a jornada principal do produto e costuma destravar valor direto para o usuário.',
+      keywords: ['agendar', 'abrir chamado', 'abrir', 'solicitar', 'criar', 'remarcar', 'cancelar', 'enviar', 'registrar atendimento', 'checkout', 'matricula'],
+    },
+    {
+      stage: 'Operação e suporte',
+      rank: 4,
+      reason: 'Melhora acompanhamento, comunicação, filtros, histórico e eficiência operacional.',
+      keywords: ['historico', 'comentario', 'filtro', 'buscar', 'busca', 'lembrete', 'notific', 'status', 'acompanhar', 'painel', 'fila'],
+    },
+    {
+      stage: 'Expansão e gestão',
+      rank: 5,
+      reason: 'Amplia governança, análise, relatórios e funções administrativas depois do fluxo base.',
+      keywords: ['relatorio', 'dashboard', 'metric', 'governanca', 'auditoria', 'sla', 'admin', 'finance', 'exportar'],
+    },
+  ];
+
+  const matchedRule =
+    rules.find((rule) => rule.keywords.some((keyword) => source.includes(keyword))) ||
+    rules[2];
+
+  const hasPlan = Boolean(implementation?.technicalSpecArtifact || implementation?.implementationPlanArtifact);
+  const statusWeight =
+    implementation?.status === 'integrated'
+      ? 50
+      : implementation?.status === 'in_progress'
+        ? 40
+        : implementation?.status === 'planned'
+          ? 30
+          : hasPlan
+            ? 20
+            : 0;
+
+  return {
+    stage: matchedRule.stage,
+    rank: matchedRule.rank,
+    reason: matchedRule.reason,
+    sortKey: matchedRule.rank * 100 + statusWeight,
+    hasPlan,
+  };
+}
+
+function getImplementationPrecedence(entries) {
+  return entries.map((entry, index) => {
+    const blockers = entries
+      .slice(0, index)
+      .filter((candidate) => candidate.order.rank < entry.order.rank)
+      .filter((candidate) => candidate.implementation?.status !== 'integrated')
+      .slice(0, 3)
+      .map((candidate) => ({
+        uuid: candidate.task.uuid,
+        title: candidate.task.title,
+        stage: candidate.order.stage,
+        status: candidate.implementation?.status || 'não iniciado',
+      }));
+
+    const unlocks = entries
+      .slice(index + 1)
+      .filter((candidate) => candidate.order.rank > entry.order.rank).length;
+
+    return {
+      ...entry,
+      blockers,
+      unlocks,
+      canStartNow: blockers.length === 0,
+    };
+  });
+}
+
 export default function CodeStudioPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -169,6 +305,7 @@ export default function CodeStudioPage() {
   const [implementationMap, setImplementationMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [runningTaskUuid, setRunningTaskUuid] = useState(null);
+  const [planningTaskUuid, setPlanningTaskUuid] = useState(null);
   const [isGeneratingApplication, setIsGeneratingApplication] = useState(false);
   const [generationProgress, setGenerationProgress] = useState('');
   const [error, setError] = useState(null);
@@ -294,6 +431,23 @@ export default function CodeStudioPage() {
     }
   }
 
+  async function handlePlanImplementation(taskUuid) {
+    if (!selectedProjectUuid) return;
+
+    setPlanningTaskUuid(taskUuid);
+    setError(null);
+
+    try {
+      await bootstrapGeneratedApp(selectedProjectUuid);
+      await planTaskImplementation(taskUuid);
+      await loadProjectWorkspace(selectedProjectUuid);
+    } catch (planError) {
+      setError(getApiErrorMessage(planError, 'Não foi possível gerar o plano técnico da task.'));
+    } finally {
+      setPlanningTaskUuid(null);
+    }
+  }
+
   async function handleGenerateApplication() {
     if (!selectedProjectUuid || !readyTasks.length) return;
 
@@ -304,7 +458,7 @@ export default function CodeStudioPage() {
     try {
       await bootstrapGeneratedApp(selectedProjectUuid);
 
-      const tasksToRun = readyTasks.filter((task) => {
+      const tasksToRun = orderedReadyTasks.map(({ task }) => task).filter((task) => {
         const implementation = implementationMap[task.uuid];
         return implementation?.status !== 'integrated';
       });
@@ -344,8 +498,38 @@ export default function CodeStudioPage() {
   }
 
   const readyTasks = useMemo(() => tasks.filter((task) => task.status === 'done'), [tasks]);
+  const orderedReadyTasks = useMemo(
+    () =>
+      getImplementationPrecedence(
+        [...readyTasks]
+          .map((task) => ({
+            task,
+            implementation: implementationMap[task.uuid] || null,
+            order: getImplementationOrder(task, implementationMap[task.uuid]),
+          }))
+          .sort((left, right) => left.order.sortKey - right.order.sortKey || left.task.title.localeCompare(right.task.title))
+      ),
+    [readyTasks, implementationMap]
+  );
+  const executionReadyTasks = useMemo(
+    () =>
+      orderedReadyTasks.filter((entry) => entry.canStartNow && entry.implementation?.status !== 'integrated'),
+    [orderedReadyTasks]
+  );
+  const blockedReadyTasks = useMemo(
+    () => orderedReadyTasks.filter((entry) => !entry.canStartNow),
+    [orderedReadyTasks]
+  );
   const integratedTasks = useMemo(
     () => readyTasks.filter((task) => implementationMap[task.uuid]?.status === 'integrated'),
+    [readyTasks, implementationMap]
+  );
+  const plannedTasks = useMemo(
+    () =>
+      readyTasks.filter((task) => {
+        const implementation = implementationMap[task.uuid];
+        return Boolean(implementation?.technicalSpecArtifact || implementation?.implementationPlanArtifact);
+      }),
     [readyTasks, implementationMap]
   );
   const selectedImplementation = selectedTaskUuid ? implementationMap[selectedTaskUuid] : null;
@@ -358,16 +542,35 @@ export default function CodeStudioPage() {
   }, [projectQuery, projects]);
   const filteredReadyTasks = useMemo(() => {
     const query = readyTaskQuery.trim().toLowerCase();
-    if (!query) return readyTasks;
-    return readyTasks.filter((task) =>
-      `${task.title} ${task.description || ''}`.toLowerCase().includes(query)
+    if (!query) return orderedReadyTasks;
+    return orderedReadyTasks.filter(({ task, order }) =>
+      `${task.title} ${task.description || ''} ${order.stage} ${order.reason}`.toLowerCase().includes(query)
     );
-  }, [readyTaskQuery, readyTasks]);
+  }, [readyTaskQuery, orderedReadyTasks]);
   const architectureStateLabel = getArchitectureStateLabel(architectureStatus);
+  const selectedImplementationPlan = useMemo(
+    () => parseJsonContent(selectedImplementation?.implementationPlanArtifact?.content),
+    [selectedImplementation]
+  );
+  const selectedImpactAnalysis = useMemo(
+    () => parseJsonContent(selectedImplementation?.impactArtifact?.content),
+    [selectedImplementation]
+  );
+  const selectedReuseHints =
+    selectedImplementationPlan?.reuseGuidance || selectedImpactAnalysis?.reuseHints || null;
+  const selectedExecutionState = useMemo(
+    () => parseJsonContent(selectedImplementation?.executionStateArtifact?.content),
+    [selectedImplementation]
+  );
+  const selectedDiffReview = useMemo(
+    () => parseJsonContent(selectedImplementation?.diffReviewArtifact?.content),
+    [selectedImplementation]
+  );
   const nextStep = getCodeStudioNextStep({
     selectedProject,
     architectureStatus,
     readyTasks,
+    plannedTasks,
     integratedTasks,
     generatedApp,
   });
@@ -421,6 +624,9 @@ export default function CodeStudioPage() {
               <p><strong>Stack:</strong> {generatedApp?.stackPreset || 'Full stack padrao'}</p>
               <p><strong>Local:</strong> {generatedApp?.rootPath || 'Será criado quando a arquitetura ou a implementação rodar.'}</p>
               <p><strong>Stories prontas:</strong> {readyTasks.length}</p>
+              <p><strong>Prontas para iniciar agora:</strong> {executionReadyTasks.length}</p>
+              <p><strong>Com bloqueios sugeridos:</strong> {blockedReadyTasks.length}</p>
+              <p><strong>Planos tecnicos:</strong> {plannedTasks.length}</p>
               <p><strong>Integradas:</strong> {integratedTasks.length}</p>
             </div>
           </section>
@@ -484,7 +690,7 @@ export default function CodeStudioPage() {
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+            <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-1">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Arquitetura</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">
@@ -494,6 +700,14 @@ export default function CodeStudioPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Stories prontas</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">{readyTasks.length}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Prontas agora</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{executionReadyTasks.length}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Com bloqueios</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{blockedReadyTasks.length}</p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Integradas</p>
@@ -506,7 +720,7 @@ export default function CodeStudioPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard icon={Layers3} label="Projeto ativo" value={selectedProject ? 'pronto' : 'pendente'} hint={selectedProject?.name || 'Escolha um projeto para começar'} tone="blue" />
           <MetricCard icon={Braces} label="App base" value={generatedApp?.status || 'pendente'} hint={generatedApp?.rootPath || 'Será materializado na geração'} tone="emerald" />
-          <MetricCard icon={CheckCircle2} label="Stories prontas" value={readyTasks.length} hint={`${integratedTasks.length} já integradas`} tone="amber" />
+          <MetricCard icon={CheckCircle2} label="Stories prontas" value={readyTasks.length} hint={`${executionReadyTasks.length} prontas agora · ${integratedTasks.length} integradas`} tone="amber" />
           <MetricCard icon={Cpu} label="Pipeline IA" value={`${operationsOverview?.summary?.p95RunDurationSeconds || 0}s`} hint={`${operationsOverview?.summary?.successRatePercent || 0}% de sucesso · ${operationsOverview?.summary?.failedRuns || 0} falhas`} tone="slate" />
         </div>
 
@@ -542,12 +756,16 @@ export default function CodeStudioPage() {
                 <p className="mt-2 text-sm font-semibold text-slate-900">{generatedApp?.status || 'Pendente'}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Integração</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Planos tecnicos</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">{plannedTasks.length}/{readyTasks.length}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Confiabilidade</p>
                 <p className="mt-2 text-sm font-semibold text-slate-900">{operationsOverview?.summary?.successRatePercent || 0}% de sucesso</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Integração</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Pipeline</p>
@@ -847,9 +1065,10 @@ export default function CodeStudioPage() {
             {loading ? (
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">Carregando estágio técnico...</div>
             ) : readyTasks.length ? (
-              filteredReadyTasks.map((task) => {
+              filteredReadyTasks.map(({ task, order, blockers, unlocks, canStartNow }) => {
                 const implementation = implementationMap[task.uuid] || null;
                 const isSelected = selectedTaskUuid === task.uuid;
+                const hasTechnicalPlan = Boolean(implementation?.technicalSpecArtifact || implementation?.implementationPlanArtifact);
 
                 return (
                   <div
@@ -860,6 +1079,17 @@ export default function CodeStudioPage() {
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
+                        <div className="mb-2 flex flex-wrap gap-2">
+                          <span className="dashboard-badge bg-blue-50 text-[#102a72]">
+                            Ordem sugerida #{order.rank}
+                          </span>
+                          <span className="dashboard-badge bg-slate-100 text-slate-700">
+                            {order.stage}
+                          </span>
+                          <span className={`dashboard-badge ${canStartNow ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                            {canStartNow ? 'Pronta para iniciar' : 'Aguardando dependências'}
+                          </span>
+                        </div>
                         <h3 className="text-base font-semibold text-slate-900">{task.title}</h3>
                         <p className="mt-2 text-sm leading-6 text-slate-500">{task.description || 'Sem contexto adicional.'}</p>
                       </div>
@@ -882,7 +1112,26 @@ export default function CodeStudioPage() {
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                         <strong>Template:</strong> {implementation?.qualitySummary?.screenTemplate || 'n/a'}
                       </div>
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        <strong>Plano técnico:</strong> {hasTechnicalPlan ? 'Disponível' : 'Pendente'}
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600 sm:col-span-2">
+                        <strong>Por que agora:</strong> {order.reason}
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        <strong>Destrava:</strong> {unlocks} story{unlocks === 1 ? '' : 's'}
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        <strong>Bloqueios:</strong> {blockers.length ? `${blockers.length} antes desta` : 'Nenhum'}
+                      </div>
                     </div>
+
+                    {!!blockers.length && (
+                      <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                        <strong>Bloqueada por:</strong>{' '}
+                        {blockers.map((blocker) => blocker.title).join(' · ')}
+                      </div>
+                    )}
 
                     <div className="mt-4 flex flex-col gap-3 sm:flex-row">
                       <button
@@ -898,12 +1147,40 @@ export default function CodeStudioPage() {
                         Ver detalhes técnicos
                       </button>
                       <button
+                        onClick={() => handlePlanImplementation(task.uuid)}
+                        disabled={planningTaskUuid === task.uuid || runningTaskUuid === task.uuid || !architectureStatus?.canGenerateCode || !canStartNow}
+                        className="dashboard-button-secondary"
+                        title={
+                          !architectureStatus?.canGenerateCode
+                            ? architectureStatus?.blockers?.[0]
+                            : !canStartNow
+                              ? 'Finalize as stories que destravam esta implementação antes de planejar.'
+                              : 'Gera technical spec, plano de implementação e estratégia antes da integração.'
+                        }
+                      >
+                        <Layers3 className="h-4 w-4" />
+                        {planningTaskUuid === task.uuid ? 'Planejando...' : hasTechnicalPlan ? 'Atualizar plano' : 'Gerar plano técnico'}
+                      </button>
+                      <button
                         onClick={() => handleRunImplementation(task.uuid)}
-                        disabled={runningTaskUuid === task.uuid || !architectureStatus?.canGenerateCode}
+                        disabled={runningTaskUuid === task.uuid || planningTaskUuid === task.uuid || !architectureStatus?.canGenerateCode || !canStartNow}
                         className="dashboard-button-primary"
+                        title={
+                          !canStartNow
+                            ? 'A ordem sugerida indica stories anteriores que deveriam entrar antes desta.'
+                            : !hasTechnicalPlan
+                              ? 'Se não existir plano técnico, o studio cria um automaticamente antes da integração.'
+                              : undefined
+                        }
                       >
                         <Hammer className="h-4 w-4" />
-                        {runningTaskUuid === task.uuid ? 'Integrando...' : implementation?.status === 'integrated' ? 'Regerar integração' : 'Integrar story'}
+                        {runningTaskUuid === task.uuid
+                          ? 'Integrando...'
+                          : implementation?.status === 'integrated'
+                            ? 'Regerar integração'
+                            : implementation?.status === 'planned'
+                              ? 'Integrar story'
+                              : 'Integrar direto'}
                       </button>
                       <button
                         onClick={() => navigate(`/projects/${selectedProjectUuid}/tasks/${task.uuid}`)}
@@ -940,6 +1217,7 @@ export default function CodeStudioPage() {
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Resumo</p>
                 <div className="mt-4 space-y-3 text-sm text-slate-700">
                   <p><strong>Status:</strong> {selectedImplementation.status}</p>
+                  <p><strong>Fase atual:</strong> {selectedExecutionState?.phaseLabel || 'n/a'}</p>
                   <p><strong>Review:</strong> {selectedImplementation.qualitySummary?.reviewStatus || 'n/a'}</p>
                   <p><strong>Specialist review:</strong> {selectedImplementation.qualitySummary?.specialistReviewStatus || 'n/a'}</p>
                   <p><strong>Score:</strong> {selectedImplementation.qualitySummary?.score ?? 'n/a'}</p>
@@ -953,6 +1231,7 @@ export default function CodeStudioPage() {
                   <p><strong>UX:</strong> {selectedImplementation.qualitySummary?.uxScore ?? 'n/a'}</p>
                   <p><strong>Arquitetura:</strong> {selectedImplementation.qualitySummary?.specialistArchitectureScore ?? 'n/a'}</p>
                   <p><strong>Validação:</strong> {selectedImplementation.qualitySummary?.validationScore ?? 'n/a'}</p>
+                  <p><strong>Risco:</strong> {selectedDiffReview?.summary?.riskLevel || 'n/a'}</p>
                   <p><strong>Build:</strong> {selectedImplementation.buildStatus || 'n/a'}</p>
                   <p><strong>Testes:</strong> {selectedImplementation.testStatus || 'n/a'}</p>
                   <p><strong>Template:</strong> {selectedImplementation.qualitySummary?.screenTemplate || 'n/a'}</p>
@@ -1007,6 +1286,222 @@ export default function CodeStudioPage() {
                 )}
               </div>
             </div>
+            {selectedExecutionState && (
+              <div className="px-6 pb-6">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Execução incremental</p>
+                      <p className="mt-2 text-lg font-semibold text-slate-900">{selectedExecutionState.phaseLabel || 'Fase atual'}</p>
+                    </div>
+                    <span className="dashboard-badge bg-slate-100 text-slate-700">
+                      {typeof selectedExecutionState.progressPercent === 'number' ? `${selectedExecutionState.progressPercent}%` : 'sem progresso'}
+                    </span>
+                  </div>
+                  <p className="mt-4 text-sm leading-6 text-slate-600">
+                    {selectedExecutionState.headline || 'A execução técnica segue a trilha incremental do studio.'}
+                  </p>
+                  {!!selectedExecutionState.notes?.length && (
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      {selectedExecutionState.notes.slice(0, 6).map((note, index) => (
+                        <div key={`${selectedExecutionState.phase}-${index}`} className="rounded-lg bg-white px-4 py-3 text-sm text-slate-700">
+                          {note}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {(selectedExecutionState.currentWorkstreams?.length || selectedExecutionState.completedWorkstreams?.length) > 0 && (
+                    <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                      <div className="rounded-lg bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Workstreams ativos</p>
+                        <div className="mt-3 space-y-2 text-sm text-slate-700">
+                          {(selectedExecutionState.currentWorkstreams || []).map((stream) => (
+                            <div key={stream.id}>
+                              <strong>{stream.label}</strong>
+                              {stream.goal ? <span> · {stream.goal}</span> : null}
+                            </div>
+                          ))}
+                          {!selectedExecutionState.currentWorkstreams?.length && <div>Nenhum workstream ativo nesta fase.</div>}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Workstreams concluídos</p>
+                        <div className="mt-3 space-y-2 text-sm text-slate-700">
+                          {(selectedExecutionState.completedWorkstreams || []).slice(-4).map((stream) => (
+                            <div key={`${stream.id}-done`}>
+                              <strong>{stream.label}</strong>
+                              {stream.goal ? <span> · {stream.goal}</span> : null}
+                            </div>
+                          ))}
+                          {!selectedExecutionState.completedWorkstreams?.length && <div>Nenhum workstream concluído ainda.</div>}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {selectedReuseHints && (
+              <div className="px-6 pb-6">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Memória e padrão do projeto</p>
+                  <div className="mt-4 grid gap-4 xl:grid-cols-3">
+                    <div className="rounded-lg bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Template preferido</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {selectedReuseHints.preferredScreenTemplate || 'Sem preferência consolidada'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-white p-4 xl:col-span-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Referências do mesmo domínio</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        {(selectedReuseHints.domainReferences || []).slice(0, 3).map((item) => (
+                          <div key={`${item.featureKey}-${item.route || 'route'}`} className="rounded-lg border border-slate-200 px-3 py-2">
+                            <p className="font-semibold text-slate-900">{item.featureKey}</p>
+                            <p className="mt-1 text-slate-600">{item.route || 'Sem rota registrada'} · {item.reason || 'Referência útil'}</p>
+                          </div>
+                        ))}
+                        {!selectedReuseHints.domainReferences?.length && <div>Nenhuma referência forte do mesmo domínio ainda.</div>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                    <div className="rounded-lg bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Referências do mesmo template</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        {(selectedReuseHints.templateReferences || []).slice(0, 3).map((item) => (
+                          <div key={`${item.featureKey}-${item.route || 'route'}-template`}>
+                            {item.featureKey} · {item.route || 'Sem rota'}
+                          </div>
+                        ))}
+                        {!selectedReuseHints.templateReferences?.length && <div>Nenhuma referência forte do mesmo template ainda.</div>}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Anti-padrões recorrentes</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        {(selectedReuseHints.recurringAntiPatterns || []).slice(0, 4).map((item) => (
+                          <div key={item.code}>{item.code} · {item.count}x</div>
+                        ))}
+                        {!selectedReuseHints.recurringAntiPatterns?.length && <div>Nenhum anti-padrão recorrente registrado.</div>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {selectedDiffReview && (
+              <div className="px-6 pb-6">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Revisão de diff e risco</p>
+                      <p className="mt-2 text-lg font-semibold text-slate-900">
+                        {selectedDiffReview.summary?.headline || 'Resumo da mudança não disponível'}
+                      </p>
+                    </div>
+                    <RiskBadge value={selectedDiffReview.summary?.riskLevel} />
+                  </div>
+                  <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                    <div className="rounded-lg bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Áreas tocadas</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        {(selectedDiffReview.summary?.changedAreas || []).map((item) => (
+                          <div key={item}>{item}</div>
+                        ))}
+                        {!selectedDiffReview.summary?.changedAreas?.length && <div>Nenhuma área consolidada.</div>}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Recomendação</p>
+                      <p className="mt-3 text-sm leading-6 text-slate-700">
+                        {selectedDiffReview.summary?.recommendation || 'Sem recomendação registrada.'}
+                      </p>
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2 text-sm text-slate-700">
+                        <div><strong>Score de risco:</strong> {selectedDiffReview.summary?.riskScore ?? 'n/a'}</div>
+                        <div><strong>Repair attempts:</strong> {selectedDiffReview.qualitySignals?.repairAttempts ?? 'n/a'}</div>
+                        <div><strong>Review:</strong> {selectedDiffReview.qualitySignals?.reviewScore ?? 'n/a'}</div>
+                        <div><strong>Traceability:</strong> {selectedDiffReview.qualitySignals?.traceabilityScore ?? 'n/a'}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="px-6 pb-6">
+              <div className="grid gap-4 lg:grid-cols-4">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Technical spec</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {selectedImplementation.technicalSpecArtifact?.title || 'Ainda não gerado'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Plano de implementação</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {selectedImplementation.implementationPlanArtifact?.title || 'Ainda não gerado'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Estratégia de execução</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {selectedImplementation.strategyArtifact?.title || 'Ainda não gerada'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Análise de impacto</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {selectedImplementation.impactArtifact?.title || 'Ainda não gerada'}
+                  </p>
+                </div>
+              </div>
+            </div>
+            {(selectedImpactAnalysis || selectedImplementationPlan) && (
+              <div className="grid gap-4 px-6 pb-6 xl:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Objetivo e impacto</p>
+                  <div className="mt-4 space-y-3 text-sm text-slate-700">
+                    <p><strong>Objetivo:</strong> {selectedImpactAnalysis?.executionIntent?.primaryGoal || selectedImplementationPlan?.objective?.primaryGoal || 'n/a'}</p>
+                    <p><strong>Resultado esperado:</strong> {selectedImpactAnalysis?.executionIntent?.userOutcome || selectedImplementationPlan?.objective?.userOutcome || 'n/a'}</p>
+                    <p><strong>Capacidades afetadas:</strong> {(selectedImpactAnalysis?.affectedCapabilities || []).join(' · ') || 'n/a'}</p>
+                    <p><strong>Rota frontend:</strong> {selectedImpactAnalysis?.impactSurface?.frontend?.route || 'n/a'}</p>
+                    <p><strong>Rota backend:</strong> {selectedImpactAnalysis?.impactSurface?.backend?.routeBase || 'n/a'}</p>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Subtarefas reais</p>
+                  <div className="mt-4 space-y-3">
+                    {(selectedImplementationPlan?.workstreams || []).slice(0, 4).map((stream) => (
+                      <div key={stream.id} className="rounded-lg bg-white px-4 py-3 text-sm text-slate-700">
+                        <p className="font-semibold text-slate-900">{stream.label}</p>
+                        <p className="mt-1 leading-6 text-slate-600">{stream.goal}</p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Entregáveis: {(stream.deliverables || []).join(' · ') || 'n/a'}
+                        </p>
+                      </div>
+                    ))}
+                    {!selectedImplementationPlan?.workstreams?.length && (
+                      <div className="rounded-lg bg-white px-4 py-3 text-sm text-slate-500">
+                        O plano técnico ainda não detalhou workstreams para esta implementação.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+        {selectedTaskUuid && !selectedImplementation && (
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Detalhe técnico</p>
+              <h2 className="mt-2 text-2xl font-bold text-slate-900">A implementação ainda não começou</h2>
+            </div>
+            <div className="p-6">
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
+                Gere um plano técnico ou integre a story para abrir technical spec, estratégia, arquivos e relatórios desta implementação.
+              </div>
+            </div>
           </section>
         )}
         {!selectedTaskUuid && readyTasks.length > 0 && (
@@ -1018,6 +1513,28 @@ export default function CodeStudioPage() {
             <div className="p-6">
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
                 Abra uma das stories prontas acima para ver score, arquivos gerados, achados e rastreabilidade da implementação.
+              </div>
+            </div>
+            <div className="px-6 pb-6">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Technical spec</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    Disponível depois do plano técnico
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Plano de implementação</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    Disponível depois do planejamento
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Estratégia de execução</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    Disponível quando uma story for planejada
+                  </p>
+                </div>
               </div>
             </div>
           </section>

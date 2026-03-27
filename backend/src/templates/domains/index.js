@@ -11,15 +11,19 @@ export function resolveDomainTemplate(domainKey, fallback = {}) {
     templateKey: 'generic/form',
     screenTemplate: 'crud',
     heroEyebrow: fallback.frontend?.navigationLabel || fallback.entityName,
-    heroTitle: fallback.frontend?.pageTitle || fallback.entityName,
-    heroDescription: fallback.frontend?.pageDescription || fallback.summary,
-    formCardTitle: 'Preencha os dados',
-    formCardDescription: 'Informe os dados necessários para continuar.',
-    recordsTitle: 'Últimos registros',
-    recordsEmptyState: 'Nenhum registro processado ainda.',
+    heroTitle: fallback.frontend?.pageTitle || `Conduza ${fallback.frontend?.navigationLabel || fallback.entityName || 'a operacao'} com mais clareza`,
+    heroDescription:
+      fallback.frontend?.pageDescription ||
+      fallback.summary ||
+      'Organize a acao principal desta area em uma experiencia mais clara, confiavel e pronta para uso.',
+    formCardTitle: 'Concluir operacao',
+    formCardDescription: 'Preencha apenas o essencial para avancar com seguranca e contexto.',
+    recordsTitle: 'Atividade recente',
+    recordsEmptyState: 'Nenhuma movimentacao registrada ainda nesta area.',
     highlights: [
-      'Validação básica aplicada aos campos principais.',
-      'Feedback imediato em caso de sucesso ou erro.',
+      'Fluxo desenhado para acelerar a operacao com menos friccao.',
+      'Leitura clara do proximo passo e do contexto desta tela.',
+      'Estado preparado para acompanhar evolucao e feedback do usuario.',
     ],
     profileSummaryTitle: 'Resumo da feature',
     profileSummaryDescription: fallback.summary,

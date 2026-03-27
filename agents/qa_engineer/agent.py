@@ -92,11 +92,111 @@ class QAEngineer:
                 "Se houver autosave definido no produto, o comportamento deve ser validado de ponta a ponta.",
             "A autenticacao do usuario deve ser verificada antes de permitir o envio do formulario.":
                 "Validar que o acesso ao fluxo respeita as regras de autenticacao e permissao definidas no produto.",
+            "Cobertura de código esperada: 80% em todos os cenarios":
+                "Cobertura esperada definida pelo time conforme criticidade da historia.",
+            "Cobertura esperada: 80% dos cenários de envio automático de lembretes":
+                "Cobertura esperada definida pelo time conforme criticidade da historia.",
+            "O sistema deve permitir ao paciente escolher o canal de lembrete (SMS ou e-mail), caso configuravel.":
+                "Validar o envio do lembrete pelos canais previstos no requisito.",
         }
 
         for source, target in replacements.items():
             text = text.replace(source, target)
 
+        text = re.sub(
+            r"cobertura\s+(?:de codigo\s+)?esperad[a|o]\s*:\s*\d+%\s*(?:dos|em)?[^.\n]*",
+            "Cobertura esperada definida pelo time conforme criticidade da historia.",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"o sistema deve permitir ao paciente escolher o canal de lembrete[^.\n]*",
+            "Validar o envio do lembrete pelos canais previstos no requisito.",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"interface de configuracao de canais de lembrete[^.\n]*",
+            "fluxo de envio de lembretes pelos canais previstos no requisito.",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"configurar envio de lembrete por\s+(sms|e-mail)",
+            r"acionar envio de lembrete por \1 conforme o fluxo previsto",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"canal escolhido",
+            "canal previsto",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"caso configuravel",
+            "conforme definido no produto",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"em ate \d+\s+segundos[^.\n]*",
+            "em tempo compativel com a experiencia definida pelo produto.",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\b\d+\s+lembretes?\s+simultaneos?[^.\n]*",
+            "em volume compativel com a demanda esperada do produto.",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\b\d+%\s+dos casos[^.\n]*",
+            "com taxa de entrega acompanhada conforme meta operacional definida pelo time.",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"paciente\s+altera\s+o\s+canal\s+de\s+comunicacao\s+preferencial[^.\n]*",
+            "Se o produto permitir alteracao de canal apos a marcacao, validar esse fluxo separadamente.",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"canal\s+preferencial", "canal de envio", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"escolha\s+do\s+canal\s+pe(?:lo|la)\s+paciente",
+            "definicao do canal no fluxo do produto",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"paciente\s+altera\s+a\s+preferencia\s+de\s+canal[^.\n]*",
+            "Se o produto permitir alteracao de canal apos a marcacao, validar esse fluxo separadamente.",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"no exato momento em que a consulta esta prestes a ocorrer",
+            "em momento compativel com a estrategia operacional definida pelo produto",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"(?im)^-\s*Performance:\s*$",
+            "- Performance: Validar tempo de resposta e estabilidade do envio conforme a experiencia esperada do produto.",
+            text,
+        )
+        text = re.sub(
+            r"(?im)^-\s*Confiabilidade:\s*$",
+            "- Confiabilidade: Validar registro de falhas e reprocessamento conforme politica operacional definida pelo produto.",
+            text,
+        )
+        text = re.sub(
+            r"(?im)^-\s*Observabilidade:\s*$",
+            "- Observabilidade: Validar disponibilidade de logs e sinais operacionais para acompanhar o envio dos lembretes.",
+            text,
+        )
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
@@ -166,6 +266,13 @@ Regras gerais:
 - Nao invente escopo fora da historia.
 - Nao invente comportamento de produto que nao esteja sustentado pelo requisito.
 - Se alguma regra nao estiver explicita no requisito, trate como ponto de verificacao ou risco, nunca como funcionalidade confirmada.
+- Nao transforme heuristica de QA em verdade do produto.
+- Nao introduza metas numericas arbitrarias, como cobertura de 80 por cento, sem fonte explicita.
+- Nao afirme canais configuraveis, links, janelas de envio, retries ou automatismos extras se isso nao estiver no requisito.
+- Nao introduza metas como 2 segundos, 99 por cento, 1000 eventos simultaneos ou volume especifico sem fonte explicita.
+- Se o requisito nao confirmar variacao de canal, alteracao de preferencia ou notificacao para equipe interna, trate isso como risco ou ponto a validar.
+- Quando o requisito citar "SMS ou e-mail", interprete isso como canais possiveis do fluxo, nao como escolha do paciente ou preferencia configuravel, salvo evidencia explicita.
+- Nao use verbos como "configurar", "escolher" ou "selecionar" para o canal de envio, salvo se o requisito disser isso explicitamente.
 - Seja especifico e economico em tokens.
 - Prefira bullets curtos e objetivos.
 - Nao inclua introducao nem conclusao.
@@ -189,8 +296,9 @@ Inclua testes unitarios, integracao, API, UI e E2E em no maximo 5 bullets.
 Inclua dados validos, invalidos, limites e cenarios de falha em no maximo 5 bullets.
 
 ## Riscos e metricas
-Liste cobertura esperada, riscos criticos e severidade em no maximo 5 bullets.
+Liste apenas riscos criticos, impacto e sinais operacionais de acompanhamento em no maximo 5 bullets.
 - Nao transforme risco em requisito.
+- Se a metrica nao estiver definida no requisito, use linguagem neutra como "acompanhar falhas", "acompanhar tempo de resposta" ou "acompanhar entrega".
 """
                 planning_result = self._generate_block(
                     planning_prompt,
@@ -214,6 +322,7 @@ Gere exatamente 10 itens numerados:
 - 5 cenarios de excecao numerados de 1. a 5.
 - Inclua explicitamente a expressao "Caminho Feliz" nos 5 primeiros itens.
 - Inclua explicitamente a expressao "Excecao" nos 5 ultimos itens.
+- Evite expressoes temporais fortes como "no exato momento", "imediatamente" ou equivalentes sem base no requisito.
 
 ## Casos de teste funcionais
 Gere pelo menos 3 casos numerados.
@@ -244,10 +353,13 @@ Liste exatamente 4 bullets, um para cada topico abaixo, usando explicitamente es
 - Confiabilidade:
 - Observabilidade:
 - Baseie os bullets no requisito e no fluxo descrito.
+- Nenhum bullet pode ficar vazio.
 - Se algo nao estiver explicito, escreva de forma neutra como verificacao operacional, sem inventar comportamento de produto.
+- Nao use numeros ou metas fechadas sem fonte no requisito.
 
 ## Usabilidade e acessibilidade
 Liste checks objetivos cobrindo heuristicas de Nielsen, leis de UX e WCAG em no maximo 4 bullets.
+- Se o requisito nao explicitar configuracoes de UI, trate como validacao de clareza, feedback, navegacao e acessibilidade, nao como feature confirmada.
 """
                 quality_result = self._generate_block(
                     quality_prompt,

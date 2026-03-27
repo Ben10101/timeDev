@@ -6,7 +6,7 @@ import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { prisma } from '../lib/prisma.js';
 import { resolveDomainTemplate } from '../templates/domains/index.js';
-import { materializeFullstackTemplate } from './generatedAppTemplateService.js';
+import { materializeFullstackTemplate, materializeFullstackTemplateSubset } from './generatedAppTemplateService.js';
 import { generateImplementationUi } from './implementationAiService.js';
 import { buildRuntimeAiEnvForUser } from './aiSettingsService.js';
 import { getProjectArchitectureStatus } from './projectDataService.js';
@@ -90,7 +90,62 @@ async function readText(targetPath, fallback = '') {
 
 async function writeText(targetPath, content) {
   await mkdir(path.dirname(targetPath), { recursive: true });
-  await writeFile(targetPath, content, 'utf8');
+  const normalizedContent = /[\\/]apps[\\/]web[\\/].+\.(tsx|ts|jsx|js)$|[\\/]packages[\\/]ui[\\/].+\.(tsx|ts|jsx|js)$/i.test(targetPath)
+    ? normalizeUiCopy(normalizeGeneratedCopy(content))
+    : normalizeGeneratedCopy(content);
+  await writeFile(targetPath, normalizedContent, 'utf8');
+}
+
+async function ensureGeneratedAppFoundation(project, generatedApp) {
+  if (!generatedApp?.rootPath || !project) return false;
+
+  const requiredFiles = [
+    'packages/ui/package.json',
+    'packages/ui/src/index.tsx',
+    'packages/config/package.json',
+  ];
+
+  const missingFiles = [];
+  for (const relativePath of requiredFiles) {
+    const absolutePath = path.join(generatedApp.rootPath, relativePath);
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await pathExists(absolutePath))) {
+      missingFiles.push(relativePath);
+    }
+  }
+
+  if (!missingFiles.length) {
+    return false;
+  }
+
+  const writtenFiles = await materializeFullstackTemplateSubset({
+    destinationRoot: generatedApp.rootPath,
+    projectName: project.name,
+    projectSlug: generatedApp.slug || slugify(project.slug || project.name, project.uuid),
+    includeRelativeRoots: ['packages/ui', 'packages/config'],
+  });
+
+  if (writtenFiles.length) {
+    await prisma.generatedFile.deleteMany({
+      where: {
+        generatedAppId: generatedApp.id,
+        taskImplementationId: null,
+        OR: [{ filePath: { startsWith: 'packages/ui/' } }, { filePath: { startsWith: 'packages/config/' } }],
+      },
+    });
+
+    await prisma.generatedFile.createMany({
+      data: writtenFiles.map((file) => ({
+        generatedAppId: generatedApp.id,
+        filePath: file.relativePath,
+        fileType: file.fileType,
+        changeType: 'created',
+        checksum: file.checksum,
+      })),
+    });
+  }
+
+  return true;
 }
 
 async function removeFileIfExists(targetPath) {
@@ -129,6 +184,71 @@ function truncateText(value, maxLength = 2000) {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
+function repairEncodingArtifacts(value) {
+  let current = String(value || '');
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!hasEncodingArtifacts(current)) break;
+
+    const candidate = Buffer.from(current, 'latin1').toString('utf8');
+    if (!candidate || candidate === current) break;
+
+    const candidateArtifacts = (candidate.match(/(?:Ã.|Â.|â.|ï¿½|�)/g) || []).length;
+    const currentArtifacts = (current.match(/(?:Ã.|Â.|â.|ï¿½|�)/g) || []).length;
+    if (candidateArtifacts > currentArtifacts) break;
+
+    current = candidate;
+  }
+
+  return current;
+}
+
+function toAsciiUiText(value) {
+  return repairEncodingArtifacts(value)
+    .replace(/⊘/g, 'O')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trimEnd();
+}
+
+function normalizeUiCopy(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeUiCopy(item));
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, normalizeUiCopy(item)])
+    );
+  }
+
+  if (typeof value === 'string') {
+    return toAsciiUiText(value);
+  }
+
+  return value;
+}
+
+function normalizeGeneratedCopy(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeGeneratedCopy(item));
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, normalizeGeneratedCopy(item)])
+    );
+  }
+
+  if (typeof value === 'string') {
+    return repairEncodingArtifacts(value).replace(/\s+\n/g, '\n').trimEnd();
+  }
+
+  return value;
+}
+
 function getAiGovernanceVersionMeta() {
   return {
     policyVersion: process.env.AI_POLICY_VERSION || 'v1',
@@ -147,6 +267,78 @@ function compactValidationSummary(validationSummary = []) {
 
 function compactExperienceGoals(goals = []) {
   return (goals || []).map((item) => truncateText(item, 140)).slice(0, 4);
+}
+
+function compactUiFieldsForGeneration(fields = []) {
+  return (fields || []).slice(0, 6).map((field) => ({
+    name: field.name,
+    label: field.label,
+    inputType: field.inputType,
+    required: Boolean(field.required),
+    options: Array.isArray(field.selectOptions) ? field.selectOptions.slice(0, 5) : [],
+  }));
+}
+
+function sanitizeUiStatesForGeneration(uiStates = {}) {
+  return {
+    loading: truncateText(uiStates?.loading || 'Carregando a experiencia principal da tela.', 120),
+    empty: truncateText(uiStates?.empty || 'Nenhum registro disponivel ainda.', 120),
+    success: truncateText(uiStates?.success || 'Operacao concluida com sucesso.', 120),
+  };
+}
+
+function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
+  const screenTemplate =
+    technicalSpec.architecture?.screenTemplate ||
+    technicalSpec.structured?.classification?.screenTemplate ||
+    'crud';
+  const domainTemplate = getDomainTemplate(technicalSpec);
+  const reuseHints = buildProjectMemoryReuseHints(technicalSpec.projectMemory, technicalSpec, task.title);
+
+  return {
+    taskTitle: task.title,
+    summary: technicalSpec.summary,
+    frontendRoute: technicalSpec.frontend?.suggestedRoute,
+    screenTemplate,
+    submitLabel: technicalSpec.domain?.submitLabel,
+    navigationLabel: technicalSpec.frontend?.navigationLabel,
+    pageTitle: technicalSpec.frontend?.pageTitle,
+    pageDescription: technicalSpec.frontend?.pageDescription,
+    userValue: technicalSpec.implementationObjective?.userOutcome || technicalSpec.summary,
+    uiRole:
+      screenTemplate === 'settings'
+        ? 'configuracao'
+        : screenTemplate === 'dashboard'
+          ? 'acompanhamento'
+          : screenTemplate === 'wizard'
+            ? 'progressao'
+            : 'operacao',
+    actorLabel: technicalSpec.ux?.permissions?.actor || 'usuario',
+    fields: compactUiFieldsForGeneration(technicalSpec.domain?.fields),
+    uiStates: sanitizeUiStatesForGeneration(technicalSpec.ux?.states),
+    designReference: {
+      templateKey: technicalSpec.structured?.classification?.templateKey || domainTemplate.templateKey,
+      preferredScreenTemplate: reuseHints.preferredScreenTemplate || null,
+      domainReferences: reuseHints.domainReferences.slice(0, 2).map((item) => ({
+        featureKey: item.featureKey,
+        route: item.route,
+        reason: item.reason,
+      })),
+      templateReferences: reuseHints.templateReferences.slice(0, 2).map((item) => ({
+        featureKey: item.featureKey,
+        route: item.route,
+        reason: item.reason,
+      })),
+    },
+    repairGoals: repairContext
+      ? {
+          previousIssueCodes: (repairContext.findings || []).slice(0, 4).map((item) => item.code),
+          previousValidationFailures: (repairContext.validationFailures || [])
+            .slice(0, 3)
+            .map((item) => item.scriptName),
+        }
+      : null,
+  };
 }
 
 function compactProjectMemory(projectMemory) {
@@ -213,6 +405,70 @@ function normalizeSemanticText(value = '') {
     .toLowerCase();
 }
 
+function inferFeatureDomainKey(spec = {}) {
+  return (
+    spec?.structured?.classification?.domain ||
+    spec?.featureKey ||
+    spec?.backend?.routeBase ||
+    'generic'
+  );
+}
+
+function buildProjectMemoryReuseHints(projectMemory, technicalSpec, taskTitle = '') {
+  if (!projectMemory) {
+    return {
+      preferredScreenTemplate: null,
+      domainReferences: [],
+      templateReferences: [],
+      recurringAntiPatterns: [],
+    };
+  }
+
+  const domainKey = inferFeatureDomainKey(technicalSpec);
+  const screenTemplate = technicalSpec?.architecture?.screenTemplate || technicalSpec?.structured?.classification?.screenTemplate || null;
+  const taskSignals = extractSemanticSignals(taskTitle, technicalSpec?.featureKey, technicalSpec?.backend?.routeBase)
+    .map((item) => item.group);
+
+  const rankedPatterns = (projectMemory.featurePatterns || [])
+    .filter((item) => item.featureKey !== technicalSpec?.featureKey)
+    .map((item) => {
+      let score = 0;
+      if (item.domainKey === domainKey) score += 5;
+      if (screenTemplate && item.screenTemplate === screenTemplate) score += 3;
+      if (item.status === 'integrated') score += 2;
+      if ((item.score || 0) >= 90) score += 2;
+      if (taskSignals.some((signal) => (item.semanticGroups || []).includes(signal))) score += 2;
+      return { ...item, matchScore: score };
+    })
+    .filter((item) => item.matchScore > 0)
+    .sort((a, b) => b.matchScore - a.matchScore || (b.score || 0) - (a.score || 0));
+
+  const domainReferences = rankedPatterns.slice(0, 3).map((item) => ({
+    featureKey: item.featureKey,
+    route: item.route,
+    screenTemplate: item.screenTemplate,
+    score: item.score,
+    reason: item.domainKey === domainKey ? 'Mesmo domínio funcional' : 'Semântica próxima',
+  }));
+
+  const templateReferences = rankedPatterns
+    .filter((item) => item.screenTemplate === screenTemplate)
+    .slice(0, 3)
+    .map((item) => ({
+      featureKey: item.featureKey,
+      route: item.route,
+      score: item.score,
+      reason: 'Mesmo template visual',
+    }));
+
+  return {
+    preferredScreenTemplate: projectMemory.summary?.preferredScreenTemplate || null,
+    domainReferences,
+    templateReferences,
+    recurringAntiPatterns: (projectMemory.recurringFindings || []).slice(0, 4),
+  };
+}
+
 function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '') {
   const title = normalizeSemanticText(taskTitle);
   const feature = normalizeSemanticText(featureKey);
@@ -223,6 +479,8 @@ function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '')
     { group: 'module', aliases: ['modulo', 'modulos', 'modules', 'module'] },
     { group: 'lesson', aliases: ['aula', 'aulas', 'lessons', 'lesson'] },
     { group: 'material', aliases: ['material', 'materiais', 'pdf', 'video', 'audio'] },
+    { group: 'access-control', aliases: ['permissao', 'permissoes', 'acesso', 'role', 'roles', 'funcao', 'perfil de acesso'] },
+    { group: 'notification', aliases: ['notificacao', 'notificacoes', 'notificar', 'notification', 'notifications'] },
     { group: 'search', aliases: ['buscar', 'busca', 'search', 'pesquisa'] },
     { group: 'pricing', aliases: ['preco', 'valor', 'pricing', 'pagamento'] },
     { group: 'enrollment', aliases: ['inscricao', 'matricula', 'enrollment'] },
@@ -240,6 +498,8 @@ function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '')
 
 function getExpectedDomainKeywords(domainKey = '') {
   const catalog = {
+    'access-control': ['access', 'acesso', 'permission', 'permissao', 'role', 'funcao', 'perfil'],
+    'ticket-notification-preferences': ['notification', 'notificacao', 'email', 'alerta', 'ticket', 'chamado'],
     'course-catalog': ['course', 'courses', 'curso'],
     'course-modules': ['module', 'modules', 'modulo'],
     'course-lessons': ['lesson', 'lessons', 'aula'],
@@ -248,6 +508,7 @@ function getExpectedDomainKeywords(domainKey = '') {
     'course-search': ['search', 'busca', 'pesquisa', 'catalog'],
     'course-enrollment': ['enrollment', 'enrollments', 'matricula', 'inscricao'],
     'course-player': ['player', 'lesson', 'video', 'audio'],
+    'access-control-roles': ['access', 'acesso', 'permission', 'permissao', 'perfil', 'role', 'funcao'],
     'profile-settings': ['profile', 'perfil'],
     'auth-login': ['login', 'auth', 'signin'],
     'auth-register': ['register', 'signup', 'cadastro'],
@@ -283,6 +544,8 @@ function detectDomainMismatch(taskTitle = '', domainKey = '', featureKey = '', r
 function inferImplementedDomain(featureKey = '', routeBase = '') {
   const source = `${normalizeSemanticText(featureKey)} ${normalizeSemanticText(routeBase)}`;
   const candidates = [
+    'ticket-notification-preferences',
+    'access-control',
     'course-catalog',
     'course-modules',
     'course-lessons',
@@ -291,6 +554,7 @@ function inferImplementedDomain(featureKey = '', routeBase = '') {
     'course-search',
     'course-enrollment',
     'course-player',
+    'access-control-roles',
     'profile-settings',
     'auth-login',
     'auth-register',
@@ -304,6 +568,38 @@ function inferImplementedDomain(featureKey = '', routeBase = '') {
   }
 
   return 'custom';
+}
+
+function areDomainKeysAligned(expectedDomain = '', implementedDomain = '') {
+  const expected = normalizeSemanticText(expectedDomain);
+  const implemented = normalizeSemanticText(implementedDomain);
+
+  if (!expected || !implemented || expected === implemented) {
+    return Boolean(expected) && Boolean(implemented) ? expected === implemented : false;
+  }
+
+  const expectedBase = expected.split(/[-_/]/)[0];
+  const implementedBase = implemented.split(/[-_/]/)[0];
+  if (expectedBase && implementedBase && expectedBase === implementedBase) {
+    return true;
+  }
+
+  const expectedKeywords = new Set([
+    expected,
+    expectedBase,
+    ...getExpectedDomainKeywords(expected),
+  ].map((item) => normalizeSemanticText(item)).filter(Boolean));
+  const implementedKeywords = new Set([
+    implemented,
+    implementedBase,
+    ...getExpectedDomainKeywords(implemented),
+  ].map((item) => normalizeSemanticText(item)).filter(Boolean));
+
+  for (const keyword of expectedKeywords) {
+    if (implementedKeywords.has(keyword)) return true;
+  }
+
+  return false;
 }
 
 function buildTraceabilitySummary(task, implementation, technicalSpecContent, expectedDomain, implementedDomain) {
@@ -468,6 +764,39 @@ function parseJsonArtifactContent(artifact) {
   }
 }
 
+function getWorkstreamExecutionState(planContent, phaseId) {
+  const phases = planContent?.executionPhases || [];
+  const workstreams = planContent?.workstreams || [];
+  const currentPhaseIndex = phases.findIndex((phase) => phase.id === phaseId);
+  const currentPhase = currentPhaseIndex >= 0 ? phases[currentPhaseIndex] : null;
+
+  const completedWorkstreamIds = phases
+    .slice(0, currentPhaseIndex < 0 ? 0 : currentPhaseIndex)
+    .flatMap((phase) => phase.workstreams || []);
+  const activeWorkstreamIds = currentPhase?.workstreams || [];
+
+  const toView = (id) => {
+    const stream = workstreams.find((item) => item.id === id);
+    return stream
+      ? {
+          id: stream.id,
+          label: stream.label,
+          goal: stream.goal,
+        }
+      : {
+          id,
+          label: id,
+          goal: '',
+        };
+  };
+
+  return {
+    currentPhaseId: currentPhase?.id || null,
+    currentWorkstreams: activeWorkstreamIds.map(toView),
+    completedWorkstreams: completedWorkstreamIds.map(toView),
+  };
+}
+
 function buildImplementationQualitySummary({ task, implementation, reviewArtifact, specialistReviewArtifact, buildReportArtifact, testReportArtifact, lintReportArtifact }) {
   const reviewContent = parseJsonArtifactContent(reviewArtifact);
   const specialistReviewContent = parseJsonArtifactContent(specialistReviewArtifact);
@@ -549,6 +878,139 @@ function buildImplementationQualitySummary({ task, implementation, reviewArtifac
   };
 }
 
+function classifyImplementationRisk({ generatedFiles = [], technicalSpec, qualitySummary, repairAttempts = 0 }) {
+  const filePaths = (generatedFiles || []).map((file) => String(file.filePath || '').replace(/\\/g, '/'));
+  const touchesDatabase = filePaths.some((filePath) => filePath.endsWith('prisma/schema.prisma'));
+  const touchesSharedContracts = filePaths.some((filePath) => filePath.includes('packages/shared/src/contracts/'));
+  const touchesApiServer = filePaths.some((filePath) => filePath.endsWith('apps/api/src/server.ts'));
+  const touchesFrontendRouter = filePaths.some((filePath) => filePath.endsWith('apps/web/src/App.tsx'));
+  const totalFindings = Number(qualitySummary?.totalFindings || 0);
+  const highFindings = Number(qualitySummary?.findingsBySeverity?.high || 0);
+  const validationFailed = qualitySummary?.buildStatus !== 'completed' || qualitySummary?.testStatus !== 'completed' || qualitySummary?.lintStatus !== 'completed';
+  const traceabilityScore = Number(qualitySummary?.traceability?.traceabilityScore || 0);
+
+  let score = 0;
+  if (touchesDatabase) score += 3;
+  if (touchesSharedContracts) score += 3;
+  if (touchesApiServer) score += 2;
+  if (touchesFrontendRouter) score += 1;
+  score += Math.min(4, Math.floor(filePaths.length / 4));
+  score += highFindings * 3;
+  score += Math.min(4, Math.floor(totalFindings / 3));
+  score += repairAttempts > 0 ? Math.min(3, repairAttempts) : 0;
+  if (validationFailed) score += 3;
+  if (traceabilityScore > 0 && traceabilityScore < 70) score += 2;
+
+  const level = score >= 10 ? 'high' : score >= 5 ? 'medium' : 'low';
+
+  return {
+    level,
+    score,
+    signals: {
+      touchesDatabase,
+      touchesSharedContracts,
+      touchesApiServer,
+      touchesFrontendRouter,
+      totalFiles: filePaths.length,
+      repairAttempts,
+      totalFindings,
+      highFindings,
+      validationFailed,
+      traceabilityScore,
+    },
+  };
+}
+
+function buildImplementationDiffReview({ task, implementation, technicalSpec, qualitySummary, generatedFiles = [], repairAttempts = 0 }) {
+  const normalizedFiles = (generatedFiles || []).map((file) => ({
+    path: String(file.filePath || file.relativePath || '').replace(/\\/g, '/'),
+    type: file.fileType || 'unknown',
+    changeType: file.changeType || 'created',
+  }));
+
+  const grouped = {
+    frontend: normalizedFiles.filter((file) => file.path.startsWith('apps/web/')).map((file) => file.path),
+    backend: normalizedFiles.filter((file) => file.path.startsWith('apps/api/')).map((file) => file.path),
+    shared: normalizedFiles.filter((file) => file.path.startsWith('packages/shared/')).map((file) => file.path),
+    docs: normalizedFiles.filter((file) => file.path.startsWith('docs/')).map((file) => file.path),
+    database: normalizedFiles.filter((file) => file.path.endsWith('prisma/schema.prisma')).map((file) => file.path),
+  };
+
+  const risk = classifyImplementationRisk({
+    generatedFiles: normalizedFiles,
+    technicalSpec,
+    qualitySummary,
+    repairAttempts,
+  });
+
+  const summaryLines = [
+    grouped.frontend.length ? `Frontend: ${grouped.frontend.length} arquivo(s)` : null,
+    grouped.backend.length ? `Backend: ${grouped.backend.length} arquivo(s)` : null,
+    grouped.shared.length ? `Contratos compartilhados: ${grouped.shared.length} arquivo(s)` : null,
+    grouped.database.length ? 'Schema alterado' : null,
+    grouped.docs.length ? `Documentação: ${grouped.docs.length} arquivo(s)` : null,
+  ].filter(Boolean);
+
+  return {
+    version: 1,
+    taskUuid: task.uuid,
+    implementationId: String(implementation.id),
+    featureKey: technicalSpec.featureKey,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      headline: `A implementação alterou ${normalizedFiles.length} arquivo(s) para entregar ${technicalSpec.frontend?.navigationLabel || task.title}.`,
+      changedAreas: summaryLines,
+      riskLevel: risk.level,
+      riskScore: risk.score,
+      recommendation:
+        risk.level === 'high'
+          ? 'Revisar manualmente o diff antes de considerar a integração encerrada.'
+          : risk.level === 'medium'
+            ? 'Revisar contratos, rotas e regressões principais antes de promover a mudança.'
+            : 'Mudança localizada; a revisão pode focar nos fluxos principais e consistência final.',
+    },
+    filesByArea: grouped,
+    topChangedFiles: normalizedFiles.slice(0, 12).map((file) => ({
+      path: file.path,
+      type: file.type,
+      changeType: file.changeType,
+    })),
+    qualitySignals: {
+      premiumScore: qualitySummary?.premiumScore ?? null,
+      reviewScore: qualitySummary?.score ?? null,
+      specialistScore: qualitySummary?.specialistScore ?? null,
+      validationScore: qualitySummary?.validationScore ?? null,
+      traceabilityScore: qualitySummary?.traceability?.traceabilityScore ?? null,
+      repairAttempts,
+    },
+    risk,
+  };
+}
+
+async function createImplementationDiffReviewArtifact(task, implementation, technicalSpec, qualitySummary, generatedFiles, repairAttempts) {
+  const diffReview = buildImplementationDiffReview({
+    task,
+    implementation,
+    technicalSpec,
+    qualitySummary,
+    generatedFiles,
+    repairAttempts,
+  });
+
+  const artifact = await createCurrentArtifact(
+    task.id,
+    `Implementation Diff Review - ${task.title}`,
+    JSON.stringify(diffReview, null, 2),
+    'implementation_diff_reviewer',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation.id,
+    }
+  );
+
+  return { artifact, diffReview };
+}
+
 async function buildProjectMemorySnapshot(task, generatedApp) {
   const implementations = await prisma.taskImplementation.findMany({
     where: {
@@ -600,12 +1062,18 @@ async function buildProjectMemorySnapshot(task, generatedApp) {
       taskUuid: implementation.task.uuid,
       title: implementation.task.title,
       featureKey: spec.featureKey,
+      domainKey: inferFeatureDomainKey(spec),
       route: spec.frontend?.suggestedRoute,
       routeBase: spec.backend?.routeBase,
       templateKey,
       screenTemplate,
       status: implementation.status,
       score: review?.summary?.score ?? null,
+      semanticGroups: extractSemanticSignals(
+        implementation.task.title,
+        spec.featureKey,
+        spec.backend?.routeBase
+      ).map((item) => item.group),
     });
 
     for (const finding of review?.findings || []) {
@@ -662,6 +1130,8 @@ async function createProjectMemoryArtifact(task, implementation, generatedApp) {
 }
 
 function buildExecutionStrategy(task, generatedApp, technicalSpec, projectMemory) {
+  const reuseHints = buildProjectMemoryReuseHints(projectMemory, technicalSpec, task.title);
+
   return {
     version: 1,
     taskUuid: task.uuid,
@@ -680,10 +1150,66 @@ function buildExecutionStrategy(task, generatedApp, technicalSpec, projectMemory
     ],
     architectureSummary: technicalSpec.architecture?.sourceSummary || null,
     projectMemory: projectMemory || null,
+    reuseHints,
     qualityTargets: {
       reviewScore: 85,
       validationScore: 80,
       specialistApproval: true,
+    },
+  };
+}
+
+function buildImplementationImpactAnalysis(task, generatedApp, technicalSpec, projectMemory) {
+  const screenTemplate = technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud';
+  const semanticSignals = extractSemanticSignals(task.title, technicalSpec.featureKey, technicalSpec.backend?.routeBase);
+  const reuseHints = buildProjectMemoryReuseHints(projectMemory, technicalSpec, task.title);
+
+  return {
+    version: 1,
+    taskUuid: task.uuid,
+    generatedAppUuid: generatedApp.uuid,
+    generatedAt: new Date().toISOString(),
+    executionIntent: {
+      primaryGoal: technicalSpec.implementationObjective?.primaryGoal || technicalSpec.summary,
+      userOutcome: technicalSpec.implementationObjective?.userOutcome || technicalSpec.summary,
+      successDefinition: technicalSpec.implementationObjective?.successDefinition || [],
+    },
+    impactSurface: {
+      frontend: {
+        route: technicalSpec.frontend?.suggestedRoute,
+        pageComponent: technicalSpec.frontend?.pageComponentName,
+        targetFiles: technicalSpec.files?.frontend || [],
+      },
+      backend: {
+        routeBase: technicalSpec.backend?.routeBase,
+        router: technicalSpec.backend?.routerName,
+        targetFiles: technicalSpec.files?.backend || [],
+      },
+      shared: technicalSpec.files?.shared || [],
+      database: technicalSpec.files?.database || [],
+      documentation: [`docs/implementations/${technicalSpec.featureKey}.md`],
+    },
+    affectedCapabilities: [
+      technicalSpec.frontend?.navigationLabel,
+      technicalSpec.domain?.primaryAction,
+      technicalSpec.backend?.routeBase,
+    ].filter(Boolean),
+    dependencySignals: {
+      permissions: technicalSpec.ux?.permissions || null,
+      semanticSignals,
+      architectureHighlights: technicalSpec.architecture?.sourceSummary || [],
+    },
+    likelyRisks: [
+      `Garantir consistencia entre ${technicalSpec.shared?.requestContractName} e ${technicalSpec.shared?.responseContractName}.`,
+      `Evitar divergencia entre o template ${screenTemplate} e os padroes ja consolidados no projeto.`,
+      'Confirmar que schema, rotas e navegacao sejam atualizados na mesma iteracao.',
+    ],
+    reuseHints: {
+      preferredScreenTemplate: reuseHints.preferredScreenTemplate,
+      highQualityReferences: (projectMemory?.highQualityReferences || []).slice(0, 3),
+      sameDomainPatterns: reuseHints.domainReferences,
+      templateReferences: reuseHints.templateReferences,
+      recurringAntiPatterns: reuseHints.recurringAntiPatterns,
     },
   };
 }
@@ -695,7 +1221,7 @@ async function getProjectOrThrow(projectUuid) {
   });
 
   if (!project) {
-    throw new Error('Projeto nÃ£o encontrado.');
+    throw new Error('Projeto não encontrado.');
   }
 
   return project;
@@ -706,7 +1232,17 @@ async function getTaskWithArtifactsOrThrow(taskUuid) {
     where: { uuid: taskUuid },
     include: {
       project: {
-        select: { id: true, uuid: true, name: true, slug: true },
+        select: {
+          id: true,
+          uuid: true,
+          name: true,
+          slug: true,
+          creator: {
+            select: {
+              uuid: true,
+            },
+          },
+        },
       },
       artifacts: {
         where: { isCurrent: true },
@@ -716,7 +1252,7 @@ async function getTaskWithArtifactsOrThrow(taskUuid) {
   });
 
   if (!task) {
-    throw new Error('Tarefa nÃ£o encontrada.');
+    throw new Error('Tarefa não encontrada.');
   }
 
   return task;
@@ -760,6 +1296,11 @@ async function ensureDevelopmentStageTask(projectId) {
   });
 
   return task;
+}
+
+function resolveImplementationUserUuid(task, explicitUserUuid = null) {
+  if (explicitUserUuid) return explicitUserUuid;
+  return task?.project?.creator?.uuid || null;
 }
 
 function inferFieldDefinitions(sourceText, actionSpec = null) {
@@ -969,6 +1510,89 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
     ];
   }
 
+  if (actionSpec?.domainKey === 'access-control-roles') {
+    return [
+      {
+        name: 'roleName',
+        label: 'Perfil de acesso',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: true,
+        helperText: 'Selecione o perfil que recebera o conjunto de permissoes.',
+        placeholder: 'solicitante | analista | gestor',
+        defaultValue: 'solicitante',
+        sampleValue: 'gestor',
+        selectOptions: ['solicitante', 'analista', 'gestor'],
+        validations: ['required'],
+      },
+      {
+        name: 'permissionMatrix',
+        label: 'Permissoes',
+        inputType: 'textarea',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Descreva as permissoes liberadas para o perfil em formato claro e auditavel.',
+        placeholder: 'Ex.: visualizar chamados, aprovar atendimento, gerenciar usuarios',
+        defaultValue: '',
+        sampleValue: 'visualizar chamados; aprovar atendimento; gerenciar usuarios',
+        validations: ['required', 'min:10'],
+      },
+      {
+        name: 'accessScope',
+        label: 'Escopo',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Defina se o perfil atua apenas na propria fila ou em toda a operacao.',
+        placeholder: 'self_service | team | global',
+        defaultValue: 'team',
+        sampleValue: 'global',
+        selectOptions: ['self_service', 'team', 'global'],
+        validations: ['required'],
+      },
+    ];
+  }
+
+  if (actionSpec?.domainKey === 'ticket-notification-preferences') {
+    return [
+      {
+        name: 'notificationEmail',
+        label: 'E-mail para notificacoes',
+        inputType: 'email',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: true,
+        helperText: 'Use o e-mail que deve receber avisos sempre que houver atualizacao do chamado.',
+        placeholder: 'nome@empresa.com',
+        defaultValue: '',
+        sampleValue: 'comercial@empresa.com',
+        validations: ['required', 'email'],
+      },
+      {
+        name: 'ticketUpdateAlerts',
+        label: 'Notificar atualizacoes do chamado',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Defina se o sistema deve enviar avisos por e-mail quando o chamado mudar de status ou receber interacoes.',
+        placeholder: 'enabled | disabled',
+        defaultValue: 'enabled',
+        sampleValue: 'enabled',
+        selectOptions: ['enabled', 'disabled'],
+        validations: ['required'],
+      },
+    ];
+  }
+
   const fields = [];
 
   if (/\bperfil\b/.test(normalized)) {
@@ -1071,6 +1695,13 @@ function inferActionSpec(task, sourceText) {
   const looksLikeCourse = /\bcurso\b/.test(titleNormalized);
   const looksLikeModule = /\bmodulo\b|\bmodulos\b/.test(titleNormalized);
   const looksLikeLesson = /\baula\b|\baulas\b/.test(titleNormalized);
+  const looksLikeAccessControl =
+    (/\bpermiss/.test(titleNormalized) || /\brole\b|\broles\b|\bfunca/.test(titleNormalized)) &&
+    (/\bacesso\b/.test(titleNormalized) || /\bperfil\b|\bperfis\b/.test(titleNormalized) || /\bseguranc/.test(titleNormalized));
+  const looksLikeNotificationPreference =
+    /\bnotifica/.test(titleNormalized) &&
+    /\be-?mail\b/.test(normalized) &&
+    (/\batualizad/.test(normalized) || /\bchamado\b/.test(normalized) || /\balerta\b/.test(normalized));
   const looksLikeMaterial = /\bmaterial\b|\bmateriais\b|\banexo\b|\banexar\b|\bupload\b/.test(titleNormalized);
   const looksLikeCategory = /\bcategoria\b/.test(titleNormalized);
   const looksLikePricing = /\bpreco\b|\bvalor\b|\breceita\b/.test(titleNormalized);
@@ -1092,6 +1723,40 @@ function inferActionSpec(task, sourceText) {
       pageDescription: 'Defina nome, descricao, categoria e preco para disponibilizar um curso na plataforma.',
       successMessage: 'Curso criado com sucesso.',
       summary: 'Permite ao infoprodutor cadastrar novos cursos com informacoes comerciais e editoriais.',
+    };
+  }
+
+  if (looksLikeAccessControl) {
+    return {
+      domainKey: 'access-control-roles',
+      entityName: 'AccessControlRole',
+      routeBase: '/api/access-control/roles',
+      frontendRoute: '/settings/access-control',
+      pageComponentName: 'AccessControlRolesPage',
+      serviceName: 'AccessControlRolesService',
+      submitLabel: 'Salvar Perfil',
+      navigationLabel: 'Perfis de Acesso',
+      pageTitle: 'Configure perfis e permissoes',
+      pageDescription: 'Defina quais funcoes podem acessar cada parte da operacao com seguranca e rastreabilidade.',
+      successMessage: 'Perfil de acesso atualizado com sucesso.',
+      summary: 'Permite configurar perfis de acesso e permissoes por funcao para controlar a operacao com seguranca.',
+    };
+  }
+
+  if (looksLikeNotificationPreference) {
+    return {
+      domainKey: 'ticket-notification-preferences',
+      entityName: 'TicketNotificationPreference',
+      routeBase: '/api/notification-preferences',
+      frontendRoute: '/settings/notifications',
+      pageComponentName: 'TicketNotificationPreferencesPage',
+      serviceName: 'TicketNotificationPreferencesService',
+      submitLabel: 'Salvar Preferencias',
+      navigationLabel: 'Notificacoes',
+      pageTitle: 'Configure notificacoes por e-mail',
+      pageDescription: 'Defina para quais atualizacoes do chamado o sistema deve enviar avisos por e-mail.',
+      successMessage: 'Preferencias de notificacao atualizadas com sucesso.',
+      summary: 'Permite configurar notificacoes por e-mail para acompanhar atualizacoes do chamado sem acessar o sistema.',
     };
   }
 
@@ -1331,35 +1996,35 @@ function getDomainTemplateLegacy(technicalSpec) {
       templateKey: 'auth/register',
       heroEyebrow: 'Cadastro',
       heroTitle: 'Crie sua conta',
-      heroDescription: 'Cadastre seu acesso com e-mail e senha para comeÃ§ar a usar a plataforma.',
+      heroDescription: 'Cadastre seu acesso com e-mail e senha para começar a usar a plataforma.',
       formCardTitle: 'Dados de acesso',
-      formCardDescription: 'Preencha as credenciais mÃ­nimas para liberar seu primeiro acesso.',
+      formCardDescription: 'Preencha as credenciais mínimas para liberar seu primeiro acesso.',
       recordsTitle: 'Cadastros recentes',
-      recordsEmptyState: 'Nenhum cadastro processado atÃ© o momento.',
+      recordsEmptyState: 'Nenhum cadastro processado até o momento.',
       highlights: [
-        'ValidaÃ§Ã£o imediata de e-mail antes da persistÃªncia.',
+        'Validação imediata de e-mail antes da persistência.',
         'Senha forte exigida para concluir o cadastro.',
-        'ProteÃ§Ã£o contra e-mails duplicados no fluxo incremental.',
+        'Proteção contra e-mails duplicados no fluxo incremental.',
       ],
       profileSummaryTitle: 'Checklist de cadastro',
-      profileSummaryDescription: 'O fluxo precisa validar e-mail, senha e evitar duplicidade antes da criaÃ§Ã£o da conta.',
+      profileSummaryDescription: 'O fluxo precisa validar e-mail, senha e evitar duplicidade antes da criação da conta.',
     };
   }
 
   if (domainKey === 'auth-login') {
     return {
       templateKey: 'auth/login',
-      heroEyebrow: 'AutenticaÃ§Ã£o',
+      heroEyebrow: 'Autenticação',
       heroTitle: 'Entre na plataforma',
       heroDescription: 'Use suas credenciais para acessar cursos, progresso e recursos da sua conta.',
       formCardTitle: 'Acesso',
-      formCardDescription: 'Informe o e-mail cadastrado e a senha para autenticar a sessÃ£o.',
-      recordsTitle: 'SessÃµes recentes',
-      recordsEmptyState: 'Nenhuma sessÃ£o registrada atÃ© o momento.',
+      formCardDescription: 'Informe o e-mail cadastrado e a senha para autenticar a sessão.',
+      recordsTitle: 'Sessões recentes',
+      recordsEmptyState: 'Nenhuma sessão registrada até o momento.',
       highlights: [
-        'ValidaÃ§Ã£o de credenciais antes de iniciar a sessÃ£o.',
-        'Mensagens claras para e-mail ou senha invÃ¡lidos.',
-        'Fluxo pensado para acoplar autenticaÃ§Ã£o real depois.',
+        'Validação de credenciais antes de iniciar a sessão.',
+        'Mensagens claras para e-mail ou senha inválidos.',
+        'Fluxo pensado para acoplar autenticação real depois.',
       ],
       profileSummaryTitle: 'Checklist de login',
       profileSummaryDescription: 'A entrada deve validar credenciais e retornar feedback imediato em caso de falha.',
@@ -1373,16 +2038,36 @@ function getDomainTemplateLegacy(technicalSpec) {
       heroTitle: 'Atualize seu perfil',
       heroDescription: 'Mantenha nome, foto e dados principais da conta sempre consistentes.',
       formCardTitle: 'Dados do perfil',
-      formCardDescription: 'Edite as informaÃ§Ãµes visÃ­veis na conta e salve as alteraÃ§Ãµes.',
-      recordsTitle: 'HistÃ³rico de alteraÃ§Ãµes',
-      recordsEmptyState: 'Nenhuma alteraÃ§Ã£o realizada atÃ© o momento.',
+      formCardDescription: 'Edite as informações visíveis na conta e salve as alterações.',
+      recordsTitle: 'Histórico de alterações',
+      recordsEmptyState: 'Nenhuma alteração realizada até o momento.',
       highlights: [
-        'Nome obrigatÃ³rio para exibiÃ§Ã£o correta do perfil.',
-        'Foto de perfil com validaÃ§Ã£o de formato e limite de tamanho.',
-        'HistÃ³rico preparado para auditoria de atualizaÃ§Ãµes.',
+        'Nome obrigatório para exibição correta do perfil.',
+        'Foto de perfil com validação de formato e limite de tamanho.',
+        'Histórico preparado para auditoria de atualizações.',
       ],
-      profileSummaryTitle: 'Boas prÃ¡ticas do perfil',
-      profileSummaryDescription: 'O aluno precisa manter dados atualizados, com nome obrigatÃ³rio e foto vÃ¡lida.',
+      profileSummaryTitle: 'Boas práticas do perfil',
+      profileSummaryDescription: 'O aluno precisa manter dados atualizados, com nome obrigatório e foto válida.',
+    };
+  }
+
+  if (domainKey === 'access-control-roles') {
+    return {
+      templateKey: 'security/access-control',
+      heroEyebrow: 'Seguranca',
+      heroTitle: 'Governanca de perfis e permissoes',
+      heroDescription: 'Configure perfis por funcao e distribua o acesso correto para cada etapa da operacao.',
+      formCardTitle: 'Matriz de acesso',
+      formCardDescription: 'Defina o perfil, o escopo de atuacao e as permissoes liberadas para a funcao.',
+      recordsTitle: 'Perfis configurados',
+      recordsEmptyState: 'Nenhum perfil configurado ate o momento.',
+      highlights: [
+        'Permissoes centralizadas por funcao.',
+        'Escopo de acesso claro para cada perfil operacional.',
+        'Base pronta para auditoria e rastreabilidade de seguranca.',
+      ],
+      profileSummaryTitle: 'Governanca minima',
+      profileSummaryDescription: 'Cada perfil deve registrar permissoes, escopo de acesso e responsabilidade operacional.',
     };
   }
 
@@ -1392,11 +2077,11 @@ function getDomainTemplateLegacy(technicalSpec) {
     heroTitle: technicalSpec.frontend?.pageTitle || technicalSpec.entityName,
     heroDescription: technicalSpec.frontend?.pageDescription || technicalSpec.summary,
     formCardTitle: 'Preencha os dados',
-    formCardDescription: 'Informe os dados necessÃ¡rios para continuar.',
-    recordsTitle: 'Ãšltimos registros',
+    formCardDescription: 'Informe os dados necessários para continuar.',
+    recordsTitle: 'Últimos registros',
     recordsEmptyState: 'Nenhum registro processado ainda.',
     highlights: [
-      'ValidaÃ§Ã£o bÃ¡sica aplicada aos campos principais.',
+      'Validação básica aplicada aos campos principais.',
       'Feedback imediato em caso de sucesso ou erro.',
     ],
     profileSummaryTitle: 'Resumo da feature',
@@ -1411,13 +2096,7 @@ function getDomainTemplate(technicalSpec) {
 
 async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repairContext = null) {
   const domainTemplate = getDomainTemplate(technicalSpec);
-  const experienceGoals = compactExperienceGoals([
-    technicalSpec.frontend.pageDescription,
-    technicalSpec.domain.successMessage,
-    `AÃ§Ã£o principal: ${technicalSpec.domain.submitLabel}`,
-    `Rota da tela: ${technicalSpec.frontend.suggestedRoute}`,
-  ].filter(Boolean));
-  const fallback = {
+  const fallback = normalizeUiCopy(normalizeGeneratedCopy({
     navigationLabel: technicalSpec.frontend.navigationLabel,
     pageTitle: technicalSpec.frontend.pageTitle,
     pageDescription: technicalSpec.frontend.pageDescription,
@@ -1433,40 +2112,27 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
     profileSummaryTitle: domainTemplate.profileSummaryTitle,
     profileSummaryDescription: domainTemplate.profileSummaryDescription,
     domainTemplateKey: domainTemplate.templateKey,
-  };
+  }));
+  const uiGenerationContext = buildUiGenerationContext(task, technicalSpec, repairContext);
 
   try {
     const envOverrides = userUuid
       ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'implementation_architect' })
       : { AI_DISABLE_OLLAMA_FALLBACK: '0' };
-    const aiResult = await generateImplementationUi({
-      taskTitle: task.title,
-      summary: technicalSpec.summary,
-      frontendRoute: technicalSpec.frontend.suggestedRoute,
-      screenTemplate: technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud',
-      submitLabel: technicalSpec.domain.submitLabel,
-      navigationLabel: technicalSpec.frontend.navigationLabel,
-      pageTitle: technicalSpec.frontend.pageTitle,
-      pageDescription: technicalSpec.frontend.pageDescription,
-      fields: technicalSpec.domain.fields,
-      experienceGoals,
-      uiStates: technicalSpec.ux?.states,
-      validationSummary: compactValidationSummary(technicalSpec.ux?.validationSummary),
-      permissions: technicalSpec.ux?.permissions,
-      projectMemory: compactProjectMemory(technicalSpec.projectMemory),
-      repairContext: compactRepairContext(repairContext),
-    }, { envOverrides });
+    const aiResult = normalizeUiCopy(normalizeGeneratedCopy(await generateImplementationUi({
+      ...uiGenerationContext,
+    }, { envOverrides })));
 
     return {
       ...technicalSpec,
       frontend: {
         ...technicalSpec.frontend,
         ...fallback,
-        ...aiResult,
+        ...normalizeUiCopy(normalizeGeneratedCopy(aiResult)),
       },
       domain: {
         ...technicalSpec.domain,
-        submitLabel: aiResult?.submitLabel || technicalSpec.domain.submitLabel,
+        submitLabel: toAsciiUiText(aiResult?.submitLabel || technicalSpec.domain.submitLabel),
       },
     };
   } catch {
@@ -1577,7 +2243,7 @@ function buildFieldInitializer(field) {
 }
 
 function hasEncodingArtifacts(content) {
-  return /Ãƒ.|Ã‚|ï¿½/.test(String(content || ''));
+  return /(?:Ã.|Â.|â.|ï¿½|�)/.test(String(content || ''));
 }
 
 function inferUiStates(actionSpec, fields, qaScenarios) {
@@ -1617,6 +2283,8 @@ function inferDomainName(actionSpec, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
 
   if (actionSpec.domainKey.startsWith('auth-')) return 'auth';
+  if (actionSpec.domainKey === 'access-control-roles' || /\bpermiss/.test(normalized) || /\brole\b|\broles\b/.test(normalized)) return 'access-control';
+  if (actionSpec.domainKey === 'ticket-notification-preferences' || /\bnotifica/.test(normalized) || /\balerta\b/.test(normalized)) return 'notification';
   if (actionSpec.domainKey === 'profile-settings' || /\bperfil\b/.test(normalized)) return 'profile';
   if (['course-catalog', 'course-modules', 'course-lessons', 'lesson-materials'].includes(actionSpec.domainKey)) {
     return 'education';
@@ -1632,6 +2300,8 @@ function inferIntent(actionSpec, sourceText) {
 
   if (actionSpec.domainKey === 'auth-login' || /\blogin\b|\bentrar\b|\bautentic/.test(normalized)) return 'login';
   if (actionSpec.domainKey === 'auth-register' || /\bregistr/.test(normalized) || /\bcadastr/.test(normalized)) return 'register';
+  if (actionSpec.domainKey === 'access-control-roles' || /\bconfigurar\b/.test(normalized) && /\bpermiss/.test(normalized)) return 'configure';
+  if (actionSpec.domainKey === 'ticket-notification-preferences') return 'configure';
   if (actionSpec.domainKey === 'profile-settings' || /\batualiz/.test(normalized) || /\bedita/.test(normalized)) return 'update';
   if (actionSpec.domainKey === 'course-catalog') return 'create';
   if (actionSpec.domainKey === 'course-modules') return 'structure';
@@ -1648,6 +2318,8 @@ function inferScreenTemplate(actionSpec, fields, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const hasFewFields = (fields || []).length <= 3;
 
+  if (actionSpec.domainKey === 'access-control-roles') return 'settings';
+  if (actionSpec.domainKey === 'ticket-notification-preferences') return 'settings';
   if (actionSpec.domainKey === 'profile-settings') return 'settings';
   if (actionSpec.domainKey.startsWith('auth-')) return hasFewFields ? 'settings' : 'wizard';
   if (/\bdashboard\b|\bpainel\b|\brelatorio\b|\bmetricas\b/.test(normalized)) return 'dashboard';
@@ -1875,7 +2547,7 @@ function buildTechnicalSpec(task, projectArchitectureSource = '') {
   };
 
   return {
-    version: 4,
+    version: 5,
     taskUuid: task.uuid,
     taskTitle: task.title,
     projectUuid: task.project.uuid,
@@ -1885,6 +2557,19 @@ function buildTechnicalSpec(task, projectArchitectureSource = '') {
     entityName,
     entityPluralName: `${entityName}Items`,
     summary: actionSpec.summary,
+    implementationObjective: {
+      primaryGoal: `Entregar a feature ${actionSpec.navigationLabel || task.title} com consistencia entre frontend, backend e contratos compartilhados.`,
+      userOutcome: actionSpec.summary,
+      successDefinition: [
+        `Fluxo principal ${actionSpec.submitLabel.toLowerCase()} disponivel em ${actionSpec.frontendRoute}.`,
+        `Contrato ${requestContractName}/${responseContractName} publicado e consumido sem divergencia.`,
+        `Modulo ${featureKey} integrado ao monorepo com documentacao incremental.`,
+      ],
+      nonGoals: [
+        'Nao reestruturar modulos fora do escopo da story.',
+        'Nao introduzir novos fluxos de negocio sem base no refinamento atual.',
+      ],
+    },
     businessRules,
     qaScenarios,
     domain: {
@@ -2057,42 +2742,112 @@ function normalizeTechnicalSpec(rawSpec, task) {
 }
 
 function buildImplementationPlan(task, generatedApp, technicalSpec) {
+  const screenTemplate = technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud';
+  const reuseHints = buildProjectMemoryReuseHints(technicalSpec.projectMemory, technicalSpec, task.title);
+  const sharedContractPath = technicalSpec.shared.contractPath;
+  const backendFiles = [
+    `${technicalSpec.backend.modulePath}/service.ts`,
+    `${technicalSpec.backend.modulePath}/router.ts`,
+    `${technicalSpec.backend.modulePath}/index.ts`,
+    'apps/api/src/server.ts',
+  ];
+  const frontendFiles = [
+    `${technicalSpec.frontend.featurePath}/page.tsx`,
+    `${technicalSpec.frontend.featurePath}/service.ts`,
+    `${technicalSpec.frontend.featurePath}/index.ts`,
+    'apps/web/src/App.tsx',
+  ];
+  const persistenceFiles = [technicalSpec.database.schemaPath];
+  const documentationFiles = [`docs/implementations/${technicalSpec.featureKey}.md`];
+
   return {
-    version: 2,
+    version: 3,
     taskUuid: task.uuid,
     generatedAppUuid: generatedApp.uuid,
     generatedAppRoot: generatedApp.rootPath,
+    executionModel: 'goal_driven_incremental',
+    objective: technicalSpec.implementationObjective,
+    reuseGuidance: reuseHints,
     steps: [
       'Ler o contexto atual do monorepo gerado',
-      `Aplicar o template de tela ${technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud'}`,
+      `Aplicar o template de tela ${screenTemplate}`,
       'Usar os highlights da arquitetura para respeitar stack, modulos e contratos ja definidos',
+      'Reaproveitar padroes de dominio e referencias bem avaliadas do proprio projeto',
       'Criar contrato compartilhado da feature',
-      'Criar mÃ³dulo funcional no backend',
+      'Criar módulo funcional no backend',
       'Registrar rota real no servidor da API',
-      'Criar pÃ¡gina e serviÃ§o reais no frontend',
-      'Registrar a pÃ¡gina na navegaÃ§Ã£o do app',
+      'Criar página e serviço reais no frontend',
+      'Registrar a página na navegação do app',
       'Atualizar prisma/schema.prisma do app gerado',
-      'Registrar documentaÃ§Ã£o da implementaÃ§Ã£o incremental',
+      'Registrar documentação da implementação incremental',
+    ],
+    workstreams: [
+      {
+        id: 'shared_contracts',
+        label: 'Contratos compartilhados',
+        goal: 'Definir a interface publica da feature antes da integracao completa.',
+        dependsOn: [],
+        targetFiles: [sharedContractPath],
+        deliverables: ['Request/Response contract', 'tipagem reutilizavel entre frontend e backend'],
+      },
+      {
+        id: 'backend_module',
+        label: 'Backend e rotas',
+        goal: 'Materializar servico, router e registro do modulo da feature.',
+        dependsOn: ['shared_contracts'],
+        targetFiles: backendFiles,
+        deliverables: ['modulo funcional', 'rotas registradas', 'alinhamento com contrato compartilhado'],
+      },
+      {
+        id: 'frontend_feature',
+        label: 'Frontend e experiencia',
+        goal: `Publicar a experiencia ${screenTemplate} com fluxo principal acessivel pelo app.`,
+        dependsOn: ['shared_contracts'],
+        targetFiles: frontendFiles,
+        deliverables: ['pagina', 'servico de consumo', 'registro na navegacao'],
+      },
+      {
+        id: 'persistence_and_docs',
+        label: 'Persistencia e documentacao',
+        goal: 'Atualizar schema e registrar a trilha tecnica da feature.',
+        dependsOn: ['backend_module', 'frontend_feature'],
+        targetFiles: [...persistenceFiles, ...documentationFiles],
+        deliverables: ['schema atualizado', 'documentacao incremental'],
+      },
+    ],
+    executionPhases: [
+      {
+        id: 'impact_and_contract',
+        label: 'Impacto e contrato',
+        goal: 'Confirmar superficie de mudanca e fechar o contrato compartilhado.',
+        workstreams: ['shared_contracts'],
+      },
+      {
+        id: 'service_and_ui',
+        label: 'Servico e interface',
+        goal: 'Implementar backend e frontend em paralelo com o mesmo objetivo funcional.',
+        workstreams: ['backend_module', 'frontend_feature'],
+      },
+      {
+        id: 'integration_and_validation',
+        label: 'Integracao e validacao',
+        goal: 'Conectar persistencia, documentacao e validar a entrega completa.',
+        workstreams: ['persistence_and_docs'],
+      },
     ],
     targetFiles: [
-      technicalSpec.shared.contractPath,
-      `${technicalSpec.backend.modulePath}/service.ts`,
-      `${technicalSpec.backend.modulePath}/router.ts`,
-      `${technicalSpec.backend.modulePath}/index.ts`,
-      'apps/api/src/server.ts',
-      `${technicalSpec.frontend.featurePath}/page.tsx`,
-      `${technicalSpec.frontend.featurePath}/service.ts`,
-      `${technicalSpec.frontend.featurePath}/index.ts`,
-      'apps/web/src/App.tsx',
+      sharedContractPath,
+      ...backendFiles,
+      ...frontendFiles,
       'apps/web/package.json',
-      technicalSpec.database.schemaPath,
-      `docs/implementations/${technicalSpec.featureKey}.md`,
+      ...persistenceFiles,
+      ...documentationFiles,
     ],
     architectureGuidance: technicalSpec.architecture?.sourceSummary || null,
     qualityTargets: {
       minimumReviewScore: 85,
       requiredStatuses: ['review=approved', 'lint=completed', 'test=completed', 'build=completed'],
-      screenTemplate: technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud',
+      screenTemplate,
     },
   };
 }
@@ -2218,7 +2973,7 @@ function backendModuleFiles(task, technicalSpec) {
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/README.md`,
-      content: `# ${task.title}\n\nMÃ³dulo backend incremental criado a partir da task refinada.\n`,
+      content: `# ${task.title}\n\nMódulo backend incremental criado a partir da task refinada.\n`,
       fileType: 'md',
     },
   ];
@@ -2283,7 +3038,7 @@ function frontendFeatureFiles(task, technicalSpec) {
     },
     {
       relativePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
-      content: `import { useEffect, useState } from 'react';\nimport type { FormEvent } from 'react';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\nimport { FeaturePage, FieldGroup, PrimaryButton, inputStyle } from '${uiImportPath}';\nimport { create${entityName}, fetch${entityName}Items } from './service';\n\nconst initialForm: ${technicalSpec.shared.requestContractName} = {\n${initialStateEntries}\n};\n\nexport function ${technicalSpec.frontend.pageComponentName}() {\n  const [items, setItems] = useState<${technicalSpec.shared.responseContractName}[]>([]);\n  const [form, setForm] = useState<${technicalSpec.shared.requestContractName}>(initialForm);\n  const [feedback, setFeedback] = useState('');\n  const [errorMessage, setErrorMessage] = useState('');\n\n  useEffect(() => {\n    fetch${entityName}Items().then(setItems).catch(() => setItems([]));\n  }, []);\n\n  async function handleSubmit(event: FormEvent<HTMLFormElement>) {\n    event.preventDefault();\n    setFeedback('');\n    setErrorMessage('');\n\n    try {\n      const created = await create${entityName}({\n${payloadObject}\n      });\n      setItems((current) => [created, ...current]);\n      setForm(initialForm);\n      setFeedback('${escapeTemplate(technicalSpec.domain.successMessage)}');\n    } catch (error) {\n      setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');\n    }\n  }\n\n  return (\n    <FeaturePage\n      accent="${accent}"\n      layout="${layout}"\n      eyebrow="${escapeTemplate(technicalSpec.frontend.heroEyebrow || technicalSpec.frontend.navigationLabel || technicalSpec.entityName)}"\n      title="${escapeTemplate(technicalSpec.frontend.heroTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      description="${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      metrics={[\n        { label: 'Campos essenciais', value: '${technicalSpec.domain.fields.length}' },\n        { label: 'Registros atuais', value: String(items.length) },\n        { label: 'Acao principal', value: '${escapeTemplate(technicalSpec.domain.submitLabel)}' },\n      ]}\n      highlights={${JSON.stringify(highlights.length ? highlights : ['Experiencia preparada para uma operacao mais clara e confiavel.'])}}\n      formTitle="${escapeTemplate(technicalSpec.frontend.formCardTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      formDescription="${escapeTemplate(technicalSpec.frontend.formCardDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      form={\n        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>\n${inputBlocks}\n          <PrimaryButton type="submit" accent="${accent}">\n            ${escapeTemplate(technicalSpec.domain.submitLabel)}\n          </PrimaryButton>\n\n          {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}\n          {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}\n        </form>\n      }\n      listTitle="${escapeTemplate(technicalSpec.frontend.recordsTitle || 'Registros recentes')}"\n      listDescription="${escapeTemplate(technicalSpec.ux?.states?.empty || 'Acompanhe os registros criados nesta area.')}"\n      listMeta={\`\${items.length} registro(s)\`}\n    >\n      {items.length ? (\n        <div style={{ display: 'grid', gap: 12 }}>\n          {items.map((item) => (\n            <article key={item.id} style={{ padding: 18, borderRadius: 20, background: '#f8fafc', border: '1px solid #e2e8f0' }}>\n              <strong style={{ display: 'block', color: '#0f172a', fontSize: 17 }}>{String(item.${previewField.name === 'password' ? 'passwordHint' : previewField.name} || item.id)}</strong>\n              <span style={{ display: 'block', marginTop: 6, color: '#64748b' }}>{String(item.${secondaryField.name === 'password' ? 'passwordHint' : secondaryField.name} || item.status || 'active')}</span>\n            </article>\n          ))}\n        </div>\n      ) : (\n        <p style={{ margin: 0, color: '#64748b' }}>${escapeTemplate(technicalSpec.frontend.recordsEmptyState || technicalSpec.ux?.states?.empty || 'Nenhum registro disponivel ainda.')}</p>\n      )}\n    </FeaturePage>\n  );\n}\n`,
+      content: `import { useEffect, useState } from 'react';\nimport type { FormEvent } from 'react';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\nimport { FeaturePage, FieldGroup, PrimaryButton, inputStyle } from '${uiImportPath}';\nimport { create${entityName}, fetch${entityName}Items } from './service';\n\nconst initialForm: ${technicalSpec.shared.requestContractName} = {\n${initialStateEntries}\n};\n\nexport function ${technicalSpec.frontend.pageComponentName}() {\n  const [items, setItems] = useState<${technicalSpec.shared.responseContractName}[]>([]);\n  const [form, setForm] = useState<${technicalSpec.shared.requestContractName}>(initialForm);\n  const [feedback, setFeedback] = useState('');\n  const [errorMessage, setErrorMessage] = useState('');\n  const [isLoading, setIsLoading] = useState(true);\n  const [isSubmitting, setIsSubmitting] = useState(false);\n\n  useEffect(() => {\n    fetch${entityName}Items()\n      .then(setItems)\n      .catch(() => setItems([]))\n      .finally(() => setIsLoading(false));\n  }, []);\n\n  async function handleSubmit(event: FormEvent<HTMLFormElement>) {\n    event.preventDefault();\n    setFeedback('');\n    setErrorMessage('');\n    setIsSubmitting(true);\n\n    try {\n      const created = await create${entityName}({\n${payloadObject}\n      });\n      setItems((current) => [created, ...current]);\n      setForm(initialForm);\n      setFeedback('${escapeTemplate(technicalSpec.domain.successMessage)}');\n    } catch (error) {\n      setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');\n    } finally {\n      setIsSubmitting(false);\n    }\n  }\n\n  return (\n    <FeaturePage\n      accent="${accent}"\n      layout="${layout}"\n      eyebrow="${escapeTemplate(technicalSpec.frontend.heroEyebrow || technicalSpec.frontend.navigationLabel || technicalSpec.entityName)}"\n      title="${escapeTemplate(technicalSpec.frontend.heroTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      description="${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      metrics={[\n        { label: 'Campos essenciais', value: '${technicalSpec.domain.fields.length}' },\n        { label: 'Movimentacoes', value: isLoading ? '...' : String(items.length) },\n        { label: 'Ritmo da tela', value: isSubmitting ? 'Processando' : 'Pronto' },\n      ]}\n      highlights={${JSON.stringify(highlights.length ? highlights : ['Experiencia preparada para uma operacao mais clara e confiavel.'])}}\n      formTitle="${escapeTemplate(technicalSpec.frontend.formCardTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      formDescription="${escapeTemplate(technicalSpec.frontend.formCardDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      form={\n        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>\n${inputBlocks}\n          <PrimaryButton type="submit" accent="${accent}">\n            {isSubmitting ? 'Processando...' : '${escapeTemplate(technicalSpec.domain.submitLabel)}'}\n          </PrimaryButton>\n\n          {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}\n          {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}\n        </form>\n      }\n      listTitle="${escapeTemplate(technicalSpec.frontend.recordsTitle || 'Registros recentes')}"\n      listDescription="${escapeTemplate(technicalSpec.ux?.states?.empty || 'Acompanhe os registros criados nesta area.')}"\n      listMeta={isLoading ? 'Carregando...' : \`\${items.length} registro(s)\`}\n    >\n      {isLoading ? (\n        <div style={{ display: 'grid', gap: 10 }}>\n          {[0, 1].map((placeholder) => (\n            <div\n              key={placeholder}\n              style={{\n                padding: '18px 16px',\n                borderRadius: 14,\n                background: '#f8fafc',\n                border: '1px solid #e2e8f0',\n                minHeight: 74,\n              }}\n            />\n          ))}\n        </div>\n      ) : items.length ? (\n        <div style={{ display: 'grid', gap: 10 }}>\n          {items.map((item) => (\n            <article\n              key={item.id}\n              style={{\n                padding: '14px 16px',\n                borderRadius: 14,\n                background: '#ffffff',\n                border: '1px solid #d9deea',\n                display: 'grid',\n                gridTemplateColumns: '1.3fr 0.8fr 0.9fr',\n                gap: 12,\n                alignItems: 'center',\n              }}\n            >\n              <div style={{ display: 'grid', gap: 4 }}>\n                <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>{String(item.${previewField.name === 'password' ? 'passwordHint' : previewField.name} || item.id)}</strong>\n                <span style={{ display: 'block', color: '#64748b', fontSize: 13 }}>{String(item.${secondaryField.name === 'password' ? 'passwordHint' : secondaryField.name} || 'Registro pronto para acompanhamento')}</span>\n              </div>\n              <span style={{ width: 'fit-content', padding: '6px 10px', borderRadius: 999, background: '#ecfeff', color: '#115e59', fontSize: 12, fontWeight: 700 }}>\n                {String(item.status || 'active')}\n              </span>\n              <span style={{ color: '#64748b', fontSize: 13 }}>{String(item.createdAt || 'Agora')}</span>\n            </article>\n          ))}\n        </div>\n      ) : (\n        <div style={{ padding: 28, borderRadius: 16, background: '#f8fafc', border: '1px dashed #cbd5e1', textAlign: 'center' }}>\n          <div style={{ width: 58, height: 58, margin: '0 auto 12px', borderRadius: '50%', background: '#e2e8f0', color: '#475569', display: 'grid', placeItems: 'center', fontSize: 24 }}>⊘</div>\n          <p style={{ margin: 0, color: '#64748b', lineHeight: 1.7 }}>${escapeTemplate(technicalSpec.frontend.recordsEmptyState || technicalSpec.ux?.states?.empty || 'Nenhum registro disponivel ainda.')}</p>\n        </div>\n      )}\n    </FeaturePage>\n  );\n}\n`,
       fileType: 'tsx',
     },
     {
@@ -2740,8 +3495,8 @@ function buildSyntheticTaskFromSpec(technicalSpec) {
 }
 
 async function ensureValidationScripts(generatedAppRoot) {
-  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Visao geral|Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Preencha os dados|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !appContent.includes('Application Studio') || !appContent.includes('function HomePage()')) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contÃ©m textos genÃ©ricos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contÃ©m copy genÃ©rica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluÃ­do sem problemas.');\n`;
-  const testContent = `import { access, readFile } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatÃ³rio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluÃ­dos com sucesso.');\n`;
+  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\nconst hasPremiumShellSignals =\n  appContent.includes('AppFrame') &&\n  appContent.includes('AppHeader') &&\n  appContent.includes('StudioHome') &&\n  appContent.includes('MetricRow') &&\n  appContent.includes('SurfaceCard') &&\n  appContent.includes('function HomePage()') &&\n  appContent.includes('Resumo do workspace');\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !hasPremiumShellSignals) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem textos genericos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluido sem problemas.');\n`;
+  const testContent = `import { access, readFile } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatório ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluídos com sucesso.');\n`;
 
   return [
     {
@@ -2765,7 +3520,7 @@ async function updateWebApp(generatedAppRoot, routeSpecs, projectName) {
   const importLines = uniqueRouteSpecs
     .map((spec) => `import { ${spec.frontend.pageComponentName} } from './features/${spec.featureKey}/index'`)
     .join('\n');
-  const shellImport = `import { AppFrame, AppHeader, StudioHome } from '../../../packages/ui/src/index.tsx'`;
+  const shellImport = `import { AppFrame, AppHeader, MetricRow, SidebarNav, StudioHome, SurfaceCard } from '../../../packages/ui/src/index.tsx'`;
   const routeLines = uniqueRouteSpecs
     .map(
       (spec) =>
@@ -2773,7 +3528,7 @@ async function updateWebApp(generatedAppRoot, routeSpecs, projectName) {
     )
     .join('\n');
 
-  const content = `${shellImport}\n${importLines ? `\n${importLines}\n` : '\n'}const routes = [\n  { path: '/', label: 'Inicio', render: () => <HomePage /> },\n${routeLines}\n]\n\nfunction HomePage() {\n  const productAreas = routes.filter((route) => route.path !== '/')\n  return <StudioHome title="${escapeTemplate(projectName)}" routes={productAreas} />\n}\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const activeRoute = routes.find((route) => route.path === currentPath) || routes[0]\n\n  return (\n    <AppFrame>\n      <AppHeader title="${escapeTemplate(projectName)}" routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n      {activeRoute.render()}\n    </AppFrame>\n  )\n}\n`;
+  const content = `${shellImport}\n${importLines ? `\n${importLines}\n` : '\n'}const routes = [\n  { path: '/', label: 'Inicio', render: () => <HomePage /> },\n${routeLines}\n]\n\nfunction HomePage() {\n  const productAreas = routes.filter((route) => route.path !== '/')\n\n  return (\n    <div style={{ display: 'grid', gap: 20 }}>\n      <StudioHome title="${escapeTemplate(projectName)}" routes={productAreas} />\n      <div style={{ display: 'grid', gap: 18, gridTemplateColumns: 'minmax(0, 1.12fr) minmax(320px, 0.88fr)' }}>\n        <SurfaceCard\n          title="Resumo do workspace"\n          description="Acompanhe a base gerada, as areas prontas para evolucao e a proxima frente operacional do produto."\n          meta={\`\${productAreas.length} modulo(s)\`}\n        >\n          <MetricRow\n            items={[\n              { label: 'Modulos ativos', value: String(productAreas.length) },\n              { label: 'Interface', value: 'Profissional' },\n              { label: 'Base', value: 'Web + API' },\n            ]}\n          />\n        </SurfaceCard>\n        <SurfaceCard\n          title="Fila de evolucao"\n          description="Escolha um modulo para continuar a implementacao incremental com contratos, backend e experiencia conectados."\n          meta="Fluxo guiado"\n        >\n          <div style={{ display: 'grid', gap: 12 }}>\n            {productAreas.map((route) => (\n              <a\n                key={route.path}\n                href={route.path}\n                style={{\n                  padding: '16px 18px',\n                  borderRadius: 18,\n                  border: '1px solid #dbe4ee',\n                  background: '#f8fafc',\n                  textDecoration: 'none',\n                  color: '#0f172a',\n                  fontWeight: 700,\n                }}\n              >\n                {route.label}\n              </a>\n            ))}\n          </div>\n        </SurfaceCard>\n      </div>\n    </div>\n  )\n}\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const activeRoute = routes.find((route) => route.path === currentPath) || routes[0]\n\n  return (\n    <AppFrame>\n      <AppHeader title={activeRoute.label} routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n      <div style={{ display: 'grid', gridTemplateColumns: '234px minmax(0, 1fr)' }}>\n        <SidebarNav routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n        <div style={{ padding: 18 }}>\n          {activeRoute.render()}\n        </div>\n      </div>\n    </AppFrame>\n  )\n}\n`;
 
   await writeText(appPath, content);
 
@@ -2967,7 +3722,7 @@ function buildFixPlan(findings, technicalSpec) {
         category: 'fallback',
         priority: 'high',
         filePath: finding.filePath,
-        action: 'Substituir copy genÃ©rica e campos de fallback pelo template de domÃ­nio correspondente.',
+        action: 'Substituir copy genérica e campos de fallback pelo template de domínio correspondente.',
         suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
       };
     }
@@ -3007,7 +3762,7 @@ function buildFixPlan(findings, technicalSpec) {
         category: 'template_deviation',
         priority: 'medium',
         filePath: finding.filePath,
-        action: 'Mapear a task para um template de domÃ­nio conhecido ou enriquecer o structured spec.',
+        action: 'Mapear a task para um template de domínio conhecido ou enriquecer o structured spec.',
         suggestedTemplate: 'domain-mapping',
       };
     }
@@ -3046,7 +3801,7 @@ function buildFixPlan(findings, technicalSpec) {
       category: categorizeFinding(finding.code),
       priority: finding.severity === 'high' ? 'high' : 'medium',
       filePath: finding.filePath,
-      action: 'Ajustar o arquivo para alinhar a implementaÃ§Ã£o ao structured spec e rodar review novamente.',
+      action: 'Ajustar o arquivo para alinhar a implementação ao structured spec e rodar review novamente.',
       suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
     };
   });
@@ -3076,10 +3831,18 @@ async function runImplementationReviewInternal({ task, implementation, technical
   const pageContent = loadedFiles[pagePath] || '';
   const contractContent = loadedFiles[contractPath] || '';
   const genericUxCopyPattern =
-    /Visao geral|Nenhum dado exibido ainda\.|Validacao automatica dos campos antes do envio\.|Feedback imediato em caso de sucesso ou erro\.|Preencha os dados|Conclua esta etapa/;
+    /Nenhum dado exibido ainda\.|Validacao automatica dos campos antes do envio\.|Feedback imediato em caso de sucesso ou erro\.|Conclua esta etapa/;
   const basicWebShellPattern =
     /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\.<\/p>|fontFamily: 'sans-serif', padding: 24/;
-  const encodingPattern = /Ãƒ.|Ã‚|ï¿½/;
+  const hasPremiumShellSignals =
+    webAppContent.includes('AppFrame') &&
+    webAppContent.includes('AppHeader') &&
+    webAppContent.includes('StudioHome') &&
+    webAppContent.includes('function HomePage()') &&
+    webAppContent.includes('MetricRow') &&
+    webAppContent.includes('SurfaceCard') &&
+    webAppContent.includes('Resumo do workspace');
+  const encodingPattern = /(?:Ã.|Â.|â.|ï¿½|�)/;
 
   if (/Campo principal da feature gerada|Informe o valor principal/.test(pageContent)) {
     findings.push({
@@ -3101,7 +3864,7 @@ async function runImplementationReviewInternal({ task, implementation, technical
     });
   }
 
-  if (basicWebShellPattern.test(webAppContent) || !webAppContent.includes('Application Studio') || !webAppContent.includes('function HomePage()')) {
+  if (basicWebShellPattern.test(webAppContent) || !hasPremiumShellSignals) {
     findings.push({
       severity: 'high',
       code: 'basic_web_shell',
@@ -3365,7 +4128,8 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
 
   const expectedDomain = technicalSpec.structured?.classification?.domain || technicalSpec.featureKey;
   const implementedDomain = inferImplementedDomain(technicalSpec.featureKey, technicalSpec.backend.routeBase);
-  if (expectedDomain && implementedDomain !== 'custom' && expectedDomain !== implementedDomain) {
+  const domainAligned = areDomainKeysAligned(expectedDomain, implementedDomain);
+  if (expectedDomain && implementedDomain !== 'custom' && !domainAligned) {
     findings.push({
       severity: 'high',
       code: 'specialist_domain_alignment_mismatch',
@@ -3413,7 +4177,7 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
       semanticScore: Math.max(0, semanticScore),
       expectedDomain,
       implementedDomain,
-      domainAligned: expectedDomain === implementedDomain,
+      domainAligned,
       totalFindings: findings.length,
       status: hasSemanticBlocker || findings.some((item) => item.severity === 'high') ? 'needs_attention' : findings.length ? 'minor_issues' : 'approved',
       verdict: hasSemanticBlocker
@@ -3462,6 +4226,40 @@ async function createRepairAttemptArtifact(task, implementation, technicalSpec, 
       taskImplementationId: implementation.id,
     }
   );
+}
+
+async function persistImplementationExecutionState(task, implementation, state) {
+  const phaseLabel = state?.phaseLabel || state?.phase || 'unknown';
+  const progressLabel =
+    typeof state?.progressPercent === 'number' ? `${Math.max(0, Math.min(100, state.progressPercent))}%` : 'n/a';
+
+  await createCurrentArtifact(
+    task.id,
+    `Implementation Execution State - ${task.title}`,
+    JSON.stringify(
+      {
+        version: 1,
+        taskUuid: task.uuid,
+        implementationId: String(implementation.id),
+        generatedAt: new Date().toISOString(),
+        ...state,
+      },
+      null,
+      2
+    ),
+    'implementation_orchestrator',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation.id,
+    }
+  );
+
+  await prisma.taskImplementation.update({
+    where: { id: implementation.id },
+    data: {
+      summary: `${state?.headline || 'Execucao tecnica em andamento.'}\nFase atual: ${phaseLabel}\nProgresso: ${progressLabel}`,
+    },
+  });
 }
 
 async function createRefactorPlanArtifact(task, implementation, technicalSpec, reviewReport, specialistReviewReport, validationSummary) {
@@ -3665,7 +4463,8 @@ export async function bootstrapGeneratedApp(projectUuid, options = {}) {
   });
 
   if (existing && !options.forceRebuild) {
-    return existing;
+    await ensureGeneratedAppFoundation(project, existing);
+    return getGeneratedAppByProjectUuid(projectUuid);
   }
 
   const slug = slugify(project.slug || project.name, project.uuid);
@@ -3772,6 +4571,7 @@ export async function bootstrapGeneratedApp(projectUuid, options = {}) {
 
 export async function planTaskImplementation(taskUuid, userUuid = null) {
   const task = await getTaskWithArtifactsOrThrow(taskUuid);
+  const runtimeUserUuid = resolveImplementationUserUuid(task, userUuid);
 
   if (task.status !== 'done') {
     throw new Error('A implementacao so pode comecar apos o refinamento completo da task.');
@@ -3783,6 +4583,7 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
   if (!generatedApp) {
     throw new Error('O projeto ainda nao possui um app full stack gerado. Faca o bootstrap primeiro.');
   }
+  await ensureGeneratedAppFoundation(task.project, generatedApp);
 
   let technicalSpec = buildTechnicalSpec(task, projectArchitectureSource);
   const projectMemory = await buildProjectMemorySnapshot(task, generatedApp);
@@ -3790,7 +4591,7 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
     ...technicalSpec,
     projectMemory,
   };
-  technicalSpec = await enrichFrontendWithAi(task, technicalSpec, userUuid);
+  technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid);
   const technicalSpecArtifact = await createCurrentArtifact(
     task.id,
     `Technical Spec - ${task.title}`,
@@ -3800,6 +4601,7 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
 
   const plan = buildImplementationPlan(task, generatedApp, technicalSpec);
   const strategy = buildExecutionStrategy(task, generatedApp, technicalSpec, projectMemory);
+  const impactAnalysis = buildImplementationImpactAnalysis(task, generatedApp, technicalSpec, projectMemory);
   const planArtifact = await createCurrentArtifact(
     task.id,
     `Implementation Plan - ${task.title}`,
@@ -3810,6 +4612,12 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
     task.id,
     `Implementation Strategy - ${task.title}`,
     JSON.stringify(strategy, null, 2),
+    'implementation_architect'
+  );
+  const impactArtifact = await createCurrentArtifact(
+    task.id,
+    `Implementation Impact Analysis - ${task.title}`,
+    JSON.stringify(impactAnalysis, null, 2),
     'implementation_architect'
   );
 
@@ -3874,7 +4682,7 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
   await prisma.taskArtifact.updateMany({
     where: {
       id: {
-        in: [technicalSpecArtifact.id, planArtifact.id, strategyArtifact.id],
+        in: [technicalSpecArtifact.id, planArtifact.id, strategyArtifact.id, impactArtifact.id],
       },
     },
     data: {
@@ -3897,13 +4705,21 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
 
 export async function runTaskImplementation(taskUuid, userUuid = null) {
   const task = await getTaskWithArtifactsOrThrow(taskUuid);
+  const runtimeUserUuid = resolveImplementationUserUuid(task, userUuid);
   const generatedApp = await getGeneratedAppByProjectUuid(task.project.uuid);
 
   if (!generatedApp) {
     throw new Error('O projeto ainda nao possui um app full stack gerado. Faca o bootstrap primeiro.');
   }
+  await ensureGeneratedAppFoundation(task.project, generatedApp);
 
-  let implementation = await planTaskImplementation(taskUuid, userUuid);
+  let implementation = await getLatestTaskImplementation(task.id);
+
+  if (!hasReusableImplementationPlan(implementation, generatedApp.id)) {
+    implementation = await planTaskImplementation(taskUuid, runtimeUserUuid);
+  }
+
+  const implementationPlanContent = parseJsonArtifactContent(implementation?.implementationPlanArtifact);
 
   implementation = await prisma.taskImplementation.update({
     where: { id: implementation.id },
@@ -3928,9 +4744,38 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
   });
 
   try {
+    await persistImplementationExecutionState(task, implementation, {
+      phase: 'impact_and_contract',
+      phaseLabel: 'Impacto e contrato',
+      progressPercent: 10,
+      status: 'in_progress',
+      headline: 'Consolidando objetivo, impacto e plano tecnico antes da integracao.',
+      notes: [
+        'Revisar technical spec atual',
+        'Confirmar plano de implementacao reutilizavel',
+        'Preparar contexto da feature para materializacao',
+      ],
+      ...getWorkstreamExecutionState(implementationPlanContent, 'impact_and_contract'),
+    });
+
     await cleanupImplementationFiles(generatedApp.rootPath, implementation);
 
     let technicalSpec = normalizeTechnicalSpec(JSON.parse(implementation.technicalSpecArtifact.content), task);
+
+    await persistImplementationExecutionState(task, implementation, {
+      phase: 'service_and_ui',
+      phaseLabel: 'Servico e interface',
+      progressPercent: 35,
+      status: 'in_progress',
+      headline: 'Materializando frontend, backend e contratos da feature.',
+      notes: [
+        technicalSpec.frontend?.suggestedRoute || 'Rota frontend pendente',
+        technicalSpec.backend?.routeBase || 'Rota backend pendente',
+        technicalSpec.shared?.contractPath || 'Contrato compartilhado pendente',
+      ],
+      ...getWorkstreamExecutionState(implementationPlanContent, 'service_and_ui'),
+    });
+
     let generatedFiles = await materializeImplementationFiles({
       task,
       implementation,
@@ -3939,6 +4784,21 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
     });
     const maxRepairAttempts = getImplementationAutoRepairAttempts();
     const repairAttempts = [];
+
+    await persistImplementationExecutionState(task, implementation, {
+      phase: 'integration_and_validation',
+      phaseLabel: 'Integracao e validacao',
+      progressPercent: 60,
+      status: 'in_progress',
+      headline: 'Executando review estrutural, review especialista e suite automatica.',
+      notes: [
+        'Review estrutural',
+        'Review especialista',
+        'Build, teste e lint',
+      ],
+      ...getWorkstreamExecutionState(implementationPlanContent, 'integration_and_validation'),
+    });
+
     let cycleResult = await executeImplementationQualityCycle({
       task,
       implementation,
@@ -3966,7 +4826,19 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
       await createRepairAttemptArtifact(task, implementation, technicalSpec, repairContext);
       repairAttempts.push(repairContext);
 
-      technicalSpec = await enrichFrontendWithAi(task, technicalSpec, userUuid, repairContext);
+      await persistImplementationExecutionState(task, implementation, {
+        phase: 'repair',
+        phaseLabel: 'Reparo incremental',
+        progressPercent: Math.min(92, 68 + attemptIndex * 8),
+        status: 'in_progress',
+        headline: `Aplicando reparo automatico ${attemptIndex}/${maxRepairAttempts}.`,
+        notes: (repairContext.findings || [])
+          .slice(0, 3)
+          .map((item) => `${item.severity}: ${item.message}`),
+        ...getWorkstreamExecutionState(implementationPlanContent, 'integration_and_validation'),
+      });
+
+      technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid, repairContext);
       generatedFiles = await materializeImplementationFiles({
         task,
         implementation,
@@ -3986,6 +4858,45 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
       cycleResult.specialistReviewReport.summary.status === 'approved' &&
       cycleResult.validationSuite.summary.status === 'completed';
     const createdPaths = generatedFiles.map((file) => file.relativePath).join('\n');
+    const qualitySummary = buildImplementationQualitySummary({
+      task,
+      implementation,
+      reviewArtifact: cycleResult.reviewArtifact,
+      specialistReviewArtifact: cycleResult.specialistReviewArtifact,
+      buildReportArtifact: cycleResult.validationSuite.buildArtifact,
+      testReportArtifact: cycleResult.validationSuite.testArtifact,
+      lintReportArtifact: cycleResult.validationSuite.lintArtifact,
+    });
+    await createImplementationDiffReviewArtifact(
+      task,
+      implementation,
+      technicalSpec,
+      qualitySummary,
+      generatedFiles,
+      repairAttempts.length
+    );
+
+    await persistImplementationExecutionState(task, implementation, {
+      phase: finalSucceeded ? 'completed' : 'failed_validation',
+      phaseLabel: finalSucceeded ? 'Integracao concluida' : 'Validacao final com ressalvas',
+      progressPercent: finalSucceeded ? 100 : 96,
+      status: finalSucceeded ? 'completed' : 'needs_attention',
+      headline: finalSucceeded
+        ? 'A feature foi integrada com sucesso e passou pelos gates tecnicos.'
+        : 'A feature foi materializada, mas ainda requer atencao de qualidade antes de ser considerada integrada.',
+      notes: [
+        `Review: ${cycleResult.reviewReport.summary.status}`,
+        `Specialist: ${cycleResult.specialistReviewReport.summary.status}`,
+        `Validation: ${cycleResult.validationSuite.summary.status}`,
+      ],
+      currentWorkstreams: [],
+      completedWorkstreams: (implementationPlanContent?.workstreams || []).map((stream) => ({
+        id: stream.id,
+        label: stream.label,
+        goal: stream.goal,
+      })),
+    });
+
     await prisma.taskImplementation.update({
       where: { id: implementation.id },
       data: {
@@ -4009,6 +4920,15 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
       },
     });
   } catch (error) {
+    await persistImplementationExecutionState(task, implementation, {
+      phase: 'failed',
+      phaseLabel: 'Falha na execucao',
+      progressPercent: 100,
+      status: 'failed',
+      headline: 'A implementacao falhou antes de concluir a trilha tecnica.',
+      notes: [error.message],
+      ...getWorkstreamExecutionState(implementationPlanContent, 'integration_and_validation'),
+    });
     await prisma.taskImplementation.update({
       where: { id: implementation.id },
       data: {
@@ -4037,6 +4957,17 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
       runs: true,
     },
   });
+}
+
+function hasReusableImplementationPlan(implementation, generatedAppId) {
+  if (!implementation) return false;
+
+  return (
+    implementation.status === 'planned' &&
+    implementation.generatedAppId === generatedAppId &&
+    Boolean(implementation.technicalSpecArtifact?.content) &&
+    Boolean(implementation.implementationPlanArtifact?.content)
+  );
 }
 
 export async function getTaskImplementationStatus(taskUuid) {
@@ -4083,6 +5014,46 @@ export async function getTaskImplementationStatus(taskUuid) {
     where: {
       taskId: task.id,
       title: `Implementation Specialist Review - ${task.title}`,
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const strategyArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      title: `Implementation Strategy - ${task.title}`,
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const impactArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      title: `Implementation Impact Analysis - ${task.title}`,
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const executionStateArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      title: `Implementation Execution State - ${task.title}`,
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const diffReviewArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      title: `Implementation Diff Review - ${task.title}`,
       artifactScope: 'implementation',
       isCurrent: true,
     },
@@ -4139,6 +5110,10 @@ export async function getTaskImplementationStatus(taskUuid) {
     reviewArtifact,
     specialistReviewArtifact,
     fixPlanArtifact,
+    strategyArtifact,
+    impactArtifact,
+    executionStateArtifact,
+    diffReviewArtifact,
     buildReportArtifact,
     testReportArtifact,
     lintReportArtifact,
@@ -4154,7 +5129,7 @@ export async function reviewTaskImplementation(taskUuid) {
   const implementation = await getLatestTaskImplementation(task.id);
 
   if (!implementation?.technicalSpecArtifact || !implementation?.generatedApp) {
-    throw new Error('A task ainda nÃ£o possui implementaÃ§Ã£o gerada para revisar.');
+    throw new Error('A task ainda não possui implementação gerada para revisar.');
   }
 
   const run = await prisma.generatedAppRun.create({
@@ -4183,6 +5158,85 @@ export async function reviewTaskImplementation(taskUuid) {
       generatedApp: implementation.generatedApp,
     });
 
+    const [buildReportArtifact, testReportArtifact, lintReportArtifact] = await Promise.all([
+      prisma.taskArtifact.findFirst({
+        where: {
+          taskId: task.id,
+          title: `Build Report - ${task.title}`,
+          artifactScope: 'implementation',
+          isCurrent: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.taskArtifact.findFirst({
+        where: {
+          taskId: task.id,
+          title: `Test Report - ${task.title}`,
+          artifactScope: 'implementation',
+          isCurrent: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.taskArtifact.findFirst({
+        where: {
+          taskId: task.id,
+          title: `Lint Report - ${task.title}`,
+          artifactScope: 'implementation',
+          isCurrent: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const qualitySummary = buildImplementationQualitySummary({
+      task,
+      implementation,
+      reviewArtifact: artifact,
+      specialistReviewArtifact,
+      buildReportArtifact,
+      testReportArtifact,
+      lintReportArtifact,
+    });
+    const validationCompleted =
+      qualitySummary.buildStatus === 'completed' &&
+      qualitySummary.testStatus === 'completed' &&
+      qualitySummary.lintStatus === 'completed';
+    const approvedNow =
+      reviewReport.summary.status === 'approved' &&
+      specialistReviewReport.summary.status === 'approved' &&
+      validationCompleted;
+
+    if (approvedNow) {
+      await prisma.taskImplementation.update({
+        where: { id: implementation.id },
+        data: {
+          status: 'integrated',
+          buildStatus: 'completed',
+          testStatus: 'completed',
+          summary: `Implementacao validada manualmente e aprovada para a task ${task.title}.`,
+        },
+      });
+
+      await persistImplementationExecutionState(task, implementation, {
+        phase: 'completed',
+        phaseLabel: 'Integracao concluida',
+        progressPercent: 100,
+        status: 'completed',
+        headline: 'A feature foi revisada novamente e agora passou por todos os gates tecnicos.',
+        notes: [
+          `Review: ${reviewReport.summary.status}`,
+          `Specialist: ${specialistReviewReport.summary.status}`,
+          'Validation: completed',
+        ],
+        currentWorkstreams: [],
+        completedWorkstreams: (parseJsonArtifactContent(implementation.implementationPlanArtifact)?.workstreams || []).map((stream) => ({
+          id: stream.id,
+          label: stream.label,
+          goal: stream.goal,
+        })),
+      });
+    }
+
     await prisma.generatedAppRun.update({
       where: { id: run.id },
       data: {
@@ -4193,7 +5247,17 @@ export async function reviewTaskImplementation(taskUuid) {
     });
 
     return {
-      implementation,
+      implementation: approvedNow
+        ? await prisma.taskImplementation.findUnique({
+            where: { id: implementation.id },
+            include: {
+              technicalSpecArtifact: true,
+              implementationPlanArtifact: true,
+              generatedApp: true,
+              generatedFiles: true,
+            },
+          })
+        : implementation,
       reviewArtifact: artifact,
       specialistReviewArtifact,
       fixPlanArtifact,

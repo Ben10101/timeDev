@@ -264,6 +264,68 @@ class ProjectManager:
         stories = self._renumber_stories(story_blocks)
         return "## Historias de Usuario\n\n" + "\n\n".join(stories).strip()
 
+    def _repair_backlog_output(self, base_context, full_backlog, overview, story_blocks, reason, *, min_stories, max_stories):
+        repaired_overview = (overview or "").strip()
+        extracted_overview = self._extract_section(full_backlog, "Visao Geral")
+        if not repaired_overview and extracted_overview:
+            repaired_overview = extracted_overview.strip()
+
+        consolidated_blocks = self._dedupe_and_polish_stories(
+            list(story_blocks) + self._extract_story_lines(self._extract_section(full_backlog, "Historias de Usuario"))
+        )
+
+        if not repaired_overview:
+            overview_prompt = f"""
+{base_context}
+
+TAREFA
+Gere APENAS esta secao em Markdown:
+
+## Visao Geral
+- Resuma o problema, o objetivo e a primeira versao do produto em no maximo 5 linhas.
+"""
+            overview_result = self._generate_block(
+                overview_prompt,
+                num_predict=os.getenv("PROJECT_MANAGER_BLOCK_OVERVIEW_NUM_PREDICT", "240"),
+            )
+            repaired_overview = self._extract_section(overview_result, "Visao Geral") or repaired_overview
+
+        if len(consolidated_blocks) < min_stories or "trunc" in (reason or "").lower():
+            consolidated_blocks = self._ensure_minimum_story_count(
+                base_context,
+                consolidated_blocks,
+                min_stories=min_stories,
+                max_stories=max_stories,
+            )
+
+        if len(consolidated_blocks) < min_stories:
+            fallback_blocks = self._generate_missing_stories_fallback(
+                base_context,
+                consolidated_blocks,
+                needed_count=min_stories - len(consolidated_blocks),
+            )
+            if fallback_blocks:
+                consolidated_blocks = self._dedupe_and_polish_stories(consolidated_blocks + fallback_blocks)
+
+        if len(consolidated_blocks) >= min_stories:
+            curated_section = self._curate_story_batch(
+                base_context,
+                consolidated_blocks,
+                min_stories=min_stories,
+                max_stories=max_stories,
+            )
+            consolidated_blocks = self._dedupe_and_polish_stories(self._extract_story_lines(curated_section))
+
+        consolidated_blocks = self._ensure_minimum_story_count(
+            base_context,
+            consolidated_blocks,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )[:max_stories]
+
+        self._validate_story_batch_quality(consolidated_blocks, min_stories=min_stories)
+        return self._build_full_backlog(repaired_overview, consolidated_blocks)
+
     def _generate_block(self, prompt, *, num_predict):
         result = generate_text_from_llm(
             prompt,
@@ -724,7 +786,20 @@ Gere APENAS esta secao em Markdown:
                 if is_complete:
                     return full_backlog
 
-                last_reason = reason or "Backlog considerado incompleto."
+                repaired_backlog = self._repair_backlog_output(
+                    base_context,
+                    full_backlog,
+                    overview,
+                    combined_story_blocks,
+                    reason or "",
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
+                repaired_ok, repaired_reason = validate_backlog_output(repaired_backlog)
+                if repaired_ok:
+                    return repaired_backlog
+
+                last_reason = repaired_reason or reason or "Backlog considerado incompleto."
             except Exception as error:
                 last_reason = str(error) or "Falha ao montar o backlog."
 

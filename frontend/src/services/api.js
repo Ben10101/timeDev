@@ -313,6 +313,11 @@ export const runTaskImplementation = async (taskUuid) => {
   return response.data
 }
 
+export const planTaskImplementation = async (taskUuid) => {
+  const response = await apiClient.post(`/tasks/${taskUuid}/implementation/plan`)
+  return response.data
+}
+
 export const getTaskImplementationStatus = async (taskUuid) => {
   const response = await apiClient.get(`/tasks/${taskUuid}/implementation/status`)
   return response.data
@@ -385,6 +390,7 @@ export default {
   runTaskRequirements,
   runTaskQa,
   bootstrapGeneratedApp,
+  planTaskImplementation,
   getGeneratedApp,
   runTaskImplementation,
   getTaskImplementationStatus,

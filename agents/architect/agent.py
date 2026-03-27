@@ -166,6 +166,30 @@ class Architect:
                 missing.append(title)
         return sections, missing
 
+    def _extract_missing_sections(self, reason):
+        mapping = {self._normalize_text(title)[1]: title for title in self.REQUIRED_SECTIONS}
+        match = re.search(r"Secoes ausentes:\s*(.+)$", reason or "", re.IGNORECASE)
+        if not match:
+            return []
+
+        raw_sections = [item.strip() for item in match.group(1).split(",")]
+        normalized_targets = []
+        for item in raw_sections:
+            _, normalized_item = self._normalize_text(item)
+            if normalized_item in mapping:
+                normalized_targets.append(mapping[normalized_item])
+                continue
+            for normalized_title, original_title in mapping.items():
+                if normalized_item in normalized_title or normalized_title in normalized_item:
+                    normalized_targets.append(original_title)
+                    break
+
+        deduped = []
+        for title in normalized_targets:
+            if title not in deduped:
+                deduped.append(title)
+        return deduped
+
     def _repair_missing_sections(self, base_context, block_result, missing_titles, architecture_model):
         if not missing_titles:
             return {}
@@ -209,6 +233,23 @@ REGRAS
             raise RuntimeError(f"Reparo do bloco nao entregou secoes {', '.join(still_missing)}.")
 
         return repaired_sections
+
+    def _repair_final_architecture(self, base_context, sections, reason, architecture_model):
+        missing_titles = self._extract_missing_sections(reason)
+        if not missing_titles:
+            return sections
+
+        current_document = self._build_full_architecture(sections)
+        repaired_sections = self._repair_missing_sections(
+            base_context,
+            current_document,
+            missing_titles,
+            architecture_model,
+        )
+
+        merged = dict(sections)
+        merged.update(repaired_sections)
+        return merged
 
     def _build_full_architecture(self, sections):
         ordered_sections = []
@@ -403,7 +444,18 @@ Cubra logs, metricas, alertas, suporte operacional e recovery.
                 if is_complete:
                     return full_architecture
 
-                last_reason = reason or "Arquitetura considerada incompleta."
+                repaired_sections = self._repair_final_architecture(
+                    base_context,
+                    sections,
+                    reason or "",
+                    architecture_model,
+                )
+                repaired_architecture = self._build_full_architecture(repaired_sections)
+                repaired_ok, repaired_reason = validate_architecture_output(repaired_architecture)
+                if repaired_ok:
+                    return repaired_architecture
+
+                last_reason = repaired_reason or reason or "Arquitetura considerada incompleta."
             except Exception as error:
                 last_reason = str(error) or "Falha ao montar a arquitetura."
 
