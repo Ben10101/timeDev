@@ -228,8 +228,121 @@ export function StudioHome({
   )
 }
 
+function getFeatureModeProfile(productMode: string) {
+  const profiles: Record<string, Record<string, unknown>> = {
+    'governance-console': {
+      heroDark: true,
+      metricDark: true,
+      reversePanels: false,
+      bodyColumns: 'minmax(380px, 0.92fr) minmax(0, 1.08fr)',
+      searchLabel: 'Localizar perfil, regra ou escopo',
+      tableLabels: ['Perfil', 'Escopo', 'Atualizacao'],
+      asideTitle: 'Governanca ativa',
+      asideTone: 'Controle claro para acesso, risco e decisao.',
+      highlightVariant: 'pills',
+      recordsVariant: 'policy-grid',
+      formVariant: 'console',
+    },
+    'self-service-settings': {
+      heroDark: false,
+      metricDark: false,
+      reversePanels: false,
+      bodyColumns: 'minmax(360px, 0.98fr) minmax(300px, 0.82fr)',
+      searchLabel: 'Buscar ajuste ou preferencia',
+      tableLabels: ['Ajuste', 'Estado', 'Atualizacao'],
+      asideTitle: 'Resumo atual',
+      asideTone: 'Ajustes simples, com leitura clara do que esta ativo agora.',
+      highlightVariant: 'soft-list',
+      recordsVariant: 'summary',
+      formVariant: 'settings',
+    },
+    'evidence-workbench': {
+      heroDark: false,
+      metricDark: false,
+      reversePanels: true,
+      bodyColumns: 'minmax(0, 1.12fr) minmax(360px, 0.88fr)',
+      searchLabel: 'Localizar comprovante, link ou referencia',
+      tableLabels: ['Documento', 'Status', 'Envio'],
+      asideTitle: 'Contexto do caso',
+      asideTone: 'Organize evidencias com foco em triagem e rapidez de analise.',
+      highlightVariant: 'chips',
+      recordsVariant: 'evidence',
+      formVariant: 'workbench',
+    },
+    'manager-cockpit': {
+      heroDark: true,
+      metricDark: true,
+      reversePanels: true,
+      bodyColumns: 'minmax(0, 1.14fr) minmax(360px, 0.86fr)',
+      searchLabel: 'Filtrar indicador ou recorte',
+      tableLabels: ['Indicador', 'Estado', 'Atualizacao'],
+      asideTitle: 'Leitura executiva',
+      asideTone: 'A tela precisa apoiar decisao, comparacao e visao consolidada.',
+      highlightVariant: 'cards',
+      recordsVariant: 'insights',
+      formVariant: 'support',
+    },
+    'review-workbench': {
+      heroDark: true,
+      metricDark: false,
+      reversePanels: true,
+      bodyColumns: 'minmax(0, 1.08fr) minmax(360px, 0.92fr)',
+      searchLabel: 'Buscar item para revisar',
+      tableLabels: ['Item', 'Decisao', 'Atualizacao'],
+      asideTitle: 'Fila de revisao',
+      asideTone: 'Mantenha a fila clara para aprovar, ajustar e seguir rapido.',
+      highlightVariant: 'cards',
+      recordsVariant: 'queue',
+      formVariant: 'support',
+    },
+    'onboarding-flow': {
+      heroDark: false,
+      metricDark: false,
+      reversePanels: false,
+      bodyColumns: 'minmax(360px, 0.95fr) minmax(320px, 0.85fr)',
+      searchLabel: 'Ver proximas etapas',
+      tableLabels: ['Etapa', 'Status', 'Atualizacao'],
+      asideTitle: 'Proxima etapa',
+      asideTone: 'Avance pela jornada mantendo contexto e baixo atrito.',
+      highlightVariant: 'steps',
+      recordsVariant: 'steps',
+      formVariant: 'settings',
+    },
+    'immersive-workspace': {
+      heroDark: true,
+      metricDark: false,
+      reversePanels: false,
+      bodyColumns: 'minmax(0, 1fr)',
+      searchLabel: 'Filtrar atividade atual',
+      tableLabels: ['Item', 'Estado', 'Atualizacao'],
+      asideTitle: 'Foco principal',
+      asideTone: 'Menos painel e mais concentracao na tarefa central.',
+      highlightVariant: 'cards',
+      recordsVariant: 'focus',
+      formVariant: 'workbench',
+    },
+  }
+
+  return {
+    heroDark: false,
+    metricDark: false,
+    reversePanels: false,
+    bodyColumns: 'minmax(340px, 420px) minmax(0, 1fr)',
+    searchLabel: 'Pesquisar...',
+    tableLabels: ['Registro', 'Status', 'Atualizacao'],
+    asideTitle: 'Operacao viva',
+    asideTone: 'Acompanhe o contexto principal desta area sem perder clareza.',
+    highlightVariant: 'cards',
+    recordsVariant: 'table',
+    formVariant: 'panel',
+    ...(profiles[productMode] || {}),
+  }
+}
+
 export function FeaturePage({
   accent = 'teal',
+  layout = 'split',
+  productMode = 'structured-workspace',
   eyebrow,
   title,
   description,
@@ -244,11 +357,12 @@ export function FeaturePage({
   children,
 }: {
   accent?: 'teal' | 'blue' | 'violet' | 'amber'
-  layout?: 'split' | 'stacked' | 'wizard' | 'dashboard'
+  layout?: 'split' | 'stacked' | 'wizard' | 'dashboard' | 'workspace' | 'settings' | 'crud'
+  productMode?: string
   eyebrow: string
   title: string
   description: string
-  metrics: Array<{ label: string; value: string }>
+  metrics?: Array<{ label: string; value: string }>
   highlights: string[]
   formTitle: string
   formDescription: string
@@ -403,40 +517,230 @@ export function FeatureWorkbench({
   const tableLabels = Array.isArray(modeProfile.tableLabels) ? modeProfile.tableLabels : ['Registro', 'Status', 'Atualizacao']
   const asideTitle = String(modeProfile.asideTitle || 'Operacao viva')
   const asideTone = String(modeProfile.asideTone || 'Acompanhe o contexto principal desta area sem perder clareza.')
+  const highlightVariant = String(modeProfile.highlightVariant || 'cards')
+  const recordsVariant = String(modeProfile.recordsVariant || 'table')
+  const formVariant = String(modeProfile.formVariant || 'panel')
+
+  const highlightNode =
+    highlightVariant === 'pills' ? (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {highlights.map((item) => (
+          <span
+            key={item}
+            style={{
+              padding: '8px 11px',
+              borderRadius: tokens.radius.pill,
+              background: '#ffffff',
+              border: `1px solid ${accentColor}22`,
+              color: tokens.color.shell,
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    ) : highlightVariant === 'soft-list' ? (
+      <div style={{ display: 'grid', gap: 10 }}>
+        {highlights.map((item) => (
+          <div
+            key={item}
+            style={{
+              padding: '12px 14px',
+              borderRadius: 14,
+              background: '#ffffff',
+              border: `1px solid ${tokens.color.border}`,
+              color: tokens.color.mutedStrong,
+              lineHeight: 1.6,
+            }}
+          >
+            {item}
+          </div>
+        ))}
+      </div>
+    ) : highlightVariant === 'chips' ? (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        {highlights.map((item) => (
+          <span
+            key={item}
+            style={{
+              padding: '10px 12px',
+              borderRadius: 14,
+              background: `${accentColor}10`,
+              border: `1px dashed ${accentColor}55`,
+              color: tokens.color.shell,
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    ) : highlightVariant === 'steps' ? (
+      <div style={{ display: 'grid', gap: 10 }}>
+        {highlights.map((item, index) => (
+          <div key={item} style={{ display: 'grid', gridTemplateColumns: '28px 1fr', gap: 12, alignItems: 'start' }}>
+            <div
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                background: `${accentColor}15`,
+                color: accentColor,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 800,
+                fontSize: 12,
+              }}
+            >
+              {index + 1}
+            </div>
+            <div style={{ paddingTop: 4, color: tokens.color.mutedStrong, lineHeight: 1.6 }}>{item}</div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        {highlights.map((item) => (
+          <div
+            key={item}
+            style={{
+              padding: '14px 16px',
+              borderRadius: 16,
+              border: `1px solid ${tokens.color.border}`,
+              background: '#ffffff',
+              boxShadow: tokens.shadow.panel,
+              color: tokens.color.mutedStrong,
+              lineHeight: 1.65,
+            }}
+          >
+            {item}
+          </div>
+        ))}
+      </div>
+    )
+
+  const recordsLeadNode =
+    recordsVariant === 'summary' ? (
+      <div style={{ display: 'grid', gap: 12 }}>
+        {highlights.slice(0, 2).map((item) => (
+          <div
+            key={item}
+            style={{
+              padding: '14px 16px',
+              borderRadius: 16,
+              background: '#f8fafc',
+              border: `1px solid ${tokens.color.border}`,
+              color: tokens.color.mutedStrong,
+              lineHeight: 1.65,
+            }}
+          >
+            {item}
+          </div>
+        ))}
+      </div>
+    ) : recordsVariant === 'policy-grid' ? (
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+        {tableLabels.slice(0, 2).map((label) => (
+          <div
+            key={String(label)}
+            style={{
+              padding: '12px 14px',
+              borderRadius: 14,
+              background: '#f8fafc',
+              border: `1px solid ${tokens.color.border}`,
+            }}
+          >
+            <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              {String(label)}
+            </div>
+            <div style={{ marginTop: 6, color: tokens.color.shell, fontWeight: 700 }}>Em definicao</div>
+          </div>
+        ))}
+      </div>
+    ) : recordsVariant === 'evidence' ? (
+      <div
+        style={{
+          padding: '16px 18px',
+          borderRadius: 18,
+          background: `${accentColor}08`,
+          border: `1px dashed ${accentColor}55`,
+          color: tokens.color.mutedStrong,
+          lineHeight: 1.7,
+        }}
+      >
+        Mantenha comprovantes, links e anexos organizados para apoiar a triagem do chamado.
+      </div>
+    ) : recordsVariant === 'insights' ? (
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+        {tableLabels.map((label) => (
+          <div
+            key={String(label)}
+            style={{
+              padding: '12px 14px',
+              borderRadius: 14,
+              background: '#111827',
+              color: '#f8fafc',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}
+          >
+            <div style={{ fontSize: 12, opacity: 0.72, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{String(label)}</div>
+            <div style={{ marginTop: 8, fontWeight: 800 }}>Acompanhando</div>
+          </div>
+        ))}
+      </div>
+    ) : recordsVariant === 'queue' ? (
+      <div style={{ display: 'grid', gap: 10 }}>
+        {['Prioridade alta', 'Em revisão', 'Pronto para decisão'].map((item) => (
+          <div
+            key={item}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '12px 14px',
+              borderRadius: 14,
+              background: '#f8fafc',
+              border: `1px solid ${tokens.color.border}`,
+            }}
+          >
+            <strong style={{ color: tokens.color.shell }}>{item}</strong>
+            <span style={{ color: tokens.color.mutedStrong, fontWeight: 700 }}>Fila ativa</span>
+          </div>
+        ))}
+      </div>
+    ) : recordsVariant === 'steps' ? (
+      <div style={{ display: 'grid', gap: 10 }}>
+        {['Preparar', 'Confirmar', 'Concluir'].map((item, index) => (
+          <div key={item} style={{ display: 'grid', gridTemplateColumns: '24px 1fr', gap: 12, alignItems: 'center' }}>
+            <div style={{ width: 24, height: 24, borderRadius: '50%', background: `${accentColor}15`, color: accentColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 11 }}>
+              {index + 1}
+            </div>
+            <div style={{ color: tokens.color.mutedStrong }}>{item}</div>
+          </div>
+        ))}
+      </div>
+    ) : null
 
   const formPanel = (
     <SurfaceCard title={formTitle} description={formDescription}>
       <div style={{ display: 'grid', gap: 16 }}>
         <div
           style={{
-            padding: '14px 16px',
-            borderRadius: 16,
-            background: `${accentColor}10`,
-            border: `1px solid ${accentColor}25`,
+            padding: '16px 18px',
+            borderRadius: 18,
+            background: formVariant === 'console' ? '#0f172a' : formVariant === 'settings' ? '#f8fafc' : `${accentColor}10`,
+            border: formVariant === 'console' ? '1px solid rgba(255,255,255,0.08)' : `1px solid ${formVariant === 'settings' ? tokens.color.border : `${accentColor}28`}`,
             display: 'grid',
             gap: 10,
           }}
         >
-          <strong style={{ color: tokens.color.shell, fontSize: 15 }}>{asideTitle}</strong>
-          <p style={{ margin: 0, color: tokens.color.mutedStrong, lineHeight: 1.7 }}>{asideTone}</p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {highlights.slice(0, 2).map((item) => (
-              <span
-                key={item}
-                style={{
-                  padding: '7px 10px',
-                  borderRadius: tokens.radius.pill,
-                  background: '#ffffff',
-                  border: `1px solid ${accentColor}22`,
-                  color: tokens.color.shell,
-                  fontWeight: 700,
-                  fontSize: 12,
-                }}
-              >
-                {item}
-              </span>
-            ))}
-          </div>
+          <strong style={{ color: formVariant === 'console' ? '#f8fafc' : tokens.color.shell, fontSize: 15 }}>{asideTitle}</strong>
+          <p style={{ margin: 0, color: formVariant === 'console' ? 'rgba(248,250,252,0.76)' : tokens.color.mutedStrong, lineHeight: 1.7 }}>{asideTone}</p>
+          {highlightVariant === 'pills' || highlightVariant === 'chips' ? highlightNode : null}
         </div>
         {form}
       </div>
@@ -446,38 +750,43 @@ export function FeatureWorkbench({
   const recordsPanel = (
     <SurfaceCard title={listTitle} description={listDescription} meta={listMeta}>
       <div style={{ display: 'grid', gap: 14 }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '10px 12px',
-            borderRadius: 14,
-            background: '#f6f8fc',
-            border: `1px solid ${tokens.color.border}`,
-          }}
-        >
-          <span style={{ color: tokens.color.muted }}>Buscar</span>
-          <span style={{ color: tokens.color.mutedStrong }}>{searchLabel}</span>
-        </div>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1.3fr 0.8fr 0.9fr',
-            gap: 12,
-            padding: '10px 14px',
-            borderRadius: 12,
-            background: '#f6f8fc',
-            border: `1px solid ${tokens.color.border}`,
-            color: tokens.color.mutedStrong,
-            fontSize: 13,
-            fontWeight: 800,
-          }}
-        >
-          <span>{String(tableLabels[0] || 'Registro')}</span>
-          <span>{String(tableLabels[1] || 'Status')}</span>
-          <span>{String(tableLabels[2] || 'Atualizacao')}</span>
-        </div>
+        {recordsLeadNode}
+        {recordsVariant !== 'summary' && recordsVariant !== 'steps' ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '10px 12px',
+              borderRadius: 14,
+              background: '#f6f8fc',
+              border: `1px solid ${tokens.color.border}`,
+            }}
+          >
+            <span style={{ color: tokens.color.muted }}>Buscar</span>
+            <span style={{ color: tokens.color.mutedStrong }}>{searchLabel}</span>
+          </div>
+        ) : null}
+        {recordsVariant !== 'summary' && recordsVariant !== 'steps' ? (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1.3fr 0.8fr 0.9fr',
+              gap: 12,
+              padding: '10px 14px',
+              borderRadius: 12,
+              background: '#f6f8fc',
+              border: `1px solid ${tokens.color.border}`,
+              color: tokens.color.mutedStrong,
+              fontSize: 13,
+              fontWeight: 800,
+            }}
+          >
+            <span>{String(tableLabels[0] || 'Registro')}</span>
+            <span>{String(tableLabels[1] || 'Status')}</span>
+            <span>{String(tableLabels[2] || 'Atualizacao')}</span>
+          </div>
+        ) : null}
         {children}
       </div>
     </SurfaceCard>
@@ -526,24 +835,7 @@ export function FeatureWorkbench({
         </div>
       </div>
 
-      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-        {highlights.map((item) => (
-          <div
-            key={item}
-            style={{
-              padding: '14px 16px',
-              borderRadius: 16,
-              border: `1px solid ${tokens.color.border}`,
-              background: '#ffffff',
-              boxShadow: tokens.shadow.panel,
-              color: tokens.color.mutedStrong,
-              lineHeight: 1.65,
-            }}
-          >
-            {item}
-          </div>
-        ))}
-      </div>
+      {highlightVariant === 'pills' || highlightVariant === 'chips' ? null : highlightNode}
 
       <div style={{ display: 'grid', gap: 18, gridTemplateColumns: bodyColumns }}>
         {reversePanels ? recordsPanel : formPanel}

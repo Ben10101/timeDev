@@ -45,17 +45,17 @@ export function SupportTicketAttachmentsPage() {
  <FeatureWorkbench
  accent="amber"
  productMode="evidence-workbench"
- eyebrow="Triagem com Contexto"
- title="Anexar Evidencia"
- description="Forneca o contexto necessario para nossa equipe tecnica iniciar a analise imediatamente."
+ eyebrow="Bancada de Evidencias"
+ title="Contexto do Atendimento"
+ description="Acompanhe os documentos ja anexados e adicione novas provas para garantir uma triagem precisa."
  metrics={[
  { label: 'Triagem', value: isLoading ? 'Sincronizando' : 'Ativa' },
  { label: 'Evidencias', value: isLoading ? '...' : String(items.length || 0) },
  { label: 'Prioridade', value: 'Alta' },
  ]}
- highlights={["Agiliza a triagem inicial","Reduz idas e vindas de informacao"]}
+ highlights={["Triagem acelerada com prova documental","Visibilidade imediata para o time de suporte"]}
  formTitle="Novo Anexo"
- formDescription="Preencha os dados do documento e faca o upload do arquivo ou link."
+ formDescription="Preencha os dados do documento para vincular ao chamado atual."
  form={
  <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
  <FieldGroup label="Tipo de documento" hint="Classifique o anexo para facilitar a triagem do chamado.">
@@ -96,7 +96,7 @@ export function SupportTicketAttachmentsPage() {
  </form>
  }
  listTitle="Evidencias do Caso"
- listDescription="Nenhum documento anexado ainda."
+ listDescription="Nenhum documento anexado ainda. Adicione o primeiro acima."
  listMeta={isLoading ? 'Sincronizando' : items.length ? `${items.length} evidencia(s) vinculada(s)` : 'Sem evidencias'}
  >
  {isLoading ? (
@@ -132,7 +132,7 @@ export function SupportTicketAttachmentsPage() {
  >
  <div style={{ display: 'grid', gap: 4 }}>
  <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>{String(item.documentType || item.id)}</strong>
- <span style={{ display: 'block', color: '#64748b', fontSize: 13 }}>{String(item.documentDescription || 'Item pronto para acompanhamento operacional')}</span>
+ <span style={{ display: 'block', color: '#64748b', fontSize: 13 }}>{String(item.documentDescription || 'Item pronto para consulta')}</span>
  </div>
  <span style={{ width: 'fit-content', padding: '6px 10px', borderRadius: 999, background: '#ecfeff', color: '#115e59', fontSize: 12, fontWeight: 700 }}>
  {String(item.status || 'active')}
@@ -144,7 +144,7 @@ export function SupportTicketAttachmentsPage() {
  ) : (
  <div style={{ padding: 28, borderRadius: 16, background: '#f8fafc', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
  <div style={{ width: 58, height: 58, margin: '0 auto 12px', borderRadius: '50%', background: '#e2e8f0', color: '#475569', display: 'grid', placeItems: 'center', fontSize: 24 }}>O</div>
- <p style={{ margin: 0, color: '#64748b', lineHeight: 1.7 }}>Nenhum documento anexado ainda.</p>
+ <p style={{ margin: 0, color: '#64748b', lineHeight: 1.7 }}>Nenhum documento anexado ainda. Adicione o primeiro acima.</p>
  </div>
  )}
  </FeatureWorkbench>

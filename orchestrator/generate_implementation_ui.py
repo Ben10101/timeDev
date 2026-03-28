@@ -146,6 +146,9 @@ Instrucoes:
 - Se houver referencias de design, prefira os padroes de mesmo dominio e template antes de inventar uma abordagem nova.
 - Se houver objetivos de reparo, use-os apenas para evitar repetir problemas de copy ou hierarquia.
 - Nao use na interface palavras como: criterio de aceite, requisito, regra de negocio, QA, validacao tecnica, arquitetura, rastreabilidade, permissao por perfil, passos da implementacao.
+- Evite expor termos de modelo interno ou jargao tecnico ao usuario final, como: RBAC, auditavel, self_service, team, global, enabled, disabled, matriz de permissao, validacao fiscal imediata, prioridade alta fixa.
+- Quando houver enums ou estados internos, traduza-os para linguagem de produto em portugues do Brasil.
+- Prefira beneficios percebidos e instrucoes claras; evite frases que parecam politica interna, auditoria ou operacao de bastidor.
 - Evite qualquer um destes sinais de interface fraca:
   - titulo generico como "Execute esta jornada" ou "Preencha os dados"
   - descricoes vagas sem valor percebido
@@ -154,6 +157,13 @@ Instrucoes:
   - estados vazios frios ou burocraticos
 - Se o dominio for pouco especifico, ainda assim escolha uma linguagem mais forte e comercialmente madura.
 - O mesmo layout base pode produzir produtos diferentes. Diferencie a tela pelo papel, pela hierarquia e pelo tom dos nomes de secao.
+- Nao reutilize automaticamente hero, metricas e painel lateral padrao. Escolha uma composicao mais especifica para o product mode.
+- Para `governance-console`, prefira matriz, politicas, controles e leitura de risco; evite aparência de CRUD comum.
+- Para `self-service-settings`, prefira estado atual, ajustes claros, orientacao e confirmacao; evite grade operacional ou historico burocratico.
+- Para `evidence-workbench`, prefira bancada de caso, acervo de comprovantes, dropzone conceitual e contexto do atendimento; evite formulario seco com lista generica.
+- Para `manager-cockpit`, destaque indicadores, recortes, alertas e leitura executiva; evite painel lateral irrelevante ou formulario protagonista.
+- Para `review-workbench`, pense em fila, decisão, prioridade e contexto do item; evite composição de cadastro/listagem tradicional.
+- Se dois modos funcionais diferentes sairem com a mesma composicao base, reescreva a proposta até que a diferenca fique perceptivel.
 - Retorne APENAS JSON valido, sem markdown.
 
 Formato:

@@ -62,6 +62,22 @@ function humanizeFieldName(value) {
     .replace(/^./, (char) => char.toUpperCase());
 }
 
+function humanizeSelectOptionLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const directMap = {
+    self_service: 'Somente o proprio acesso',
+    team: 'Equipe',
+    global: 'Toda a empresa',
+    enabled: 'Ativado',
+    disabled: 'Desativado',
+    active: 'Ativo',
+    draft: 'Rascunho',
+  };
+
+  if (directMap[normalized]) return directMap[normalized];
+  return humanizeFieldName(value);
+}
+
 function camelCase(value, fallback = 'generatedField') {
   const source = pascalCase(value, fallback);
   return source.charAt(0).toLowerCase() + source.slice(1);
@@ -769,7 +785,9 @@ function detectDomainMismatch(taskTitle = '', domainKey = '', featureKey = '', r
 }
 
 function inferImplementedDomain(featureKey = '', routeBase = '') {
-  const source = `${normalizeSemanticText(featureKey)} ${normalizeSemanticText(routeBase)}`;
+  const normalizedFeatureKey = normalizeSemanticText(featureKey);
+  const normalizedRouteBase = normalizeSemanticText(routeBase);
+  const source = `${normalizedFeatureKey} ${normalizedRouteBase}`;
   const candidates = [
     'support-ticket-attachments',
     'ticket-notification-preferences',
@@ -788,14 +806,36 @@ function inferImplementedDomain(featureKey = '', routeBase = '') {
     'auth-register',
   ];
 
+  let bestCandidate = 'custom';
+  let bestScore = 0;
+
   for (const candidate of candidates) {
+    const normalizedCandidate = normalizeSemanticText(candidate);
     const keywords = getExpectedDomainKeywords(candidate);
-    if (keywords.some((keyword) => source.includes(normalizeSemanticText(keyword)))) {
-      return candidate;
+    let score = 0;
+
+    if (normalizedFeatureKey.includes(normalizedCandidate)) score += 12;
+    if (normalizedRouteBase.includes(normalizedCandidate)) score += 8;
+
+    const routeSlug = normalizedRouteBase.split('/').filter(Boolean).pop() || '';
+    const candidateTail = normalizedCandidate.split('-').pop() || '';
+    if (routeSlug && candidateTail && routeSlug.includes(candidateTail)) score += 4;
+
+    for (const keyword of keywords) {
+      const normalizedKeyword = normalizeSemanticText(keyword);
+      if (!normalizedKeyword) continue;
+      if (source.includes(normalizedKeyword)) score += 2;
+      if (normalizedFeatureKey.includes(normalizedKeyword)) score += 1;
+      if (normalizedRouteBase.includes(normalizedKeyword)) score += 1;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestCandidate = candidate;
     }
   }
 
-  return 'custom';
+  return bestScore > 0 ? bestCandidate : 'custom';
 }
 
 function areDomainKeysAligned(expectedDomain = '', implementedDomain = '') {
@@ -2001,10 +2041,10 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
         prismaType: 'String',
         required: true,
         unique: false,
-        helperText: 'Descreva as permissoes liberadas para o perfil em formato claro e auditavel.',
-        placeholder: 'Ex.: visualizar chamados, aprovar atendimento, gerenciar usuarios',
+        helperText: 'Liste o que esse perfil pode fazer no sistema, de forma simples e objetiva.',
+        placeholder: 'Ex.: acompanhar chamados, aprovar atendimento, administrar usuarios',
         defaultValue: '',
-        sampleValue: 'visualizar chamados; aprovar atendimento; gerenciar usuarios',
+        sampleValue: 'acompanhar chamados; aprovar atendimento; administrar usuarios',
         validations: ['required', 'min:10'],
       },
       {
@@ -2015,8 +2055,8 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
         prismaType: 'String',
         required: true,
         unique: false,
-        helperText: 'Defina se o perfil atua apenas na propria fila ou em toda a operacao.',
-        placeholder: 'self_service | team | global',
+        helperText: 'Escolha onde esse perfil pode atuar no sistema.',
+        placeholder: 'somente o proprio acesso | equipe | toda a empresa',
         defaultValue: 'team',
         sampleValue: 'global',
         selectOptions: ['self_service', 'team', 'global'],
@@ -2049,8 +2089,8 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
         prismaType: 'String',
         required: true,
         unique: false,
-        helperText: 'Defina se o sistema deve enviar avisos por e-mail quando o chamado mudar de status ou receber interacoes.',
-        placeholder: 'enabled | disabled',
+        helperText: 'Escolha se deseja receber avisos por e-mail sobre novidades no chamado.',
+        placeholder: 'ativado | desativado',
         defaultValue: 'enabled',
         sampleValue: 'enabled',
         selectOptions: ['enabled', 'disabled'],
@@ -3596,7 +3636,7 @@ function frontendFeatureFiles(task, technicalSpec) {
         control = `            <textarea\n${common}\n              placeholder="${escapeTemplate(field.placeholder)}"\n              style={inputStyle({ minHeight: 132, resize: 'vertical' })}\n            />`;
       } else if (field.inputType === 'select' && Array.isArray(field.selectOptions) && field.selectOptions.length) {
         const options = field.selectOptions
-          .map((option) => `              <option value="${escapeTemplate(option)}">${escapeTemplate(humanizeFieldName(option))}</option>`)
+          .map((option) => `              <option value="${escapeTemplate(option)}">${escapeTemplate(humanizeSelectOptionLabel(option))}</option>`)
           .join('\n');
         control = `            <select\n${common}\n              style={inputStyle()}\n            >\n${options}\n            </select>`;
       } else {
@@ -3712,10 +3752,10 @@ function frontendFeatureFiles(task, technicalSpec) {
                 <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>{String(item.${previewField.name === 'password' ? 'passwordHint' : previewField.name} || item.id)}</strong>
                 <span style={{ display: 'block', color: '#64748b', fontSize: 13 }}>{String(item.${secondaryField.name === 'password' ? 'passwordHint' : secondaryField.name} || '${escapeTemplate(
                   isWorkspaceLayout
-                    ? 'Item pronto para acompanhamento operacional'
+                    ? 'Item pronto para consulta'
                     : isDashboardLayout
-                      ? 'Indicador pronto para leitura'
-                      : 'Registro pronto para acompanhamento'
+                      ? 'Indicador disponivel para consulta'
+                      : 'Registro disponivel'
                 )}')}</span>
               </div>
               <span style={{ width: 'fit-content', padding: '6px 10px', borderRadius: 999, background: '#ecfeff', color: '#115e59', fontSize: 12, fontWeight: 700 }}>
@@ -3748,8 +3788,8 @@ function frontendFeatureFiles(task, technicalSpec) {
           ))}
         </div>
         <div style={{ padding: '14px 16px', borderRadius: 14, background: '#eef5ef', border: '1px solid #d9e7de', color: '#21493d' }}>
-          {isLoading ? '${escapeTemplate(isWizardLayout ? 'Preparando a proxima etapa...' : 'Sincronizando o estado atual...')}' : items.length ? '${escapeTemplate(
-            isWizardLayout ? 'Etapa pronta para seguir com seguranca.' : 'Preferencia registrada e pronta para acompanhamento.'
+          {isLoading ? '${escapeTemplate(isWizardLayout ? 'Preparando a proxima etapa...' : 'Carregando informacoes...')}' : items.length ? '${escapeTemplate(
+            isWizardLayout ? 'Etapa pronta para continuar.' : 'Configuracao salva com sucesso.'
           )}' : '${escapeTemplate(technicalSpec.frontend.recordsEmptyState || (isWizardLayout ? 'Nenhum passo confirmado ainda.' : 'Nenhuma configuracao registrada ainda.'))}' }
         </div>
       </div>`;
@@ -6126,7 +6166,3 @@ export async function reviewTaskImplementation(taskUuid) {
     throw error;
   }
 }
-
-
-
-

@@ -42,14 +42,14 @@ export function TicketNotificationPreferencesPage() {
  return (
  <FeatureWorkbench
  accent="teal"
- productMode="structured-workspace"
- eyebrow="Acompanhamento em Tempo Real"
- title="Notificacoes de Atualizacao de Chamados"
- description="Receba notificacoes instantaneas quando seu chamado for atualizado, mantendo-se sempre informado."
+ productMode="self-service-settings"
+ eyebrow="Autogestao"
+ title="Mantenha-se informado sem sair do fluxo"
+ description="Configure o recebimento de alertas por e-mail para acompanhar o progresso dos seus chamados em tempo real, sem precisar acessar o sistema constantemente."
  metrics={undefined}
- highlights={["Acompanhe o progresso do seu chamado sem abrir o sistema.","Mantenha-se atualizado com as ultimas atualizacoes."]}
- formTitle="Preferencias de Notificacao"
- formDescription="Personalize suas preferencias para receber alertas relevantes."
+ highlights={["Receba atualizacoes instantaneas no seu e-mail","Acompanhe o status sem interromper sua rotina"]}
+ formTitle="Configuracao de Alertas"
+ formDescription="Defina o e-mail de contato e ative as notificacoes para atualizacoes de status."
  form={
  <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
  <FieldGroup label="E-mail para notificacoes" hint="Use o e-mail que deve receber avisos sempre que houver atualizacao do chamado.">
@@ -61,18 +61,18 @@ export function TicketNotificationPreferencesPage() {
  style={inputStyle()}
  />
  </FieldGroup>
- <FieldGroup label="Notificar atualizacoes do chamado" hint="Defina se o sistema deve enviar avisos por e-mail quando o chamado mudar de status ou receber interacoes.">
+ <FieldGroup label="Notificar atualizacoes do chamado" hint="Escolha se deseja receber avisos por e-mail sobre novidades no chamado.">
  <select
  value={form.ticketUpdateAlerts}
  onChange={(event) => setForm((current) => ({ ...current, ticketUpdateAlerts: event.target.value }))}
  style={inputStyle()}
  >
- <option value="enabled">Enabled</option>
- <option value="disabled">Disabled</option>
+ <option value="enabled">Ativado</option>
+ <option value="disabled">Desativado</option>
  </select>
  </FieldGroup>
  <PrimaryButton type="submit" accent="teal">
- {isSubmitting ? 'Processando...' : 'Salvar Alteracoes'}
+ {isSubmitting ? 'Processando...' : 'Salvar Preferencias'}
  </PrimaryButton>
  {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}
  {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}
@@ -85,17 +85,17 @@ export function TicketNotificationPreferencesPage() {
  <div style={{ display: 'grid', gap: 14 }}>
  <div style={{ padding: '16px 18px', borderRadius: 16, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
  <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>Canal principal</strong>
- <p style={{ margin: '8px 0 0', color: '#64748b', lineHeight: 1.7 }}>Receba notificacoes instantaneas quando seu chamado for atualizado, mantendo-se sempre informado.</p>
+ <p style={{ margin: '8px 0 0', color: '#64748b', lineHeight: 1.7 }}>Configure o recebimento de alertas por e-mail para acompanhar o progresso dos seus chamados em tempo real, sem precisar acessar o sistema constantemente.</p>
  </div>
  <div style={{ display: 'grid', gap: 10 }}>
- {["Acompanhe o progresso do seu chamado sem abrir o sistema.","Mantenha-se atualizado com as ultimas atualizacoes."].map((item) => (
+ {["Receba atualizacoes instantaneas no seu e-mail","Acompanhe o status sem interromper sua rotina"].map((item) => (
  <div key={item} style={{ padding: '12px 14px', borderRadius: 14, background: '#ffffff', border: '1px solid #d9deea', color: '#475569', lineHeight: 1.6 }}>
  {item}
  </div>
  ))}
  </div>
  <div style={{ padding: '14px 16px', borderRadius: 14, background: '#eef5ef', border: '1px solid #d9e7de', color: '#21493d' }}>
- {isLoading ? 'Sincronizando o estado atual...' : items.length ? 'Preferencia registrada e pronta para acompanhamento.' : 'Nenhum alerta configurado. Configure para receber notificacoes de atualizacoes do seu chamado.' }
+ {isLoading ? 'Carregando informacoes...' : items.length ? 'Configuracao salva com sucesso.' : 'Nenhuma configuracao ativa. Ajuste as preferencias acima para comecar.' }
  </div>
  </div>
  </FeatureWorkbench>

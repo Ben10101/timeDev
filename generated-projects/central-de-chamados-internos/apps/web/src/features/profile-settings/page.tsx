@@ -46,12 +46,12 @@ export function ProfileSettingsPage() {
  accent="teal"
  productMode="structured-workspace"
  eyebrow="Configuracoes"
- title="Informacoes de Contato"
- description="Mantenha seus dados de perfil atualizados para uma comunicacao eficiente."
+ title="Informacoes de Perfil"
+ description="Mantenha seus dados atualizados para acesso facilitado e suporte prioritario."
  metrics={undefined}
- highlights={["Nome completo para identificacao clara.","Foto de perfil profissional para melhor comunicacao."]}
+ highlights={["Nome completo para identificacao precisa.","Foto de perfil para reconhecimento visual."]}
  formTitle="Detalhes Pessoais"
- formDescription="Altere seu nome, foto e e-mail."
+ formDescription="Altere seu nome, foto e e-mail para refletir suas preferencias."
  form={
  <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
  <FieldGroup label="Nome completo" hint="Informe o nome que sera exibido no seu perfil.">
@@ -95,17 +95,17 @@ export function ProfileSettingsPage() {
  <div style={{ display: 'grid', gap: 14 }}>
  <div style={{ padding: '16px 18px', borderRadius: 16, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
  <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>Canal principal</strong>
- <p style={{ margin: '8px 0 0', color: '#64748b', lineHeight: 1.7 }}>Mantenha seus dados de perfil atualizados para uma comunicacao eficiente.</p>
+ <p style={{ margin: '8px 0 0', color: '#64748b', lineHeight: 1.7 }}>Mantenha seus dados atualizados para acesso facilitado e suporte prioritario.</p>
  </div>
  <div style={{ display: 'grid', gap: 10 }}>
- {["Nome completo para identificacao clara.","Foto de perfil profissional para melhor comunicacao."].map((item) => (
+ {["Nome completo para identificacao precisa.","Foto de perfil para reconhecimento visual."].map((item) => (
  <div key={item} style={{ padding: '12px 14px', borderRadius: 14, background: '#ffffff', border: '1px solid #d9deea', color: '#475569', lineHeight: 1.6 }}>
  {item}
  </div>
  ))}
  </div>
  <div style={{ padding: '14px 16px', borderRadius: 14, background: '#eef5ef', border: '1px solid #d9e7de', color: '#21493d' }}>
- {isLoading ? 'Sincronizando o estado atual...' : items.length ? 'Preferencia registrada e pronta para acompanhamento.' : 'Nenhum registro encontrado. Adicione seus dados para comecar a gerenciar seu perfil.' }
+ {isLoading ? 'Carregando informacoes...' : items.length ? 'Configuracao salva com sucesso.' : 'Nenhum registro encontrado. Adicione suas informacoes para comecar.' }
  </div>
  </div>
  </FeatureWorkbench>

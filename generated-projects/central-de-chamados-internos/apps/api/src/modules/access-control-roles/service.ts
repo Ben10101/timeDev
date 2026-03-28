@@ -24,7 +24,7 @@ export class AccessControlRolesService {
   buildSeedFromTask(): AccessControlRoleRequest {
     return {
       roleName: 'gestor',
-      permissionMatrix: 'visualizar chamados; aprovar atendimento; gerenciar usuarios',
+      permissionMatrix: 'acompanhar chamados; aprovar atendimento; administrar usuarios',
       accessScope: 'global',
     };
   }

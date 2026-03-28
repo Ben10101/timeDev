@@ -1,8 +1,8 @@
-model AccessControlRole {
+model SupportTicketAttachment {
   id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  roleName  String @db.VarChar(190)
-  permissionMatrix String @db.VarChar(190)
-  accessScope String @db.VarChar(190)
+  documentType String @db.VarChar(190)
+  documentDescription String @db.VarChar(190)
+  fileUrl   String @db.VarChar(190)
   status    String   @default("draft") @db.VarChar(40)
   createdAt DateTime @default(now()) @db.DateTime(0)
   updatedAt DateTime @updatedAt @db.DateTime(0)

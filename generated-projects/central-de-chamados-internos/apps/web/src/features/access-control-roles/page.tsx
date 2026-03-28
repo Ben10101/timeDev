@@ -47,11 +47,11 @@ export function AccessControlRolesPage() {
  productMode="governance-console"
  eyebrow="Governanca"
  title="Matriz de Controle de Acesso"
- description="Configure perfis de acesso com permissoes granulares para cada funcao da organizacao."
+ description="Configure papeis estrategicos e delimite o escopo de atuacao para cada funcao da organizacao."
  metrics={undefined}
- highlights={["Controle granular por funcao","Seguranca operacional garantida"]}
+ highlights={["Controle granular por funcao","Escopo de atuacao definido"]}
  formTitle="Configurar Perfil"
- formDescription="Selecione a funcao e defina o escopo de atuacao e as permissoes especificas."
+ formDescription="Selecione a funcao e atribua as permissoes necessarias para operar com seguranca."
  form={
  <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
  <FieldGroup label="Perfil de acesso" hint="Selecione o perfil que recebera o conjunto de permissoes.">
@@ -65,23 +65,23 @@ export function AccessControlRolesPage() {
  <option value="gestor">Gestor</option>
  </select>
  </FieldGroup>
- <FieldGroup label="Permissoes" hint="Descreva as permissoes liberadas para o perfil em formato claro e auditavel.">
+ <FieldGroup label="Permissoes" hint="Liste o que esse perfil pode fazer no sistema, de forma simples e objetiva.">
  <textarea
  value={form.permissionMatrix}
  onChange={(event) => setForm((current) => ({ ...current, permissionMatrix: event.target.value }))}
- placeholder="Ex.: visualizar chamados, aprovar atendimento, gerenciar usuarios"
+ placeholder="Ex.: acompanhar chamados, aprovar atendimento, administrar usuarios"
  style={inputStyle({ minHeight: 132, resize: 'vertical' })}
  />
  </FieldGroup>
- <FieldGroup label="Escopo" hint="Defina se o perfil atua apenas na propria fila ou em toda a operacao.">
+ <FieldGroup label="Escopo" hint="Escolha onde esse perfil pode atuar no sistema.">
  <select
  value={form.accessScope}
  onChange={(event) => setForm((current) => ({ ...current, accessScope: event.target.value }))}
  style={inputStyle()}
  >
- <option value="self_service">Self service</option>
- <option value="team">Team</option>
- <option value="global">Global</option>
+ <option value="self_service">Somente o proprio acesso</option>
+ <option value="team">Equipe</option>
+ <option value="global">Toda a empresa</option>
  </select>
  </FieldGroup>
  <PrimaryButton type="submit" accent="blue">
@@ -98,17 +98,17 @@ export function AccessControlRolesPage() {
  <div style={{ display: 'grid', gap: 14 }}>
  <div style={{ padding: '16px 18px', borderRadius: 16, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
  <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>Canal principal</strong>
- <p style={{ margin: '8px 0 0', color: '#64748b', lineHeight: 1.7 }}>Configure perfis de acesso com permissoes granulares para cada funcao da organizacao.</p>
+ <p style={{ margin: '8px 0 0', color: '#64748b', lineHeight: 1.7 }}>Configure papeis estrategicos e delimite o escopo de atuacao para cada funcao da organizacao.</p>
  </div>
  <div style={{ display: 'grid', gap: 10 }}>
- {["Controle granular por funcao","Seguranca operacional garantida"].map((item) => (
+ {["Controle granular por funcao","Escopo de atuacao definido"].map((item) => (
  <div key={item} style={{ padding: '12px 14px', borderRadius: 14, background: '#ffffff', border: '1px solid #d9deea', color: '#475569', lineHeight: 1.6 }}>
  {item}
  </div>
  ))}
  </div>
  <div style={{ padding: '14px 16px', borderRadius: 14, background: '#eef5ef', border: '1px solid #d9e7de', color: '#21493d' }}>
- {isLoading ? 'Sincronizando o estado atual...' : items.length ? 'Preferencia registrada e pronta para acompanhamento.' : 'Nenhuma politica configurada. Comece definindo um novo perfil.' }
+ {isLoading ? 'Carregando informacoes...' : items.length ? 'Configuracao salva com sucesso.' : 'Nenhuma politica de acesso configurada.' }
  </div>
  </div>
  </FeatureWorkbench>

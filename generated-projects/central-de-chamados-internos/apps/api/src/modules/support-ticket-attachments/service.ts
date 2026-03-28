@@ -3,6 +3,7 @@ import type { SupportTicketAttachmentListResponse, SupportTicketAttachmentReques
 const records: SupportTicketAttachmentResponse[] = [];
 /**
  * - O documento anexado deve permanecer vinculado ao chamado correto para consulta durante o atendimento.
+ * - O tipo do documento precisa indicar se o anexo e fiscal, comprovante ou outro apoio operacional.
  * - O anexo precisa registrar uma referencia acessivel para que o suporte consulte o documento sem retrabalho.
  */
 export class SupportTicketAttachmentsService {

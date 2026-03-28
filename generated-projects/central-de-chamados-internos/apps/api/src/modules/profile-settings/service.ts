@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import type { ProfileSettingsListResponse, ProfileSettingsRequest, ProfileSettingsResponse } from '../../../../../packages/shared/src/contracts/profile-settings.ts';
 const records: ProfileSettingsResponse[] = [];
 /**
- * - Regras de negocio basicas aplicadas no fluxo incremental.
+ * - O nome do perfil e obrigatorio e nao pode ficar em branco.
  */
 export class ProfileSettingsService {
   list(): ProfileSettingsListResponse {

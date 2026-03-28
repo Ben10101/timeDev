@@ -1,5 +1,5 @@
-# Como colaborador, eu quero anexar evidências como imagens ou documentos ao abrir um chamado, para facilitar o entendimento do problema
-Task UUID: 9264c961-dbd0-4eaf-97f8-be38ca1f81fc
+# Como colaborador do setor financeiro, eu quero anexar documentos fiscais e comprobatórios ao abrir um chamado de suporte, para agilizar o processo de atendimento
+Task UUID: ff930611-140c-429d-8526-fddfa0c8c6c0
 ## Resumo
 Feature integrada no baseline full stack pos-refinamento.
 ## Template de tela
