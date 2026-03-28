@@ -59,14 +59,14 @@ const EMPTY_TASK = {
 
 function getStoredBootstrap() {
   const raw = localStorage.getItem('factory_bootstrap_context');
-  return raw ? JSON.parse(raw) : null;
+  return raw ?JSON.parse(raw) : null;
 }
 
 function formatElapsed(seconds) {
   if (!seconds) return '0m';
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  return hours > 0 ?`${hours}h ${minutes}m` : `${minutes}m`;
 }
 
 function formatShortDate(value) {
@@ -87,10 +87,10 @@ function getProjectTimeline(project) {
 }
 
 function getRoadmapPhaseProgress(index, totalDone, totalTasks) {
-  if (!totalTasks) return index === 0 ? 15 : 0;
+  if (!totalTasks) return index === 0 ?15 : 0;
 
   if (totalDone === 0) {
-    return index === 0 ? 10 : 0;
+    return index === 0 ?10 : 0;
   }
 
   const base = Math.round((totalDone / totalTasks) * 100);
@@ -104,7 +104,7 @@ function hasCurrentArtifact(task, artifactType) {
 
 function getLatestStatusHistoryNote(task, toStatus = null) {
   const history = task?.statusHistory || [];
-  const entry = toStatus ? history.find((item) => item.toStatus === toStatus) : history[0];
+  const entry = toStatus ?history.find((item) => item.toStatus === toStatus) : history[0];
   return entry?.note || '';
 }
 
@@ -124,7 +124,7 @@ function TextInput({ label, value, onChange, placeholder, icon: Icon }) {
           value={value}
           onChange={onChange}
           placeholder={placeholder}
-          className={`dashboard-input ${Icon ? 'pl-11' : ''}`}
+          className={`dashboard-input ${Icon ?'pl-11' : ''}`}
         />
       </div>
     </div>
@@ -152,7 +152,7 @@ function exportTaskArtifacts(task) {
 
   const content = [
     `# ${task.title}`,
-    task.description ? `\n${task.description}` : '',
+    task.description ?`\n${task.description}` : '',
     ...artifacts.map(
       (artifact) =>
         `\n\n---\n\n## ${artifact.title}\nTipo: ${artifact.artifactType}\nVersao: ${artifact.version}\n\n${artifact.content}`
@@ -202,7 +202,7 @@ function TaskCard({
   const typeLabels = {
     epic: 'Epic',
     story: 'Story',
-    task: 'Tecnica',
+    task: 'T?cnica',
   };
   const typeGuidance = {
     epic: 'Épico de planejamento. Abra os detalhes para ver o desdobramento em stories.',
@@ -269,7 +269,7 @@ function TaskCard({
 
         {processingError && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Falha na ultima execucao</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Falha na ?ltima execu??o</p>
             <p className="mt-1 text-sm font-medium text-rose-700">{processingError.message}</p>
           </div>
         )}
@@ -296,9 +296,9 @@ function TaskCard({
       </div>
 
       <div className="mt-auto flex items-center gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
-        {!isDone ? (
+        {!isDone ?(
           <>
-            {isStory ? (
+            {isStory ?(
               <>
                 <button
                   onClick={() => onRequirements(task.uuid)}
@@ -306,14 +306,14 @@ function TaskCard({
                   className="dashboard-button-primary flex-1"
                   title={
                     requirementsRunning
-                      ? 'Ja existe uma execucao de requisitos em andamento para esta task.'
+                      ? 'J? existe uma execu??o de requisitos em andamento para esta task.'
                       : !canRunRequirements
-                        ? 'A etapa de requisitos ja foi concluida.'
+                        ? 'A etapa de requisitos j? foi conclu?da.'
                         : undefined
                   }
                 >
                   <FileText className="h-4 w-4" />
-                  {requirementsRunning ? 'Executando...' : 'Analisar'}
+                  {requirementsRunning ?'Executando...' : 'Analisar'}
                 </button>
                 <button
                   onClick={() => onQa(task.uuid)}
@@ -321,14 +321,14 @@ function TaskCard({
                   className="dashboard-button-secondary flex-1"
                   title={
                     qaRunning
-                      ? 'Ja existe uma execucao de QA em andamento para esta task.'
+                      ? 'J? existe uma execu??o de QA em andamento para esta task.'
                       : !canRunQa && hasTestPlan
-                        ? 'A etapa de QA ja foi concluida.'
+                        ? 'A etapa de QA j? foi conclu?da.'
                         : undefined
                   }
                 >
                   <TestTube2 className="h-4 w-4" />
-                  {qaRunning ? 'Executando...' : 'Validar'}
+                  {qaRunning ?'Executando...' : 'Validar'}
                 </button>
               </>
             ) : (
@@ -341,7 +341,7 @@ function TaskCard({
                   Abrir detalhes
                 </button>
                 <div className="flex flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-center text-xs font-medium text-slate-500">
-                  {isEpic ? 'Épico de planejamento' : 'Tarefa técnica fora do fluxo de refinamento'}
+                  {isEpic ?'Épico de planejamento' : 'Tarefa técnica fora do fluxo de refinamento'}
                 </div>
               </>
             )}
@@ -402,7 +402,7 @@ export default function ProjectsPage() {
     storyTasks.forEach((task) => {
       const assignee = task.assigneeUser?.name || task.assigneeAgentName || 'Sem responsável';
       const current = loadMap.get(assignee) || { assignee, total: 0, overdue: 0, dueSoon: 0 };
-      const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+      const dueDate = task.dueDate ?new Date(task.dueDate) : null;
       const isDone = task.status === 'done';
       const today = new Date();
       const sevenDays = new Date();
@@ -485,9 +485,9 @@ export default function ProjectsPage() {
       const nextProjects = await listProjects();
       setProjects(nextProjects);
       const preferredExists = preferredProjectUuid
-        ? nextProjects.some((project) => project.uuid === preferredProjectUuid)
+        ?nextProjects.some((project) => project.uuid === preferredProjectUuid)
         : false;
-      setActiveProjectUuid(preferredExists ? preferredProjectUuid : nextProjects[0]?.uuid || null);
+      setActiveProjectUuid(preferredExists ?preferredProjectUuid : nextProjects[0]?.uuid || null);
     } catch (loadError) {
       setError(getApiErrorMessage(loadError, 'Não foi possível carregar os projetos.'));
     } finally {
@@ -699,7 +699,7 @@ export default function ProjectsPage() {
 
   const qaCount = storyTasks.filter((task) => hasCurrentArtifact(task, 'test_plan')).length;
   const doneCount = storyTasks.filter((task) => task.status === 'done').length;
-  const overallProgress = storyTasks.length ? Math.round((doneCount / storyTasks.length) * 100) : 0;
+  const overallProgress = storyTasks.length ?Math.round((doneCount / storyTasks.length) * 100) : 0;
   const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
   const implementationBlockReason = architectureStatus?.blockers?.[0] || null;
   const hasAgentGeneratedStories = storyTasks.some((task) => task.assigneeAgentName === 'requirements_analyst' || task.taskType === 'story');
@@ -750,10 +750,10 @@ export default function ProjectsPage() {
                   </div>
                   <button
                     onClick={() => setShowProjectForm(!showProjectForm)}
-                    className={showProjectForm ? 'dashboard-button-secondary px-4' : 'dashboard-button-primary px-4'}
+                    className={showProjectForm ?'dashboard-button-secondary px-4' : 'dashboard-button-primary px-4'}
                   >
-                    <Plus className={`h-4 w-4 transition-transform ${showProjectForm ? 'rotate-45' : ''}`} />
-                    <span>{showProjectForm ? 'Fechar' : 'Novo projeto'}</span>
+                    <Plus className={`h-4 w-4 transition-transform ${showProjectForm ?'rotate-45' : ''}`} />
+                    <span>{showProjectForm ?'Fechar' : 'Novo projeto'}</span>
                   </button>
                 </div>
               </div>
@@ -778,7 +778,7 @@ export default function ProjectsPage() {
                         onClick={() => navigate(`/projects?project=${project.uuid}`)}
                         className={`w-full rounded-xl border px-4 py-4 text-left transition ${
                           project.uuid === activeProjectUuid
-                            ? 'border-[#102a72]/20 bg-[#102a72]/5 shadow-sm'
+                            ?'border-[#102a72]/20 bg-[#102a72]/5 shadow-sm'
                             : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                         }`}
                       >
@@ -863,7 +863,7 @@ export default function ProjectsPage() {
               </div>
 
               <div className="p-4">
-                {bootstrapContext ? (
+                {bootstrapContext ?(
                   <div className="space-y-3">
                     <div className="rounded-xl border border-slate-200 bg-white p-4">
                       <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Usuário</p>
@@ -920,7 +920,7 @@ export default function ProjectsPage() {
                           {activeProject?.name || 'Selecione um projeto'}
                         </h2>
                         <div className="mt-2">
-                          {activeProject ? (
+                          {activeProject ?(
                             <span className="dashboard-badge bg-emerald-50 text-emerald-700">Operacional</span>
                           ) : (
                             <span className="dashboard-badge bg-slate-100 text-slate-500">Selecione um projeto</span>
@@ -975,15 +975,15 @@ export default function ProjectsPage() {
                           className="dashboard-button-primary"
                           title={
                             !architectureStatus?.hasArchitecture
-                              ? 'Gere a arquitetura antes de aprovar.'
+                              ?'Gere a arquitetura antes de aprovar.'
                               : architectureStatus?.architectureNeedsRefresh
-                                ? 'Regere a arquitetura antes de aprovar.'
+                                ?'Regere a arquitetura antes de aprovar.'
                                 : architectureStatus?.architectureApproved
-                                  ? 'A arquitetura atual já foi aprovada.'
+                                  ?'A arquitetura atual já foi aprovada.'
                                   : undefined
                           }
                         >
-                          {architectureStatus?.architectureApproved ? 'Arquitetura aprovada' : 'Aprovar arquitetura'}
+                          {architectureStatus?.architectureApproved ?'Arquitetura aprovada' : 'Aprovar arquitetura'}
                         </button>
                         <button
                           type="button"
@@ -992,7 +992,7 @@ export default function ProjectsPage() {
                           className="dashboard-button-secondary"
                         >
                           <Download className="h-4 w-4" />
-                          {exportingPdf ? 'Preparando PDF...' : 'Exportar documentação'}
+                          {exportingPdf ?'Preparando PDF...' : 'Exportar documentação'}
                         </button>
                       </div>
                     )}
@@ -1021,7 +1021,7 @@ export default function ProjectsPage() {
                   <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {roadmapPhases.map((phase, index) => {
                       const phaseLabel = `Fase ${index + 1}`;
-                      const phaseStatus = index === 0 ? 'Prioridade atual' : index === 1 ? 'Próxima etapa' : 'Planejada';
+                      const phaseStatus = index === 0 ?'Prioridade atual' : index === 1 ?'Próxima etapa' : 'Planejada';
                       const phaseProgress = getRoadmapPhaseProgress(index, doneCount, storyTasks.length);
                       return (
                         <div key={`${phase.order || index}-${phase.title}`} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -1034,7 +1034,7 @@ export default function ProjectsPage() {
                           <p className="mt-3 text-sm font-semibold text-slate-900">{phase.title}</p>
                           <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
                             <div
-                              className={`h-full rounded-full ${index === 0 ? 'bg-[#102a72]' : index === 1 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                              className={`h-full rounded-full ${index === 0 ?'bg-[#102a72]' : index === 1 ?'bg-amber-500' : 'bg-emerald-500'}`}
                               style={{ width: `${phaseProgress}%` }}
                             />
                           </div>
@@ -1044,9 +1044,9 @@ export default function ProjectsPage() {
                           </div>
                           <p className="mt-2 text-xs leading-6 text-slate-500">
                             {index === 0
-                              ? 'Base operacional, rastreabilidade e controle do fluxo.'
+                              ?'Base operacional, rastreabilidade e controle do fluxo.'
                               : index === 1
-                                ? 'Colaboração, relatórios e acompanhamento gerencial.'
+                                ?'Colaboração, relatórios e acompanhamento gerencial.'
                                 : 'Escala, integrações e governança avançada.'}
                           </p>
                         </div>
@@ -1105,7 +1105,7 @@ export default function ProjectsPage() {
                         </p>
                       </div>
                       <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#102a72]">
-                        {projectTimeline.weeklyCapacity ? `${projectTimeline.weeklyCapacity} tasks/semana` : 'Capacidade não definida'}
+                        {projectTimeline.weeklyCapacity ?`${projectTimeline.weeklyCapacity} tasks/semana` : 'Capacidade não definida'}
                       </span>
                     </div>
 
@@ -1122,7 +1122,7 @@ export default function ProjectsPage() {
                         <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Meta do plano</p>
                         <p className="mt-2 text-sm leading-6 text-slate-700">
                           {projectTimeline.targetDate
-                            ? 'Essa data serve como referência para acompanhamento do ritmo do projeto e negociação de prazo.'
+                            ?'Essa data serve como referência para acompanhamento do ritmo do projeto e negociação de prazo.'
                             : 'Defina uma meta de entrega para deixar o plano mais previsível.'}
                         </p>
                       </div>
@@ -1161,7 +1161,7 @@ export default function ProjectsPage() {
                         <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Gate de arquitetura</p>
                         <p className="mt-2 text-sm text-slate-700">
                           {architectureStatus?.canGenerateCode
-                            ? 'Todas as histórias refinadas e a arquitetura estão prontas. A implementação por task foi liberada.'
+                            ?'Todas as histórias refinadas e a arquitetura estão prontas. A implementação por task foi liberada.'
                             : architectureStatus?.blockers?.[0] || 'Refine todas as histórias para liberar a arquitetura do projeto.'}
                         </p>
                         <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -1171,13 +1171,13 @@ export default function ProjectsPage() {
                           <span
                             className={`dashboard-badge ${
                               architectureStatus?.hasArchitecture && !architectureStatus?.architectureNeedsRefresh
-                                ? 'bg-emerald-50 text-emerald-700'
+                                ?'bg-emerald-50 text-emerald-700'
                                 : 'bg-amber-50 text-amber-700'
                             }`}
                           >
                             {architectureStatus?.hasArchitecture
-                              ? architectureStatus?.architectureNeedsRefresh
-                                ? 'Arquitetura desatualizada'
+                              ?architectureStatus?.architectureNeedsRefresh
+                                ?'Arquitetura desatualizada'
                                 : 'Arquitetura pronta'
                               : 'Arquitetura pendente'}
                           </span>
@@ -1188,9 +1188,9 @@ export default function ProjectsPage() {
                         onClick={handleGenerateArchitecture}
                         disabled={saving || generatingArchitecture || !architectureStatus?.canGenerateArchitecture}
                         className="dashboard-button-primary w-full lg:w-auto"
-                        title={!architectureStatus?.canGenerateArchitecture ? architectureStatus?.blockers?.[0] : undefined}
+                        title={!architectureStatus?.canGenerateArchitecture ?architectureStatus?.blockers?.[0] : undefined}
                       >
-                        {generatingArchitecture ? 'Gerando arquitetura...' : 'Gerar arquitetura'}
+                        {generatingArchitecture ?'Gerando arquitetura...' : 'Gerar arquitetura'}
                       </button>
                     </div>
                   </div>

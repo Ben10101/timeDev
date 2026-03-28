@@ -4,8 +4,8 @@ import PipelineExecutor from '../components/PipelineExecutor';
 
 export default function PipelinePage() {
   const location = useLocation();
-  const idea = location.state?.idea;
-  const answers = location.state?.answers;
+  const idea = location.stat??.idea;
+  const answers = location.stat??.answers;
 
   if (!idea) {
     return <Navigate to="/" />;
@@ -15,7 +15,7 @@ export default function PipelinePage() {
     <AppShell
       eyebrow="Execução"
       title="Fluxo Operacional da Task"
-      description="Acompanhe backlog, requisitos e QA com o mesmo padrao visual do Dashboard: foco no status, contexto e proximos passos."
+      description="Acompanhe backlog, requisitos e QA com o mesmo padrao visual do Dashboard: foco no status, contexto e pr?ximos passos."
       sidebar={
         <>
           <section className="dashboard-panel">
@@ -53,7 +53,7 @@ export default function PipelinePage() {
             <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing complementar</p>
               <p className="mt-3 text-sm leading-6 text-slate-700">
-                As respostas adicionais ja estao anexadas ao fluxo para enriquecer backlog, requisitos e QA.
+                As respostas adicionais j? estao anexadas ao fluxo para enriquecer backlog, requisitos e QA.
               </p>
             </section>
           )}

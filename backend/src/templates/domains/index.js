@@ -10,19 +10,20 @@ export function resolveDomainTemplate(domainKey, fallback = {}) {
   return {
     templateKey: 'generic/form',
     screenTemplate: 'crud',
+    productMode: 'structured-workspace',
     heroEyebrow: fallback.frontend?.navigationLabel || fallback.entityName,
     heroTitle: fallback.frontend?.pageTitle || `Conduza ${fallback.frontend?.navigationLabel || fallback.entityName || 'a operacao'} com mais clareza`,
     heroDescription:
       fallback.frontend?.pageDescription ||
       fallback.summary ||
-      'Organize a acao principal desta area em uma experiencia mais clara, confiavel e pronta para uso.',
+      'Organize a acao principal desta area em uma experi?ncia mais clara, confiavel e pronta para uso.',
     formCardTitle: 'Concluir operacao',
-    formCardDescription: 'Preencha apenas o essencial para avancar com seguranca e contexto.',
+    formCardDescription: 'Preencha apenas o essencial para avancar com seguran?a e contexto.',
     recordsTitle: 'Atividade recente',
     recordsEmptyState: 'Nenhuma movimentacao registrada ainda nesta area.',
     highlights: [
       'Fluxo desenhado para acelerar a operacao com menos friccao.',
-      'Leitura clara do proximo passo e do contexto desta tela.',
+      'Leitura clara do pr?ximo passo e do contexto desta tela.',
       'Estado preparado para acompanhar evolucao e feedback do usuario.',
     ],
     profileSummaryTitle: 'Resumo da feature',

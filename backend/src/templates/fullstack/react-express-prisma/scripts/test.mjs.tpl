@@ -56,7 +56,7 @@ for (const featureDir of featureDirs) {
 
   const pageContent = await readSafe(pagePath);
   if (!pageContent.includes('FeaturePage') || !pageContent.includes('packages/ui/src/index.tsx')) {
-    throw new Error(`Feature ${featureDir} nao esta usando o design system compartilhado.`);
+    throw new Error(`Feature ${featureDir} n?o esta usando o design system compartilhado.`);
   }
 }
 
@@ -64,11 +64,11 @@ const frontendRoutes = [...appContent.matchAll(/path:\s*'([^']+)'/g)].map((match
 const apiRoutes = [...serverContent.matchAll(/app\.use\('([^']+)'/g)].map((match) => match[1]);
 
 if (featureDirs.length && frontendRoutes.length < featureDirs.length) {
-  throw new Error('O frontend nao registrou todas as rotas das features geradas.');
+  throw new Error('O frontend n?o registrou todas as rotas das features geradas.');
 }
 
 if (featureDirs.length && apiRoutes.length < featureDirs.length) {
-  throw new Error('A API nao registrou todas as rotas das features geradas.');
+  throw new Error('A API n?o registrou todas as rotas das features geradas.');
 }
 
 if (!schemaContent.includes('model ')) {

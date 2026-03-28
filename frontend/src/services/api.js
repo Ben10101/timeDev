@@ -308,13 +308,13 @@ export const getGeneratedApp = async (projectUuid) => {
   return response.data
 }
 
-export const runTaskImplementation = async (taskUuid) => {
-  const response = await apiClient.post(`/tasks/${taskUuid}/implementation/run`)
+export const runTaskImplementation = async (taskUuid, payload = {}) => {
+  const response = await apiClient.post(`/tasks/${taskUuid}/implementation/run`, payload)
   return response.data
 }
 
-export const planTaskImplementation = async (taskUuid) => {
-  const response = await apiClient.post(`/tasks/${taskUuid}/implementation/plan`)
+export const planTaskImplementation = async (taskUuid, payload = {}) => {
+  const response = await apiClient.post(`/tasks/${taskUuid}/implementation/plan`, payload)
   return response.data
 }
 

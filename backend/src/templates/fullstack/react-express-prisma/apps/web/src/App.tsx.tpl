@@ -1,7 +1,7 @@
 import { AppFrame, AppHeader, MetricRow, SidebarNav, StudioHome, SurfaceCard } from '../../../packages/ui/src/index.tsx'
 
 const routes = [
-  { path: '/', label: 'Inicio', render: () => <HomePage /> },
+  { path: '/', label: 'InÃ­cio', render: () => <HomePage /> },
   // AUTO_REGISTER_WEB_ROUTES
 ]
 
@@ -14,20 +14,20 @@ function HomePage() {
       <div style={{ display: 'grid', gap: 18, gridTemplateColumns: 'minmax(0, 1.12fr) minmax(320px, 0.88fr)' }}>
         <SurfaceCard
           title="Resumo do workspace"
-          description="Acompanhe a base gerada, as areas prontas para evolucao e a proxima frente operacional do produto."
-          meta={`${productAreas.length} modulo(s)`}
+          description="Acompanhe a base gerada, as Ã¡reas prontas para evoluÃ§Ã£o e a prÃ³xima frente operacional do produto."
+          meta={`${productAreas.length} mÃ³dulo(s)`}
         >
           <MetricRow
             items={[
-              { label: 'Modulos ativos', value: String(productAreas.length) },
+              { label: 'MÃ³dulos ativos', value: String(productAreas.length) },
               { label: 'Interface', value: 'Profissional' },
               { label: 'Base', value: 'Web + API' },
             ]}
           />
         </SurfaceCard>
         <SurfaceCard
-          title="Fila de evolucao"
-          description="Escolha um modulo para continuar a implementacao incremental com contratos, backend e experiencia conectados."
+          title="Fila de evoluÃ§Ã£o"
+          description="Escolha um mÃ³dulo para continuar a implementaÃ§Ã£o incremental com contratos, backend e experiÃªncia conectados."
           meta="Fluxo guiado"
         >
           <div style={{ display: 'grid', gap: 12 }}>

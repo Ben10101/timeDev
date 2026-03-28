@@ -92,5 +92,7 @@ export function buildBudgetConfig() {
     qa_engineer: Number(process.env.BUDGET_QA_TOKENS || 2200),
     architect: Number(process.env.BUDGET_ARCHITECT_TOKENS || 2800),
     developer: Number(process.env.BUDGET_DEVELOPER_TOKENS || 2200),
+    developer_backend: Number(process.env.BUDGET_DEVELOPER_BACKEND_TOKENS || process.env.BUDGET_DEVELOPER_TOKENS || 2200),
+    developer_frontend: Number(process.env.BUDGET_DEVELOPER_FRONTEND_TOKENS || process.env.BUDGET_DEVELOPER_TOKENS || 2200),
   };
 }

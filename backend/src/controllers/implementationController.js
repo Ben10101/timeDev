@@ -48,7 +48,9 @@ export async function listGeneratedAppFilesController(req, res, next) {
 export async function planTaskImplementationController(req, res, next) {
   try {
     await assertTaskAccess(req.params.taskUuid, req.authUser.uuid);
-    const implementation = await planTaskImplementation(req.params.taskUuid, req.authUser.uuid);
+    const implementation = await planTaskImplementation(req.params.taskUuid, req.authUser.uuid, {
+      forceRefresh: Boolean(req.body?.forceRefresh),
+    });
     res.status(201).json(serializeBigInts(implementation));
   } catch (error) {
     next(error);
@@ -58,7 +60,9 @@ export async function planTaskImplementationController(req, res, next) {
 export async function runTaskImplementationController(req, res, next) {
   try {
     await assertTaskAccess(req.params.taskUuid, req.authUser.uuid);
-    const implementation = await runTaskImplementation(req.params.taskUuid, req.authUser.uuid);
+    const implementation = await runTaskImplementation(req.params.taskUuid, req.authUser.uuid, {
+      forceRefresh: Boolean(req.body?.forceRefresh),
+    });
     res.status(200).json(serializeBigInts(implementation));
   } catch (error) {
     next(error);

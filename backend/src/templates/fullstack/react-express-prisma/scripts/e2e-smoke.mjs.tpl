@@ -21,22 +21,22 @@ const failures = [];
 const appContent = await readSafe('apps/web/src/App.tsx');
 
 if (!appContent.includes('AppFrame') || !appContent.includes('AppHeader') || !appContent.includes('StudioHome')) {
-  failures.push('O shell principal nao usa o trio AppFrame/AppHeader/StudioHome.');
+  failures.push('O shell principal n?o usa o trio AppFrame/AppHeader/StudioHome.');
 }
 
 for (const pagePath of await listFeaturePages()) {
   const pageContent = await readSafe(path.relative(root, pagePath));
   if (!pageContent.includes('FeaturePage')) {
-    failures.push(`${path.relative(root, pagePath)} nao usa FeaturePage.`);
+    failures.push(`${path.relative(root, pagePath)} n?o usa FeaturePage.`);
   }
   if (!/highlights=\{/.test(pageContent)) {
-    failures.push(`${path.relative(root, pagePath)} nao define highlights de experiencia.`);
+    failures.push(`${path.relative(root, pagePath)} n?o define highlights de experiência.`);
   }
   if (!/metrics=\{\[/.test(pageContent)) {
-    failures.push(`${path.relative(root, pagePath)} nao define metricas de tela.`);
+    failures.push(`${path.relative(root, pagePath)} n?o define metricas de tela.`);
   }
   if (!/layout="(crud|split|settings|wizard|dashboard)"/.test(pageContent)) {
-    failures.push(`${path.relative(root, pagePath)} nao declara layout do design system.`);
+    failures.push(`${path.relative(root, pagePath)} n?o declara layout do design system.`);
   }
 }
 

@@ -46,7 +46,7 @@ const PRIORITY_STYLE = {
   MEDIUM: {
     dot: 'bg-amber-500',
     badge: 'bg-amber-50 text-amber-700',
-    label: 'Media',
+    label: 'M?dia',
   },
   LOW: {
     dot: 'bg-emerald-500',
@@ -57,7 +57,7 @@ const PRIORITY_STYLE = {
 
 function parseBacklogLines(backlogMarkdown) {
   const storyLines = backlogMarkdown
-    ? backlogMarkdown.split('\n').filter((line) => line.trim().match(/^[-*]?\s*\d*\.?\s*(?:\*\*)?Como\b/i))
+    ?backlogMarkdown.split('\n').filter((line) => line.trim().match(/^[-*]?\s*\d*\.?\s*(?:\*\*)?Como\b/i))
     : MOCK_STORIES;
 
   return storyLines.map((text, index) => {
@@ -107,11 +107,11 @@ function mapTasksToStories(tasks, stageName) {
         id: task.uuid,
         text: task.title,
         title: task.title,
-        status: stageName === 'requirements' ? (requirementsArtifact ? 'done' : 'todo') : qaArtifact ? 'done' : 'todo',
+        status: stageName === 'requirements' ?(requirementsArtifact ?'done' : 'todo') : qaArtifact ?'done' : 'todo',
         priority: (task.priority || priority || 'MEDIUM').toUpperCase(),
         requirement:
           stageName === 'requirements'
-            ? requirementsArtifact?.content || null
+            ?requirementsArtifact?.content || null
             : qaArtifact?.content || null,
         predecessorRequirement: requirementsArtifact?.content || null,
         isReady: stageName !== 'qa' || Boolean(requirementsArtifact),
@@ -131,7 +131,7 @@ function StoryCard({ story, canDrag, onDragStart, onOpenModal, index }) {
       onDragStart={(event) => canDrag && onDragStart(event, story)}
       className={`group rounded-xl border px-4 py-4 transition-all ${
         canDrag
-          ? 'cursor-grab border-slate-200 bg-white shadow-sm hover:border-[#102a72]/30 hover:shadow-md active:cursor-grabbing'
+          ?'cursor-grab border-slate-200 bg-white shadow-sm hover:border-[#102a72]/30 hover:shadow-md active:cursor-grabbing'
           : 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-60'
       }`}
     >
@@ -189,7 +189,7 @@ function ProcessedCard({ story, stageName, processingMessage, onOpenModal, onAdv
             </span>
             <span className="dashboard-badge bg-emerald-50 text-emerald-700">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              {story.status === 'processing' ? 'Em execucao' : 'Artefato pronto'}
+              {story.status === 'processing' ?'Em execuÃ§Ã£o' : 'Artefato pronto'}
             </span>
           </div>
           <h4 className="mt-3 text-sm font-semibold text-slate-900">{story.title}</h4>
@@ -198,7 +198,7 @@ function ProcessedCard({ story, stageName, processingMessage, onOpenModal, onAdv
       </div>
 
       <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-        {story.status === 'processing' ? (
+        {story.status === 'processing' ?(
           <div className="flex items-center gap-3 text-sm font-medium text-[#102a72]">
             <Clock3 className="h-4 w-4 animate-pulse" />
             {processingMessage}
@@ -294,7 +294,7 @@ export default function BacklogKanban({
         await loadStoriesFromApi();
       } catch (error) {
         if (!active) return;
-        setSyncError(getApiErrorMessage(error, 'Nao foi possivel carregar o kanban do banco.'));
+        setSyncError(getApiErrorMessage(error, 'NÃ£o foi poss?vel carregar o kanban do banco.'));
         setStories([]);
       }
     }
@@ -326,7 +326,7 @@ export default function BacklogKanban({
     const storyId = draggedStory.id;
     setProcessingStoryId(storyId);
     setDraggedStory(null);
-    setStories((prev) => prev.map((story) => (story.id === storyId ? { ...story, status: 'processing' } : story)));
+    setStories((prev) => prev.map((story) => (story.id === storyId ?{ ...story, status: 'processing' } : story)));
 
     try {
       let backlogPayload = `Historia de Usuario:\n${draggedStory.text}`;
@@ -356,12 +356,12 @@ export default function BacklogKanban({
       });
 
       const result = response.data.data || response.data;
-      const content = typeof result === 'string' ? result : JSON.stringify(result);
+      const content = typeof result === 'string' ?result : JSON.stringify(result);
 
       if (isPersistentStage) {
         await createTaskArtifact(storyId, {
-          artifactType: stageName === 'requirements' ? 'requirements' : 'test_plan',
-          title: stageName === 'requirements' ? `Requisitos - ${draggedStory.text}` : `Plano de Testes - ${draggedStory.text}`,
+          artifactType: stageName === 'requirements' ?'requirements' : 'test_plan',
+          title: stageName === 'requirements' ?`Requisitos - ${draggedStory.text}` : `Plano de Testes - ${draggedStory.text}`,
           content,
           createdByAgentName: agent,
           contentFormat: 'markdown',
@@ -370,12 +370,12 @@ export default function BacklogKanban({
       } else {
         setStories((prev) =>
           prev.map((story) =>
-            story.id === storyId ? { ...story, status: 'done', requirement: content } : story
+            story.id === storyId ?{ ...story, status: 'done', requirement: content } : story
           )
         );
       }
     } catch (error) {
-      setStories((prev) => prev.map((story) => (story.id === storyId ? { ...story, status: 'todo' } : story)));
+      setStories((prev) => prev.map((story) => (story.id === storyId ?{ ...story, status: 'todo' } : story)));
       setSyncError(getApiErrorMessage(error, 'Erro ao processar a historia com o agente.'));
     } finally {
       setProcessingStoryId(null);
@@ -454,7 +454,7 @@ export default function BacklogKanban({
           </div>
 
           <div className="space-y-4 p-4">
-            {allStoriesProcessed ? (
+            {allStoriesProcessed ?(
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center">
                 <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
                 <h4 className="mt-4 text-base font-semibold text-emerald-900">Fluxo concluido</h4>
@@ -485,7 +485,7 @@ export default function BacklogKanban({
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           className={`dashboard-panel min-h-[520px] transition-all ${
-            processing ? 'ring-2 ring-[#102a72]/10' : ''
+            processing ?'ring-2 ring-[#102a72]/10' : ''
           }`}
         >
           <div className="dashboard-panel-header">
@@ -497,11 +497,11 @@ export default function BacklogKanban({
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">{agentColumnTitle}</h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    {processing ? 'O agente esta processando uma historia agora.' : 'Arraste uma historia para iniciar.'}
+                    {processing ?'O agente esta processando uma historia agora.' : 'Arraste uma historia para iniciar.'}
                   </p>
                 </div>
               </div>
-              {processing && <span className="dashboard-badge bg-blue-50 text-blue-700">Em execucao</span>}
+              {processing && <span className="dashboard-badge bg-blue-50 text-blue-700">Em execuÃ§Ã£o</span>}
             </div>
           </div>
 

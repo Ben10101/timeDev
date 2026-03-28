@@ -81,11 +81,11 @@ function Toggle({ checked, onChange, label }) {
       onClick={() => onChange(!checked)}
       className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
         checked
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          ?'border-emerald-200 bg-emerald-50 text-emerald-700'
           : 'border-slate-200 bg-slate-50 text-slate-500'
       }`}
     >
-      <span className={`h-2.5 w-2.5 rounded-full ${checked ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+      <span className={`h-2.5 w-2.5 rounded-full ${checked ?'bg-emerald-500' : 'bg-slate-300'}`} />
       {label}
     </button>
   );
@@ -101,10 +101,10 @@ function ProviderCard({ title, description, children, supported = false }) {
         </div>
         <span
           className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] ${
-            supported ? 'bg-blue-50 text-[#102a72]' : 'bg-slate-100 text-slate-500'
+            supported ?'bg-blue-50 text-[#102a72]' : 'bg-slate-100 text-slate-500'
           }`}
         >
-          {supported ? 'Em uso' : 'Preparado'}
+          {supported ?'Em uso' : 'Preparado'}
         </span>
       </div>
       <div className="space-y-4">{children}</div>
@@ -119,7 +119,7 @@ function TestFeedback({ result }) {
     <div
       className={`rounded-2xl border px-4 py-3 text-sm ${
         result.ok
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          ?'border-emerald-200 bg-emerald-50 text-emerald-700'
           : 'border-rose-200 bg-rose-50 text-rose-700'
       }`}
     >
@@ -151,7 +151,7 @@ export default function AiSettingsPage() {
         setRuntime(runtimeSummary);
       } catch (loadError) {
         if (!active) return;
-        setError(loadError.response?.data?.message || loadError.message || 'Nao foi possivel carregar as configuracoes de IA.');
+        setError(loadError.response?.data?.message || loadError.message || 'Não foi poss?vel carregar as configurações de IA.');
       } finally {
         if (active) setLoading(false);
       }
@@ -167,20 +167,20 @@ export default function AiSettingsPage() {
     if (!runtime) return [];
     return [
       { label: 'Preferencia ativa', value: runtime.provider || '-' },
-      { label: 'Ordem', value: runtime.providerOrder?.length ? runtime.providerOrder.join(' -> ') : 'Sem ordem definida' },
-      { label: 'Fallback local', value: runtime.localFallbackDisabled ? 'Desligado' : 'Disponivel' },
+      { label: 'Ordem', value: runtime.providerOrder?.length ?runtime.providerOrder.join(' -> ') : 'Sem ordem definida' },
+      { label: 'Fallback local', value: runtime.localFallbackDisabled ?'Desligado' : 'Disponivel' },
       { label: 'Policy', value: runtime.policyVersion || 'v1' },
       { label: 'Prompt', value: runtime.promptVersion || 'v1' },
       { label: 'Release', value: runtime.platformVersion || '1.0.0' },
-      { label: 'Gemini', value: runtime.hasGeminiKey ? 'Configurado' : 'Sem chave' },
-      { label: 'DeepSeek', value: runtime.hasDeepSeekKey ? runtime.deepSeekModel || 'Configurado' : 'Sem chave' },
-      { label: 'NVIDIA', value: runtime.hasNvidiaKey ? runtime.nvidiaModel || 'Configurado' : 'Sem chave' },
-      { label: 'Ollama', value: runtime.ollamaHost ? `${runtime.ollamaModel} @ ${runtime.ollamaHost}` : 'Nao configurado' },
+      { label: 'Gemini', value: runtime.hasGeminiKey ?'Configurado' : 'Sem chave' },
+      { label: 'DeepSeek', value: runtime.hasDeepSeekKey ?runtime.deepSeekModel || 'Configurado' : 'Sem chave' },
+      { label: 'NVIDIA', value: runtime.hasNvidiaKey ?runtime.nvidiaModel || 'Configurado' : 'Sem chave' },
+      { label: 'Ollama', value: runtime.ollamaHost ?`${runtime.ollamaModel} @ ${runtime.ollamaHost}` : 'Não configurado' },
       {
         label: 'OpenRouter',
         value: runtime.openRouterModel
-          ? `${runtime.openRouterModel}${runtime.openRouterFallbackModels?.length ? ` +${runtime.openRouterFallbackModels.length} fallback(s)` : ''}`
-          : 'Nao configurado',
+          ?`${runtime.openRouterModel}${runtime.openRouterFallbackModels?.length ?` +${runtime.openRouterFallbackModels.length} fallback(s)` : ''}`
+          : 'Não configurado',
       },
     ];
   }, [runtime]);
@@ -203,7 +203,7 @@ export default function AiSettingsPage() {
   function applyOpenRouterFreePreset() {
     setSettings((current) => ({
       ...current,
-      providerPreference: current.providerPreference === 'auto' ? current.providerPreference : 'openrouter',
+      providerPreference: current.providerPreference === 'auto' ?current.providerPreference : 'openrouter',
       openrouter: {
         ...current.openrouter,
         enabled: true,
@@ -226,9 +226,9 @@ export default function AiSettingsPage() {
       const runtimeSummary = await getAiRuntimeSummary();
       setSettings({ ...EMPTY_SETTINGS, ...saved });
       setRuntime(runtimeSummary);
-      setSuccess('Configuracoes salvas. Os proximos agentes usarao essas credenciais.');
+      setSuccess('Configura??es salvas. Os pr?ximos agentes usar?o essas credenciais.');
     } catch (saveError) {
-      setError(saveError.response?.data?.message || saveError.message || 'Nao foi possivel salvar as configuracoes de IA.');
+      setError(saveError.response?.data?.message || saveError.message || 'Não foi poss?vel salvar as configurações de IA.');
     } finally {
       setSaving(false);
     }
@@ -257,7 +257,7 @@ export default function AiSettingsPage() {
         const runtimeSummary = await getAiRuntimeSummary();
         setSettings({ ...EMPTY_SETTINGS, ...saved });
         setRuntime(runtimeSummary);
-        const providerLabel = provider === 'ollama' ? 'Ollama' : provider === 'deepseek' ? 'DeepSeek' : provider;
+        const providerLabel = provider === 'ollama' ?'Ollama' : provider === 'deepseek' ?'DeepSeek' : provider;
         setSuccess(`${providerLabel} validado e ativado com sucesso.`);
       }
 
@@ -267,7 +267,7 @@ export default function AiSettingsPage() {
         ...current,
         [provider]: {
           ok: false,
-          message: testError.response?.data?.message || `Nao foi possivel testar ${provider}.`,
+          message: testError.response?.data?.message || `Não foi poss?vel testar ${provider}.`,
           meta: {
             detail: testError.response?.data?.detail || testError.response?.data?.meta?.detail || testError.message,
           },
@@ -289,7 +289,7 @@ export default function AiSettingsPage() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#102a72]">Runtime atual</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Policy, fallback e ordem de execucao</h2>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Policy, fallback e ordem de execução</h2>
               <p className="mt-1 text-sm text-slate-500">
                 Esta area controla como a plataforma escolhe providers, como reage a falhas e quais versoes de policy estao em vigor.
               </p>
@@ -398,7 +398,7 @@ export default function AiSettingsPage() {
             <Toggle
               checked={Boolean(settings.ollama?.enabled)}
               onChange={(value) => patchProvider('ollama', 'enabled', value)}
-              label={settings.ollama?.enabled ? 'Ativo' : 'Inativo'}
+              label={settings.ollama?.enabled ?'Ativo' : 'Inativo'}
             />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Host do Ollama">
@@ -423,7 +423,7 @@ export default function AiSettingsPage() {
                 disabled={testingProvider === 'ollama'}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {testingProvider === 'ollama' ? 'Testando...' : 'Testar conexao'}
+                {testingProvider === 'ollama' ?'Testando...' : 'Testar conexao'}
               </button>
             </div>
             <TestFeedback result={testResults.ollama} />
@@ -433,7 +433,7 @@ export default function AiSettingsPage() {
             <Toggle
               checked={Boolean(settings.gemini?.enabled)}
               onChange={(value) => patchProvider('gemini', 'enabled', value)}
-              label={settings.gemini?.enabled ? 'Ativo' : 'Inativo'}
+              label={settings.gemini?.enabled ?'Ativo' : 'Inativo'}
             />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
@@ -459,14 +459,14 @@ export default function AiSettingsPage() {
                 disabled={testingProvider === 'gemini'}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {testingProvider === 'gemini' ? 'Testando...' : 'Testar chave'}
+                {testingProvider === 'gemini' ?'Testando...' : 'Testar chave'}
               </button>
             </div>
             <TestFeedback result={testResults.gemini} />
           </ProviderCard>
 
           <ProviderCard title="OpenAI" description="Area pronta para cadastrar chave e modelo da OpenAI.">
-            <Toggle checked={Boolean(settings.openai?.enabled)} onChange={(value) => patchProvider('openai', 'enabled', value)} label={settings.openai?.enabled ? 'Ativo' : 'Inativo'} />
+            <Toggle checked={Boolean(settings.openai?.enabled)} onChange={(value) => patchProvider('openai', 'enabled', value)} label={settings.openai?.enabled ?'Ativo' : 'Inativo'} />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.openai?.apiKey || ''} onChange={(event) => patchProvider('openai', 'apiKey', event.target.value)} placeholder="sk-..." />
@@ -482,14 +482,14 @@ export default function AiSettingsPage() {
                 disabled={testingProvider === 'openai'}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {testingProvider === 'openai' ? 'Testando...' : 'Testar chave'}
+                {testingProvider === 'openai' ?'Testando...' : 'Testar chave'}
               </button>
             </div>
             <TestFeedback result={testResults.openai} />
           </ProviderCard>
 
           <ProviderCard title="DeepSeek" description="Use a API oficial da DeepSeek em modo compativel com chat completions.">
-            <Toggle checked={Boolean(settings.deepseek?.enabled)} onChange={(value) => patchProvider('deepseek', 'enabled', value)} label={settings.deepseek?.enabled ? 'Ativo' : 'Inativo'} />
+            <Toggle checked={Boolean(settings.deepseek?.enabled)} onChange={(value) => patchProvider('deepseek', 'enabled', value)} label={settings.deepseek?.enabled ?'Ativo' : 'Inativo'} />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.deepseek?.apiKey || ''} onChange={(event) => patchProvider('deepseek', 'apiKey', event.target.value)} placeholder="sk-..." />
@@ -505,14 +505,14 @@ export default function AiSettingsPage() {
                 disabled={testingProvider === 'deepseek'}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {testingProvider === 'deepseek' ? 'Testando...' : 'Testar chave'}
+                {testingProvider === 'deepseek' ?'Testando...' : 'Testar chave'}
               </button>
             </div>
             <TestFeedback result={testResults.deepseek} />
           </ProviderCard>
 
           <ProviderCard title="NVIDIA NIM" description="Use a API da NVIDIA com modelos servidos pelo endpoint integrate chat completions.">
-            <Toggle checked={Boolean(settings.nvidia?.enabled)} onChange={(value) => patchProvider('nvidia', 'enabled', value)} label={settings.nvidia?.enabled ? 'Ativo' : 'Inativo'} />
+            <Toggle checked={Boolean(settings.nvidia?.enabled)} onChange={(value) => patchProvider('nvidia', 'enabled', value)} label={settings.nvidia?.enabled ?'Ativo' : 'Inativo'} />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.nvidia?.apiKey || ''} onChange={(event) => patchProvider('nvidia', 'apiKey', event.target.value)} placeholder="nvapi-..." />
@@ -528,14 +528,14 @@ export default function AiSettingsPage() {
                 disabled={testingProvider === 'nvidia'}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {testingProvider === 'nvidia' ? 'Testando...' : 'Testar chave'}
+                {testingProvider === 'nvidia' ?'Testando...' : 'Testar chave'}
               </button>
             </div>
             <TestFeedback result={testResults.nvidia} />
           </ProviderCard>
 
           <ProviderCard title="Anthropic" description="Area pronta para cadastrar chave e modelo da Anthropic.">
-            <Toggle checked={Boolean(settings.anthropic?.enabled)} onChange={(value) => patchProvider('anthropic', 'enabled', value)} label={settings.anthropic?.enabled ? 'Ativo' : 'Inativo'} />
+            <Toggle checked={Boolean(settings.anthropic?.enabled)} onChange={(value) => patchProvider('anthropic', 'enabled', value)} label={settings.anthropic?.enabled ?'Ativo' : 'Inativo'} />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.anthropic?.apiKey || ''} onChange={(event) => patchProvider('anthropic', 'apiKey', event.target.value)} placeholder="sk-ant-..." />
@@ -551,14 +551,14 @@ export default function AiSettingsPage() {
                 disabled={testingProvider === 'anthropic'}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {testingProvider === 'anthropic' ? 'Testando...' : 'Testar chave'}
+                {testingProvider === 'anthropic' ?'Testando...' : 'Testar chave'}
               </button>
             </div>
             <TestFeedback result={testResults.anthropic} />
           </ProviderCard>
 
           <ProviderCard title="Groq" description="Area pronta para cadastrar chave e modelo do Groq.">
-            <Toggle checked={Boolean(settings.groq?.enabled)} onChange={(value) => patchProvider('groq', 'enabled', value)} label={settings.groq?.enabled ? 'Ativo' : 'Inativo'} />
+            <Toggle checked={Boolean(settings.groq?.enabled)} onChange={(value) => patchProvider('groq', 'enabled', value)} label={settings.groq?.enabled ?'Ativo' : 'Inativo'} />
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.groq?.apiKey || ''} onChange={(event) => patchProvider('groq', 'apiKey', event.target.value)} placeholder="gsk_..." />
@@ -574,14 +574,14 @@ export default function AiSettingsPage() {
                 disabled={testingProvider === 'groq'}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {testingProvider === 'groq' ? 'Testando...' : 'Testar chave'}
+                {testingProvider === 'groq' ?'Testando...' : 'Testar chave'}
               </button>
             </div>
             <TestFeedback result={testResults.groq} />
           </ProviderCard>
 
           <ProviderCard title="OpenRouter" description="Area pronta para cadastrar chave e modelo do OpenRouter.">
-            <Toggle checked={Boolean(settings.openrouter?.enabled)} onChange={(value) => patchProvider('openrouter', 'enabled', value)} label={settings.openrouter?.enabled ? 'Ativo' : 'Inativo'} />
+            <Toggle checked={Boolean(settings.openrouter?.enabled)} onChange={(value) => patchProvider('openrouter', 'enabled', value)} label={settings.openrouter?.enabled ?'Ativo' : 'Inativo'} />
             <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3">
               <div className="flex-1">
                 <p className="text-sm font-semibold text-sky-900">Usar modelos free</p>
@@ -603,7 +603,7 @@ export default function AiSettingsPage() {
                 <TextInput value={settings.openrouter?.model || ''} onChange={(event) => patchProvider('openrouter', 'model', event.target.value)} placeholder="openai/gpt-4.1-mini" />
               </Field>
             </div>
-            <Field label="Modelos de fallback" hint="Use um modelo por linha. Se o principal atingir limite de tokens, contexto ou capacidade, a plataforma tenta os proximos com a mesma API key.">
+            <Field label="Modelos de fallback" hint="Use um modelo por linha. Se o principal atingir limite de tokens, contexto ou capacidade, a plataforma tenta os pr?ximos com a mesma API key.">
               <TextArea
                 value={openRouterFallbackText}
                 onChange={(event) =>
@@ -626,7 +626,7 @@ export default function AiSettingsPage() {
                 disabled={testingProvider === 'openrouter'}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {testingProvider === 'openrouter' ? 'Testando...' : 'Testar chave'}
+                {testingProvider === 'openrouter' ?'Testando...' : 'Testar chave'}
               </button>
             </div>
             <TestFeedback result={testResults.openrouter} />
@@ -641,7 +641,7 @@ export default function AiSettingsPage() {
               disabled={loading || saving}
               className="rounded-2xl bg-[#102a72] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#102a72]/20 transition hover:bg-[#0c2058] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {saving ? 'Salvando...' : 'Salvar configuracoes'}
+              {saving ?'Salvando...' : 'Salvar configuracoes'}
             </button>
           </div>
         </form>

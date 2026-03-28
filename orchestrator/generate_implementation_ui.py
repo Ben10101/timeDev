@@ -59,6 +59,7 @@ def fallback(payload):
 def main():
     payload = json.load(sys.stdin)
     has_repair_context = bool(payload.get("repairGoals"))
+    bypass_cache = bool(payload.get("bypassCache"))
     output_budget = 280 if has_repair_context else 420
 
     prompt = f"""
@@ -72,6 +73,8 @@ Contexto da implementacao:
 - Valor para o usuario: {payload.get('userValue')}
 - Rota frontend: {payload.get('frontendRoute')}
 - Template de tela: {payload.get('screenTemplate')}
+- Product mode: {payload.get('productMode')}
+- Direcao funcional: {json.dumps(payload.get('productDirection', {}), ensure_ascii=False)}
 - Papel da tela: {payload.get('uiRole')}
 - Ator principal: {payload.get('actorLabel')}
 - Acao principal: {payload.get('submitLabel')}
@@ -90,15 +93,53 @@ Instrucoes:
 - Evite tom tecnico, burocratico ou academico.
 - Proponha uma tela com cara de produto pronto, nao de prototipo.
 - Defina um papel claro para a tela: operacao, configuracao, descoberta, acompanhamento ou cadastro orientado a valor.
+- O `productMode` define que tipo de produto esta tela quer ser. Use esse modo como prioridade maior que o layout.
+- A `Direcao funcional` descreve a sensacao que a tela deve transmitir. Ela deve influenciar hierarquia, ritmo, densidade e linguagem.
+- Interprete alguns modos assim:
+  - `governance-console`: controle, seguranca, matriz, governanca, decisao cuidadosa
+  - `self-service-settings`: autonomia, ajustes pessoais, clareza, baixo atrito
+  - `evidence-workbench`: triagem, comprovantes, contexto do caso, apoio ao atendimento
+  - `manager-cockpit`: leitura executiva, indicadores, comparacao, foco em decisao
+  - `review-workbench`: revisar, aprovar, ajustar, acompanhar itens em fila
+  - `onboarding-flow`: progresso, preparo, proximo passo, orientacao
+  - `structured-workspace`: mesa de trabalho, operacao guiada, visao clara do que fazer
+  - `asset-library`: acervo, materiais, organizacao, reuso
+  - `catalog-builder`: montagem de oferta, estrutura comercial, composicao
+  - `curriculum-designer`: montagem de estrutura, sequencia, organizacao pedagógica
+  - `commercial-settings`: configuracao comercial, impacto no negocio, controle de valor
+  - `access-gateway`: entrada, autenticacao, seguranca e confianca
+  - `immersive-workspace`: foco em execucao ou consumo principal, menos painel e mais fluxo central
 - O titulo principal deve comunicar valor ou tarefa principal, nunca soar como placeholder.
 - A descricao deve caber em uma leitura rapida e explicar o ganho para o usuario.
 - O card de formulario deve parecer uma acao importante, nao apenas um formulario generico.
 - O bloco lateral/lista deve parecer uma area viva do produto, com nome e estado vazio consistentes.
+- Use a direcao funcional para escolher melhor a cara do produto:
+  - `tone`: define a atmosfera principal da tela
+  - `density`: indica se a tela deve ser mais enxuta ou mais operacional
+  - `primarySurface`: qual bloco merece mais peso visual
+  - `secondarySurface`: qual bloco complementa a experiencia
+  - `listArchetype`: que tipo de area viva essa tela deve lembrar
+- A direcao funcional tambem informa:
+  - `spatialModel`: como a tela deve se organizar no espaco
+  - `heroStyle`: o tipo de abertura visual mais coerente
+  - `panelRelationship`: qual area lidera a leitura e qual area apoia
+- Pense primeiro em composicao de produto e so depois em campos.
+- Decida explicitamente:
+  - qual bloco lidera a atencao
+  - qual bloco e complementar
+  - se a tela parece cockpit, bancada, biblioteca, portal, configuracao ou jornada
+- O bloco vivo nao precisa ser sempre uma lista generica. Ele pode parecer fila, acervo, painel, carteira, mesa de caso ou trilha de proximos passos.
 - Se o template for `settings`, use copy de configuracao/autogestao.
-- Se o template for `wizard`, use copy de etapas e progressao.
-- Se o template for `dashboard`, use copy orientada a visao geral, metricas e acompanhamento.
-- Se o template for `crud`, use copy de cadastro/listagem com valor percebido.
+- Se o template for `settings`, nao proponha tabela, historico operacional, busca, contador de registros, nomes de secao como "historico" ou metricas tecnicas; prefira resumo do estado atual, orientacao e feedback da configuracao.
+- Se o template for `wizard`, use copy de etapas, preparo, sequencia e proximo passo; evite historico, busca, grade de registros e linguagem de monitoramento.
+- Se o template for `dashboard`, use copy orientada a visao geral, indicadores, acompanhamento e leitura executiva; evite formulario com cara de cadastro principal.
+- Se o template for `workspace`, use copy de fila operacional, acompanhamento, decisao rapida e produtividade; prefira nomes como fila, itens ativos, carteira, visao operacional ou chamados em andamento.
+- Se o template for `crud`, use copy de cadastro/listagem com valor percebido, sem parecer documentacao nem painel tecnico.
+- Quando houver `listArchetype`, reflita isso na escolha dos nomes de secoes e estados vazios. Ex.: `policies`, `evidence`, `review-queue`, `library`, `curriculum`, `insights`.
 - Quando a tela tiver lista, pense em termos de operacao: busca, monitoramento, historico, fila, registros, acompanhamento.
+- Nao deixe o tipo de tela vazar para outra familia visual: settings nao pode parecer CRUD; dashboard nao pode parecer configuracao; wizard nao pode parecer historico; workspace nao pode parecer formulario generico.
+- Nao deixe o `productMode` perder personalidade. Duas telas com layouts parecidos ainda devem parecer produtos diferentes se o modo funcional for diferente.
+- Evite repetir a mesma estetica entre telas de product modes diferentes. Mude o peso visual, o nome das secoes, o tipo de metricas e a sensacao de uso.
 - Prefira textos que transmitam clareza, confianca e valor percebido.
 - Os highlights devem parecer beneficios reais da experiencia, nunca instrucoes internas do sistema.
 - Se houver memoria do projeto, reaproveite os padroes bem avaliados e evite repetir achados recorrentes.
@@ -112,6 +153,7 @@ Instrucoes:
   - nomes de lista como "Ultimos registros" quando houver nome melhor para o dominio
   - estados vazios frios ou burocraticos
 - Se o dominio for pouco especifico, ainda assim escolha uma linguagem mais forte e comercialmente madura.
+- O mesmo layout base pode produzir produtos diferentes. Diferencie a tela pelo papel, pela hierarquia e pelo tom dos nomes de secao.
 - Retorne APENAS JSON valido, sem markdown.
 
 Formato:
@@ -138,6 +180,7 @@ Formato:
                 "temperature": 0.2,
                 "num_predict": output_budget,
             },
+            use_cache=not bypass_cache,
         )
         data = extract_json_block(raw)
         print(json.dumps({"success": True, "data": data}, ensure_ascii=False))

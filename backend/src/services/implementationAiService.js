@@ -59,7 +59,10 @@ export function generateImplementationUi(payload, options = {}) {
       }
     });
 
-    pythonProcess.stdin.write(JSON.stringify(payload));
+    pythonProcess.stdin.write(JSON.stringify({
+      ...payload,
+      bypassCache: Boolean(options.bypassCache),
+    }));
     pythonProcess.stdin.end();
   });
 }

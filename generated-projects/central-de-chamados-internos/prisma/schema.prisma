@@ -1,14 +1,9 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
-}
-
-model ExampleEntity {
+model AccessControlRole {
   id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  title     String   @db.VarChar(120)
+  roleName  String @db.VarChar(190)
+  permissionMatrix String @db.VarChar(190)
+  accessScope String @db.VarChar(190)
+  status    String   @default("draft") @db.VarChar(40)
   createdAt DateTime @default(now()) @db.DateTime(0)
+  updatedAt DateTime @updatedAt @db.DateTime(0)
 }

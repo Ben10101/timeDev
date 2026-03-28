@@ -27,7 +27,7 @@ const STORY_SHORTCUT_EXAMPLES = [
     objective: 'Diminuir volume de suporte e aumentar autonomia do cliente.',
     audience: 'Clientes finais e equipe de atendimento.',
     mainFlows: 'Consultar pedido, enviar documentos, responder pendencias e acompanhar timeline.',
-    constraints: 'Experiencia mobile, notificacoes e integracao com sistema interno.',
+    constraints: 'Experi?ncia mobile, notifica?es e integra?o com sistema interno.',
   },
 ];
 
@@ -41,7 +41,7 @@ function TextAreaField({ label, value, onChange, placeholder, rows = 4, disabled
         placeholder={placeholder}
         rows={rows}
         disabled={disabled}
-        className={`dashboard-input min-h-[120px] resize-none ${disabled ? 'cursor-not-allowed bg-slate-100 text-slate-500' : ''}`}
+        className={`dashboard-input min-h-[120px] resize-none ${disabled ?'cursor-not-allowed bg-slate-100 text-slate-500' : ''}`}
       />
     </label>
   );
@@ -241,9 +241,9 @@ export default function ProjectOverviewPage() {
             onClick={handleExportPdf}
             disabled={loading || exportingPdf || (architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved)}
             className="dashboard-button-secondary w-full sm:w-auto"
-            title={architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved ? 'A exportação final depende da aprovação humana da arquitetura.' : undefined}
+            title={architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved ?'A exportação final depende da aprovação humana da arquitetura.' : undefined}
           >
-            {exportingPdf ? 'Preparando PDF...' : 'Exportar PDF'}
+            {exportingPdf ?'Preparando PDF...' : 'Exportar PDF'}
           </button>
           <button onClick={() => navigate(`/projects?project=${projectUuid}`)} className="dashboard-button-primary w-full sm:w-auto">
             Abrir board
@@ -341,18 +341,18 @@ export default function ProjectOverviewPage() {
                   onClick={handleApproveArchitecture}
                   disabled={loading || approvingArchitecture || !architectureStatus?.hasArchitecture || architectureStatus?.architectureApproved}
                   className="dashboard-button-secondary w-full sm:w-auto"
-                  title={!architectureStatus?.hasArchitecture ? 'Gere a arquitetura antes de aprovar.' : architectureStatus?.architectureApproved ? 'A arquitetura atual já foi aprovada.' : undefined}
+                  title={!architectureStatus?.hasArchitecture ?'Gere a arquitetura antes de aprovar.' : architectureStatus?.architectureApproved ?'A arquitetura atual já foi aprovada.' : undefined}
                 >
-                  {approvingArchitecture ? 'Aprovando...' : architectureStatus?.architectureApproved ? 'Arquitetura aprovada' : 'Aprovar arquitetura'}
+                  {approvingArchitecture ?'Aprovando...' : architectureStatus?.architectureApproved ?'Arquitetura aprovada' : 'Aprovar arquitetura'}
                 </button>
                 <button
                   type="button"
                   onClick={handleGenerateArchitecture}
                   disabled={loading || generatingArchitecture || !architectureStatus?.canGenerateArchitecture}
                   className="dashboard-button-primary w-full sm:w-auto"
-                  title={!architectureStatus?.canGenerateArchitecture ? architectureStatus?.blockers?.[0] : undefined}
+                  title={!architectureStatus?.canGenerateArchitecture ?architectureStatus?.blockers?.[0] : undefined}
                 >
-                  {generatingArchitecture ? 'Gerando arquitetura...' : 'Gerar arquitetura do projeto'}
+                  {generatingArchitecture ?'Gerando arquitetura...' : 'Gerar arquitetura do projeto'}
                 </button>
               </div>
             </div>
@@ -369,8 +369,8 @@ export default function ProjectOverviewPage() {
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Arquitetura</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.hasArchitecture
-                  ? architectureStatus?.architectureApproved
-                    ? 'Aprovada'
+                  ?architectureStatus?.architectureApproved
+                    ?'Aprovada'
                     : 'Pendente de aprovação'
                   : 'Pendente'}
               </p>
@@ -378,15 +378,15 @@ export default function ProjectOverviewPage() {
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Implementação</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
-                {architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}
+                {architectureStatus?.canGenerateCode ?'Liberada' : 'Bloqueada'}
               </p>
             </div>
             <div className="rounded-xl border border-rose-200 bg-rose-50 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-600">Aprovação humana</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.hasArchitecture
-                  ? architectureStatus?.architectureApproved
-                    ? 'Aprovada'
+                  ?architectureStatus?.architectureApproved
+                    ?'Aprovada'
                     : 'Pendente'
                   : 'Aguardando'}
               </p>
@@ -440,7 +440,7 @@ export default function ProjectOverviewPage() {
               <div className="mt-4 grid gap-3 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Entrada</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{shortcutReady ? 'Boa para gerar stories' : 'Precisa de mais contexto'}</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{shortcutReady ?'Boa para gerar stories' : 'Precisa de mais contexto'}</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Tamanho da ideia</p>
@@ -499,7 +499,7 @@ export default function ProjectOverviewPage() {
                 Recarregar projeto
               </button>
               <button disabled={generating || loading || isBriefingLocked} className="dashboard-button-primary w-full sm:w-auto">
-                {isBriefingLocked ? 'User stories já geradas' : generating ? 'Gerando user stories...' : 'Gerar user stories agora'}
+                {isBriefingLocked ?'User stories já geradas' : generating ?'Gerando user stories...' : 'Gerar user stories agora'}
               </button>
             </div>
           </form>
@@ -519,9 +519,9 @@ export default function ProjectOverviewPage() {
           </div>
 
           <div className="p-6">
-            {loading ? (
+            {loading ?(
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">Carregando overview...</div>
-            ) : tasks.length ? (
+            ) : tasks.length ?(
               <div className="grid gap-4 lg:grid-cols-2">
                 {tasks.slice(0, 8).map((task) => (
                   <button

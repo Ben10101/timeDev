@@ -10,6 +10,8 @@ from agents.project_manager.agent import ProjectManager
 from agents.requirements_analyst.agent import RequirementsAnalyst
 from agents.architect.agent import Architect
 from agents.developer.agent_new import Developer as NewDeveloper
+from agents.developer_backend.agent import DeveloperBackend
+from agents.developer_frontend.agent import DeveloperFrontend
 from agents.qa_engineer.agent import QAEngineer
 from orchestrator.projectBuilder import ProjectBuilder
 
@@ -48,6 +50,19 @@ def main():
             if not architecture: raise ValueError("Faltando 'architecture' para o developer.")
             agent = NewDeveloper(project_id)
             result = agent.process(idea, architecture) # Retorna um dicionário
+
+        elif agent_name == "developer_backend":
+            architecture = payload.get("architecture")
+            if not architecture: raise ValueError("Faltando 'architecture' para o developer_backend.")
+            agent = DeveloperBackend(project_id)
+            result = agent.process(idea, architecture)
+
+        elif agent_name == "developer_frontend":
+            architecture = payload.get("architecture")
+            if not architecture: raise ValueError("Faltando 'architecture' para o developer_frontend.")
+            backend_output = payload.get("developer_backend_output")
+            agent = DeveloperFrontend(project_id)
+            result = agent.process(idea, architecture, backend_output)
 
         elif agent_name == "qa_engineer":
             developer_output = payload.get("developer_output")

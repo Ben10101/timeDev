@@ -1,4 +1,4 @@
-﻿import { randomUUID, createHash } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { exec } from 'child_process';
 import { access, mkdir, readFile, rm, writeFile } from 'fs/promises';
 import path from 'path';
@@ -193,8 +193,9 @@ function repairEncodingArtifacts(value) {
     const candidate = Buffer.from(current, 'latin1').toString('utf8');
     if (!candidate || candidate === current) break;
 
-    const candidateArtifacts = (candidate.match(/(?:Ã.|Â.|â.|ï¿½|�)/g) || []).length;
-    const currentArtifacts = (current.match(/(?:Ã.|Â.|â.|ï¿½|�)/g) || []).length;
+    const artifactPattern = /[\u00C3\u00C2\u00E2\uFFFD]/g;
+    const candidateArtifacts = (candidate.match(artifactPattern) || []).length;
+    const currentArtifacts = (current.match(artifactPattern) || []).length;
     if (candidateArtifacts > currentArtifacts) break;
 
     current = candidate;
@@ -205,7 +206,7 @@ function repairEncodingArtifacts(value) {
 
 function toAsciiUiText(value) {
   return repairEncodingArtifacts(value)
-    .replace(/⊘/g, 'O')
+    .replace(/\uFFFD/g, 'O')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '')
@@ -279,6 +280,209 @@ function compactUiFieldsForGeneration(fields = []) {
   }));
 }
 
+function getProductModeDesignProfile(productMode = 'structured-workspace', screenTemplate = 'crud') {
+  const profiles = {
+    'governance-console': {
+      accent: 'blue',
+      tone: 'controle e decisao cuidadosa',
+      density: 'media',
+      primarySurface: 'matriz de controle',
+      secondarySurface: 'estado de governanca',
+      listArchetype: 'policies',
+      spatialModel: 'hero dark + matriz primaria + trilha secundaria de governanca',
+      heroStyle: 'command-center',
+      panelRelationship: 'controle primeiro, historico depois',
+      metricLabels: ['Cobertura', 'Risco', 'Governanca'],
+      metricValues: ["isLoading ? 'Mapeando' : String(items.length || 0)", "isLoading ? 'Analisando' : 'Controlado'", "'Ativa'"],
+      collectionMeta: "isLoading ? 'Sincronizando' : items.length ? `${items.length} perfil(is) monitorado(s)` : 'Governanca inicial'",
+      emptyStateTone: 'Nenhuma politica aplicada ainda. Defina a primeira base de controle desta area.',
+    },
+    'self-service-settings': {
+      accent: 'teal',
+      tone: 'autonomia com baixo atrito',
+      density: 'baixa',
+      primarySurface: 'ajuste principal',
+      secondarySurface: 'estado atual da configuracao',
+      listArchetype: 'preferences',
+      spatialModel: 'hero leve + card de ajuste + resumo de estado',
+      heroStyle: 'calm-settings',
+      panelRelationship: 'ajuste principal com feedback lateral',
+      metricLabels: ['Ajuste', 'Estado', 'Atualizacao'],
+      metricValues: [`'${screenTemplate === 'settings' ? 'Preferencia' : 'Configuracao'}'`, "isLoading ? 'Sincronizando' : items.length ? 'Configurado' : 'Inicial'", "'Agora'"],
+      collectionMeta: "isLoading ? 'Sincronizando' : items.length ? 'Configurado' : 'Ajuste inicial'",
+      emptyStateTone: 'Nenhuma preferencia registrada ainda. Ative o primeiro ajuste desta experiencia.',
+    },
+    'evidence-workbench': {
+      accent: 'amber',
+      tone: 'triagem com contexto e prova',
+      density: 'media',
+      primarySurface: 'envio orientado por contexto',
+      secondarySurface: 'evidencias do caso',
+      listArchetype: 'evidence',
+      spatialModel: 'mesa de caso com evidencias em destaque e envio guiado',
+      heroStyle: 'evidence-desk',
+      panelRelationship: 'evidencias primeiro, captura depois',
+      metricLabels: ['Triagem', 'Evidencias', 'Prioridade'],
+      metricValues: ["isLoading ? 'Sincronizando' : 'Ativa'", "isLoading ? '...' : String(items.length || 0)", "'Alta'"],
+      collectionMeta: "isLoading ? 'Sincronizando' : items.length ? `${items.length} evidencia(s) vinculada(s)` : 'Sem evidencias'",
+      emptyStateTone: 'Nenhum documento foi anexado ainda. Centralize aqui os comprovantes que destravam o atendimento.',
+    },
+    'manager-cockpit': {
+      accent: 'blue',
+      tone: 'leitura executiva e decisao',
+      density: 'media',
+      primarySurface: 'cockpit executivo',
+      secondarySurface: 'recortes e sinais',
+      listArchetype: 'insights',
+      spatialModel: 'cockpit com hero forte, indicadores e area de leitura principal',
+      heroStyle: 'executive-cockpit',
+      panelRelationship: 'insights primeiro, acao secundaria depois',
+      metricLabels: ['Indicadores', 'Leitura', 'Atualizacao'],
+      metricValues: ["isLoading ? 'Sincronizando' : String(items.length || 0)", "isLoading ? 'Atualizando' : 'Consolidada'", "'Agora'"],
+      collectionMeta: "isLoading ? 'Atualizando' : `${items.length} insight(s)`",
+      emptyStateTone: 'Sem recortes consolidados por enquanto. Os sinais desta area aparecem aqui conforme a operacao amadurece.',
+    },
+    'review-workbench': {
+      accent: 'violet',
+      tone: 'fila de revisao e decisao rapida',
+      density: 'media',
+      primarySurface: 'revisao guiada',
+      secondarySurface: 'fila de itens',
+      listArchetype: 'review-queue',
+      spatialModel: 'bancada de revisao com fila forte e decisao lateral',
+      heroStyle: 'review-desk',
+      panelRelationship: 'fila primeiro, decisao depois',
+      metricLabels: ['Fila', 'Pendencias', 'Decisao'],
+      metricValues: ["isLoading ? '...' : String(items.length || 0)", "isLoading ? 'Sincronizando' : 'Em analise'", "'Rapida'"],
+      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} item(ns) aguardando revisao`",
+      emptyStateTone: 'Nenhum item aguardando revisao agora. A fila aparece aqui quando houver algo para decidir.',
+    },
+    'onboarding-flow': {
+      accent: 'blue',
+      tone: 'progressao guiada',
+      density: 'baixa',
+      primarySurface: 'passo principal',
+      secondarySurface: 'proximo passo',
+      listArchetype: 'next-steps',
+      spatialModel: 'jornada guiada com foco em proximo passo',
+      heroStyle: 'guided-flow',
+      panelRelationship: 'acao principal com apoio leve',
+      metricLabels: ['Etapa', 'Progresso', 'Proximo'],
+      metricValues: ["'Atual'", "isLoading ? 'Preparando' : 'Em andamento'", "'Continuar'"],
+      collectionMeta: "isLoading ? 'Preparando' : 'Proximo passo'",
+      emptyStateTone: 'Nenhuma etapa complementar por agora. Avance pela acao principal para seguir a jornada.',
+    },
+    'structured-workspace': {
+      accent: 'teal',
+      tone: 'mesa de trabalho com contexto claro',
+      density: 'media',
+      primarySurface: 'acao principal',
+      secondarySurface: 'acompanhamento operacional',
+      listArchetype: 'active-records',
+      spatialModel: 'workspace operacional com acao e acompanhamento lado a lado',
+      heroStyle: 'operational-workspace',
+      panelRelationship: 'acao e acompanhamento equilibrados',
+      metricLabels: ['Area', 'Situacao', 'Registros'],
+      metricValues: [`'${screenTemplate === 'workspace' ? 'Operacao' : 'Area'}'`, "isLoading ? 'Sincronizando' : 'Pronta'", "isLoading ? '...' : String(items.length || 0)"],
+      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} registro(s)`",
+      emptyStateTone: 'Nenhum registro ativo ainda. Esta area fica pronta para acompanhar a operacao conforme os dados chegarem.',
+    },
+    'catalog-builder': {
+      accent: 'teal',
+      tone: 'montagem de oferta com valor percebido',
+      density: 'media',
+      primarySurface: 'composicao comercial',
+      secondarySurface: 'itens publicados',
+      listArchetype: 'catalog-items',
+      spatialModel: 'builder comercial com configuracao protagonista e preview lateral',
+      heroStyle: 'offer-builder',
+      panelRelationship: 'montagem primeiro, preview depois',
+      metricLabels: ['Oferta', 'Status', 'Publicacoes'],
+      metricValues: ["'Estruturada'", "isLoading ? 'Preparando' : 'Pronta'", "isLoading ? '...' : String(items.length || 0)"],
+      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} item(ns) prontos`",
+      emptyStateTone: 'Nenhum item publicado ainda. Monte a primeira oferta com titulo, posicionamento e valor claros.',
+    },
+    'curriculum-designer': {
+      accent: 'blue',
+      tone: 'estrutura e sequencia clara',
+      density: 'media',
+      primarySurface: 'sequencia principal',
+      secondarySurface: 'estrutura cadastrada',
+      listArchetype: 'curriculum',
+      spatialModel: 'designer com sequencia, etapas e estrutura viva',
+      heroStyle: 'curriculum-designer',
+      panelRelationship: 'estrutura primeiro, sequencia depois',
+      metricLabels: ['Estrutura', 'Sequencia', 'Blocos'],
+      metricValues: ["'Guiada'", "isLoading ? 'Preparando' : 'Definida'", "isLoading ? '...' : String(items.length || 0)"],
+      collectionMeta: "isLoading ? 'Preparando' : `${items.length} bloco(s) estruturado(s)`",
+      emptyStateTone: 'Nenhum bloco criado ainda. Comece pela primeira etapa para dar forma a esta jornada.',
+    },
+    'asset-library': {
+      accent: 'amber',
+      tone: 'acervo util e organizado',
+      density: 'media',
+      primarySurface: 'cadastro do ativo',
+      secondarySurface: 'biblioteca ativa',
+      listArchetype: 'library',
+      spatialModel: 'biblioteca operacional com acervo vivo e cadastro lateral',
+      heroStyle: 'asset-library',
+      panelRelationship: 'acervo primeiro, cadastro complementar',
+      metricLabels: ['Acervo', 'Disponiveis', 'Acesso'],
+      metricValues: ["'Organizado'", "isLoading ? '...' : String(items.length || 0)", "'Rapido'"],
+      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} ativo(s) catalogado(s)`",
+      emptyStateTone: 'Nenhum ativo registrado ainda. A biblioteca ganha valor quando os primeiros recursos entram com contexto.',
+    },
+    'commercial-settings': {
+      accent: 'amber',
+      tone: 'controle comercial com impacto no negocio',
+      density: 'baixa',
+      primarySurface: 'parametro comercial',
+      secondarySurface: 'efeito configurado',
+      listArchetype: 'commercial-state',
+      spatialModel: 'configuracao comercial com impacto visivel',
+      heroStyle: 'commercial-control',
+      panelRelationship: 'regra principal com contexto de negocio',
+      metricLabels: ['Impacto', 'Estado', 'Atualizacao'],
+      metricValues: ["'Comercial'", "isLoading ? 'Sincronizando' : 'Configurado'", "'Agora'"],
+      collectionMeta: "isLoading ? 'Sincronizando' : items.length ? 'Configurado' : 'Ajuste inicial'",
+      emptyStateTone: 'Nenhum parametro comercial configurado ainda. Defina a primeira regra que influencia o valor percebido.',
+    },
+    'access-gateway': {
+      accent: 'violet',
+      tone: 'entrada confiavel e segura',
+      density: 'baixa',
+      primarySurface: 'autenticacao principal',
+      secondarySurface: 'estado de acesso',
+      listArchetype: 'session-state',
+      spatialModel: 'portal de entrada com foco em credencial e confianca',
+      heroStyle: 'secure-gateway',
+      panelRelationship: 'acesso principal com confianca lateral',
+      metricLabels: ['Acesso', 'Status', 'Atualizacao'],
+      metricValues: ["'Protegido'", "isLoading ? 'Verificando' : 'Pronto'", "'Agora'"],
+      collectionMeta: "isLoading ? 'Verificando' : items.length ? 'Ativo' : 'Sem sessoes'",
+      emptyStateTone: 'Nenhum acesso recente por aqui. A autenticacao aparece com mais contexto conforme a jornada for usada.',
+    },
+    'immersive-workspace': {
+      accent: 'violet',
+      tone: 'fluxo principal com foco continuo',
+      density: 'media',
+      primarySurface: 'experiencia central',
+      secondarySurface: 'continuidade da jornada',
+      listArchetype: 'continuity',
+      spatialModel: 'experiencia imersiva com minimo de chrome',
+      heroStyle: 'immersive-flow',
+      panelRelationship: 'execucao primeiro, apoio minimo',
+      metricLabels: ['Foco', 'Progresso', 'Continuidade'],
+      metricValues: ["'Ativo'", "isLoading ? 'Sincronizando' : 'Em curso'", "'Mantida'"],
+      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} ponto(s) acompanhados`",
+      emptyStateTone: 'Nenhum ponto de continuidade por enquanto. Esta area ganha vida conforme o fluxo principal evolui.',
+    },
+  };
+
+  const fallback = profiles['structured-workspace'];
+  return profiles[productMode] || fallback;
+}
+
 function sanitizeUiStatesForGeneration(uiStates = {}) {
   return {
     loading: truncateText(uiStates?.loading || 'Carregando a experiencia principal da tela.', 120),
@@ -293,6 +497,12 @@ function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
     technicalSpec.structured?.classification?.screenTemplate ||
     'crud';
   const domainTemplate = getDomainTemplate(technicalSpec);
+  const productMode =
+    technicalSpec.frontend?.productMode ||
+    technicalSpec.structured?.classification?.productMode ||
+    domainTemplate.productMode ||
+    'structured-workspace';
+  const productDirection = getProductModeDesignProfile(productMode, screenTemplate);
   const reuseHints = buildProjectMemoryReuseHints(technicalSpec.projectMemory, technicalSpec, task.title);
 
   return {
@@ -300,6 +510,17 @@ function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
     summary: technicalSpec.summary,
     frontendRoute: technicalSpec.frontend?.suggestedRoute,
     screenTemplate,
+    productMode,
+      productDirection: {
+        tone: productDirection.tone,
+        density: productDirection.density,
+        primarySurface: productDirection.primarySurface,
+        secondarySurface: productDirection.secondarySurface,
+        listArchetype: productDirection.listArchetype,
+        spatialModel: productDirection.spatialModel,
+        heroStyle: productDirection.heroStyle,
+        panelRelationship: productDirection.panelRelationship,
+      },
     submitLabel: technicalSpec.domain?.submitLabel,
     navigationLabel: technicalSpec.frontend?.navigationLabel,
     pageTitle: technicalSpec.frontend?.pageTitle,
@@ -310,6 +531,8 @@ function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
         ? 'configuracao'
         : screenTemplate === 'dashboard'
           ? 'acompanhamento'
+          : screenTemplate === 'workspace'
+            ? 'operacao guiada'
           : screenTemplate === 'wizard'
             ? 'progressao'
             : 'operacao',
@@ -318,6 +541,7 @@ function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
     uiStates: sanitizeUiStatesForGeneration(technicalSpec.ux?.states),
     designReference: {
       templateKey: technicalSpec.structured?.classification?.templateKey || domainTemplate.templateKey,
+      preferredAccent: productDirection.accent,
       preferredScreenTemplate: reuseHints.preferredScreenTemplate || null,
       domainReferences: reuseHints.domainReferences.slice(0, 2).map((item) => ({
         featureKey: item.featureKey,
@@ -475,6 +699,8 @@ function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '')
   const route = normalizeSemanticText(routeBase);
 
   const signals = [
+    { group: 'support', aliases: ['suporte', 'support', 'chamado', 'ticket', 'atendimento'] },
+    { group: 'attachment', aliases: ['anexo', 'anexar', 'arquivo', 'documento', 'comprovante', 'fiscal', 'attachment', 'attachments'] },
     { group: 'course', aliases: ['curso', 'courses', 'course'] },
     { group: 'module', aliases: ['modulo', 'modulos', 'modules', 'module'] },
     { group: 'lesson', aliases: ['aula', 'aulas', 'lessons', 'lesson'] },
@@ -498,6 +724,7 @@ function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '')
 
 function getExpectedDomainKeywords(domainKey = '') {
   const catalog = {
+    'support-ticket-attachments': ['support', 'suporte', 'ticket', 'chamado', 'attachment', 'attachments', 'anexo', 'arquivo', 'documento', 'comprovante', 'fiscal'],
     'access-control': ['access', 'acesso', 'permission', 'permissao', 'role', 'funcao', 'perfil'],
     'ticket-notification-preferences': ['notification', 'notificacao', 'email', 'alerta', 'ticket', 'chamado'],
     'course-catalog': ['course', 'courses', 'curso'],
@@ -544,6 +771,7 @@ function detectDomainMismatch(taskTitle = '', domainKey = '', featureKey = '', r
 function inferImplementedDomain(featureKey = '', routeBase = '') {
   const source = `${normalizeSemanticText(featureKey)} ${normalizeSemanticText(routeBase)}`;
   const candidates = [
+    'support-ticket-attachments',
     'ticket-notification-preferences',
     'access-control',
     'course-catalog',
@@ -731,26 +959,77 @@ async function buildImplementationBenchmarkSummary(implementation, technicalSpec
 }
 
 function buildRepairContext({ reviewReport, specialistReviewReport, validationSummary, attemptNumber }) {
+  const findings = (reviewReport?.findings || []).slice(0, 10).map((finding) => ({
+    code: finding.code,
+    severity: finding.severity,
+    filePath: finding.filePath,
+    message: finding.message,
+  }));
+  const specialistFindings = (specialistReviewReport?.findings || []).slice(0, 10).map((finding) => ({
+    code: finding.code,
+    severity: finding.severity,
+    filePath: finding.filePath,
+    message: finding.message,
+  }));
+  const validationFailures = formatValidationFailures(validationSummary);
+
   return {
     attemptNumber,
     reviewStatus: reviewReport?.summary?.status || 'unknown',
     reviewScore: reviewReport?.summary?.score ?? null,
     specialistReviewStatus: specialistReviewReport?.summary?.status || 'unknown',
     specialistReviewScore: specialistReviewReport?.summary?.score ?? null,
-    findings: (reviewReport?.findings || []).slice(0, 10).map((finding) => ({
-      code: finding.code,
-      severity: finding.severity,
-      filePath: finding.filePath,
-      message: finding.message,
-    })),
-    specialistFindings: (specialistReviewReport?.findings || []).slice(0, 10).map((finding) => ({
-      code: finding.code,
-      severity: finding.severity,
-      filePath: finding.filePath,
-      message: finding.message,
-    })),
+    findings,
+    specialistFindings,
     validationStatus: validationSummary?.status || 'unknown',
-    validationFailures: formatValidationFailures(validationSummary),
+    validationFailures,
+    repairScope: inferRepairScope({ findings, specialistFindings, validationFailures }),
+  };
+}
+
+function inferRepairScope({ findings = [], specialistFindings = [], validationFailures = [] }) {
+  const allSignals = [
+    ...findings.map((item) => `${item.filePath || ''} ${item.code || ''}`.toLowerCase()),
+    ...specialistFindings.map((item) => `${item.filePath || ''} ${item.code || ''}`.toLowerCase()),
+    ...validationFailures.map((item) => `${item.scriptName || ''} ${item.errorMessage || ''}`.toLowerCase()),
+  ];
+
+  const needsFrontend = allSignals.some((signal) =>
+    signal.includes('apps/web/') ||
+    signal.includes('frontend') ||
+    signal.includes('ux') ||
+    signal.includes('shell') ||
+    signal.includes('build:web') ||
+    signal.includes('lint')
+  );
+
+  const needsBackend = allSignals.some((signal) =>
+    signal.includes('apps/api/') ||
+    signal.includes('backend') ||
+    signal.includes('route') ||
+    signal.includes('contract') ||
+    signal.includes('build:api') ||
+    signal.includes('schema')
+  );
+
+  const needsShared = allSignals.some((signal) =>
+    signal.includes('packages/shared/') ||
+    signal.includes('docs/implementations/') ||
+    signal.includes('prisma/') ||
+    signal.includes('test') ||
+    signal.includes('build')
+  );
+
+  const workstreamIds = [];
+  if (needsBackend) workstreamIds.push('backend_module');
+  if (needsFrontend) workstreamIds.push('frontend_feature');
+  if (needsShared || (!needsBackend && !needsFrontend)) workstreamIds.push('persistence_and_docs');
+
+  return {
+    needsBackend,
+    needsFrontend,
+    needsShared: needsShared || (!needsBackend && !needsFrontend),
+    workstreamIds: [...new Set(workstreamIds)],
   };
 }
 
@@ -782,19 +1061,94 @@ function getWorkstreamExecutionState(planContent, phaseId) {
           id: stream.id,
           label: stream.label,
           goal: stream.goal,
+          lane: stream.lane || 'shared',
+          ownerAgent: stream.ownerAgent || null,
         }
       : {
           id,
           label: id,
           goal: '',
+          lane: 'shared',
+          ownerAgent: null,
         };
   };
 
+  const groupByLane = (items) =>
+    items.reduce(
+      (acc, item) => {
+        const key = item.lane || 'shared';
+        acc[key] = [...(acc[key] || []), item];
+        return acc;
+      },
+      { shared: [], backend: [], frontend: [] }
+    );
+
+  const currentWorkstreams = activeWorkstreamIds.map(toView);
+  const completedWorkstreams = completedWorkstreamIds.map(toView);
+
   return {
     currentPhaseId: currentPhase?.id || null,
-    currentWorkstreams: activeWorkstreamIds.map(toView),
-    completedWorkstreams: completedWorkstreamIds.map(toView),
+    currentWorkstreams,
+    completedWorkstreams,
+    currentWorkstreamsByLane: groupByLane(currentWorkstreams),
+    completedWorkstreamsByLane: groupByLane(completedWorkstreams),
   };
+}
+
+function buildCompletedWorkstreamState(planContent) {
+  const workstreams = (planContent?.workstreams || []).map((stream) => ({
+    id: stream.id,
+    label: stream.label,
+    goal: stream.goal,
+    lane: stream.lane || 'shared',
+    ownerAgent: stream.ownerAgent || null,
+  }));
+  const groupByLane = (items) =>
+    items.reduce(
+      (acc, item) => {
+        const key = item.lane || 'shared';
+        acc[key] = [...(acc[key] || []), item];
+        return acc;
+      },
+      { shared: [], backend: [], frontend: [] }
+    );
+
+  return {
+    currentWorkstreams: [],
+    completedWorkstreams: workstreams,
+    currentWorkstreamsByLane: groupByLane([]),
+    completedWorkstreamsByLane: groupByLane(workstreams),
+  };
+}
+
+function detectFindingLane(filePath = '', code = '') {
+  const signal = `${String(filePath || '')} ${String(code || '')}`.toLowerCase();
+  if (signal.includes('apps/api/') || signal.includes('backend') || signal.includes('route') || signal.includes('contract')) {
+    return 'backend';
+  }
+  if (signal.includes('apps/web/') || signal.includes('frontend') || signal.includes('ux') || signal.includes('shell')) {
+    return 'frontend';
+  }
+  return 'shared';
+}
+
+function summarizeFindingsByLane(findings = []) {
+  const severityWeight = { high: 25, medium: 12, low: 5 };
+  const buckets = {
+    backend: { total: 0, score: 100, high: 0, medium: 0, low: 0 },
+    frontend: { total: 0, score: 100, high: 0, medium: 0, low: 0 },
+    shared: { total: 0, score: 100, high: 0, medium: 0, low: 0 },
+  };
+
+  for (const finding of findings) {
+    const lane = detectFindingLane(finding.filePath, finding.code);
+    const severity = finding.severity || 'low';
+    buckets[lane].total += 1;
+    buckets[lane][severity] = (buckets[lane][severity] || 0) + 1;
+    buckets[lane].score = Math.max(0, buckets[lane].score - (severityWeight[severity] || 0));
+  }
+
+  return buckets;
 }
 
 function buildImplementationQualitySummary({ task, implementation, reviewArtifact, specialistReviewArtifact, buildReportArtifact, testReportArtifact, lintReportArtifact }) {
@@ -831,6 +1185,8 @@ function buildImplementationQualitySummary({ task, implementation, reviewArtifac
   );
   const semanticScore = specialistReviewContent?.summary?.semanticScore ?? Math.max(0, 100 - semanticFindings.length * 25);
   const traceability = buildTraceabilitySummary(task, implementation, technicalSpecContent, expectedDomain, implementedDomain);
+  const findingsByLane = summarizeFindingsByLane(findings);
+  const specialistFindingsByLane = summarizeFindingsByLane(specialistFindings);
   const premiumScore = Math.round(
     [
       score,
@@ -864,6 +1220,8 @@ function buildImplementationQualitySummary({ task, implementation, reviewArtifac
     lintStatus: lintContent?.status || 'unknown',
     totalFindings: reviewContent?.summary?.totalFindings ?? findings.length,
     findingsBySeverity: countsBySeverity,
+    findingsByLane,
+    specialistFindingsByLane,
     uxScore: reviewContent?.summary?.uxScore ?? null,
     consistencyScore: reviewContent?.summary?.consistencyScore ?? null,
     maintainabilityScore: reviewContent?.summary?.maintainabilityScore ?? null,
@@ -921,6 +1279,59 @@ function classifyImplementationRisk({ generatedFiles = [], technicalSpec, qualit
   };
 }
 
+function classifyLaneRisk(lane, qualitySummary = {}) {
+  const laneSignals =
+    lane === 'backend'
+      ? ['buildStatus', 'specialistArchitectureScore']
+      : lane === 'frontend'
+        ? ['lintStatus', 'uxScore']
+        : ['testStatus', 'validationScore'];
+  const summary = qualitySummary?.findingsByLane?.[lane] || { total: 0, high: 0, score: 100 };
+  const specialistSummary = qualitySummary?.specialistFindingsByLane?.[lane] || { total: 0, high: 0, score: 100 };
+  const validationFailed =
+    (lane === 'backend' && qualitySummary?.buildStatus !== 'completed') ||
+    (lane === 'frontend' && qualitySummary?.lintStatus !== 'completed') ||
+    (lane === 'shared' && qualitySummary?.testStatus !== 'completed');
+
+  let score = 0;
+  score += Number(summary.high || 0) * 3;
+  score += Math.min(4, Number(summary.total || 0));
+  score += Number(specialistSummary.high || 0) * 2;
+  if (validationFailed) score += 3;
+
+  const level = score >= 8 ? 'high' : score >= 4 ? 'medium' : 'low';
+
+  return {
+    lane,
+    level,
+    score,
+    reviewScore: summary.score ?? null,
+    specialistScore: specialistSummary.score ?? null,
+    totalFindings: summary.total || 0,
+    highFindings: summary.high || 0,
+    validationFailed,
+    keySignals: laneSignals,
+  };
+}
+
+function buildLaneRecommendations(laneRisks = []) {
+  return laneRisks.map((laneRisk) => {
+    const prefix = laneRisk.lane === 'backend' ? 'Backend' : laneRisk.lane === 'frontend' ? 'Frontend' : 'Shared';
+    const recommendation =
+      laneRisk.level === 'high'
+        ? `${prefix}: revisar manualmente antes de promover a integração.`
+        : laneRisk.level === 'medium'
+          ? `${prefix}: validar os pontos principais desta vertente antes do merge final.`
+          : `${prefix}: sem bloqueios relevantes na leitura atual.`;
+
+    return {
+      lane: laneRisk.lane,
+      level: laneRisk.level,
+      recommendation,
+    };
+  });
+}
+
 function buildImplementationDiffReview({ task, implementation, technicalSpec, qualitySummary, generatedFiles = [], repairAttempts = 0 }) {
   const normalizedFiles = (generatedFiles || []).map((file) => ({
     path: String(file.filePath || file.relativePath || '').replace(/\\/g, '/'),
@@ -942,6 +1353,9 @@ function buildImplementationDiffReview({ task, implementation, technicalSpec, qu
     qualitySummary,
     repairAttempts,
   });
+  const laneRisks = ['backend', 'frontend', 'shared'].map((lane) => classifyLaneRisk(lane, qualitySummary));
+  const laneRecommendations = buildLaneRecommendations(laneRisks);
+  const blockingLanes = laneRisks.filter((lane) => lane.level === 'high').map((lane) => lane.lane);
 
   const summaryLines = [
     grouped.frontend.length ? `Frontend: ${grouped.frontend.length} arquivo(s)` : null,
@@ -962,6 +1376,7 @@ function buildImplementationDiffReview({ task, implementation, technicalSpec, qu
       changedAreas: summaryLines,
       riskLevel: risk.level,
       riskScore: risk.score,
+      blockingLanes,
       recommendation:
         risk.level === 'high'
           ? 'Revisar manualmente o diff antes de considerar a integração encerrada.'
@@ -982,6 +1397,8 @@ function buildImplementationDiffReview({ task, implementation, technicalSpec, qu
       validationScore: qualitySummary?.validationScore ?? null,
       traceabilityScore: qualitySummary?.traceability?.traceabilityScore ?? null,
       repairAttempts,
+      laneRisks,
+      laneRecommendations,
     },
     risk,
   };
@@ -1151,6 +1568,7 @@ function buildExecutionStrategy(task, generatedApp, technicalSpec, projectMemory
     architectureSummary: technicalSpec.architecture?.sourceSummary || null,
     projectMemory: projectMemory || null,
     reuseHints,
+    productMode: technicalSpec.frontend?.productMode || technicalSpec.structured?.classification?.productMode || null,
     qualityTargets: {
       reviewScore: 85,
       validationScore: 80,
@@ -1221,7 +1639,7 @@ async function getProjectOrThrow(projectUuid) {
   });
 
   if (!project) {
-    throw new Error('Projeto não encontrado.');
+    throw new Error('Projeto n?o encontrado.');
   }
 
   return project;
@@ -1252,7 +1670,7 @@ async function getTaskWithArtifactsOrThrow(taskUuid) {
   });
 
   if (!task) {
-    throw new Error('Tarefa não encontrada.');
+    throw new Error('Tarefa n?o encontrada.');
   }
 
   return task;
@@ -1305,6 +1723,54 @@ function resolveImplementationUserUuid(task, explicitUserUuid = null) {
 
 function inferFieldDefinitions(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
+
+  if (actionSpec?.domainKey === 'support-ticket-attachments') {
+    return [
+      {
+        name: 'documentType',
+        label: 'Tipo de documento',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Classifique o anexo para facilitar a triagem do chamado.',
+        placeholder: 'nota_fiscal | comprovante | recibo | contrato',
+        defaultValue: 'nota_fiscal',
+        sampleValue: 'comprovante',
+        selectOptions: ['nota_fiscal', 'comprovante', 'recibo', 'contrato', 'outro'],
+        validations: ['required'],
+      },
+      {
+        name: 'documentDescription',
+        label: 'Descricao do anexo',
+        inputType: 'textarea',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Explique rapidamente por que este documento ajuda no atendimento.',
+        placeholder: 'Descreva o conteudo do documento e o contexto do chamado',
+        defaultValue: '',
+        sampleValue: 'Comprovante referente ao pagamento associado ao chamado aberto pelo financeiro.',
+        validations: ['required', 'min:10'],
+      },
+      {
+        name: 'fileUrl',
+        label: 'Arquivo ou link do comprovante',
+        inputType: 'url',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Informe a URL do arquivo salvo para que o time de suporte consiga acessar o documento.',
+        placeholder: 'https://arquivos.empresa.com/documentos/comprovante.pdf',
+        defaultValue: '',
+        sampleValue: 'https://arquivos.empresa.com/documentos/comprovante.pdf',
+        validations: ['required', 'url'],
+      },
+    ];
+  }
 
   if (actionSpec?.domainKey === 'course-catalog') {
     return [
@@ -1698,6 +2164,9 @@ function inferActionSpec(task, sourceText) {
   const looksLikeAccessControl =
     (/\bpermiss/.test(titleNormalized) || /\brole\b|\broles\b|\bfunca/.test(titleNormalized)) &&
     (/\bacesso\b/.test(titleNormalized) || /\bperfil\b|\bperfis\b/.test(titleNormalized) || /\bseguranc/.test(titleNormalized));
+  const looksLikeSupportAttachment =
+    (/\banexo\b|\banexar\b|\barquivo\b|\bdocumento\b|\bcomprov/.test(titleNormalized) || /\banexo\b|\banexar\b|\bdocumento\b|\bcomprov/.test(normalized)) &&
+    (/\bchamado\b|\bsuporte\b|\bticket\b/.test(titleNormalized) || /\bchamado\b|\bsuporte\b|\bticket\b/.test(normalized));
   const looksLikeNotificationPreference =
     /\bnotifica/.test(titleNormalized) &&
     /\be-?mail\b/.test(normalized) &&
@@ -1757,6 +2226,23 @@ function inferActionSpec(task, sourceText) {
       pageDescription: 'Defina para quais atualizacoes do chamado o sistema deve enviar avisos por e-mail.',
       successMessage: 'Preferencias de notificacao atualizadas com sucesso.',
       summary: 'Permite configurar notificacoes por e-mail para acompanhar atualizacoes do chamado sem acessar o sistema.',
+    };
+  }
+
+  if (looksLikeSupportAttachment) {
+    return {
+      domainKey: 'support-ticket-attachments',
+      entityName: 'SupportTicketAttachment',
+      routeBase: '/api/support-ticket-attachments',
+      frontendRoute: '/tickets/attachments',
+      pageComponentName: 'SupportTicketAttachmentsPage',
+      serviceName: 'SupportTicketAttachmentsService',
+      submitLabel: 'Anexar Documento',
+      navigationLabel: 'Anexos do Chamado',
+      pageTitle: 'Envie documentos que destravam o atendimento',
+      pageDescription: 'Associe comprovantes, notas e documentos fiscais ao chamado para acelerar a analise do suporte.',
+      successMessage: 'Documento anexado com sucesso.',
+      summary: 'Permite anexar documentos fiscais e comprobatórios ao abrir chamados de suporte para agilizar a triagem e o atendimento.',
     };
   }
 
@@ -1998,16 +2484,16 @@ function getDomainTemplateLegacy(technicalSpec) {
       heroTitle: 'Crie sua conta',
       heroDescription: 'Cadastre seu acesso com e-mail e senha para começar a usar a plataforma.',
       formCardTitle: 'Dados de acesso',
-      formCardDescription: 'Preencha as credenciais mínimas para liberar seu primeiro acesso.',
+      formCardDescription: 'Preencha as credenciais m?nimas para liberar seu primeiro acesso.',
       recordsTitle: 'Cadastros recentes',
-      recordsEmptyState: 'Nenhum cadastro processado até o momento.',
+      recordsEmptyState: 'Nenhum cadastro processado at? o momento.',
       highlights: [
         'Validação imediata de e-mail antes da persistência.',
         'Senha forte exigida para concluir o cadastro.',
-        'Proteção contra e-mails duplicados no fluxo incremental.',
+        'Prote??o contra e-mails duplicados no fluxo incremental.',
       ],
       profileSummaryTitle: 'Checklist de cadastro',
-      profileSummaryDescription: 'O fluxo precisa validar e-mail, senha e evitar duplicidade antes da criação da conta.',
+      profileSummaryDescription: 'O fluxo precisa validar e-mail, senha e evitar duplicidade antes da cria??o da conta.',
     };
   }
 
@@ -2019,12 +2505,12 @@ function getDomainTemplateLegacy(technicalSpec) {
       heroDescription: 'Use suas credenciais para acessar cursos, progresso e recursos da sua conta.',
       formCardTitle: 'Acesso',
       formCardDescription: 'Informe o e-mail cadastrado e a senha para autenticar a sessão.',
-      recordsTitle: 'Sessões recentes',
-      recordsEmptyState: 'Nenhuma sessão registrada até o momento.',
+      recordsTitle: 'Sess?es recentes',
+      recordsEmptyState: 'Nenhuma sess?o registrada at? o momento.',
       highlights: [
         'Validação de credenciais antes de iniciar a sessão.',
-        'Mensagens claras para e-mail ou senha inválidos.',
-        'Fluxo pensado para acoplar autenticação real depois.',
+        'Mensagens claras para e-mail ou senha inv?lidos.',
+        'Fluxo pensado para acoplar autentica��o real depois.',
       ],
       profileSummaryTitle: 'Checklist de login',
       profileSummaryDescription: 'A entrada deve validar credenciais e retornar feedback imediato em caso de falha.',
@@ -2039,15 +2525,15 @@ function getDomainTemplateLegacy(technicalSpec) {
       heroDescription: 'Mantenha nome, foto e dados principais da conta sempre consistentes.',
       formCardTitle: 'Dados do perfil',
       formCardDescription: 'Edite as informações visíveis na conta e salve as alterações.',
-      recordsTitle: 'Histórico de alterações',
-      recordsEmptyState: 'Nenhuma alteração realizada até o momento.',
+      recordsTitle: 'Hist?rico de altera??es',
+      recordsEmptyState: 'Nenhuma altera??o realizada at? o momento.',
       highlights: [
-        'Nome obrigatório para exibição correta do perfil.',
-        'Foto de perfil com validação de formato e limite de tamanho.',
-        'Histórico preparado para auditoria de atualizações.',
+        'Nome obrigat?rio para exibi??o correta do perfil.',
+        'Foto de perfil com valida??o de formato e limite de tamanho.',
+        'Hist?rico preparado para auditoria de atualiza��es.',
       ],
-      profileSummaryTitle: 'Boas práticas do perfil',
-      profileSummaryDescription: 'O aluno precisa manter dados atualizados, com nome obrigatório e foto válida.',
+      profileSummaryTitle: 'Boas pr?ticas do perfil',
+      profileSummaryDescription: 'O aluno precisa manter dados atualizados, com nome obrigat?rio e foto v?lida.',
     };
   }
 
@@ -2077,7 +2563,7 @@ function getDomainTemplateLegacy(technicalSpec) {
     heroTitle: technicalSpec.frontend?.pageTitle || technicalSpec.entityName,
     heroDescription: technicalSpec.frontend?.pageDescription || technicalSpec.summary,
     formCardTitle: 'Preencha os dados',
-    formCardDescription: 'Informe os dados necessários para continuar.',
+    formCardDescription: 'Informe os dados necess?rios para continuar.',
     recordsTitle: 'Últimos registros',
     recordsEmptyState: 'Nenhum registro processado ainda.',
     highlights: [
@@ -2094,7 +2580,7 @@ function getDomainTemplate(technicalSpec) {
   return resolveDomainTemplate(domainKey, technicalSpec);
 }
 
-async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repairContext = null) {
+async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repairContext = null, options = {}) {
   const domainTemplate = getDomainTemplate(technicalSpec);
   const fallback = normalizeUiCopy(normalizeGeneratedCopy({
     navigationLabel: technicalSpec.frontend.navigationLabel,
@@ -2116,12 +2602,15 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
   const uiGenerationContext = buildUiGenerationContext(task, technicalSpec, repairContext);
 
   try {
-    const envOverrides = userUuid
-      ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'implementation_architect' })
-      : { AI_DISABLE_OLLAMA_FALLBACK: '0' };
-    const aiResult = normalizeUiCopy(normalizeGeneratedCopy(await generateImplementationUi({
-      ...uiGenerationContext,
-    }, { envOverrides })));
+      const envOverrides = userUuid
+        ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'implementation_architect' })
+        : { AI_DISABLE_OLLAMA_FALLBACK: '0' };
+      const aiResult = normalizeUiCopy(normalizeGeneratedCopy(await generateImplementationUi({
+        ...uiGenerationContext,
+      }, {
+        envOverrides,
+        bypassCache: Boolean(options.forceRefresh),
+      })));
 
     return {
       ...technicalSpec,
@@ -2146,9 +2635,22 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
   }
 }
 
-function inferBusinessRules(sourceText) {
+function inferBusinessRules(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const rules = [];
+
+  if (actionSpec?.domainKey === 'support-ticket-attachments') {
+    if (/\bchamado\b|\bticket\b/.test(normalized)) {
+      rules.push('O documento anexado deve permanecer vinculado ao chamado correto para consulta durante o atendimento.');
+    }
+    if (/\bfiscal\b|\bcomprov/.test(normalized)) {
+      rules.push('O tipo do documento precisa indicar se o anexo e fiscal, comprovante ou outro apoio operacional.');
+    }
+    if (/\barquivo\b|\banexo\b|\bdocumento\b/.test(normalized)) {
+      rules.push('O anexo precisa registrar uma referencia acessivel para que o suporte consulte o documento sem retrabalho.');
+    }
+    return rules.length ? rules : ['O documento anexado deve permanecer vinculado ao chamado correto para consulta durante o atendimento.'];
+  }
 
   if (/\bperfil\b/.test(normalized) && /\bconta ativa\b|\blogado\b/.test(normalized)) {
     rules.push('O aluno precisa estar autenticado e com conta ativa para atualizar o perfil.');
@@ -2185,9 +2687,18 @@ function inferBusinessRules(sourceText) {
   return rules;
 }
 
-function inferQaScenarios(sourceText) {
+function inferQaScenarios(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const scenarios = [];
+
+  if (actionSpec?.domainKey === 'support-ticket-attachments') {
+    scenarios.push({ code: 'missing_document_type', message: 'Selecione o tipo de documento antes de anexar o arquivo.' });
+    scenarios.push({ code: 'missing_file_reference', message: 'Informe o arquivo ou link do comprovante antes de concluir o anexo.' });
+    if (/\bdescricao\b|\bcontexto\b|\bdetalh/.test(normalized) || true) {
+      scenarios.push({ code: 'missing_attachment_context', message: 'Descreva rapidamente o contexto do documento para apoiar a triagem.' });
+    }
+    return scenarios;
+  }
 
   if (/\bperfil\b/.test(normalized) && /\bnome\b/.test(normalized) && /\bobrigatorio\b|\bnao pode ser deixado em branco\b/.test(normalized)) {
     scenarios.push({ code: 'required_full_name', message: 'Nome obrigatorio.' });
@@ -2243,7 +2754,7 @@ function buildFieldInitializer(field) {
 }
 
 function hasEncodingArtifacts(content) {
-  return /(?:Ã.|Â.|â.|ï¿½|�)/.test(String(content || ''));
+  return /[\u00C3\u00C2\u00E2\uFFFD]/.test(String(content || ''));
 }
 
 function inferUiStates(actionSpec, fields, qaScenarios) {
@@ -2283,6 +2794,7 @@ function inferDomainName(actionSpec, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
 
   if (actionSpec.domainKey.startsWith('auth-')) return 'auth';
+  if (actionSpec.domainKey === 'support-ticket-attachments' || /\bchamado\b|\bsuporte\b|\bticket\b/.test(normalized) && /\banexo\b|\barquivo\b|\bdocumento\b/.test(normalized)) return 'support';
   if (actionSpec.domainKey === 'access-control-roles' || /\bpermiss/.test(normalized) || /\brole\b|\broles\b/.test(normalized)) return 'access-control';
   if (actionSpec.domainKey === 'ticket-notification-preferences' || /\bnotifica/.test(normalized) || /\balerta\b/.test(normalized)) return 'notification';
   if (actionSpec.domainKey === 'profile-settings' || /\bperfil\b/.test(normalized)) return 'profile';
@@ -2300,6 +2812,7 @@ function inferIntent(actionSpec, sourceText) {
 
   if (actionSpec.domainKey === 'auth-login' || /\blogin\b|\bentrar\b|\bautentic/.test(normalized)) return 'login';
   if (actionSpec.domainKey === 'auth-register' || /\bregistr/.test(normalized) || /\bcadastr/.test(normalized)) return 'register';
+  if (actionSpec.domainKey === 'support-ticket-attachments') return 'attach';
   if (actionSpec.domainKey === 'access-control-roles' || /\bconfigurar\b/.test(normalized) && /\bpermiss/.test(normalized)) return 'configure';
   if (actionSpec.domainKey === 'ticket-notification-preferences') return 'configure';
   if (actionSpec.domainKey === 'profile-settings' || /\batualiz/.test(normalized) || /\bedita/.test(normalized)) return 'update';
@@ -2318,11 +2831,13 @@ function inferScreenTemplate(actionSpec, fields, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const hasFewFields = (fields || []).length <= 3;
 
+  if (actionSpec.domainKey === 'support-ticket-attachments') return 'workspace';
   if (actionSpec.domainKey === 'access-control-roles') return 'settings';
   if (actionSpec.domainKey === 'ticket-notification-preferences') return 'settings';
   if (actionSpec.domainKey === 'profile-settings') return 'settings';
   if (actionSpec.domainKey.startsWith('auth-')) return hasFewFields ? 'settings' : 'wizard';
   if (/\bdashboard\b|\bpainel\b|\brelatorio\b|\bmetricas\b/.test(normalized)) return 'dashboard';
+  if (/\bchamado\b|\bfila\b|\bcarteira\b|\batendente\b|\banalista\b|\breclassific/.test(normalized)) return 'workspace';
   if (/\betapa\b|\bpasso\b|\bwizard\b|\bsequencia\b/.test(normalized)) return 'wizard';
   if (/\bconfigurar\b|\bpreferencia\b|\bajuste\b|\bperfil\b/.test(normalized)) return 'settings';
 
@@ -2366,6 +2881,8 @@ function extractArchitectureHighlights(architectureSource) {
 }
 
 function buildUiSections(actionSpec, fields, frontendSpec) {
+  const screenTemplate = frontendSpec.screenTemplate || 'crud';
+  const productMode = frontendSpec.productMode || 'structured-workspace';
   const sections = [
     {
       key: 'hero',
@@ -2377,10 +2894,11 @@ function buildUiSections(actionSpec, fields, frontendSpec) {
 
   sections.push({
     key: 'form',
-    type: 'form',
-    title: frontendSpec.formCardTitle || actionSpec.pageTitle,
-    description: frontendSpec.formCardDescription || actionSpec.pageDescription,
-    fields: fields.map((field) => ({
+      type: 'form',
+      title: frontendSpec.formCardTitle || actionSpec.pageTitle,
+      description: frontendSpec.formCardDescription || actionSpec.pageDescription,
+      productMode,
+      fields: fields.map((field) => ({
       name: field.name,
       label: field.label,
       inputType: field.inputType,
@@ -2393,11 +2911,47 @@ function buildUiSections(actionSpec, fields, frontendSpec) {
     primaryAction: actionSpec.submitLabel,
   });
 
-  sections.push({
-    key: 'history',
-    type: 'list',
-    title: frontendSpec.recordsTitle || 'Historico',
-  });
+  if (screenTemplate === 'settings') {
+    sections.push({
+      key: 'summary',
+      type: 'summary',
+      title: frontendSpec.profileSummaryTitle || 'Estado atual',
+      description: frontendSpec.profileSummaryDescription || frontendSpec.recordsEmptyState || frontendSpec.pageDescription,
+      productMode,
+    });
+  } else if (screenTemplate === 'wizard') {
+    sections.push({
+      key: 'next-step',
+      type: 'guidance',
+      title: frontendSpec.profileSummaryTitle || 'Proximo passo',
+      description: frontendSpec.profileSummaryDescription || frontendSpec.pageDescription,
+      productMode,
+    });
+  } else if (screenTemplate === 'dashboard') {
+    sections.push({
+      key: 'insights',
+      type: 'insights',
+      title: frontendSpec.recordsTitle || 'Leitura consolidada',
+      description: frontendSpec.recordsEmptyState || frontendSpec.pageDescription,
+      productMode,
+    });
+  } else if (screenTemplate === 'workspace') {
+    sections.push({
+      key: 'queue',
+      type: 'queue',
+      title: frontendSpec.recordsTitle || 'Fila operacional',
+      description: frontendSpec.recordsEmptyState || frontendSpec.pageDescription,
+      productMode,
+    });
+  } else {
+    sections.push({
+      key: 'records',
+      type: 'list',
+      title: frontendSpec.recordsTitle || 'Registros ativos',
+      description: frontendSpec.recordsEmptyState || frontendSpec.pageDescription,
+      productMode,
+    });
+  }
 
   return sections;
 }
@@ -2409,11 +2963,14 @@ function buildStructuredSpec(task, actionSpec, fields, businessRules, qaScenario
     entityName: databaseSpec.modelName,
     summary: actionSpec.summary,
   });
+  const screenTemplate = inferScreenTemplate(actionSpec, fields, `${task.title}\n${task.description || ''}`);
+  const productMode = domainTemplate.productMode || 'structured-workspace';
   return {
     classification: {
       domain: inferDomainName(actionSpec, `${task.title}\n${task.description || ''}`),
       intent: inferIntent(actionSpec, `${task.title}\n${task.description || ''}`),
-      screenTemplate: inferScreenTemplate(actionSpec, fields, `${task.title}\n${task.description || ''}`),
+      screenTemplate,
+      productMode,
       changeType: 'feature',
       implementationMode: 'post_refinement',
       templateKey: domainTemplate.templateKey,
@@ -2434,7 +2991,7 @@ function buildStructuredSpec(task, actionSpec, fields, businessRules, qaScenario
     ui: {
       route: frontendSpec.suggestedRoute,
       navigationLabel: frontendSpec.navigationLabel,
-      sections: buildUiSections(actionSpec, fields, frontendSpec),
+      sections: buildUiSections(actionSpec, fields, { ...frontendSpec, screenTemplate, productMode }),
       states: inferUiStates(
         {
           ...actionSpec,
@@ -2501,8 +3058,8 @@ function buildTechnicalSpec(task, projectArchitectureSource = '') {
   const routerName = `${entityName}Router`;
   const routeBase = actionSpec.routeBase;
   const fields = inferFieldDefinitions(sourceText, actionSpec);
-  const businessRules = inferBusinessRules(sourceText);
-  const qaScenarios = inferQaScenarios(sourceText);
+  const businessRules = inferBusinessRules(sourceText, actionSpec);
+  const qaScenarios = inferQaScenarios(sourceText, actionSpec);
   const uiStates = inferUiStates(actionSpec, fields, qaScenarios);
   const validationSummary = inferValidationSummary(fields);
   const permissions = inferPermissions(sourceText);
@@ -2520,6 +3077,7 @@ function buildTechnicalSpec(task, projectArchitectureSource = '') {
     navigationLabel: actionSpec.navigationLabel,
     pageTitle: actionSpec.pageTitle,
     pageDescription: actionSpec.pageDescription,
+    productMode: getDomainTemplate({ featureKey: actionSpec.domainKey, frontend: { navigationLabel: actionSpec.navigationLabel }, entityName, summary: actionSpec.summary }).productMode || 'structured-workspace',
   };
   const backendSpec = {
     modulePath: `apps/api/src/modules/${featureKey}`,
@@ -2623,8 +3181,8 @@ function normalizeTechnicalSpec(rawSpec, task) {
   const featureKey = rawSpec?.featureKey || slugify(actionSpec.domainKey, task.uuid);
   const entityName = rawSpec?.entityName || actionSpec.entityName;
   const fields = rawSpec?.domain?.fields || rawSpec?.database?.fields || inferFieldDefinitions(sourceText, actionSpec);
-  const businessRules = rawSpec?.businessRules || inferBusinessRules(sourceText);
-  const qaScenarios = rawSpec?.qaScenarios || inferQaScenarios(sourceText);
+  const businessRules = rawSpec?.businessRules || inferBusinessRules(sourceText, actionSpec);
+  const qaScenarios = rawSpec?.qaScenarios || inferQaScenarios(sourceText, actionSpec);
   const uiStates = rawSpec?.ux?.states || inferUiStates(actionSpec, fields, qaScenarios);
   const validationSummary = rawSpec?.ux?.validationSummary || inferValidationSummary(fields);
   const permissions = rawSpec?.ux?.permissions || inferPermissions(sourceText);
@@ -2636,6 +3194,16 @@ function normalizeTechnicalSpec(rawSpec, task) {
   const requestContractName = rawSpec?.shared?.requestContractName || `${entityName}Request`;
   const responseContractName = rawSpec?.shared?.responseContractName || `${entityName}Response`;
   const listContractName = rawSpec?.shared?.listContractName || `${entityName}ListResponse`;
+  const inferredProductMode =
+    rawSpec?.frontend?.productMode ||
+    rawSpec?.structured?.classification?.productMode ||
+    getDomainTemplate({
+      featureKey,
+      frontend: rawSpec?.frontend,
+      entityName,
+      summary: rawSpec?.summary || actionSpec.summary,
+    }).productMode ||
+    'structured-workspace';
 
   return {
     ...rawSpec,
@@ -2661,6 +3229,7 @@ function normalizeTechnicalSpec(rawSpec, task) {
       navigationLabel: rawSpec?.frontend?.navigationLabel || actionSpec.navigationLabel,
       pageTitle: rawSpec?.frontend?.pageTitle || actionSpec.pageTitle,
       pageDescription: rawSpec?.frontend?.pageDescription || actionSpec.pageDescription,
+      productMode: inferredProductMode,
     },
     backend: {
       modulePath: rawSpec?.backend?.modulePath || `apps/api/src/modules/${featureKey}`,
@@ -2712,6 +3281,7 @@ function normalizeTechnicalSpec(rawSpec, task) {
           navigationLabel: rawSpec?.frontend?.navigationLabel || actionSpec.navigationLabel,
           pageTitle: rawSpec?.frontend?.pageTitle || actionSpec.pageTitle,
           pageDescription: rawSpec?.frontend?.pageDescription || actionSpec.pageDescription,
+          productMode: inferredProductMode,
           formCardTitle: rawSpec?.frontend?.formCardTitle,
           formCardDescription: rawSpec?.frontend?.formCardDescription,
           recordsTitle: rawSpec?.frontend?.recordsTitle,
@@ -2786,6 +3356,8 @@ function buildImplementationPlan(task, generatedApp, technicalSpec) {
         id: 'shared_contracts',
         label: 'Contratos compartilhados',
         goal: 'Definir a interface publica da feature antes da integracao completa.',
+        lane: 'shared',
+        ownerAgent: 'developer',
         dependsOn: [],
         targetFiles: [sharedContractPath],
         deliverables: ['Request/Response contract', 'tipagem reutilizavel entre frontend e backend'],
@@ -2794,6 +3366,8 @@ function buildImplementationPlan(task, generatedApp, technicalSpec) {
         id: 'backend_module',
         label: 'Backend e rotas',
         goal: 'Materializar servico, router e registro do modulo da feature.',
+        lane: 'backend',
+        ownerAgent: 'developer_backend',
         dependsOn: ['shared_contracts'],
         targetFiles: backendFiles,
         deliverables: ['modulo funcional', 'rotas registradas', 'alinhamento com contrato compartilhado'],
@@ -2802,6 +3376,8 @@ function buildImplementationPlan(task, generatedApp, technicalSpec) {
         id: 'frontend_feature',
         label: 'Frontend e experiencia',
         goal: `Publicar a experiencia ${screenTemplate} com fluxo principal acessivel pelo app.`,
+        lane: 'frontend',
+        ownerAgent: 'developer_frontend',
         dependsOn: ['shared_contracts'],
         targetFiles: frontendFiles,
         deliverables: ['pagina', 'servico de consumo', 'registro na navegacao'],
@@ -2810,9 +3386,28 @@ function buildImplementationPlan(task, generatedApp, technicalSpec) {
         id: 'persistence_and_docs',
         label: 'Persistencia e documentacao',
         goal: 'Atualizar schema e registrar a trilha tecnica da feature.',
+        lane: 'shared',
+        ownerAgent: 'developer',
         dependsOn: ['backend_module', 'frontend_feature'],
         targetFiles: [...persistenceFiles, ...documentationFiles],
         deliverables: ['schema atualizado', 'documentacao incremental'],
+      },
+    ],
+    executionLanes: [
+      {
+        id: 'shared',
+        label: 'Shared',
+        summary: 'Contratos, persistencia e consolidacao final da feature.',
+      },
+      {
+        id: 'backend',
+        label: 'Backend',
+        summary: 'Servico, regras de negocio, rotas e impacto na API.',
+      },
+      {
+        id: 'frontend',
+        label: 'Frontend',
+        summary: 'Tela, fluxo visual, consumo de API e experiencia do usuario.',
       },
     ],
     executionPhases: [
@@ -2823,9 +3418,9 @@ function buildImplementationPlan(task, generatedApp, technicalSpec) {
         workstreams: ['shared_contracts'],
       },
       {
-        id: 'service_and_ui',
-        label: 'Servico e interface',
-        goal: 'Implementar backend e frontend em paralelo com o mesmo objetivo funcional.',
+        id: 'parallel_delivery',
+        label: 'Entrega paralela',
+        goal: 'Executar backend e frontend em paralelo apos fechar o contrato compartilhado.',
         workstreams: ['backend_module', 'frontend_feature'],
       },
       {
@@ -2973,7 +3568,7 @@ function backendModuleFiles(task, technicalSpec) {
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/README.md`,
-      content: `# ${task.title}\n\nMódulo backend incremental criado a partir da task refinada.\n`,
+      content: `# ${task.title}\n\nM�dulo backend incremental criado a partir da task refinada.\n`,
       fileType: 'md',
     },
   ];
@@ -3016,19 +3611,148 @@ function frontendFeatureFiles(task, technicalSpec) {
   const secondaryField =
     technicalSpec.domain.fields.find((field) => field.name !== previewField.name && field.name !== 'password') ||
     previewField;
-  const highlights = (technicalSpec.frontend.highlights || [])
-    .slice(0, 3);
-  const accentByTemplateKey = {
-    'auth/register': 'blue',
-    'auth/login': 'violet',
-    'profile/update': 'amber',
-    'education/course-catalog': 'teal',
-    'education/course-modules': 'blue',
-    'education/course-lessons': 'violet',
-    'education/lesson-materials': 'amber',
-  };
-  const accent = accentByTemplateKey[technicalSpec.structured?.classification?.templateKey] || 'teal';
+  const highlights = (technicalSpec.frontend.highlights || []).slice(0, 3);
   const layout = technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'split';
+  const productMode = technicalSpec.frontend?.productMode || technicalSpec.structured?.classification?.productMode || 'structured-workspace';
+  const productDirection = getProductModeDesignProfile(productMode, layout);
+  const accent = productDirection.accent || 'teal';
+  const isCrudLayout = layout === 'crud';
+  const isDashboardLayout = layout === 'dashboard';
+  const isWorkspaceLayout = layout === 'workspace';
+  const isWizardLayout = layout === 'wizard';
+  const isSettingsLayout = layout === 'settings';
+  const shouldRenderCollectionPanel = isCrudLayout || isDashboardLayout || isWorkspaceLayout;
+  const metricsExpression = isSettingsLayout || isWizardLayout
+    ? 'undefined'
+    : isDashboardLayout
+      ? `[
+          { label: '${escapeTemplate(productDirection.metricLabels?.[0] || 'Indicadores')}', value: ${productDirection.metricValues?.[0] || "isLoading ? 'Sincronizando' : String(items.length || 0)"} },
+          { label: '${escapeTemplate(productDirection.metricLabels?.[1] || 'Leitura')}', value: ${productDirection.metricValues?.[1] || "isLoading ? 'Atualizando' : 'Consolidada'"} },
+          { label: '${escapeTemplate(productDirection.metricLabels?.[2] || 'Atualizacao')}', value: ${productDirection.metricValues?.[2] || "'Agora'"} },
+        ]`
+      : isWorkspaceLayout
+        ? `[
+            { label: '${escapeTemplate(productDirection.metricLabels?.[0] || 'Fila ativa')}', value: ${productDirection.metricValues?.[0] || "isLoading ? '...' : String(items.length)"} },
+            { label: '${escapeTemplate(productDirection.metricLabels?.[1] || 'Status operacional')}', value: ${productDirection.metricValues?.[1] || "isLoading ? 'Sincronizando' : 'Em acompanhamento'"} },
+            { label: '${escapeTemplate(productDirection.metricLabels?.[2] || 'Visibilidade')}', value: ${productDirection.metricValues?.[2] || "'Tempo real'"} },
+          ]`
+        : `[
+            { label: '${escapeTemplate(productDirection.metricLabels?.[0] || 'Area')}', value: ${productDirection.metricValues?.[0] || `'${escapeTemplate(technicalSpec.frontend.navigationLabel || technicalSpec.entityName)}'`} },
+            { label: '${escapeTemplate(productDirection.metricLabels?.[1] || 'Situacao')}', value: ${productDirection.metricValues?.[1] || "isLoading ? 'Sincronizando' : 'Pronta'"} },
+            { label: '${escapeTemplate(productDirection.metricLabels?.[2] || 'Registros')}', value: ${productDirection.metricValues?.[2] || "isLoading ? '...' : String(items.length)"} },
+          ]`;
+  const supportMetaExpression = shouldRenderCollectionPanel
+    ? (productDirection.collectionMeta || (isDashboardLayout
+      ? "isLoading ? 'Atualizando' : `${items.length} insight(s)`"
+      : isWorkspaceLayout
+        ? "isLoading ? 'Sincronizando' : `${items.length} item(ns) na fila`"
+        : "`${items.length} registro(s)`"))
+    : isWizardLayout
+      ? "isLoading ? 'Preparando' : 'Proximo passo'"
+      : "isLoading ? 'Sincronizando' : items.length ? 'Configurado' : 'Ajuste inicial'";
+  const secondaryPanelTitle = shouldRenderCollectionPanel
+    ? escapeTemplate(
+        technicalSpec.frontend.recordsTitle ||
+          (isWorkspaceLayout ? 'Fila operacional' : isDashboardLayout ? 'Leitura consolidada' : 'Registros ativos')
+      )
+    : escapeTemplate(technicalSpec.frontend.profileSummaryTitle || (isWizardLayout ? 'Proximo passo' : 'Visao atual'));
+  const secondaryPanelDescription = shouldRenderCollectionPanel
+    ? escapeTemplate(
+        technicalSpec.frontend.recordsEmptyState ||
+          (isWorkspaceLayout
+            ? productDirection.emptyStateTone || 'Acompanhe os itens que exigem acao da operacao.'
+            : isDashboardLayout
+              ? productDirection.emptyStateTone || 'Visualize os recortes mais importantes desta area.'
+              : productDirection.emptyStateTone || 'Acompanhe os registros criados nesta area.')
+      )
+    : escapeTemplate(
+        technicalSpec.frontend.profileSummaryDescription ||
+          technicalSpec.frontend.recordsEmptyState ||
+          (isWizardLayout
+            ? 'Avance com seguranca mantendo clareza sobre a proxima etapa.'
+            : 'Entenda rapidamente como esta configuracao apoia a rotina do usuario.')
+      );
+  const secondaryPanelBlock = shouldRenderCollectionPanel
+    ? `      listTitle="${secondaryPanelTitle}"
+      listDescription="${secondaryPanelDescription}"
+      listMeta={${supportMetaExpression}}
+    >
+      {isLoading ? (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {[0, 1].map((placeholder) => (
+            <div
+              key={placeholder}
+              style={{
+                padding: '18px 16px',
+                borderRadius: 14,
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                minHeight: 74,
+              }}
+            />
+          ))}
+        </div>
+      ) : items.length ? (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {items.map((item) => (
+            <article
+              key={item.id}
+              style={{
+                padding: '14px 16px',
+                borderRadius: 14,
+                background: '#ffffff',
+                border: '1px solid #d9deea',
+                display: 'grid',
+                gridTemplateColumns: '1.3fr 0.8fr 0.9fr',
+                gap: 12,
+                alignItems: 'center',
+              }}
+            >
+              <div style={{ display: 'grid', gap: 4 }}>
+                <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>{String(item.${previewField.name === 'password' ? 'passwordHint' : previewField.name} || item.id)}</strong>
+                <span style={{ display: 'block', color: '#64748b', fontSize: 13 }}>{String(item.${secondaryField.name === 'password' ? 'passwordHint' : secondaryField.name} || '${escapeTemplate(
+                  isWorkspaceLayout
+                    ? 'Item pronto para acompanhamento operacional'
+                    : isDashboardLayout
+                      ? 'Indicador pronto para leitura'
+                      : 'Registro pronto para acompanhamento'
+                )}')}</span>
+              </div>
+              <span style={{ width: 'fit-content', padding: '6px 10px', borderRadius: 999, background: '#ecfeff', color: '#115e59', fontSize: 12, fontWeight: 700 }}>
+                {String(item.status || 'active')}
+              </span>
+              <span style={{ color: '#64748b', fontSize: 13 }}>{String(item.createdAt || 'Agora')}</span>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div style={{ padding: 28, borderRadius: 16, background: '#f8fafc', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
+          <div style={{ width: 58, height: 58, margin: '0 auto 12px', borderRadius: '50%', background: '#e2e8f0', color: '#475569', display: 'grid', placeItems: 'center', fontSize: 24 }}>O</div>
+          <p style={{ margin: 0, color: '#64748b', lineHeight: 1.7 }}>${escapeTemplate(technicalSpec.frontend.recordsEmptyState || technicalSpec.ux?.states?.empty || 'Nenhum registro disponivel ainda.')}</p>
+        </div>
+      )}`
+    : `      listTitle="${secondaryPanelTitle}"
+      listDescription="${secondaryPanelDescription}"
+      listMeta={${supportMetaExpression}}
+    >
+      <div style={{ display: 'grid', gap: 14 }}>
+        <div style={{ padding: '16px 18px', borderRadius: 16, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+          <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>Canal principal</strong>
+          <p style={{ margin: '8px 0 0', color: '#64748b', lineHeight: 1.7 }}>${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.summary)}</p>
+        </div>
+        <div style={{ display: 'grid', gap: 10 }}>
+          {${JSON.stringify(highlights.length ? highlights : ['Fluxo preparado para uma operacao mais clara e confiavel.'])}.map((item) => (
+            <div key={item} style={{ padding: '12px 14px', borderRadius: 14, background: '#ffffff', border: '1px solid #d9deea', color: '#475569', lineHeight: 1.6 }}>
+              {item}
+            </div>
+          ))}
+        </div>
+        <div style={{ padding: '14px 16px', borderRadius: 14, background: '#eef5ef', border: '1px solid #d9e7de', color: '#21493d' }}>
+          {isLoading ? '${escapeTemplate(isWizardLayout ? 'Preparando a proxima etapa...' : 'Sincronizando o estado atual...')}' : items.length ? '${escapeTemplate(
+            isWizardLayout ? 'Etapa pronta para seguir com seguranca.' : 'Preferencia registrada e pronta para acompanhamento.'
+          )}' : '${escapeTemplate(technicalSpec.frontend.recordsEmptyState || (isWizardLayout ? 'Nenhum passo confirmado ainda.' : 'Nenhuma configuracao registrada ainda.'))}' }
+        </div>
+      </div>`;
 
   return [
     {
@@ -3038,9 +3762,9 @@ function frontendFeatureFiles(task, technicalSpec) {
     },
     {
       relativePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
-      content: `import { useEffect, useState } from 'react';\nimport type { FormEvent } from 'react';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\nimport { FeaturePage, FieldGroup, PrimaryButton, inputStyle } from '${uiImportPath}';\nimport { create${entityName}, fetch${entityName}Items } from './service';\n\nconst initialForm: ${technicalSpec.shared.requestContractName} = {\n${initialStateEntries}\n};\n\nexport function ${technicalSpec.frontend.pageComponentName}() {\n  const [items, setItems] = useState<${technicalSpec.shared.responseContractName}[]>([]);\n  const [form, setForm] = useState<${technicalSpec.shared.requestContractName}>(initialForm);\n  const [feedback, setFeedback] = useState('');\n  const [errorMessage, setErrorMessage] = useState('');\n  const [isLoading, setIsLoading] = useState(true);\n  const [isSubmitting, setIsSubmitting] = useState(false);\n\n  useEffect(() => {\n    fetch${entityName}Items()\n      .then(setItems)\n      .catch(() => setItems([]))\n      .finally(() => setIsLoading(false));\n  }, []);\n\n  async function handleSubmit(event: FormEvent<HTMLFormElement>) {\n    event.preventDefault();\n    setFeedback('');\n    setErrorMessage('');\n    setIsSubmitting(true);\n\n    try {\n      const created = await create${entityName}({\n${payloadObject}\n      });\n      setItems((current) => [created, ...current]);\n      setForm(initialForm);\n      setFeedback('${escapeTemplate(technicalSpec.domain.successMessage)}');\n    } catch (error) {\n      setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');\n    } finally {\n      setIsSubmitting(false);\n    }\n  }\n\n  return (\n    <FeaturePage\n      accent="${accent}"\n      layout="${layout}"\n      eyebrow="${escapeTemplate(technicalSpec.frontend.heroEyebrow || technicalSpec.frontend.navigationLabel || technicalSpec.entityName)}"\n      title="${escapeTemplate(technicalSpec.frontend.heroTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      description="${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      metrics={[\n        { label: 'Campos essenciais', value: '${technicalSpec.domain.fields.length}' },\n        { label: 'Movimentacoes', value: isLoading ? '...' : String(items.length) },\n        { label: 'Ritmo da tela', value: isSubmitting ? 'Processando' : 'Pronto' },\n      ]}\n      highlights={${JSON.stringify(highlights.length ? highlights : ['Experiencia preparada para uma operacao mais clara e confiavel.'])}}\n      formTitle="${escapeTemplate(technicalSpec.frontend.formCardTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      formDescription="${escapeTemplate(technicalSpec.frontend.formCardDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      form={\n        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>\n${inputBlocks}\n          <PrimaryButton type="submit" accent="${accent}">\n            {isSubmitting ? 'Processando...' : '${escapeTemplate(technicalSpec.domain.submitLabel)}'}\n          </PrimaryButton>\n\n          {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}\n          {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}\n        </form>\n      }\n      listTitle="${escapeTemplate(technicalSpec.frontend.recordsTitle || 'Registros recentes')}"\n      listDescription="${escapeTemplate(technicalSpec.ux?.states?.empty || 'Acompanhe os registros criados nesta area.')}"\n      listMeta={isLoading ? 'Carregando...' : \`\${items.length} registro(s)\`}\n    >\n      {isLoading ? (\n        <div style={{ display: 'grid', gap: 10 }}>\n          {[0, 1].map((placeholder) => (\n            <div\n              key={placeholder}\n              style={{\n                padding: '18px 16px',\n                borderRadius: 14,\n                background: '#f8fafc',\n                border: '1px solid #e2e8f0',\n                minHeight: 74,\n              }}\n            />\n          ))}\n        </div>\n      ) : items.length ? (\n        <div style={{ display: 'grid', gap: 10 }}>\n          {items.map((item) => (\n            <article\n              key={item.id}\n              style={{\n                padding: '14px 16px',\n                borderRadius: 14,\n                background: '#ffffff',\n                border: '1px solid #d9deea',\n                display: 'grid',\n                gridTemplateColumns: '1.3fr 0.8fr 0.9fr',\n                gap: 12,\n                alignItems: 'center',\n              }}\n            >\n              <div style={{ display: 'grid', gap: 4 }}>\n                <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>{String(item.${previewField.name === 'password' ? 'passwordHint' : previewField.name} || item.id)}</strong>\n                <span style={{ display: 'block', color: '#64748b', fontSize: 13 }}>{String(item.${secondaryField.name === 'password' ? 'passwordHint' : secondaryField.name} || 'Registro pronto para acompanhamento')}</span>\n              </div>\n              <span style={{ width: 'fit-content', padding: '6px 10px', borderRadius: 999, background: '#ecfeff', color: '#115e59', fontSize: 12, fontWeight: 700 }}>\n                {String(item.status || 'active')}\n              </span>\n              <span style={{ color: '#64748b', fontSize: 13 }}>{String(item.createdAt || 'Agora')}</span>\n            </article>\n          ))}\n        </div>\n      ) : (\n        <div style={{ padding: 28, borderRadius: 16, background: '#f8fafc', border: '1px dashed #cbd5e1', textAlign: 'center' }}>\n          <div style={{ width: 58, height: 58, margin: '0 auto 12px', borderRadius: '50%', background: '#e2e8f0', color: '#475569', display: 'grid', placeItems: 'center', fontSize: 24 }}>⊘</div>\n          <p style={{ margin: 0, color: '#64748b', lineHeight: 1.7 }}>${escapeTemplate(technicalSpec.frontend.recordsEmptyState || technicalSpec.ux?.states?.empty || 'Nenhum registro disponivel ainda.')}</p>\n        </div>\n      )}\n    </FeaturePage>\n  );\n}\n`,
-      fileType: 'tsx',
-    },
+      content: `import { useEffect, useState } from 'react';\nimport type { FormEvent } from 'react';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\nimport { FeatureWorkbench, FieldGroup, PrimaryButton, inputStyle } from '${uiImportPath}';\nimport { create${entityName}, fetch${entityName}Items } from './service';\n\nconst initialForm: ${technicalSpec.shared.requestContractName} = {\n${initialStateEntries}\n};\n\nexport function ${technicalSpec.frontend.pageComponentName}() {\n  const [items, setItems] = useState<${technicalSpec.shared.responseContractName}[]>([]);\n  const [form, setForm] = useState<${technicalSpec.shared.requestContractName}>(initialForm);\n  const [feedback, setFeedback] = useState('');\n  const [errorMessage, setErrorMessage] = useState('');\n  const [isLoading, setIsLoading] = useState(true);\n  const [isSubmitting, setIsSubmitting] = useState(false);\n\n  useEffect(() => {\n    fetch${entityName}Items()\n      .then(setItems)\n      .catch(() => setItems([]))\n      .finally(() => setIsLoading(false));\n  }, []);\n\n  async function handleSubmit(event: FormEvent<HTMLFormElement>) {\n    event.preventDefault();\n    setFeedback('');\n    setErrorMessage('');\n    setIsSubmitting(true);\n\n    try {\n      const created = await create${entityName}({\n${payloadObject}\n      });\n      setItems((current) => [created, ...current]);\n      setForm(initialForm);\n      setFeedback('${escapeTemplate(technicalSpec.domain.successMessage)}');\n    } catch (error) {\n      setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');\n    } finally {\n      setIsSubmitting(false);\n    }\n  }\n\n  return (\n    <FeatureWorkbench\n      accent="${accent}"\n      productMode="${productMode}"\n      eyebrow="${escapeTemplate(technicalSpec.frontend.heroEyebrow || technicalSpec.frontend.navigationLabel || technicalSpec.entityName)}"\n      title="${escapeTemplate(technicalSpec.frontend.heroTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      description="${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      metrics={${metricsExpression}}\n      highlights={${JSON.stringify(highlights.length ? highlights : ['Experiencia preparada para uma operacao mais clara e confiavel.'])}}\n      formTitle="${escapeTemplate(technicalSpec.frontend.formCardTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      formDescription="${escapeTemplate(technicalSpec.frontend.formCardDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      form={\n        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>\n${inputBlocks}\n          <PrimaryButton type="submit" accent="${accent}">\n            {isSubmitting ? 'Processando...' : '${escapeTemplate(technicalSpec.domain.submitLabel)}'}\n          </PrimaryButton>\n\n          {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}\n          {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}\n        </form>\n      }\n${secondaryPanelBlock}\n    </FeatureWorkbench>\n  );\n}\n`,
+        fileType: 'tsx',
+      },
     {
       relativePath: `${technicalSpec.frontend.featurePath}/index.ts`,
       content: `export { ${technicalSpec.frontend.pageComponentName} } from './page';\nexport { fetch${entityName}Items } from './service';\n`,
@@ -3053,7 +3777,6 @@ function frontendFeatureFiles(task, technicalSpec) {
     },
   ];
 }
-
 function buildBackendModuleFilesFromTemplate(task, technicalSpec) {
   const domainTemplate = getDomainTemplate(technicalSpec);
   const files = backendModuleFiles(task, technicalSpec);
@@ -3496,7 +4219,7 @@ function buildSyntheticTaskFromSpec(technicalSpec) {
 
 async function ensureValidationScripts(generatedAppRoot) {
   const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\nconst hasPremiumShellSignals =\n  appContent.includes('AppFrame') &&\n  appContent.includes('AppHeader') &&\n  appContent.includes('StudioHome') &&\n  appContent.includes('MetricRow') &&\n  appContent.includes('SurfaceCard') &&\n  appContent.includes('function HomePage()') &&\n  appContent.includes('Resumo do workspace');\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !hasPremiumShellSignals) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem textos genericos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluido sem problemas.');\n`;
-  const testContent = `import { access, readFile } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatório ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluídos com sucesso.');\n`;
+  const testContent = `import { access, readFile } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigat?rio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nconsole.log('Smoke tests do projeto gerado conclu?dos com sucesso.');\n`;
 
   return [
     {
@@ -3706,6 +4429,34 @@ async function runGeneratedProjectValidationSuite({ task, implementation, genera
   };
 }
 
+async function runGeneratedProjectQuickValidation({ generatedApp, scriptNames = [] }) {
+  const reports = [];
+  const hasNodeModules = await pathExists(path.join(generatedApp.rootPath, 'node_modules'));
+
+  if (!hasNodeModules) {
+    reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, 'install'));
+  }
+
+  for (const scriptName of scriptNames) {
+    reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, scriptName));
+  }
+
+  return {
+    status: reports.every((report) => report.status === 'completed') ? 'completed' : 'failed',
+    reports,
+  };
+}
+
+async function ensureGeneratedProjectInstall(generatedApp) {
+  const hasNodeModules = await pathExists(path.join(generatedApp.rootPath, 'node_modules'));
+
+  if (hasNodeModules) {
+    return null;
+  }
+
+  return runGeneratedProjectCommand(generatedApp.rootPath, 'install');
+}
+
 function categorizeFinding(code) {
   if (String(code || '').includes('fallback')) return 'fallback';
   if (String(code || '').includes('ux')) return 'quality';
@@ -3722,7 +4473,7 @@ function buildFixPlan(findings, technicalSpec) {
         category: 'fallback',
         priority: 'high',
         filePath: finding.filePath,
-        action: 'Substituir copy genérica e campos de fallback pelo template de domínio correspondente.',
+        action: 'Substituir copy gen?rica e campos de fallback pelo template de dom?nio correspondente.',
         suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
       };
     }
@@ -3762,7 +4513,7 @@ function buildFixPlan(findings, technicalSpec) {
         category: 'template_deviation',
         priority: 'medium',
         filePath: finding.filePath,
-        action: 'Mapear a task para um template de domínio conhecido ou enriquecer o structured spec.',
+        action: 'Mapear a task para um template de dom?nio conhecido ou enriquecer o structured spec.',
         suggestedTemplate: 'domain-mapping',
       };
     }
@@ -3801,7 +4552,7 @@ function buildFixPlan(findings, technicalSpec) {
       category: categorizeFinding(finding.code),
       priority: finding.severity === 'high' ? 'high' : 'medium',
       filePath: finding.filePath,
-      action: 'Ajustar o arquivo para alinhar a implementação ao structured spec e rodar review novamente.',
+      action: 'Ajustar o arquivo para alinhar a implementa??o ao structured spec e rodar review novamente.',
       suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
     };
   });
@@ -3842,7 +4593,7 @@ async function runImplementationReviewInternal({ task, implementation, technical
     webAppContent.includes('MetricRow') &&
     webAppContent.includes('SurfaceCard') &&
     webAppContent.includes('Resumo do workspace');
-  const encodingPattern = /(?:Ã.|Â.|â.|ï¿½|�)/;
+  const encodingPattern = /[\u00C3\u00C2\u00E2\uFFFD]/;
 
   if (/Campo principal da feature gerada|Informe o valor principal/.test(pageContent)) {
     findings.push({
@@ -3966,6 +4717,7 @@ async function runImplementationReviewInternal({ task, implementation, technical
   const uxScore = Math.max(0, 100 - uxFindings.reduce((total, finding) => total + (severityWeight[finding.severity] || 0), 0));
   const consistencyScore = Math.max(0, 100 - consistencyFindings.reduce((total, finding) => total + (severityWeight[finding.severity] || 0), 0));
   const maintainabilityScore = Math.max(0, 100 - duplicationFindings.reduce((total, finding) => total + (severityWeight[finding.severity] || 0), 0));
+  const findingsByLane = summarizeFindingsByLane(findings);
   const fixPlan = buildFixPlan(findings, technicalSpec);
   const reviewReport = {
     version: 1,
@@ -3978,6 +4730,7 @@ async function runImplementationReviewInternal({ task, implementation, technical
       uxScore,
       consistencyScore,
       maintainabilityScore,
+      findingsByLane,
       totalFindings: findings.length,
       status: findings.some((item) => item.severity === 'high') ? 'needs_attention' : findings.length ? 'minor_issues' : 'approved',
       verdict: findings.length ? 'A implementacao precisa de ajustes antes de ficar pronta para uso.' : 'A implementacao esta consistente com o structured spec.',
@@ -4040,18 +4793,28 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
 
   const findings = [];
   const screenTemplate = technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud';
+  const productMode =
+    technicalSpec.frontend?.productMode ||
+    technicalSpec.architecture?.productMode ||
+    technicalSpec.structured?.classification?.productMode ||
+    '';
+  const usesFeatureWorkbench = pageContent.includes('FeatureWorkbench');
+  const usesFeaturePage = pageContent.includes('FeaturePage');
+  const hasExplicitLayout = pageContent.includes(`layout="${screenTemplate}"`);
+  const hasExplicitProductMode = productMode ? pageContent.includes(`productMode="${productMode}"`) : false;
+  const usesSharedFeatureShell = usesFeatureWorkbench || usesFeaturePage;
 
-  if (!pageContent.includes(`layout="${screenTemplate}"`)) {
+  if (!hasExplicitLayout && !(usesFeatureWorkbench && hasExplicitProductMode)) {
     findings.push({
       severity: 'high',
       code: 'specialist_screen_template_mismatch',
       category: 'quality',
       filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
-      message: `A tela nao aplicou explicitamente o layout ${screenTemplate}.`,
+      message: `A tela nao aplicou explicitamente o layout ${screenTemplate} nem declarou um product mode compativel com o shell compartilhado.`,
     });
   }
 
-  if (!pageContent.includes('FeaturePage') || !pageContent.includes('FieldGroup') || !pageContent.includes('PrimaryButton')) {
+  if (!usesSharedFeatureShell || !pageContent.includes('FieldGroup') || !pageContent.includes('PrimaryButton')) {
     findings.push({
       severity: 'high',
       code: 'specialist_missing_design_system',
@@ -4162,6 +4925,7 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
     .filter((item) => item.category === 'semantic')
     .reduce((total, item) => total - (severityWeight[item.severity] || 0), 100);
   const hasSemanticBlocker = findings.some((item) => item.category === 'semantic' && item.severity === 'high');
+  const findingsByLane = summarizeFindingsByLane(findings);
 
   const reviewReport = {
     version: 1,
@@ -4175,6 +4939,7 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
       architectureScore: Math.max(0, architectureScore),
       experienceScore: Math.max(0, experienceScore),
       semanticScore: Math.max(0, semanticScore),
+      findingsByLane,
       expectedDomain,
       implementedDomain,
       domainAligned,
@@ -4305,7 +5070,7 @@ async function createRefactorPlanArtifact(task, implementation, technicalSpec, r
   );
 }
 
-async function materializeImplementationFiles({ task, implementation, technicalSpec, generatedApp }) {
+async function materializeImplementationFiles({ task, implementation, technicalSpec, generatedApp, workstreamIds = null }) {
   const routeSpecs = await getIntegratedTechnicalSpecs(generatedApp.id, technicalSpec);
   const featureFiles = Array.from(
     new Map(
@@ -4313,8 +5078,16 @@ async function materializeImplementationFiles({ task, implementation, technicalS
         .flatMap((spec) => {
           const syntheticTask = buildSyntheticTaskFromSpec(spec);
           return [
-            ...buildBackendModuleFilesFromTemplate(syntheticTask, spec),
-            ...buildFrontendFeatureFilesFromTemplate(syntheticTask, spec),
+            ...buildBackendModuleFilesFromTemplate(syntheticTask, spec).map((file) => ({
+              ...file,
+              lane: 'backend',
+              workstreamId: 'backend_module',
+            })),
+            ...buildFrontendFeatureFilesFromTemplate(syntheticTask, spec).map((file) => ({
+              ...file,
+              lane: 'frontend',
+              workstreamId: 'frontend_feature',
+            })),
           ];
         })
         .map((file) => [file.relativePath.replace(/\\/g, '/'), file])
@@ -4323,38 +5096,69 @@ async function materializeImplementationFiles({ task, implementation, technicalS
 
   const generatedFiles = [
     ...featureFiles,
-    ...(await ensureValidationScripts(generatedApp.rootPath)),
-    ...(await ensureWorkspaceFoundationFiles(generatedApp.rootPath, task.project.name)),
+    ...(await ensureValidationScripts(generatedApp.rootPath)).map((file) => ({
+      ...file,
+      lane: 'shared',
+      workstreamId: 'persistence_and_docs',
+    })),
+    ...(await ensureWorkspaceFoundationFiles(generatedApp.rootPath, task.project.name)).map((file) => ({
+      ...file,
+      lane: 'shared',
+      workstreamId: 'shared_contracts',
+    })),
     {
       relativePath: `docs/implementations/${technicalSpec.featureKey}.md`,
       content: `# ${task.title}\n\nTask UUID: ${task.uuid}\n\n## Resumo\nFeature integrada no baseline full stack pos-refinamento.\n\n## Template de tela\n- ${technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud'}\n\n## Rotas\n- Frontend: ${technicalSpec.frontend.suggestedRoute}\n- Backend: ${technicalSpec.backend.routeBase}\n\n## Stack e arquitetura\n${(technicalSpec.architecture?.sourceSummary?.stack || []).map((line) => `- ${line}`).join('\n') || '- Sem resumo de stack extraido.'}\n\n## Modulos e limites\n${(technicalSpec.architecture?.sourceSummary?.modules || []).map((line) => `- ${line}`).join('\n') || '- Sem resumo de modulos extraido.'}\n`,
       fileType: 'md',
+      lane: 'shared',
+      workstreamId: 'persistence_and_docs',
     },
-    await updateApiServer(generatedApp.rootPath, routeSpecs, generatedApp.slug),
-    await updateWebApp(generatedApp.rootPath, routeSpecs, task.project.name),
-    await updatePrismaSchema(generatedApp.rootPath, technicalSpec),
+    {
+      ...(await updateApiServer(generatedApp.rootPath, routeSpecs, generatedApp.slug)),
+      lane: 'backend',
+      workstreamId: 'backend_module',
+    },
+    {
+      ...(await updateWebApp(generatedApp.rootPath, routeSpecs, task.project.name)),
+      lane: 'frontend',
+      workstreamId: 'frontend_feature',
+    },
+    {
+      ...(await updatePrismaSchema(generatedApp.rootPath, technicalSpec)),
+      lane: 'shared',
+      workstreamId: 'persistence_and_docs',
+    },
   ];
 
-  await prisma.generatedFile.deleteMany({
-    where: { taskImplementationId: implementation.id },
-  });
+  const selectedFiles = workstreamIds?.length
+    ? generatedFiles.filter((file) => workstreamIds.includes(file.workstreamId))
+    : generatedFiles;
 
-  for (const file of generatedFiles) {
-    await writeText(path.join(generatedApp.rootPath, file.relativePath), file.content);
+  if (selectedFiles.length) {
+    await prisma.generatedFile.deleteMany({
+      where: {
+        taskImplementationId: implementation.id,
+        filePath: { in: selectedFiles.map((file) => file.relativePath.replace(/\\/g, '/')) },
+      },
+    });
+
+    for (const file of selectedFiles) {
+      await writeText(path.join(generatedApp.rootPath, file.relativePath), file.content);
+    }
+
+    await prisma.generatedFile.createMany({
+      data: selectedFiles.map((file) => ({
+        generatedAppId: generatedApp.id,
+        taskImplementationId: implementation.id,
+        filePath: file.relativePath.replace(/\\/g, '/'),
+        fileType: file.fileType,
+        changeType: 'created',
+        checksum: sha(file.content),
+      })),
+    });
   }
 
-  await prisma.generatedFile.createMany({
-    data: generatedFiles.map((file) => ({
-      generatedAppId: generatedApp.id,
-      taskImplementationId: implementation.id,
-      filePath: file.relativePath.replace(/\\/g, '/'),
-      fileType: file.fileType,
-      changeType: 'created',
-      checksum: sha(file.content),
-    })),
-  });
-
-  return generatedFiles;
+  return selectedFiles;
 }
 
 async function executeImplementationQualityCycle({ task, implementation, technicalSpec, generatedApp }) {
@@ -4569,7 +5373,7 @@ export async function bootstrapGeneratedApp(projectUuid, options = {}) {
   return getGeneratedAppByProjectUuid(projectUuid);
 }
 
-export async function planTaskImplementation(taskUuid, userUuid = null) {
+export async function planTaskImplementation(taskUuid, userUuid = null, options = {}) {
   const task = await getTaskWithArtifactsOrThrow(taskUuid);
   const runtimeUserUuid = resolveImplementationUserUuid(task, userUuid);
 
@@ -4591,7 +5395,7 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
     ...technicalSpec,
     projectMemory,
   };
-  technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid);
+  technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid, null, options);
   const technicalSpecArtifact = await createCurrentArtifact(
     task.id,
     `Technical Spec - ${task.title}`,
@@ -4703,7 +5507,7 @@ export async function planTaskImplementation(taskUuid, userUuid = null) {
   return implementation;
 }
 
-export async function runTaskImplementation(taskUuid, userUuid = null) {
+export async function runTaskImplementation(taskUuid, userUuid = null, options = {}) {
   const task = await getTaskWithArtifactsOrThrow(taskUuid);
   const runtimeUserUuid = resolveImplementationUserUuid(task, userUuid);
   const generatedApp = await getGeneratedAppByProjectUuid(task.project.uuid);
@@ -4715,8 +5519,8 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
 
   let implementation = await getLatestTaskImplementation(task.id);
 
-  if (!hasReusableImplementationPlan(implementation, generatedApp.id)) {
-    implementation = await planTaskImplementation(taskUuid, runtimeUserUuid);
+  if (options.forceRefresh || !hasReusableImplementationPlan(implementation, generatedApp.id)) {
+    implementation = await planTaskImplementation(taskUuid, runtimeUserUuid, options);
   }
 
   const implementationPlanContent = parseJsonArtifactContent(implementation?.implementationPlanArtifact);
@@ -4761,43 +5565,86 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
     await cleanupImplementationFiles(generatedApp.rootPath, implementation);
 
     let technicalSpec = normalizeTechnicalSpec(JSON.parse(implementation.technicalSpecArtifact.content), task);
-
-    await persistImplementationExecutionState(task, implementation, {
-      phase: 'service_and_ui',
-      phaseLabel: 'Servico e interface',
-      progressPercent: 35,
-      status: 'in_progress',
-      headline: 'Materializando frontend, backend e contratos da feature.',
-      notes: [
-        technicalSpec.frontend?.suggestedRoute || 'Rota frontend pendente',
-        technicalSpec.backend?.routeBase || 'Rota backend pendente',
-        technicalSpec.shared?.contractPath || 'Contrato compartilhado pendente',
-      ],
-      ...getWorkstreamExecutionState(implementationPlanContent, 'service_and_ui'),
-    });
-
     let generatedFiles = await materializeImplementationFiles({
       task,
       implementation,
       technicalSpec,
       generatedApp,
+      workstreamIds: ['shared_contracts'],
     });
+
+      await persistImplementationExecutionState(task, implementation, {
+        phase: 'parallel_delivery',
+        phaseLabel: 'Entrega paralela',
+        progressPercent: 32,
+        status: 'in_progress',
+        headline: 'Materializando backend e frontend em paralelo a partir do contrato compartilhado.',
+        notes: [
+          technicalSpec.backend?.routeBase || 'Rota backend pendente',
+          technicalSpec.frontend?.suggestedRoute || 'Rota frontend pendente',
+          'Validacoes rapidas: build da API e build web em paralelo',
+        ],
+        ...getWorkstreamExecutionState(implementationPlanContent, 'parallel_delivery'),
+      });
+
+      const parallelDeliveryResults = await Promise.all([
+        materializeImplementationFiles({
+          task,
+          implementation,
+          technicalSpec,
+          generatedApp,
+          workstreamIds: ['backend_module'],
+        }),
+        materializeImplementationFiles({
+          task,
+          implementation,
+          technicalSpec,
+          generatedApp,
+          workstreamIds: ['frontend_feature'],
+        }),
+      ]);
+      generatedFiles = [...generatedFiles, ...parallelDeliveryResults.flat()];
+
+      await ensureGeneratedProjectInstall(generatedApp);
+
+      const [backendQuickValidation, frontendQuickValidation] = await Promise.all([
+        runGeneratedProjectCommand(generatedApp.rootPath, 'build:api'),
+        runGeneratedProjectCommand(generatedApp.rootPath, 'build:web'),
+      ]);
+
+      if (backendQuickValidation.status !== 'completed' || frontendQuickValidation.status !== 'completed') {
+        const failedLane = backendQuickValidation.status !== 'completed' ? 'backend' : 'frontend';
+        const failedReport = failedLane === 'backend' ? backendQuickValidation : frontendQuickValidation;
+        const failedScript = failedReport?.scriptName || (failedLane === 'backend' ? 'build:api' : 'build:web');
+        throw new Error(`A implementacao incremental do ${failedLane} falhou em ${failedScript}.`);
+      }
+
+      await persistImplementationExecutionState(task, implementation, {
+        phase: 'integration_and_validation',
+        phaseLabel: 'Integração e validação',
+        progressPercent: 62,
+      status: 'in_progress',
+      headline: 'Consolidando persistencia, documentacao e suite tecnica final.',
+      notes: [
+          'Schema e documentacao incremental',
+          'Review estrutural',
+          'Review especialista, build, teste e lint',
+        ],
+        ...getWorkstreamExecutionState(implementationPlanContent, 'integration_and_validation'),
+    });
+
+    generatedFiles = [
+      ...generatedFiles,
+      ...(await materializeImplementationFiles({
+        task,
+        implementation,
+        technicalSpec,
+        generatedApp,
+        workstreamIds: ['persistence_and_docs'],
+      })),
+    ];
     const maxRepairAttempts = getImplementationAutoRepairAttempts();
     const repairAttempts = [];
-
-    await persistImplementationExecutionState(task, implementation, {
-      phase: 'integration_and_validation',
-      phaseLabel: 'Integracao e validacao',
-      progressPercent: 60,
-      status: 'in_progress',
-      headline: 'Executando review estrutural, review especialista e suite automatica.',
-      notes: [
-        'Review estrutural',
-        'Review especialista',
-        'Build, teste e lint',
-      ],
-      ...getWorkstreamExecutionState(implementationPlanContent, 'integration_and_validation'),
-    });
 
     let cycleResult = await executeImplementationQualityCycle({
       task,
@@ -4832,19 +5679,32 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
         progressPercent: Math.min(92, 68 + attemptIndex * 8),
         status: 'in_progress',
         headline: `Aplicando reparo automatico ${attemptIndex}/${maxRepairAttempts}.`,
-        notes: (repairContext.findings || [])
+        notes: [
+          ...((repairContext.findings || [])
           .slice(0, 3)
-          .map((item) => `${item.severity}: ${item.message}`),
+          .map((item) => `${item.severity}: ${item.message}`)),
+          `Escopo: ${(repairContext.repairScope?.workstreamIds || []).join(', ') || 'persistence_and_docs'}`,
+        ],
+        repairScope: repairContext.repairScope || null,
         ...getWorkstreamExecutionState(implementationPlanContent, 'integration_and_validation'),
       });
 
-      technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid, repairContext);
-      generatedFiles = await materializeImplementationFiles({
-        task,
-        implementation,
-        technicalSpec,
-        generatedApp,
-      });
+        if (repairContext.repairScope?.needsFrontend) {
+          technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid, repairContext, options);
+        }
+      const repairWorkstreamIds = repairContext.repairScope?.workstreamIds?.length
+        ? repairContext.repairScope.workstreamIds
+        : ['persistence_and_docs'];
+      generatedFiles = [
+        ...generatedFiles.filter((file) => !repairWorkstreamIds.includes(file.workstreamId)),
+        ...(await materializeImplementationFiles({
+          task,
+          implementation,
+          technicalSpec,
+          generatedApp,
+          workstreamIds: repairWorkstreamIds,
+        })),
+      ];
       cycleResult = await executeImplementationQualityCycle({
         task,
         implementation,
@@ -4878,7 +5738,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
 
     await persistImplementationExecutionState(task, implementation, {
       phase: finalSucceeded ? 'completed' : 'failed_validation',
-      phaseLabel: finalSucceeded ? 'Integracao concluida' : 'Validacao final com ressalvas',
+      phaseLabel: finalSucceeded ? 'Integração concluída' : 'Validação final com ressalvas',
       progressPercent: finalSucceeded ? 100 : 96,
       status: finalSucceeded ? 'completed' : 'needs_attention',
       headline: finalSucceeded
@@ -4889,12 +5749,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
         `Specialist: ${cycleResult.specialistReviewReport.summary.status}`,
         `Validation: ${cycleResult.validationSuite.summary.status}`,
       ],
-      currentWorkstreams: [],
-      completedWorkstreams: (implementationPlanContent?.workstreams || []).map((stream) => ({
-        id: stream.id,
-        label: stream.label,
-        goal: stream.goal,
-      })),
+      ...buildCompletedWorkstreamState(implementationPlanContent),
     });
 
     await prisma.taskImplementation.update({
@@ -4922,7 +5777,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null) {
   } catch (error) {
     await persistImplementationExecutionState(task, implementation, {
       phase: 'failed',
-      phaseLabel: 'Falha na execucao',
+      phaseLabel: 'Falha na execução',
       progressPercent: 100,
       status: 'failed',
       headline: 'A implementacao falhou antes de concluir a trilha tecnica.',
@@ -5129,7 +5984,7 @@ export async function reviewTaskImplementation(taskUuid) {
   const implementation = await getLatestTaskImplementation(task.id);
 
   if (!implementation?.technicalSpecArtifact || !implementation?.generatedApp) {
-    throw new Error('A task ainda não possui implementação gerada para revisar.');
+    throw new Error('A task ainda n?o possui implementa??o gerada para revisar.');
   }
 
   const run = await prisma.generatedAppRun.create({
@@ -5219,7 +6074,7 @@ export async function reviewTaskImplementation(taskUuid) {
 
       await persistImplementationExecutionState(task, implementation, {
         phase: 'completed',
-        phaseLabel: 'Integracao concluida',
+        phaseLabel: 'Integração concluída',
         progressPercent: 100,
         status: 'completed',
         headline: 'A feature foi revisada novamente e agora passou por todos os gates tecnicos.',
@@ -5228,12 +6083,7 @@ export async function reviewTaskImplementation(taskUuid) {
           `Specialist: ${specialistReviewReport.summary.status}`,
           'Validation: completed',
         ],
-        currentWorkstreams: [],
-        completedWorkstreams: (parseJsonArtifactContent(implementation.implementationPlanArtifact)?.workstreams || []).map((stream) => ({
-          id: stream.id,
-          label: stream.label,
-          goal: stream.goal,
-        })),
+        ...buildCompletedWorkstreamState(parseJsonArtifactContent(implementation.implementationPlanArtifact)),
       });
     }
 
@@ -5276,6 +6126,7 @@ export async function reviewTaskImplementation(taskUuid) {
     throw error;
   }
 }
+
 
 
 

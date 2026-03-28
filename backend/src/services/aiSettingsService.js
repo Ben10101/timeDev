@@ -8,6 +8,8 @@ const DEFAULT_AI_SETTINGS = {
     qa_engineer: 'QA Agent',
     architect: 'Architect Agent',
     developer: 'Developer Agent',
+    developer_backend: 'Developer Backend',
+    developer_frontend: 'Developer Frontend',
     implementation_architect: 'UI Agent',
   },
   ollama: {

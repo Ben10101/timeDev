@@ -29,6 +29,8 @@ from agents.project_manager.agent import ProjectManager
 from agents.requirements_analyst.agent import RequirementsAnalyst
 from agents.architect.agent import Architect
 from agents.developer.agent_new import Developer
+from agents.developer_backend.agent import DeveloperBackend
+from agents.developer_frontend.agent import DeveloperFrontend
 from agents.qa_engineer.agent import QAEngineer
 from orchestrator.projectBuilder import ProjectBuilder
 
@@ -71,13 +73,30 @@ class Factory:
                     "save": lambda res: self.results.update({'architecture': res})
                 },
                 {
+                    "name": "Developer Backend",
+                    "action": "Planejando backend",
+                    "execute": lambda: DeveloperBackend(self.project_id).process(self.idea, self.results['architecture']),
+                    "save": lambda res: self.results.update({'developer_backend': res})
+                },
+                {
+                    "name": "Developer Frontend",
+                    "action": "Planejando frontend",
+                    "execute": lambda: DeveloperFrontend(self.project_id).process(
+                        self.idea,
+                        self.results['architecture'],
+                        self.results.get('developer_backend')
+                    ),
+                    "save": lambda res: self.results.update({'developer_frontend': res})
+                },
+                {
                     "name": "Developer",
-                    "action": "Gerando código",
+                    "action": "Consolidando plano full stack",
                     "execute": lambda: Developer(self.project_id).process(self.idea, self.results['architecture']),
                     "save": lambda res: self.results.update({
                         'code': res['code'],
                         'primary_entity': res['primary_entity'],
-                        'attributes': res.get('attributes', [])
+                        'attributes': res.get('attributes', []),
+                        'developer_output': res
                     })
                 },
                 {

@@ -53,7 +53,7 @@ function MetricCard({ label, value, hint, icon: Icon, tone = 'slate' }) {
         <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">{label}</span>
       </div>
       <p className="mt-4 text-3xl font-bold tracking-tight text-slate-900">{value}</p>
-      {hint ? <p className="mt-2 text-sm leading-6 text-slate-500">{hint}</p> : null}
+      {hint ?<p className="mt-2 text-sm leading-6 text-slate-500">{hint}</p> : null}
     </div>
   );
 }
@@ -61,11 +61,11 @@ function MetricCard({ label, value, hint, icon: Icon, tone = 'slate' }) {
 function StatusBadge({ value }) {
   const tone =
     value === 'integrated'
-      ? 'bg-emerald-50 text-emerald-700'
+      ?'bg-emerald-50 text-emerald-700'
       : value === 'failed'
-        ? 'bg-rose-50 text-rose-700'
+        ?'bg-rose-50 text-rose-700'
         : value === 'in_progress'
-          ? 'bg-blue-50 text-[#102a72]'
+          ?'bg-blue-50 text-[#102a72]'
           : 'bg-slate-100 text-slate-600';
 
   return <span className={`dashboard-badge ${tone}`}>{value || 'não iniciado'}</span>;
@@ -73,28 +73,28 @@ function StatusBadge({ value }) {
 
 function ScoreBadge({ value }) {
   const numeric = Number(value);
-  const tone = numeric >= 90 ? 'bg-emerald-50 text-emerald-700' : numeric >= 75 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700';
-  return <span className={`dashboard-badge ${tone}`}>{Number.isFinite(numeric) ? `${numeric}/100` : 'sem score'}</span>;
+  const tone = numeric >= 90 ?'bg-emerald-50 text-emerald-700' : numeric >= 75 ?'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700';
+  return <span className={`dashboard-badge ${tone}`}>{Number.isFinite(numeric) ?`${numeric}/100` : 'sem score'}</span>;
 }
 
 function RiskBadge({ value }) {
   const normalized = String(value || 'unknown');
   const tone =
     normalized === 'high'
-      ? 'bg-rose-50 text-rose-700'
+      ?'bg-rose-50 text-rose-700'
       : normalized === 'medium'
-        ? 'bg-amber-50 text-amber-700'
+        ?'bg-amber-50 text-amber-700'
         : normalized === 'low'
-          ? 'bg-emerald-50 text-emerald-700'
+          ?'bg-emerald-50 text-emerald-700'
           : 'bg-slate-100 text-slate-600';
 
   const label =
     normalized === 'high'
-      ? 'risco alto'
+      ?'risco alto'
       : normalized === 'medium'
-        ? 'risco medio'
+        ?'risco medio'
         : normalized === 'low'
-          ? 'risco baixo'
+          ?'risco baixo'
           : 'risco n/a';
 
   return <span className={`dashboard-badge ${tone}`}>{label}</span>;
@@ -239,7 +239,7 @@ function getImplementationOrder(task, implementation) {
       stage: 'Expansão e gestão',
       rank: 5,
       reason: 'Amplia governança, análise, relatórios e funções administrativas depois do fluxo base.',
-      keywords: ['relatorio', 'dashboard', 'metric', 'governanca', 'auditoria', 'sla', 'admin', 'finance', 'exportar'],
+      keywords: ['relatorio', 'dashboard', 'metric', 'governanÃ§a', 'auditoria', 'sla', 'admin', 'finance', 'exportar'],
     },
   ];
 
@@ -250,13 +250,13 @@ function getImplementationOrder(task, implementation) {
   const hasPlan = Boolean(implementation?.technicalSpecArtifact || implementation?.implementationPlanArtifact);
   const statusWeight =
     implementation?.status === 'integrated'
-      ? 50
+      ?50
       : implementation?.status === 'in_progress'
-        ? 40
+        ?40
         : implementation?.status === 'planned'
-          ? 30
+          ?30
           : hasPlan
-            ? 20
+            ?20
             : 0;
 
   return {
@@ -344,9 +344,9 @@ export default function CodeStudioPage() {
       setProjects(nextProjects);
 
       const preferredExists = selectedProjectUuid
-        ? nextProjects.some((project) => project.uuid === selectedProjectUuid)
+        ?nextProjects.some((project) => project.uuid === selectedProjectUuid)
         : false;
-      const fallbackProjectUuid = preferredExists ? selectedProjectUuid : nextProjects[0]?.uuid || null;
+      const fallbackProjectUuid = preferredExists ?selectedProjectUuid : nextProjects[0]?.uuid || null;
       if (fallbackProjectUuid && fallbackProjectUuid !== selectedProjectUuid) {
         const nextParams = new URLSearchParams(searchParams);
         nextParams.set('project', fallbackProjectUuid);
@@ -414,7 +414,7 @@ export default function CodeStudioPage() {
     }
   }
 
-  async function handleRunImplementation(taskUuid) {
+  async function handleRunImplementation(taskUuid, forceRefresh = false) {
     if (!selectedProjectUuid) return;
 
     setRunningTaskUuid(taskUuid);
@@ -422,7 +422,7 @@ export default function CodeStudioPage() {
 
     try {
       await bootstrapGeneratedApp(selectedProjectUuid);
-      await runTaskImplementation(taskUuid);
+      await runTaskImplementation(taskUuid, forceRefresh ? { forceRefresh: true } : {});
       await loadProjectWorkspace(selectedProjectUuid);
     } catch (runError) {
       setError(getApiErrorMessage(runError, 'Não foi possível iniciar a implementação da task.'));
@@ -431,7 +431,7 @@ export default function CodeStudioPage() {
     }
   }
 
-  async function handlePlanImplementation(taskUuid) {
+  async function handlePlanImplementation(taskUuid, forceRefresh = false) {
     if (!selectedProjectUuid) return;
 
     setPlanningTaskUuid(taskUuid);
@@ -439,7 +439,7 @@ export default function CodeStudioPage() {
 
     try {
       await bootstrapGeneratedApp(selectedProjectUuid);
-      await planTaskImplementation(taskUuid);
+      await planTaskImplementation(taskUuid, forceRefresh ? { forceRefresh: true } : {});
       await loadProjectWorkspace(selectedProjectUuid);
     } catch (planError) {
       setError(getApiErrorMessage(planError, 'Não foi possível gerar o plano técnico da task.'));
@@ -532,7 +532,7 @@ export default function CodeStudioPage() {
       }),
     [readyTasks, implementationMap]
   );
-  const selectedImplementation = selectedTaskUuid ? implementationMap[selectedTaskUuid] : null;
+  const selectedImplementation = selectedTaskUuid ?implementationMap[selectedTaskUuid] : null;
   const filteredProjects = useMemo(() => {
     const query = projectQuery.trim().toLowerCase();
     if (!query) return projects;
@@ -576,9 +576,9 @@ export default function CodeStudioPage() {
   });
   const nextStepTone =
     nextStep.tone === 'emerald'
-      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      ?'border-emerald-200 bg-emerald-50 text-emerald-800'
       : nextStep.tone === 'amber'
-        ? 'border-amber-200 bg-amber-50 text-amber-800'
+        ?'border-amber-200 bg-amber-50 text-amber-800'
         : 'border-blue-200 bg-blue-50 text-[#102a72]';
 
   return (
@@ -626,7 +626,7 @@ export default function CodeStudioPage() {
               <p><strong>Stories prontas:</strong> {readyTasks.length}</p>
               <p><strong>Prontas para iniciar agora:</strong> {executionReadyTasks.length}</p>
               <p><strong>Com bloqueios sugeridos:</strong> {blockedReadyTasks.length}</p>
-              <p><strong>Planos tecnicos:</strong> {plannedTasks.length}</p>
+              <p><strong>Planos tÃ©cnicos:</strong> {plannedTasks.length}</p>
               <p><strong>Integradas:</strong> {integratedTasks.length}</p>
             </div>
           </section>
@@ -661,7 +661,7 @@ export default function CodeStudioPage() {
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Workspace de entrega</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">
-                {selectedProject ? `Code Studio de ${selectedProject.name}` : 'Escolha um projeto para entrar no handoff técnico'}
+                {selectedProject ?`Code Studio de ${selectedProject.name}` : 'Escolha um projeto para entrar no handoff técnico'}
               </h2>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
                 Centralize arquitetura, stories prontas, aplicação base e observabilidade técnica em uma área pensada para o momento de implementar.
@@ -678,7 +678,7 @@ export default function CodeStudioPage() {
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#102a72] px-5 py-3 text-sm font-semibold text-white transition-all hover:bg-[#0c205a] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Sparkles className="h-4 w-4" />
-                  {isGeneratingApplication ? 'Gerando aplicação...' : 'Gerar aplicação'}
+                  {isGeneratingApplication ?'Gerando aplicação...' : 'Gerar aplicação'}
                 </button>
                 <button
                   onClick={() => selectedProjectUuid && loadProjectWorkspace(selectedProjectUuid)}
@@ -718,7 +718,7 @@ export default function CodeStudioPage() {
         </section>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard icon={Layers3} label="Projeto ativo" value={selectedProject ? 'pronto' : 'pendente'} hint={selectedProject?.name || 'Escolha um projeto para começar'} tone="blue" />
+          <MetricCard icon={Layers3} label="Projeto ativo" value={selectedProject ?'pronto' : 'pendente'} hint={selectedProject?.name || 'Escolha um projeto para começar'} tone="blue" />
           <MetricCard icon={Braces} label="App base" value={generatedApp?.status || 'pendente'} hint={generatedApp?.rootPath || 'Será materializado na geração'} tone="emerald" />
           <MetricCard icon={CheckCircle2} label="Stories prontas" value={readyTasks.length} hint={`${executionReadyTasks.length} prontas agora · ${integratedTasks.length} integradas`} tone="amber" />
           <MetricCard icon={Cpu} label="Pipeline IA" value={`${operationsOverview?.summary?.p95RunDurationSeconds || 0}s`} hint={`${operationsOverview?.summary?.successRatePercent || 0}% de sucesso · ${operationsOverview?.summary?.failedRuns || 0} falhas`} tone="slate" />
@@ -737,10 +737,10 @@ export default function CodeStudioPage() {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Arquitetura</p>
                 <p className="mt-2 text-sm font-semibold text-slate-900">
                   {architectureStatus?.hasArchitecture
-                    ? architectureStatus?.architectureNeedsRefresh
-                      ? 'Desatualizada'
+                    ?architectureStatus?.architectureNeedsRefresh
+                      ?'Desatualizada'
                       : architectureStatus?.architectureApproved
-                        ? 'Aprovada'
+                        ?'Aprovada'
                         : 'Pendente de aprovação'
                     : 'Pendente'}
                 </p>
@@ -756,7 +756,7 @@ export default function CodeStudioPage() {
                 <p className="mt-2 text-sm font-semibold text-slate-900">{generatedApp?.status || 'Pendente'}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Planos tecnicos</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Planos tÃ©cnicos</p>
                 <p className="mt-2 text-sm font-semibold text-slate-900">{plannedTasks.length}/{readyTasks.length}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -765,7 +765,7 @@ export default function CodeStudioPage() {
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Integração</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ? 'Liberada' : 'Bloqueada'}</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ?'Liberada' : 'Bloqueada'}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Pipeline</p>
@@ -797,7 +797,7 @@ export default function CodeStudioPage() {
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-[#102a72]">{generationProgress}</div>
         )}
 
-        {operationsOverview?.recentRuns?.length ? (
+        {operationsOverview?.recentRuns?.length ?(
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
               <div>
@@ -825,8 +825,8 @@ export default function CodeStudioPage() {
                       <td className="py-3 pr-4"><StatusBadge value={run.status} /></td>
                       <td className="py-3 pr-4">{run.runtimeMeta?.primaryProvider || '-'}</td>
                       <td className="py-3 pr-4">{run.totalTokens || 0}</td>
-                      <td className="py-3 pr-4">{run.durationSeconds != null ? `${run.durationSeconds}s` : '-'}</td>
-                      <td className="py-3 pr-4">{run.overBudget ? 'acima' : 'ok'}</td>
+                      <td className="py-3 pr-4">{run.durationSeconds != null ?`${run.durationSeconds}s` : '-'}</td>
+                      <td className="py-3 pr-4">{run.overBudget ?'acima' : 'ok'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -866,7 +866,7 @@ export default function CodeStudioPage() {
                 }}
                 className={`rounded-xl border p-5 text-left transition ${
                   project.uuid === selectedProjectUuid
-                    ? 'border-[#102a72]/30 bg-[#102a72]/5'
+                    ?'border-[#102a72]/30 bg-[#102a72]/5'
                     : 'border-slate-200 bg-white hover:border-slate-300'
                 }`}
               >
@@ -876,7 +876,7 @@ export default function CodeStudioPage() {
                 </div>
                 <p className="mt-3 text-sm leading-6 text-slate-500">{project.description || 'Sem descrição consolidada.'}</p>
                 <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  {project.uuid === selectedProjectUuid ? 'Projeto aberto no studio' : 'Clique para abrir o contexto técnico'}
+                  {project.uuid === selectedProjectUuid ?'Projeto aberto no studio' : 'Clique para abrir o contexto técnico'}
                 </p>
               </button>
             ))}
@@ -896,15 +896,15 @@ export default function CodeStudioPage() {
                 <h2 className="mt-2 text-2xl font-bold text-slate-900">Arquitetura e liberação</h2>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <StatusBadge value={architectureStatus?.canGenerateCode ? 'integrated' : 'planned'} />
+                <StatusBadge value={architectureStatus?.canGenerateCode ?'integrated' : 'planned'} />
                 <button
                   onClick={handleGenerateApplication}
                   disabled={isGeneratingApplication || !architectureStatus?.canGenerateCode || !readyTasks.length}
                   className="dashboard-button-primary"
-                  title={!architectureStatus?.canGenerateCode ? architectureStatus?.blockers?.[0] : undefined}
+                  title={!architectureStatus?.canGenerateCode ?architectureStatus?.blockers?.[0] : undefined}
                 >
                   <Sparkles className="h-4 w-4" />
-                  {isGeneratingApplication ? 'Gerando aplicação...' : 'Gerar aplicação'}
+                  {isGeneratingApplication ?'Gerando aplicação...' : 'Gerar aplicação'}
                 </button>
               </div>
             </div>
@@ -920,10 +920,10 @@ export default function CodeStudioPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Arquitetura</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">
                     {architectureStatus?.hasArchitecture
-                      ? architectureStatus?.architectureNeedsRefresh
-                        ? 'Desatualizada'
+                      ?architectureStatus?.architectureNeedsRefresh
+                        ?'Desatualizada'
                         : architectureStatus?.architectureApproved
-                          ? 'Aprovada'
+                          ?'Aprovada'
                           : 'Pendente de aprovação'
                       : 'Pendente'}
                   </p>
@@ -950,7 +950,7 @@ export default function CodeStudioPage() {
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Entrega</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ? 'Liberado' : 'Bloqueado'}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ?'Liberado' : 'Bloqueado'}</p>
                 </div>
               </div>
             </div>
@@ -1001,7 +1001,7 @@ export default function CodeStudioPage() {
             </div>
           </div>
 
-          {architectureStatus?.architectureArtifact ? (
+          {architectureStatus?.architectureArtifact ?(
             <div className="space-y-4 p-6">
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -1062,9 +1062,9 @@ export default function CodeStudioPage() {
           </div>
 
           <div className="grid gap-4 p-6 xl:grid-cols-2">
-            {loading ? (
+            {loading ?(
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">Carregando estágio técnico...</div>
-            ) : readyTasks.length ? (
+            ) : readyTasks.length ?(
               filteredReadyTasks.map(({ task, order, blockers, unlocks, canStartNow }) => {
                 const implementation = implementationMap[task.uuid] || null;
                 const isSelected = selectedTaskUuid === task.uuid;
@@ -1074,7 +1074,7 @@ export default function CodeStudioPage() {
                   <div
                     key={task.uuid}
                     className={`rounded-xl border p-5 transition ${
-                      isSelected ? 'border-[#102a72]/30 bg-[#102a72]/5' : 'border-slate-200 bg-white'
+                      isSelected ?'border-[#102a72]/30 bg-[#102a72]/5' : 'border-slate-200 bg-white'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -1086,8 +1086,8 @@ export default function CodeStudioPage() {
                           <span className="dashboard-badge bg-slate-100 text-slate-700">
                             {order.stage}
                           </span>
-                          <span className={`dashboard-badge ${canStartNow ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                            {canStartNow ? 'Pronta para iniciar' : 'Aguardando dependências'}
+                          <span className={`dashboard-badge ${canStartNow ?'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                            {canStartNow ?'Pronta para iniciar' : 'Aguardando dependências'}
                           </span>
                         </div>
                         <h3 className="text-base font-semibold text-slate-900">{task.title}</h3>
@@ -1113,16 +1113,16 @@ export default function CodeStudioPage() {
                         <strong>Template:</strong> {implementation?.qualitySummary?.screenTemplate || 'n/a'}
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                        <strong>Plano técnico:</strong> {hasTechnicalPlan ? 'Disponível' : 'Pendente'}
+                        <strong>Plano técnico:</strong> {hasTechnicalPlan ?'Disponível' : 'Pendente'}
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600 sm:col-span-2">
                         <strong>Por que agora:</strong> {order.reason}
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                        <strong>Destrava:</strong> {unlocks} story{unlocks === 1 ? '' : 's'}
+                        <strong>Destrava:</strong> {unlocks} story{unlocks === 1 ?'' : 's'}
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                        <strong>Bloqueios:</strong> {blockers.length ? `${blockers.length} antes desta` : 'Nenhum'}
+                        <strong>Bloqueios:</strong> {blockers.length ?`${blockers.length} antes desta` : 'Nenhum'}
                       </div>
                     </div>
 
@@ -1147,39 +1147,44 @@ export default function CodeStudioPage() {
                         Ver detalhes técnicos
                       </button>
                       <button
-                        onClick={() => handlePlanImplementation(task.uuid)}
+                        onClick={() => handlePlanImplementation(task.uuid, hasTechnicalPlan)}
                         disabled={planningTaskUuid === task.uuid || runningTaskUuid === task.uuid || !architectureStatus?.canGenerateCode || !canStartNow}
                         className="dashboard-button-secondary"
                         title={
                           !architectureStatus?.canGenerateCode
-                            ? architectureStatus?.blockers?.[0]
+                            ?architectureStatus?.blockers?.[0]
                             : !canStartNow
-                              ? 'Finalize as stories que destravam esta implementação antes de planejar.'
+                              ?'Finalize as stories que destravam esta implementação antes de planejar.'
                               : 'Gera technical spec, plano de implementação e estratégia antes da integração.'
                         }
                       >
                         <Layers3 className="h-4 w-4" />
-                        {planningTaskUuid === task.uuid ? 'Planejando...' : hasTechnicalPlan ? 'Atualizar plano' : 'Gerar plano técnico'}
+                        {planningTaskUuid === task.uuid ?'Planejando...' : hasTechnicalPlan ?'Atualizar plano' : 'Gerar plano técnico'}
                       </button>
                       <button
-                        onClick={() => handleRunImplementation(task.uuid)}
+                        onClick={() => handleRunImplementation(
+                          task.uuid,
+                          implementation?.status === 'integrated'
+                            || implementation?.status === 'failed'
+                            || implementation?.status === 'planned'
+                        )}
                         disabled={runningTaskUuid === task.uuid || planningTaskUuid === task.uuid || !architectureStatus?.canGenerateCode || !canStartNow}
                         className="dashboard-button-primary"
                         title={
                           !canStartNow
-                            ? 'A ordem sugerida indica stories anteriores que deveriam entrar antes desta.'
+                            ?'A ordem sugerida indica stories anteriores que deveriam entrar antes desta.'
                             : !hasTechnicalPlan
-                              ? 'Se não existir plano técnico, o studio cria um automaticamente antes da integração.'
+                              ?'Se não existir plano técnico, o studio cria um automaticamente antes da integração.'
                               : undefined
                         }
                       >
                         <Hammer className="h-4 w-4" />
                         {runningTaskUuid === task.uuid
-                          ? 'Integrando...'
+                          ?'Integrando...'
                           : implementation?.status === 'integrated'
-                            ? 'Regerar integração'
+                            ?'Regerar integração'
                             : implementation?.status === 'planned'
-                              ? 'Integrar story'
+                              ?'Integrar story'
                               : 'Integrar direto'}
                       </button>
                       <button
@@ -1235,8 +1240,8 @@ export default function CodeStudioPage() {
                   <p><strong>Build:</strong> {selectedImplementation.buildStatus || 'n/a'}</p>
                   <p><strong>Testes:</strong> {selectedImplementation.testStatus || 'n/a'}</p>
                   <p><strong>Template:</strong> {selectedImplementation.qualitySummary?.screenTemplate || 'n/a'}</p>
-                  <p><strong>Dominio esperado:</strong> {selectedImplementation.qualitySummary?.expectedDomain || 'n/a'}</p>
-                  <p><strong>Dominio implementado:</strong> {selectedImplementation.qualitySummary?.implementedDomain || 'n/a'}</p>
+                  <p><strong>DomÃ­nio esperado:</strong> {selectedImplementation.qualitySummary?.expectedDomain || 'n/a'}</p>
+                  <p><strong>DomÃ­nio implementado:</strong> {selectedImplementation.qualitySummary?.implementedDomain || 'n/a'}</p>
                   <p><strong>Rastreabilidade:</strong> {selectedImplementation.qualitySummary?.traceability?.traceabilityScore ?? 'n/a'}</p>
                   <p><strong>Sucesso no projeto:</strong> {selectedImplementation.qualitySummary?.benchmark?.projectSuccessRatePercent ?? 'n/a'}%</p>
                   <p><strong>Sucesso no dominio:</strong> {selectedImplementation.qualitySummary?.benchmark?.domainSuccessRatePercent ?? 'n/a'}%</p>
@@ -1271,16 +1276,16 @@ export default function CodeStudioPage() {
                       <strong>Altas:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.high || 0}
                     </div>
                     <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>Medias:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.medium || 0}
+                      <strong>MÃ©dias:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.medium || 0}
                     </div>
                     <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
                       <strong>Baixas:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.low || 0}
                     </div>
                     <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>Frontend:</strong> {selectedImplementation.qualitySummary.traceability?.hasFrontendPage ? 'ok' : 'pendente'}
+                      <strong>Frontend:</strong> {selectedImplementation.qualitySummary.traceability?.hasFrontendPage ?'ok' : 'pendente'}
                     </div>
                     <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>Contrato/docs:</strong> {selectedImplementation.qualitySummary.traceability?.hasSharedContract && selectedImplementation.qualitySummary.traceability?.hasDocumentation ? 'ok' : 'pendente'}
+                      <strong>Contrato/docs:</strong> {selectedImplementation.qualitySummary.traceability?.hasSharedContract && selectedImplementation.qualitySummary.traceability?.hasDocumentation ?'ok' : 'pendente'}
                     </div>
                   </div>
                 )}
@@ -1295,7 +1300,7 @@ export default function CodeStudioPage() {
                       <p className="mt-2 text-lg font-semibold text-slate-900">{selectedExecutionState.phaseLabel || 'Fase atual'}</p>
                     </div>
                     <span className="dashboard-badge bg-slate-100 text-slate-700">
-                      {typeof selectedExecutionState.progressPercent === 'number' ? `${selectedExecutionState.progressPercent}%` : 'sem progresso'}
+                      {typeof selectedExecutionState.progressPercent === 'number' ?`${selectedExecutionState.progressPercent}%` : 'sem progresso'}
                     </span>
                   </div>
                   <p className="mt-4 text-sm leading-6 text-slate-600">
@@ -1318,7 +1323,7 @@ export default function CodeStudioPage() {
                           {(selectedExecutionState.currentWorkstreams || []).map((stream) => (
                             <div key={stream.id}>
                               <strong>{stream.label}</strong>
-                              {stream.goal ? <span> · {stream.goal}</span> : null}
+                              {stream.goal ?<span> · {stream.goal}</span> : null}
                             </div>
                           ))}
                           {!selectedExecutionState.currentWorkstreams?.length && <div>Nenhum workstream ativo nesta fase.</div>}
@@ -1330,7 +1335,7 @@ export default function CodeStudioPage() {
                           {(selectedExecutionState.completedWorkstreams || []).slice(-4).map((stream) => (
                             <div key={`${stream.id}-done`}>
                               <strong>{stream.label}</strong>
-                              {stream.goal ? <span> · {stream.goal}</span> : null}
+                              {stream.goal ?<span> · {stream.goal}</span> : null}
                             </div>
                           ))}
                           {!selectedExecutionState.completedWorkstreams?.length && <div>Nenhum workstream concluído ainda.</div>}
@@ -1543,4 +1548,3 @@ export default function CodeStudioPage() {
     </AppShell>
   );
 }
-

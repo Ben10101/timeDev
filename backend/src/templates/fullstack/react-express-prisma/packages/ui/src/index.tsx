@@ -139,10 +139,10 @@ export function SidebarNav({
               style={{
                 padding: '14px 16px',
                 textDecoration: 'none',
-                color: active ? tokens.color.shell : tokens.color.mutedStrong,
-                fontWeight: active ? 800 : 600,
-                background: active ? '#eef2ff' : 'transparent',
-                borderLeft: active ? `3px solid ${tokens.color.accent}` : '3px solid transparent',
+                color: active ?tokens.color.shell : tokens.color.mutedStrong,
+                fontWeight: active ?800 : 600,
+                background: active ?'#eef2ff' : 'transparent',
+                borderLeft: active ?`3px solid ${tokens.color.accent}` : '3px solid transparent',
                 borderBottom: `1px solid ${tokens.color.shellBorder}`,
               }}
             >
@@ -153,7 +153,7 @@ export function SidebarNav({
       </nav>
 
       <div style={{ marginTop: 'auto', padding: 16, fontSize: 12, color: tokens.color.muted }}>
-        Workspace pronto para evolucao incremental.
+        Workspace pronto para evoluÃ§Ã£o incremental.
       </div>
     </aside>
   )
@@ -185,19 +185,19 @@ export function StudioHome({
           </div>
           <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.05, letterSpacing: '-0.03em', color: tokens.color.shell }}>{title}</h1>
           <p style={{ margin: 0, fontSize: 15, lineHeight: 1.7, color: tokens.color.mutedStrong }}>
-            Estrutura base pronta para evoluir modulos operacionais, fluxos de cadastro e jornadas de acompanhamento com mais consistencia.
+            Estrutura base pronta para evoluir mÃ³dulos operacionais, fluxos de cadastro e jornadas de acompanhamento com mais consistÃªncia.
           </p>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>Ultima atualizacao</div>
+          <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>?ltima atualizaÃ§Ã£o</div>
           <strong style={{ display: 'block', marginTop: 6, color: tokens.color.shell }}>Agora</strong>
         </div>
       </div>
 
       <MetricRow
         items={[
-          { label: 'Modulos ativos', value: String(routes.length) },
-          { label: 'Navegacao', value: 'Pronta' },
+          { label: 'MÃ³dulos ativos', value: String(routes.length) },
+          { label: 'NavegaÃ§Ã£o', value: 'Pronta' },
           { label: 'Base', value: 'Web + API' },
         ]}
       />
@@ -228,8 +228,97 @@ export function StudioHome({
   )
 }
 
+function getFeatureModeProfile(productMode: string) {
+  const profiles: Record<string, Record<string, unknown>> = {
+    'governance-console': {
+      heroDark: true,
+      metricDark: true,
+      reversePanels: false,
+      bodyColumns: 'minmax(380px, 0.92fr) minmax(0, 1.08fr)',
+      searchLabel: 'Localizar perfil, regra ou escopo',
+      tableLabels: ['Perfil', 'Escopo', 'Atualizacao'],
+      asideTitle: 'Governanca ativa',
+      asideTone: 'Controle claro para acesso, risco e decisao.',
+    },
+    'self-service-settings': {
+      heroDark: false,
+      metricDark: false,
+      reversePanels: false,
+      bodyColumns: 'minmax(360px, 0.98fr) minmax(300px, 0.82fr)',
+      searchLabel: 'Buscar ajuste ou preferencia',
+      tableLabels: ['Ajuste', 'Estado', 'Atualizacao'],
+      asideTitle: 'Resumo atual',
+      asideTone: 'Ajustes simples, com leitura clara do que esta ativo agora.',
+    },
+    'evidence-workbench': {
+      heroDark: false,
+      metricDark: false,
+      reversePanels: true,
+      bodyColumns: 'minmax(0, 1.12fr) minmax(360px, 0.88fr)',
+      searchLabel: 'Localizar comprovante, link ou referencia',
+      tableLabels: ['Documento', 'Status', 'Envio'],
+      asideTitle: 'Contexto do caso',
+      asideTone: 'Organize evidencias com foco em triagem e rapidez de analise.',
+    },
+    'manager-cockpit': {
+      heroDark: true,
+      metricDark: true,
+      reversePanels: true,
+      bodyColumns: 'minmax(0, 1.14fr) minmax(360px, 0.86fr)',
+      searchLabel: 'Filtrar indicador ou recorte',
+      tableLabels: ['Indicador', 'Estado', 'Atualizacao'],
+      asideTitle: 'Leitura executiva',
+      asideTone: 'A tela precisa apoiar decisao, comparacao e visao consolidada.',
+    },
+    'review-workbench': {
+      heroDark: true,
+      metricDark: false,
+      reversePanels: true,
+      bodyColumns: 'minmax(0, 1.08fr) minmax(360px, 0.92fr)',
+      searchLabel: 'Buscar item para revisar',
+      tableLabels: ['Item', 'Decisao', 'Atualizacao'],
+      asideTitle: 'Fila de revisao',
+      asideTone: 'Mantenha a fila clara para aprovar, ajustar e seguir rapido.',
+    },
+    'onboarding-flow': {
+      heroDark: false,
+      metricDark: false,
+      reversePanels: false,
+      bodyColumns: 'minmax(360px, 0.95fr) minmax(320px, 0.85fr)',
+      searchLabel: 'Ver proximas etapas',
+      tableLabels: ['Etapa', 'Status', 'Atualizacao'],
+      asideTitle: 'Proxima etapa',
+      asideTone: 'Avance pela jornada mantendo contexto e baixo atrito.',
+    },
+    'immersive-workspace': {
+      heroDark: true,
+      metricDark: false,
+      reversePanels: false,
+      bodyColumns: 'minmax(0, 1fr)',
+      searchLabel: 'Filtrar atividade atual',
+      tableLabels: ['Item', 'Estado', 'Atualizacao'],
+      asideTitle: 'Foco principal',
+      asideTone: 'Menos painel e mais concentracao na tarefa central.',
+    },
+  }
+
+  return {
+    heroDark: false,
+    metricDark: false,
+    reversePanels: false,
+    bodyColumns: 'minmax(340px, 420px) minmax(0, 1fr)',
+    searchLabel: 'Pesquisar...',
+    tableLabels: ['Registro', 'Status', 'Atualizacao'],
+    asideTitle: 'Operacao viva',
+    asideTone: 'Acompanhe o contexto principal desta area sem perder clareza.',
+    ...(profiles[productMode] || {}),
+  }
+}
+
 export function FeaturePage({
   accent = 'teal',
+  layout = 'split',
+  productMode = 'structured-workspace',
   eyebrow,
   title,
   description,
@@ -244,11 +333,12 @@ export function FeaturePage({
   children,
 }: {
   accent?: 'teal' | 'blue' | 'violet' | 'amber'
-  layout?: 'split' | 'stacked' | 'wizard' | 'dashboard'
+  layout?: 'split' | 'stacked' | 'wizard' | 'dashboard' | 'workspace' | 'settings' | 'crud'
+  productMode?: string
   eyebrow: string
   title: string
   description: string
-  metrics: Array<{ label: string; value: string }>
+  metrics?: Array<{ label: string; value: string }>
   highlights: string[]
   formTitle: string
   formDescription: string
@@ -285,7 +375,7 @@ export function FeaturePage({
             </div>
           </div>
           <div style={{ minWidth: 180, textAlign: 'right' }}>
-            <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>Ultima atualização</div>
+            <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>?ltima atualização</div>
             <strong style={{ display: 'block', marginTop: 6, color: tokens.color.shell }}>Agora</strong>
           </div>
         </div>
@@ -307,7 +397,7 @@ export function FeaturePage({
                 lineHeight: 1.6,
               }}
             >
-              {highlights[0] || 'Fluxo pronto para operacao com mais clareza.'}
+              {highlights[0] || 'Fluxo pronto para operaÃ§Ã£o com mais clareza.'}
             </div>
             {form}
           </div>
@@ -355,6 +445,204 @@ export function FeaturePage({
   )
 }
 
+export function FeatureWorkbench({
+  accent = 'teal',
+  productMode = 'structured-workspace',
+  eyebrow,
+  title,
+  description,
+  metrics,
+  highlights,
+  formTitle,
+  formDescription,
+  form,
+  listTitle,
+  listDescription,
+  listMeta,
+  children,
+}: {
+  accent?: 'teal' | 'blue' | 'violet' | 'amber'
+  productMode?: string
+  eyebrow: string
+  title: string
+  description: string
+  metrics?: Array<{ label: string; value: string }>
+  highlights: string[]
+  formTitle: string
+  formDescription: string
+  form: ReactNode
+  listTitle: string
+  listDescription: string
+  listMeta?: string
+  children: ReactNode
+}) {
+  const accentMap: Record<string, string> = {
+    teal: '#0f766e',
+    blue: '#2451b7',
+    violet: '#6d28d9',
+    amber: '#b45309',
+  }
+
+  const accentColor = accentMap[accent] || accentMap.teal
+  const modeProfile = getFeatureModeProfile(productMode)
+  const heroDark = Boolean(modeProfile.heroDark)
+  const metricDark = Boolean(modeProfile.metricDark)
+  const reversePanels = Boolean(modeProfile.reversePanels)
+  const bodyColumns = String(modeProfile.bodyColumns || 'minmax(340px, 420px) minmax(0, 1fr)')
+  const searchLabel = String(modeProfile.searchLabel || 'Pesquisar...')
+  const tableLabels = Array.isArray(modeProfile.tableLabels) ? modeProfile.tableLabels : ['Registro', 'Status', 'Atualizacao']
+  const asideTitle = String(modeProfile.asideTitle || 'Operacao viva')
+  const asideTone = String(modeProfile.asideTone || 'Acompanhe o contexto principal desta area sem perder clareza.')
+
+  const formPanel = (
+    <SurfaceCard title={formTitle} description={formDescription}>
+      <div style={{ display: 'grid', gap: 16 }}>
+        <div
+          style={{
+            padding: '16px 18px',
+            borderRadius: 18,
+            background: `${accentColor}10`,
+            border: `1px solid ${accentColor}28`,
+            display: 'grid',
+            gap: 10,
+          }}
+        >
+          <strong style={{ color: tokens.color.shell, fontSize: 15 }}>{asideTitle}</strong>
+          <p style={{ margin: 0, color: tokens.color.mutedStrong, lineHeight: 1.7 }}>{asideTone}</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {highlights.slice(0, 2).map((item) => (
+              <span
+                key={item}
+                style={{
+                  padding: '7px 10px',
+                  borderRadius: tokens.radius.pill,
+                  background: '#ffffff',
+                  border: `1px solid ${accentColor}22`,
+                  color: tokens.color.shell,
+                  fontWeight: 700,
+                  fontSize: 12,
+                }}
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+        {form}
+      </div>
+    </SurfaceCard>
+  )
+
+  const recordsPanel = (
+    <SurfaceCard title={listTitle} description={listDescription} meta={listMeta}>
+      <div style={{ display: 'grid', gap: 14 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '10px 12px',
+            borderRadius: 14,
+            background: '#f6f8fc',
+            border: `1px solid ${tokens.color.border}`,
+          }}
+        >
+          <span style={{ color: tokens.color.muted }}>Buscar</span>
+          <span style={{ color: tokens.color.mutedStrong }}>{searchLabel}</span>
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.3fr 0.8fr 0.9fr',
+            gap: 12,
+            padding: '10px 14px',
+            borderRadius: 12,
+            background: '#f6f8fc',
+            border: `1px solid ${tokens.color.border}`,
+            color: tokens.color.mutedStrong,
+            fontSize: 13,
+            fontWeight: 800,
+          }}
+        >
+          <span>{String(tableLabels[0] || 'Registro')}</span>
+          <span>{String(tableLabels[1] || 'Status')}</span>
+          <span>{String(tableLabels[2] || 'Atualizacao')}</span>
+        </div>
+        {children}
+      </div>
+    </SurfaceCard>
+  )
+
+  return (
+    <section style={{ display: 'grid', gap: 20 }}>
+      <div
+        style={{
+          padding: '22px 24px',
+          borderRadius: 24,
+          background: heroDark ? `linear-gradient(135deg, ${tokens.color.shell} 0%, ${tokens.color.shellSoft} 100%)` : '#ffffff',
+          border: heroDark ? 'none' : `1px solid ${tokens.color.border}`,
+          boxShadow: tokens.shadow.panel,
+          color: heroDark ? '#f8fafc' : tokens.color.text,
+        }}
+      >
+        <div style={{ display: 'grid', gap: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 18, alignItems: 'start' }}>
+            <div style={{ display: 'grid', gap: 10, maxWidth: 820 }}>
+              <Badge dark={heroDark} subtle={!heroDark}>{eyebrow}</Badge>
+              <div style={{ display: 'grid', gap: 8 }}>
+                <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.02, letterSpacing: '-0.03em', color: heroDark ? '#f8fafc' : tokens.color.shell }}>{title}</h1>
+                <p style={{ margin: 0, color: heroDark ? 'rgba(248,250,252,0.78)' : tokens.color.mutedStrong, lineHeight: 1.75 }}>{description}</p>
+              </div>
+            </div>
+            <div style={{ minWidth: 220, display: 'grid', gap: 10 }}>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: heroDark ? 'rgba(248,250,252,0.62)' : tokens.color.muted }}>Atualizado agora</div>
+              </div>
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: 18,
+                  background: heroDark ? 'rgba(255,255,255,0.1)' : `${accentColor}10`,
+                  border: heroDark ? '1px solid rgba(255,255,255,0.16)' : `1px solid ${accentColor}20`,
+                }}
+              >
+                <strong style={{ display: 'block', fontSize: 14, color: heroDark ? '#f8fafc' : tokens.color.shell }}>{asideTitle}</strong>
+                <span style={{ display: 'block', marginTop: 6, lineHeight: 1.6, color: heroDark ? 'rgba(248,250,252,0.78)' : tokens.color.mutedStrong }}>{asideTone}</span>
+              </div>
+            </div>
+          </div>
+
+          {!!metrics?.length && <MetricRow items={metrics} dark={metricDark} />}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        {highlights.map((item) => (
+          <div
+            key={item}
+            style={{
+              padding: '14px 16px',
+              borderRadius: 16,
+              border: `1px solid ${tokens.color.border}`,
+              background: '#ffffff',
+              boxShadow: tokens.shadow.panel,
+              color: tokens.color.mutedStrong,
+              lineHeight: 1.65,
+            }}
+          >
+            {item}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gap: 18, gridTemplateColumns: bodyColumns }}>
+        {reversePanels ? recordsPanel : formPanel}
+        {reversePanels ? formPanel : recordsPanel}
+      </div>
+    </section>
+  )
+}
+
 export function SurfaceCard({
   title,
   description,
@@ -379,9 +667,9 @@ export function SurfaceCard({
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start', marginBottom: 18 }}>
         <div style={{ display: 'grid', gap: 6 }}>
           <h2 style={{ margin: 0, fontSize: 24, lineHeight: 1.08, letterSpacing: '-0.03em', color: tokens.color.shell }}>{title}</h2>
-          {description ? <p style={{ margin: 0, color: tokens.color.mutedStrong, lineHeight: 1.6 }}>{description}</p> : null}
+          {description ?<p style={{ margin: 0, color: tokens.color.mutedStrong, lineHeight: 1.6 }}>{description}</p> : null}
         </div>
-        {meta ? <Badge subtle>{meta}</Badge> : null}
+        {meta ?<Badge subtle>{meta}</Badge> : null}
       </div>
       {children}
     </div>
@@ -403,15 +691,15 @@ export function MetricRow({
           style={{
             padding: '16px 18px',
             borderRadius: 14,
-            background: dark ? 'rgba(255,255,255,0.08)' : '#ffffff',
-            border: dark ? '1px solid rgba(255,255,255,0.12)' : `1px solid ${tokens.color.border}`,
-            boxShadow: dark ? 'none' : tokens.shadow.panel,
+            background: dark ?'rgba(255,255,255,0.08)' : '#ffffff',
+            border: dark ?'1px solid rgba(255,255,255,0.12)' : `1px solid ${tokens.color.border}`,
+            boxShadow: dark ?'none' : tokens.shadow.panel,
           }}
         >
-          <div style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: dark ? 'rgba(248,250,252,0.66)' : tokens.color.muted, fontWeight: 800 }}>
+          <div style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: dark ?'rgba(248,250,252,0.66)' : tokens.color.muted, fontWeight: 800 }}>
             {item.label}
           </div>
-          <strong style={{ display: 'block', marginTop: 8, fontSize: 24, color: dark ? '#f8fafc' : tokens.color.shell }}>{item.value}</strong>
+          <strong style={{ display: 'block', marginTop: 8, fontSize: 24, color: dark ?'#f8fafc' : tokens.color.shell }}>{item.value}</strong>
         </div>
       ))}
     </div>
@@ -431,7 +719,7 @@ export function Badge({
     display: 'inline-flex',
     width: 'fit-content',
     padding: '7px 12px',
-    borderRadius: tokens.color.accentSoft ? tokens.radius.pill : 999,
+    borderRadius: tokens.color.accentSoft ?tokens.radius.pill : 999,
     fontSize: 12,
     fontWeight: 800,
     letterSpacing: '0.08em',
@@ -462,7 +750,7 @@ export function FieldGroup({
     <label style={{ display: 'grid', gap: 8 }}>
       <span style={{ fontWeight: 800, fontSize: 14, color: tokens.color.shell }}>{label}</span>
       {children}
-      {hint ? <small style={{ color: tokens.color.muted, fontSize: 13, lineHeight: 1.5 }}>{hint}</small> : null}
+      {hint ?<small style={{ color: tokens.color.muted, fontSize: 13, lineHeight: 1.5 }}>{hint}</small> : null}
     </label>
   )
 }

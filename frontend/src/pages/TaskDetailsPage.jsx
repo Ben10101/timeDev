@@ -25,7 +25,7 @@ function formatElapsed(seconds) {
   if (!seconds) return '0m';
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  return hours > 0 ?`${hours}h ${minutes}m` : `${minutes}m`;
 }
 
 function hasCurrentArtifact(task, artifactType) {
@@ -77,7 +77,7 @@ function renderCommentBody(text) {
   }
 
   return parts.map((part, index) =>
-    part.type === 'mention' ? (
+    part.type === 'mention' ?(
       <span key={`${part.value}-${index}`} className="rounded bg-[#dff0b8] px-1.5 py-0.5 font-semibold text-[#17322b]">
         {part.value}
       </span>
@@ -89,7 +89,7 @@ function renderCommentBody(text) {
 
 function getLatestStatusHistoryNote(task, toStatus = null) {
   const history = task?.statusHistory || [];
-  const entry = toStatus ? history.find((item) => item.toStatus === toStatus) : history[0];
+  const entry = toStatus ?history.find((item) => item.toStatus === toStatus) : history[0];
   return entry?.note || '';
 }
 
@@ -186,7 +186,7 @@ export default function TaskDetailsPage() {
   const implementationSummary = reviewReport?.summary || null;
   const stageHint = getTaskStageHint(task, architectureStatus, taskHasRequirements, taskHasTestPlan, taskIsDone, implementationStatus);
   const activeArtifactForEdit =
-    editingArtifactId != null ? task?.artifacts?.find((artifact) => artifact.id === editingArtifactId) || null : null;
+    editingArtifactId != null ?task?.artifacts?.find((artifact) => artifact.id === editingArtifactId) || null : null;
 
   async function loadTask() {
     setLoading(true);
@@ -195,8 +195,8 @@ export default function TaskDetailsPage() {
       const result = await getTask(taskUuid);
       setTask(result);
       setTaskOwnerUuid(result?.assigneeUser?.uuid || '');
-      setTaskDueDate(result?.dueDate ? String(result.dueDate).slice(0, 10) : '');
-      setBlockReason(result?.status === 'blocked' ? getLatestStatusHistoryNote(result, 'blocked') : '');
+      setTaskDueDate(result?.dueDate ?String(result.dueDate).slice(0, 10) : '');
+      setBlockReason(result?.status === 'blocked' ?getLatestStatusHistoryNote(result, 'blocked') : '');
       const projectArchitecture = await getProjectArchitectureStatus(result.project.uuid);
       setArchitectureStatus(projectArchitecture);
 
@@ -212,7 +212,7 @@ export default function TaskDetailsPage() {
       }
     } catch (loadError) {
       if (loadError.response?.status === 404) {
-        navigate(projectUuid ? `/projects?project=${projectUuid}` : '/projects', { replace: true });
+        navigate(projectUuid ?`/projects?project=${projectUuid}` : '/projects', { replace: true });
         return;
       }
       setError(getApiErrorMessage(loadError, 'Não foi possível carregar a task.'));
@@ -372,7 +372,7 @@ export default function TaskDetailsPage() {
 
   async function handleToggleBlockTask() {
     setSaving(true);
-    setActionLoading(taskIsBlocked ? 'unblock' : 'block');
+    setActionLoading(taskIsBlocked ?'unblock' : 'block');
     setError(null);
     try {
       if (taskIsBlocked) {
@@ -417,16 +417,16 @@ export default function TaskDetailsPage() {
             className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
             title={
               requirementsRunning
-                ? 'Ja existe uma execucao de requisitos em andamento para esta task.'
+                ? 'J? existe uma execu??o de requisitos em andamento para esta task.'
                 : !canRunRequirements
-                  ? 'A etapa de requisitos ja foi concluida.'
+                  ? 'A etapa de requisitos j? foi conclu?da.'
                   : undefined
             }
           >
             {actionLoading === 'requirements'
-              ? 'Refinando...'
+              ?'Refinando...'
               : requirementsRunning
-                ? 'Requisitos em execucao'
+                ? 'Requisitos em execu??o'
                 : 'Refinar com Requisitos'}
           </button>
           <button
@@ -435,16 +435,16 @@ export default function TaskDetailsPage() {
             className="w-full rounded-2xl bg-[#7b3aa4] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#6d3194] disabled:opacity-50 sm:w-auto"
             title={
               qaRunning
-                ? 'Ja existe uma execucao de QA em andamento para esta task.'
+                ? 'J? existe uma execu??o de QA em andamento para esta task.'
                 : !canRunQa && taskHasTestPlan
-                  ? 'A etapa de QA ja foi concluida.'
+                  ? 'A etapa de QA j? foi conclu?da.'
                   : undefined
             }
           >
             {actionLoading === 'qa'
-              ? 'Executando QA...'
+              ?'Executando QA...'
               : qaRunning
-                ? 'QA em execucao'
+                ? 'QA em execu??o'
                 : 'Executar QA'}
           </button>
           {taskIsDone && (
@@ -468,7 +468,7 @@ export default function TaskDetailsPage() {
         <>
           <section className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
             <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Visão rápida</p>
-            {task ? (
+            {task ?(
               <div className="mt-4 space-y-4">
                 <div className="rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
                   <div className="flex flex-wrap gap-2">
@@ -495,11 +495,11 @@ export default function TaskDetailsPage() {
                   <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-500">
                     <div className="rounded-2xl bg-white p-3">
                       <p className="font-semibold uppercase tracking-[0.14em] text-slate-400">Requisitos</p>
-                      <p className="mt-1 font-medium text-slate-700">{taskHasRequirements ? 'Disponível' : 'Pendente'}</p>
+                      <p className="mt-1 font-medium text-slate-700">{taskHasRequirements ?'Disponível' : 'Pendente'}</p>
                     </div>
                     <div className="rounded-2xl bg-white p-3">
                       <p className="font-semibold uppercase tracking-[0.14em] text-slate-400">QA</p>
-                      <p className="mt-1 font-medium text-slate-700">{taskHasTestPlan ? 'Disponível' : 'Pendente'}</p>
+                      <p className="mt-1 font-medium text-slate-700">{taskHasTestPlan ?'Disponível' : 'Pendente'}</p>
                     </div>
                   </div>
                 </div>
@@ -515,14 +515,14 @@ export default function TaskDetailsPage() {
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Mudança</p>
                       <p className="mt-1 text-slate-700">
                         {latestHistory
-                          ? `${latestHistory.fromStatus || 'novo'} → ${latestHistory.toStatus}`
+                          ?`${latestHistory.fromStatus || 'novo'} → ${latestHistory.toStatus}`
                           : 'Sem histórico de status ainda.'}
                       </p>
                     </div>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Execução</p>
                       <p className="mt-1 text-slate-700">
-                        {latestRun ? `${latestRun.agentLabel || getAgentLabel(latestRun.agentName)} • ${latestRun.status}` : 'Nenhuma execução registrada.'}
+                        {latestRun ?`${latestRun.agentLabel || getAgentLabel(latestRun.agentName)} • ${latestRun.status}` : 'Nenhuma execução registrada.'}
                       </p>
                     </div>
                   </div>
@@ -554,15 +554,15 @@ export default function TaskDetailsPage() {
 
         {task?.processingError && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            <strong>Ultima execucao com erro:</strong> {task.processingError.message}
+            <strong>?ltima execu??o com erro:</strong> {task.processingError.message}
           </div>
         )}
 
-        {loading ? (
+        {loading ?(
           <div className="rounded-[28px] border border-slate-200 bg-white/90 p-8 text-center text-slate-500 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
             Carregando detalhes da task...
           </div>
-        ) : task ? (
+        ) : task ?(
           <>
             <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
               <div className="space-y-6">
@@ -598,7 +598,7 @@ export default function TaskDetailsPage() {
                       <p className="mt-2 text-sm text-slate-500">Responsável, prazo e bloqueio em um só lugar.</p>
                     </div>
                     <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
-                      {taskIsBlocked ? 'Bloqueada' : 'Em fluxo'}
+                      {taskIsBlocked ?'Bloqueada' : 'Em fluxo'}
                     </span>
                   </div>
                   <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -631,7 +631,7 @@ export default function TaskDetailsPage() {
                     <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Bloqueio</p>
                     <p className="mt-2 text-sm text-slate-600">
                       {taskIsBlocked
-                        ? 'Essa task está bloqueada. Desbloqueie quando a dependência estiver resolvida.'
+                        ?'Essa task está bloqueada. Desbloqueie quando a dependência estiver resolvida.'
                         : 'Use o bloqueio para sinalizar dependências externas ou impedimentos reais.'}
                     </p>
                     {!taskIsBlocked && (
@@ -661,14 +661,14 @@ export default function TaskDetailsPage() {
                         type="button"
                         onClick={handleToggleBlockTask}
                         disabled={saving || loading}
-                        className={taskIsBlocked ? 'dashboard-button-secondary' : 'dashboard-button-primary'}
+                        className={taskIsBlocked ?'dashboard-button-secondary' : 'dashboard-button-primary'}
                       >
                         {actionLoading === 'block'
-                          ? 'Bloqueando...'
+                          ?'Bloqueando...'
                           : actionLoading === 'unblock'
-                            ? 'Desbloqueando...'
+                            ?'Desbloqueando...'
                             : taskIsBlocked
-                              ? 'Desbloquear tarefa'
+                              ?'Desbloquear tarefa'
                               : 'Bloquear tarefa'}
                       </button>
                       <button
@@ -677,7 +677,7 @@ export default function TaskDetailsPage() {
                         disabled={saving || loading}
                         className="dashboard-button-primary"
                       >
-                        {actionLoading === 'meta' ? 'Salvando...' : 'Salvar gestão da task'}
+                        {actionLoading === 'meta' ?'Salvando...' : 'Salvar gestão da task'}
                       </button>
                     </div>
                   </div>
@@ -691,15 +691,15 @@ export default function TaskDetailsPage() {
                   <div className="mt-5 grid gap-3 text-sm">
                     <div className="rounded-2xl bg-white p-4">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Requisitos</p>
-                      <p className="mt-2 font-medium text-slate-700">{taskHasRequirements ? 'Já gerados' : 'Ainda não gerados'}</p>
+                      <p className="mt-2 font-medium text-slate-700">{taskHasRequirements ?'Já gerados' : 'Ainda não gerados'}</p>
                     </div>
                     <div className="rounded-2xl bg-white p-4">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">QA</p>
-                      <p className="mt-2 font-medium text-slate-700">{taskHasTestPlan ? 'Já gerado' : 'Ainda não gerado'}</p>
+                      <p className="mt-2 font-medium text-slate-700">{taskHasTestPlan ?'Já gerado' : 'Ainda não gerado'}</p>
                     </div>
                     <div className="rounded-2xl bg-white p-4">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Implementação</p>
-                      <p className="mt-2 font-medium text-slate-700">{implementationUnlocked ? 'Liberada' : 'Aguardando arquitetura'}</p>
+                      <p className="mt-2 font-medium text-slate-700">{implementationUnlocked ?'Liberada' : 'Aguardando arquitetura'}</p>
                     </div>
                   </div>
                 </section>
@@ -717,7 +717,7 @@ export default function TaskDetailsPage() {
                       onClick={() => setActiveTab(tab.id)}
                       className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
                         isActive
-                          ? 'bg-[#17322b] text-white shadow-[0_12px_28px_rgba(23,50,43,0.18)]'
+                          ?'bg-[#17322b] text-white shadow-[0_12px_28px_rgba(23,50,43,0.18)]'
                           : 'bg-[#faf8f2] text-slate-600 hover:bg-slate-100'
                       }`}
                     >
@@ -738,7 +738,7 @@ export default function TaskDetailsPage() {
                     </article>
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
                       <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Requisitos</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">{taskHasRequirements ? 'Disponível' : 'Pendente'}</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{taskHasRequirements ?'Disponível' : 'Pendente'}</p>
                     </article>
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
                       <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Desenvolvimento</p>
@@ -759,9 +759,9 @@ export default function TaskDetailsPage() {
                     <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#2f6c58]">Próximo passo recomendado</p>
                     <p className="mt-3 text-sm leading-7 text-slate-600">
                       {task.status !== 'done'
-                        ? 'Finalize refinamento e QA antes de iniciar a implementação.'
+                        ?'Finalize refinamento e QA antes de iniciar a implementação.'
                         : implementationStatus
-                          ? 'Acompanhe a execução técnica, os relatórios de validação e os arquivos alterados.'
+                          ?'Acompanhe a execução técnica, os relatórios de validação e os arquivos alterados.'
                           : 'Clique em Gerar código para iniciar a integração da task no projeto full stack.'}
                     </p>
                   </div>
@@ -785,7 +785,7 @@ export default function TaskDetailsPage() {
                     />
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                       <span className="font-semibold uppercase tracking-[0.18em] text-slate-400">Menções detectadas:</span>
-                      {extractMentions(commentBody).length ? (
+                      {extractMentions(commentBody).length ?(
                         extractMentions(commentBody).map((mention) => (
                           <span key={mention} className="rounded-full bg-[#eef5ef] px-2.5 py-1 font-semibold text-[#2f6c58]">
                             @{mention}
@@ -796,7 +796,7 @@ export default function TaskDetailsPage() {
                       )}
                     </div>
                     <button disabled={saving || !commentBody.trim()} className="w-full rounded-2xl bg-[#17322b] px-4 py-3 text-sm font-semibold text-white hover:bg-[#214338] disabled:opacity-50 sm:w-auto">
-                      {actionLoading === 'comment' ? 'Adicionando...' : 'Adicionar comentário'}
+                      {actionLoading === 'comment' ?'Adicionando...' : 'Adicionar comentário'}
                     </button>
                   </form>
 
@@ -852,8 +852,8 @@ export default function TaskDetailsPage() {
                             {artifact.artifactType} • v{artifact.version}
                           </p>
                         </div>
-                        <span className={`w-fit rounded-full px-3 py-1 text-[11px] font-semibold ${artifact.isApproved ? 'bg-[#e5f3e8] text-[#2f6c58]' : 'bg-[#fff5d9] text-[#8a6a1f]'}`}>
-                          {artifact.isApproved ? 'Aprovado' : 'Pendente'}
+                        <span className={`w-fit rounded-full px-3 py-1 text-[11px] font-semibold ${artifact.isApproved ?'bg-[#e5f3e8] text-[#2f6c58]' : 'bg-[#fff5d9] text-[#8a6a1f]'}`}>
+                          {artifact.isApproved ?'Aprovado' : 'Pendente'}
                         </span>
                       </div>
                       <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap rounded-2xl bg-white p-4 text-xs leading-6 text-slate-600">
@@ -896,7 +896,7 @@ export default function TaskDetailsPage() {
                 </span>
               </div>
 
-              {implementationStatus ? (
+              {implementationStatus ?(
                 <div className="mt-6 space-y-6">
                   <div className="grid gap-4 lg:grid-cols-4">
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
@@ -910,7 +910,7 @@ export default function TaskDetailsPage() {
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
                       <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Revisão</p>
                       <p className="mt-2 text-sm font-semibold text-slate-900">
-                        {implementationSummary?.status || (implementationStatus.reviewArtifact ? 'disponível' : 'não executado')}
+                        {implementationSummary?.status || (implementationStatus.reviewArtifact ?'disponível' : 'não executado')}
                       </p>
                     </article>
                     <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
@@ -977,7 +977,7 @@ export default function TaskDetailsPage() {
                       <p className="mt-2 text-sm font-semibold text-slate-900">
                         {implementationStatus.fixPlanArtifact?.title || 'Nenhum plano de correção gerado'}
                       </p>
-                      {fixPlanReport?.actions?.length ? (
+                      {fixPlanReport?.actions?.length ?(
                         <div className="mt-4 space-y-3">
                           {fixPlanReport.actions.map((action, index) => (
                             <div key={`${action.filePath}-${index}`} className="rounded-2xl bg-white p-3">
@@ -1028,7 +1028,7 @@ export default function TaskDetailsPage() {
                       <p className="mt-2 text-sm font-semibold text-slate-900">
                         {implementationStatus.fixPlanArtifact?.title || 'Nenhum plano de correção gerado'}
                       </p>
-                      {fixPlanReport?.actions?.length ? (
+                      {fixPlanReport?.actions?.length ?(
                         <div className="mt-4 space-y-3">
                           {fixPlanReport.actions.map((action, index) => (
                             <div key={`${action.filePath}-${index}`} className="rounded-2xl bg-white p-3">
@@ -1147,7 +1147,7 @@ export default function TaskDetailsPage() {
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Última mudança</p>
                   <p className="mt-2 text-sm font-semibold text-slate-900">
                     {task.statusHistory?.[0]
-                      ? `${task.statusHistory[0].fromStatus || 'novo'} → ${task.statusHistory[0].toStatus}`
+                      ?`${task.statusHistory[0].fromStatus || 'novo'} → ${task.statusHistory[0].toStatus}`
                       : 'Sem mudanças registradas'}
                   </p>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
@@ -1161,7 +1161,7 @@ export default function TaskDetailsPage() {
                   </p>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
                     {task.agentRuns?.[0]
-                      ? `${task.agentRuns[0].status} • ${formatDate(task.agentRuns[0].startedAt)}`
+                      ?`${task.agentRuns[0].status} • ${formatDate(task.agentRuns[0].startedAt)}`
                       : 'Nenhum agente executado ainda.'}
                   </p>
                 </article>
@@ -1182,7 +1182,7 @@ export default function TaskDetailsPage() {
                       <div>
                         <p className="text-sm font-semibold text-slate-900">{run.agentLabel || getAgentLabel(run.agentName)}</p>
                         <p className="mt-1 text-xs text-slate-500">
-                          {run.status} • {formatElapsed(run.startedAt ? Math.round((new Date(run.finishedAt || Date.now()).getTime() - new Date(run.startedAt).getTime()) / 1000) : 0)}
+                          {run.status} • {formatElapsed(run.startedAt ?Math.round((new Date(run.finishedAt || Date.now()).getTime() - new Date(run.startedAt).getTime()) / 1000) : 0)}
                         </p>
                       </div>
                       <span className="text-xs text-slate-500">{formatDate(run.startedAt)}</span>
@@ -1234,7 +1234,7 @@ export default function TaskDetailsPage() {
           </>
         ) : null}
       </section>
-      {activeArtifactForEdit ? (
+      {activeArtifactForEdit ?(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
           <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
@@ -1291,7 +1291,7 @@ export default function TaskDetailsPage() {
                       disabled={saving || !artifactDraft.trim()}
                       className="rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#214338] disabled:opacity-50"
                     >
-                      {actionLoading === 'artifact' ? 'Salvando...' : 'Salvar nova versão'}
+                      {actionLoading === 'artifact' ?'Salvando...' : 'Salvar nova versão'}
                     </button>
                   </div>
                 </div>

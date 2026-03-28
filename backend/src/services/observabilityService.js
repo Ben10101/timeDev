@@ -20,6 +20,21 @@ function asNumber(value) {
   return Number(value || 0);
 }
 
+function parseJsonContent(value) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function averageNullable(values = []) {
+  const filtered = values.filter((value) => value !== null && value !== undefined && !Number.isNaN(Number(value)));
+  if (!filtered.length) return null;
+  return Math.round(filtered.reduce((sum, value) => sum + Number(value), 0) / filtered.length);
+}
+
 export async function getOperationalHealth() {
   let database = 'degraded';
   try {
@@ -216,6 +231,135 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
 
   const implementationFailures = qualityImplementations.filter((run) => run.status === 'failed');
 
+  const taskImplementations = await prisma.taskImplementation.findMany({
+    where: {
+      task: {
+        project: {
+          workspace: {
+            ownerUser: {
+              uuid: userUuid,
+            },
+          },
+          ...(projectUuid ? { uuid: projectUuid } : {}),
+        },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: 40,
+    select: {
+      id: true,
+      status: true,
+      buildStatus: true,
+      testStatus: true,
+      updatedAt: true,
+      task: {
+        select: {
+          uuid: true,
+          title: true,
+          project: { select: { uuid: true, name: true } },
+        },
+      },
+    },
+  });
+
+  const implementationIds = taskImplementations.map((item) => item.id);
+  const implementationArtifacts = implementationIds.length
+    ? await prisma.taskArtifact.findMany({
+        where: {
+          taskImplementationId: { in: implementationIds },
+          artifactScope: 'implementation',
+          isCurrent: true,
+          OR: [
+            { title: { startsWith: 'Implementation Diff Review - ' } },
+            { title: { startsWith: 'Implementation Execution State - ' } },
+          ],
+        },
+        select: {
+          taskImplementationId: true,
+          title: true,
+          content: true,
+        },
+      })
+    : [];
+
+  const implementationArtifactsById = implementationArtifacts.reduce((acc, artifact) => {
+    const current = acc.get(artifact.taskImplementationId) || {};
+    if (artifact.title.startsWith('Implementation Diff Review - ')) {
+      current.diffReview = parseJsonContent(artifact.content);
+    }
+    if (artifact.title.startsWith('Implementation Execution State - ')) {
+      current.executionState = parseJsonContent(artifact.content);
+    }
+    acc.set(artifact.taskImplementationId, current);
+    return acc;
+  }, new Map());
+
+  const laneNames = ['backend', 'frontend', 'shared'];
+  const implementationByLane = laneNames.map((lane) => {
+    const implementationsForLane = taskImplementations
+      .map((implementation) => {
+        const artifacts = implementationArtifactsById.get(implementation.id) || {};
+        const diffReview = artifacts.diffReview || null;
+        const executionState = artifacts.executionState || null;
+        const laneRisk = diffReview?.qualitySignals?.laneRisks?.find((item) => item.lane === lane) || null;
+        const laneRecommendation =
+          diffReview?.qualitySignals?.laneRecommendations?.find((item) => item.lane === lane) || null;
+        const currentLaneWorkstreams = executionState?.currentWorkstreamsByLane?.[lane] || [];
+        const completedLaneWorkstreams = executionState?.completedWorkstreamsByLane?.[lane] || [];
+        const repairingLane =
+          executionState?.phase === 'repair' &&
+          Array.isArray(executionState?.repairScope?.workstreamIds) &&
+          executionState.repairScope.workstreamIds.some((id) =>
+            lane === 'backend'
+              ? id === 'backend_module'
+              : lane === 'frontend'
+                ? id === 'frontend_feature'
+                : id === 'shared_contracts' || id === 'persistence_and_docs'
+          );
+
+        const touchedLane =
+          Boolean(laneRisk) ||
+          currentLaneWorkstreams.length > 0 ||
+          completedLaneWorkstreams.length > 0;
+
+        if (!touchedLane) return null;
+
+        return {
+          implementationId: implementation.id,
+          status: implementation.status,
+          buildStatus: implementation.buildStatus,
+          testStatus: implementation.testStatus,
+          updatedAt: implementation.updatedAt,
+          project: implementation.task.project,
+          task: { uuid: implementation.task.uuid, title: implementation.task.title },
+          laneRisk,
+          laneRecommendation,
+          activeWorkstreams: currentLaneWorkstreams.length,
+          completedWorkstreams: completedLaneWorkstreams.length,
+          repairingLane,
+        };
+      })
+      .filter(Boolean);
+
+    return {
+      lane,
+      implementations: implementationsForLane.length,
+      integrated: implementationsForLane.filter((item) => item.status === 'integrated').length,
+      failed: implementationsForLane.filter((item) => item.status === 'failed').length,
+      blocked: implementationsForLane.filter((item) => item.laneRisk?.level === 'high').length,
+      active: implementationsForLane.filter((item) => item.activeWorkstreams > 0).length,
+      repairing: implementationsForLane.filter((item) => item.repairingLane).length,
+      averageReviewScore: averageNullable(implementationsForLane.map((item) => item.laneRisk?.reviewScore)),
+      averageSpecialistScore: averageNullable(implementationsForLane.map((item) => item.laneRisk?.specialistScore)),
+      averageRiskScore: averageNullable(implementationsForLane.map((item) => item.laneRisk?.score)),
+      highRiskCount: implementationsForLane.filter((item) => item.laneRisk?.level === 'high').length,
+      recommendations: implementationsForLane
+        .map((item) => item.laneRecommendation?.recommendation)
+        .filter(Boolean)
+        .slice(0, 3),
+    };
+  });
+
   return {
     summary: {
       totalRuns: enrichedRuns.length,
@@ -252,6 +396,7 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
       })),
     },
     byAgent,
+    implementationByLane,
     recentRuns: enrichedRuns.slice(0, 20),
     generatedRuns: qualityImplementations,
     alerts: [
