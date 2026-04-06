@@ -101,6 +101,7 @@ Additional real-product scenario available:
 - developer frontend depth
 - generation ir contract
 - project manager backlog quality
+- pipeline coherence observability
 
 Recorded real-product baseline:
 
@@ -136,3 +137,7 @@ Recorded Sprint 5 comparison outputs:
 Project Manager backlog quality check available:
 
 - `node scripts/agent-evals/run-eval.mjs project-manager-backlog-quality --prompt-version <version> --run`
+
+Pipeline coherence observability check available:
+
+- `node scripts/agent-evals/run-eval.mjs pipeline-coherence-observability --prompt-version <version> --run`

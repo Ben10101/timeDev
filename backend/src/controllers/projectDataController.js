@@ -98,6 +98,60 @@ function compactBacklogInput(idea = '', answers = {}) {
     .join('\n\n');
 }
 
+function compactProjectDnaForAgent(projectDna) {
+  if (!projectDna || typeof projectDna !== 'object') return '';
+
+  const project = projectDna.project || {};
+  const positioning = projectDna.positioning || {};
+  const designSystem = projectDna.designSystem || {};
+  const coherenceRules = projectDna.coherenceRules || {};
+
+  const domainLanguage = Array.isArray(project.domainLanguage) ? project.domainLanguage.slice(0, 8).join(', ') : '';
+  const allowedScreenFamilies = Array.isArray(designSystem.allowedScreenFamilies)
+    ? designSystem.allowedScreenFamilies.slice(0, 6).join(', ')
+    : '';
+
+  return [
+    'Project DNA:',
+    project.productMode ? `- Product mode: ${project.productMode}` : null,
+    project.experienceStyle ? `- Experience style: ${project.experienceStyle}` : null,
+    project.primaryActor ? `- Ator principal: ${project.primaryActor}` : null,
+    domainLanguage ? `- Linguagem do dominio: ${domainLanguage}` : null,
+    positioning.summary ? `- Resumo: ${clampText(positioning.summary, 180)}` : null,
+    positioning.promise ? `- Promessa: ${clampText(positioning.promise, 180)}` : null,
+    allowedScreenFamilies ? `- Familias de tela permitidas: ${allowedScreenFamilies}` : null,
+    Array.isArray(coherenceRules.mustPreserve) && coherenceRules.mustPreserve.length
+      ? `- Preservar: ${coherenceRules.mustPreserve.join(', ')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function compactArchitectureBacklogContract(project) {
+  const backlogContract = project?.intakeConfig?.backlogContract;
+  if (!backlogContract || typeof backlogContract !== 'object') return '';
+
+  const capabilities = Array.isArray(backlogContract.capabilities)
+    ? backlogContract.capabilities.slice(0, 6).map((item) => item?.name || '').filter(Boolean).join(', ')
+    : '';
+  const epics = Array.isArray(backlogContract.epics)
+    ? backlogContract.epics.slice(0, 6).map((item) => item?.name || '').filter(Boolean).join(', ')
+    : '';
+  const releaseSlices = Array.isArray(backlogContract.releaseSlices)
+    ? backlogContract.releaseSlices.slice(0, 4).map((item) => item?.name || '').filter(Boolean).join(', ')
+    : '';
+
+  return [
+    'Backlog Contract:',
+    capabilities ? `- Capacidades: ${capabilities}` : null,
+    epics ? `- Epicos: ${epics}` : null,
+    releaseSlices ? `- Releases: ${releaseSlices}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 export async function listProjectsController(req, res, next) {
   try {
     const projects = await listProjects(req.authUser.uuid);
@@ -395,9 +449,12 @@ export async function generateProjectBacklogController(req, res, next) {
       },
     });
 
+    const refreshedProject = await getProjectByUuid(projectUuid, req.authUser.uuid);
+    const projectDnaContext = compactProjectDnaForAgent(refreshedProject?.projectDna || null);
+
     const payload = {
       project_id: projectUuid,
-      idea: compactBacklogInput(idea.trim(), answers || {}),
+      idea: [compactBacklogInput(idea.trim(), answers || {}), projectDnaContext].filter(Boolean).join('\n\n'),
       answers: {},
     };
 
@@ -546,6 +603,8 @@ export async function generateProjectArchitectureController(req, res, next) {
         description: project?.description || '',
         vision: project?.vision || '',
         intake: project?.intakeConfig || {},
+        project_dna: compactProjectDnaForAgent(project?.projectDna || project?.intakeConfig?.projectDna || null),
+        backlog_contract: compactArchitectureBacklogContract(project),
         stories: refinedStories.map((story) => ({
           taskUuid: story.taskUuid,
           title: story.title,

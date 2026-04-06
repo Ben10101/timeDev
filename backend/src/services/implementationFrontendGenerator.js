@@ -46,6 +46,24 @@ function normalizeLayoutVariant(layoutVariant, productMode, screenTemplate, uiIn
   return 'summary-first';
 }
 
+function resolveUiFamily(technicalSpec, screenTemplate, productMode, pageArchetype) {
+  const explicitFamily =
+    technicalSpec.implementationManifest?.classification?.uiFamily ||
+    technicalSpec.classification?.uiFamily ||
+    technicalSpec.frontend?.uiFamily ||
+    technicalSpec.structured?.classification?.uiFamily;
+
+  if (explicitFamily) return explicitFamily;
+  if (screenTemplate === 'settings') return 'settings-console';
+  if (screenTemplate === 'dashboard' || productMode === 'manager-cockpit' || pageArchetype === 'executive-dashboard') {
+    return 'executive-cockpit';
+  }
+  if (screenTemplate === 'workspace' && (String(productMode || '').includes('planner') || pageArchetype === 'approval-flow')) {
+    return 'planner-workbench';
+  }
+  return 'operations-workspace';
+}
+
 function buildSchemaField(field) {
   if (field.inputType === 'select' && Array.isArray(field.selectOptions) && field.selectOptions.length) {
     return `  ${field.name}: z.enum([${field.selectOptions.map((option) => `'${escapeTemplate(option)}'`).join(', ')}], { message: '${escapeTemplate(field.helperText || `Escolha um valor valido para ${field.label || field.name}.`)}' }),`;
@@ -330,9 +348,16 @@ export function buildModernFrontendFeatureFiles(task, technicalSpec, { sharedImp
         ? technicalSpec.frontend.componentMap
         : {};
   const layoutVariant = normalizeLayoutVariant(technicalSpec.frontend?.layoutVariant, productMode, layout, uiIntent);
-  const isSettingsLayout = layout === 'settings';
-  const shellComponentName = isSettingsLayout ? 'SettingsWorkbench' : 'FeatureWorkbench';
-  const uiImports = isSettingsLayout ? 'SettingsWorkbench, FieldGroup, PrimaryButton, inputStyle' : 'FeatureWorkbench, FieldGroup, PrimaryButton, inputStyle';
+  const uiFamily = resolveUiFamily(technicalSpec, layout, productMode, pageArchetype);
+  const shellComponentNameByFamily = {
+    'operations-workspace': 'OperationsWorkspace',
+    'executive-cockpit': 'ExecutiveCockpit',
+    'settings-console': 'SettingsConsole',
+    'planner-workbench': 'PlannerWorkbench',
+  };
+  const shellComponentName = shellComponentNameByFamily[uiFamily] || 'OperationsWorkspace';
+  const isSettingsLayout = uiFamily === 'settings-console';
+  const uiImports = `${shellComponentName}, FieldGroup, PrimaryButton, inputStyle`;
   const schemaName = `${camelCase(entityName, 'generatedEntity')}FormSchema`;
   const formValuesType = `${entityName}FormValues`;
   const queryKeyName = `${camelCase(entityName, 'generatedEntity')}QueryKey`;

@@ -1652,3 +1652,50 @@ export function PrimaryButton({
     </button>
   )
 }
+
+type FeatureWorkbenchProps = Parameters<typeof FeatureWorkbench>[0]
+type SettingsWorkbenchProps = Parameters<typeof SettingsWorkbench>[0]
+
+export function OperationsWorkspace(props: FeatureWorkbenchProps) {
+  return (
+    <FeatureWorkbench
+      layoutVariant={props.layoutVariant || 'balanced-split'}
+      pageArchetype={props.pageArchetype || 'operations-queue'}
+      {...props}
+    />
+  )
+}
+
+export function ExecutiveCockpit(props: FeatureWorkbenchProps) {
+  return (
+    <FeatureWorkbench
+      productMode={props.productMode || 'manager-cockpit'}
+      layoutVariant={props.layoutVariant || 'hero-metrics'}
+      pageArchetype={props.pageArchetype || 'executive-dashboard'}
+      fallbackPattern={props.fallbackPattern || 'vercel-analytics'}
+      {...props}
+    />
+  )
+}
+
+export function PlannerWorkbench(props: FeatureWorkbenchProps) {
+  return (
+    <FeatureWorkbench
+      productMode={props.productMode || 'timeline-planner'}
+      layoutVariant={props.layoutVariant || 'workflow-guided'}
+      pageArchetype={props.pageArchetype || 'approval-flow'}
+      fallbackPattern={props.fallbackPattern || 'github-review'}
+      {...props}
+    />
+  )
+}
+
+export function SettingsConsole(props: SettingsWorkbenchProps) {
+  return (
+    <SettingsWorkbench
+      layoutVariant={props.layoutVariant || 'calm-settings'}
+      pageArchetype={props.pageArchetype || 'settings-console'}
+      {...props}
+    />
+  )
+}

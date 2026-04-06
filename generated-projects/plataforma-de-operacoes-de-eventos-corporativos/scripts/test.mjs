@@ -67,6 +67,10 @@ for (const featureDir of featureDirs) {
     pageContent.includes('packages/ui/src/index.tsx') &&
     (pageContent.includes('FeatureWorkbench') ||
       pageContent.includes('SettingsWorkbench') ||
+      pageContent.includes('OperationsWorkspace') ||
+      pageContent.includes('ExecutiveCockpit') ||
+      pageContent.includes('SettingsConsole') ||
+      pageContent.includes('PlannerWorkbench') ||
       pageContent.includes('FeaturePage'));
   if (!usesSharedUi) {
     throw new Error(`Feature ${featureDir} nao esta usando o design system compartilhado.`);

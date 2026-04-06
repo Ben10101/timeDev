@@ -4,7 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   assertTaskAccess,
   createAgentRunStart,
-  createTaskArtifact,
+  createQaArtifacts,
+  createRequirementsArtifacts,
   ensurePipelineProject,
   finishAgentRun,
   getTaskContextByUuid,
@@ -26,11 +27,26 @@ function compactText(value = '', maxLength = 220) {
 }
 
 function buildCompactRequirementBacklog(task) {
+  const projectDna = task.project?.intakeConfig?.projectDna || null;
+  const projectDnaSummary = projectDna
+    ? [
+        projectDna.project?.productMode ? `Product mode: ${projectDna.project.productMode}` : null,
+        projectDna.project?.experienceStyle ? `Experience style: ${projectDna.project.experienceStyle}` : null,
+        projectDna.project?.primaryActor ? `Ator principal: ${projectDna.project.primaryActor}` : null,
+        Array.isArray(projectDna.project?.domainLanguage) && projectDna.project.domainLanguage.length
+          ? `Linguagem do dominio: ${projectDna.project.domainLanguage.slice(0, 8).join(', ')}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' | ')
+    : null;
+
   return [
     `Historia alvo: ${compactText(task.title, 140)}`,
     task.description ? `Contexto imediato: ${compactText(task.description, 180)}` : null,
     task.project?.description ? `Projeto: ${compactText(task.project.description, 140)}` : null,
     task.project?.vision ? `Visao: ${compactText(task.project.vision, 160)}` : null,
+    projectDnaSummary ? `Project DNA: ${compactText(projectDnaSummary, 240)}` : null,
   ]
     .filter(Boolean)
     .join('\n');
@@ -63,6 +79,21 @@ function buildQaRequirementSummary(requirementsContent = '') {
   ]
     .filter(Boolean)
     .join('\n\n');
+}
+
+function buildCompactProjectDnaSummary(projectDna) {
+  if (!projectDna || typeof projectDna !== 'object') return '';
+
+  return [
+    projectDna.project?.productMode ? `Product mode: ${projectDna.project.productMode}` : null,
+    projectDna.project?.experienceStyle ? `Experience style: ${projectDna.project.experienceStyle}` : null,
+    projectDna.project?.primaryActor ? `Ator principal: ${projectDna.project.primaryActor}` : null,
+    Array.isArray(projectDna.project?.domainLanguage) && projectDna.project.domainLanguage.length
+      ? `Linguagem do dominio: ${projectDna.project.domainLanguage.slice(0, 8).join(', ')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' | ');
 }
 
 function hasBrokenEnding(content = '') {
@@ -279,8 +310,7 @@ export async function runRequirementsForTaskController(req, res) {
       usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
     });
 
-    await createTaskArtifact(task.uuid, {
-      artifactType: 'requirements',
+    await createRequirementsArtifacts(task.uuid, {
       title: `Requisitos refinados - ${task.title}`,
       content,
       contentFormat: 'markdown',
@@ -371,6 +401,10 @@ export async function runQaForTaskController(req, res) {
     });
 
     const requirementSummary = buildQaRequirementSummary(latestRequirements.content);
+    const latestRequirementSpec = task.artifacts.find(
+      (artifact) => artifact.title === '[SYSTEM] Requirement Spec' && artifact.isCurrent
+    );
+    const projectDnaSummary = buildCompactProjectDnaSummary(task.project?.intakeConfig?.projectDna || null);
 
     const payload = {
       project_id: task.project.uuid,
@@ -386,8 +420,10 @@ export async function runQaForTaskController(req, res) {
       project_context: {
         description: compactText(task.project.description, 180),
         vision: compactText(task.project.vision, 220),
+        project_dna: compactText(projectDnaSummary, 240),
       },
       requirement_summary: requirementSummary,
+      requirement_spec: latestRequirementSpec?.content || '',
     };
 
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'qa_engineer' });
@@ -403,8 +439,7 @@ export async function runQaForTaskController(req, res) {
       usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
     });
 
-    await createTaskArtifact(task.uuid, {
-      artifactType: 'test_plan',
+    await createQaArtifacts(task.uuid, {
       title: `Plano de testes - ${task.title}`,
       content,
       contentFormat: 'markdown',

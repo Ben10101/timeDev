@@ -74,6 +74,10 @@ jobs:
         working-directory: backend
         run: npm run test:runtime-observability:smoke
 
+      - name: Run pipeline coherence smoke test
+        working-directory: backend
+        run: npm run test:pipeline-coherence:smoke
+
       - name: Run requirements recovery smoke test
         working-directory: backend
         run: npm run test:requirements-recovery:smoke

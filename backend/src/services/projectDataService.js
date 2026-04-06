@@ -257,10 +257,146 @@ function enrichProjectAccess(project, userUuid = null) {
   );
   return {
     ...project,
+    projectDna: project.intakeConfig?.projectDna || null,
     currentUserRole,
     permissions: buildProjectPermissions(currentUserRole),
     resolvedProjectTemplate,
   };
+}
+
+function normalizeProjectLanguage(...values) {
+  const tokens = values
+    .flatMap((value) =>
+      String(value || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean)
+    );
+
+  return Array.from(new Set(tokens));
+}
+
+function inferDomainLanguage({ projectName, description, vision, templateKey }) {
+  const vocabulary = normalizeProjectLanguage(projectName, description, vision, templateKey);
+  const prioritizedTerms = [
+    'evento',
+    'eventos',
+    'cronograma',
+    'fornecedor',
+    'fornecedores',
+    'convidado',
+    'convidados',
+    'orcamento',
+    'visita',
+    'visitante',
+    'recepcao',
+    'chamado',
+    'suporte',
+    'ticket',
+    'acesso',
+    'perfil',
+    'notificacao',
+    'operacao',
+    'operacional',
+  ];
+
+  const matches = prioritizedTerms.filter((term) => vocabulary.includes(term));
+  return matches.length ? matches : vocabulary.slice(0, 8);
+}
+
+function inferProductMode({ templateKey, description, vision }) {
+  const source = normalizeProjectLanguage(templateKey, description, vision);
+  if (source.includes('evento') || source.includes('eventos')) return 'operational-workspace';
+  if (source.includes('visita') || source.includes('visitante')) return 'access-operations';
+  if (source.includes('suporte') || source.includes('ticket') || source.includes('chamado')) return 'service-operations';
+  if (source.includes('dashboard') || source.includes('analitico')) return 'executive-cockpit';
+  return 'product-workspace';
+}
+
+function inferExperienceStyle({ templateKey, description, vision }) {
+  const source = normalizeProjectLanguage(templateKey, description, vision);
+  if (source.includes('evento') || source.includes('operacao') || source.includes('operacional')) return 'operational-premium';
+  if (source.includes('configuracao') || source.includes('preferencia') || source.includes('ajuste')) return 'controlled-console';
+  return 'professional-balanced';
+}
+
+function inferPrimaryActor({ description, vision, intakeConfig }) {
+  const actorCandidates = [
+    'coordenador de eventos',
+    'recepcionista',
+    'analista de suporte',
+    'gestor operacional',
+    'administrador',
+  ];
+  const source = `${description || ''}\n${vision || ''}\n${intakeConfig?.idea || ''}\n${intakeConfig?.objective || ''}`.toLowerCase();
+  return actorCandidates.find((candidate) => source.includes(candidate)) || 'operador principal';
+}
+
+function buildProjectDna({ name, description, vision, templateKey, intakeConfig }) {
+  const domainLanguage = inferDomainLanguage({
+    projectName: name,
+    description,
+    vision,
+    templateKey,
+  });
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    project: {
+      name: String(name || '').trim(),
+      slugHint:
+        String(name || '')
+          .trim()
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '') || null,
+      templateKey: templateKey || null,
+      productMode: inferProductMode({ templateKey, description, vision }),
+      experienceStyle: inferExperienceStyle({ templateKey, description, vision }),
+      primaryActor: inferPrimaryActor({ description, vision, intakeConfig }),
+      domainLanguage,
+    },
+    positioning: {
+      summary: String(description || vision || intakeConfig?.idea || '').trim() || null,
+      promise: String(vision || intakeConfig?.objective || '').trim() || null,
+    },
+    designSystem: {
+      allowedScreenFamilies: ['workspace', 'executive-cockpit', 'settings-console'],
+      defaultScreenFamily: 'workspace',
+      navigationStyle: 'sidebar-operational',
+      visualTone: 'professional',
+    },
+    coherenceRules: {
+      mustPreserve: ['domainLanguage', 'productMode', 'experienceStyle'],
+      forbiddenDrift: ['generic-crud-without-domain', 'cross-domain-language-bleed'],
+    },
+  };
+}
+
+function renderProjectDnaArtifact(project, projectDna) {
+  const domainLanguage = (projectDna?.project?.domainLanguage || []).map((item) => `- ${item}`).join('\n') || '- sem termos-chave';
+  const screenFamilies =
+    (projectDna?.designSystem?.allowedScreenFamilies || []).map((item) => `- ${item}`).join('\n') || '- workspace';
+
+  return `# Project DNA\n\n## Projeto\n- Nome: ${project.name}\n- Template: ${project.templateKey || 'nao definido'}\n- Product mode: ${projectDna?.project?.productMode || 'product-workspace'}\n- Experience style: ${projectDna?.project?.experienceStyle || 'professional-balanced'}\n- Ator principal: ${projectDna?.project?.primaryActor || 'operador principal'}\n\n## Posicionamento\n- Resumo: ${projectDna?.positioning?.summary || 'nao informado'}\n- Promessa: ${projectDna?.positioning?.promise || 'nao informada'}\n\n## Linguagem do Dominio\n${domainLanguage}\n\n## Direcao de UX\n${screenFamilies}\n\n## Regras de Coerencia\n- Preservar: ${(projectDna?.coherenceRules?.mustPreserve || []).join(', ') || 'domainLanguage, productMode, experienceStyle'}\n- Evitar: ${(projectDna?.coherenceRules?.forbiddenDrift || []).join(', ') || 'generic-crud-without-domain'}\n\n## Contract\n\`\`\`json\n${JSON.stringify(projectDna, null, 2)}\n\`\`\`\n`;
+}
+
+async function persistProjectDnaArtifact(projectUuid, projectRecord, projectDna) {
+  const stageTask = await ensureStageTask(projectUuid, 'project_manager');
+  if (!stageTask) return null;
+
+  return createSystemTaskArtifact(stageTask.uuid, {
+    artifactType: 'custom',
+    title: '[SYSTEM] Project DNA',
+    content: renderProjectDnaArtifact(projectRecord, projectDna),
+    contentFormat: 'markdown',
+    createdByAgentName: 'system',
+  });
 }
 
 export async function assertProjectPermission(projectUuid, userUuid, minimumRole = 'viewer') {
@@ -782,7 +918,15 @@ export async function updateProjectBrief(projectUuid, input = {}) {
           summary: mergedIntakeConfig.objective,
         });
 
-  return prisma.project.update({
+  const resolvedProjectDna = buildProjectDna({
+    name: existingProject.name,
+    description: input.description !== undefined ? input.description : existingProject.description,
+    vision: input.vision !== undefined ? input.vision : existingProject.vision,
+    templateKey: resolvedTemplateKey,
+    intakeConfig: mergedIntakeConfig,
+  });
+
+  const project = await prisma.project.update({
     where: { uuid: projectUuid },
     data: {
       description: input.description !== undefined ? input.description?.trim() || null : undefined,
@@ -792,11 +936,19 @@ export async function updateProjectBrief(projectUuid, input = {}) {
         input.intakeConfig !== undefined
           ? {
               ...mergedIntakeConfig,
+              projectDna: resolvedProjectDna,
               projectTemplateKey: resolvedTemplateKey || mergedIntakeConfig.projectTemplateKey || null,
             }
-          : undefined,
+          : {
+              ...(existingProject.intakeConfig || {}),
+              projectDna: resolvedProjectDna,
+            },
     },
   });
+
+  await persistProjectDnaArtifact(projectUuid, project, resolvedProjectDna);
+
+  return project;
 }
 
 export async function addProjectMember(projectUuid, { email, projectRole = 'editor' }, actorUserUuid) {
@@ -995,9 +1147,17 @@ export async function createProject({
           ...(intakeConfig || {}),
           projectTemplateKey: resolvedTemplateKey || intakeConfig?.projectTemplateKey || null,
         }
-      : undefined;
+      : {};
 
-  return prisma.project.create({
+  const projectDna = buildProjectDna({
+    name,
+    description,
+    vision,
+    templateKey: resolvedTemplateKey,
+    intakeConfig: normalizedIntakeConfig,
+  });
+
+  const project = await prisma.project.create({
     data: {
       uuid: forcedUuid || randomUUID(),
       workspaceId: workspace.id,
@@ -1007,7 +1167,10 @@ export async function createProject({
       vision: vision?.trim() || null,
       startMode: startMode?.trim() || null,
       templateKey: resolvedTemplateKey || null,
-      intakeConfig: normalizedIntakeConfig,
+      intakeConfig: {
+        ...normalizedIntakeConfig,
+        projectDna,
+      },
       boardConfig: boardConfig ?? undefined,
       agentsConfig: agentsConfig ?? undefined,
       automationConfig: automationConfig ?? undefined,
@@ -1029,6 +1192,10 @@ export async function createProject({
       },
     },
   });
+
+  await persistProjectDnaArtifact(project.uuid, project, projectDna);
+
+  return project;
 }
 
 export async function listProjectTasks(projectUuid, { status, parentTaskUuid } = {}, userUuid = null) {
@@ -1555,6 +1722,393 @@ function extractBacklogItems(backlogMarkdown) {
   };
 }
 
+function normalizeBacklogContractList(items = []) {
+  return items
+    .map((item) => String(item || '').replace(/^[-*]\s+/, '').trim())
+    .filter(Boolean);
+}
+
+function parseReleaseSlices(sectionContent) {
+  if (!sectionContent) return [];
+
+  const lines = String(sectionContent)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const slices = [];
+
+  for (const line of lines) {
+    const cleaned = line.replace(/^[-*]\s+/, '').trim();
+    const match = cleaned.match(/^([^:]+):\s*(.+)$/);
+
+    if (match) {
+      slices.push({
+        name: match[1].trim(),
+        goal: match[2].trim(),
+      });
+      continue;
+    }
+
+    slices.push({
+      name: cleaned,
+      goal: null,
+    });
+  }
+
+  return slices;
+}
+
+function buildBacklogContract(backlogMarkdown, projectDna = null) {
+  const overview = extractMarkdownSection(backlogMarkdown, 'Visao Geral');
+  const capabilities = normalizeBacklogContractList(
+    extractBulletLines(extractMarkdownSection(backlogMarkdown, 'Capacidades do Produto'))
+  );
+  const epics = normalizeBacklogContractList(
+    extractBulletLines(extractMarkdownSection(backlogMarkdown, 'Epicos Recomendados'))
+  );
+  const releaseSlices = parseReleaseSlices(extractMarkdownSection(backlogMarkdown, 'Fatias de Release'));
+  const { stories } = extractBacklogItems(backlogMarkdown);
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    source: 'project_manager',
+    projectDnaSnapshot: projectDna || null,
+    overview: overview || null,
+    capabilities: capabilities.map((name, index) => ({
+      id: `cap_${index + 1}`,
+      name,
+    })),
+    epics: epics.map((name, index) => ({
+      id: `epic_${index + 1}`,
+      name,
+    })),
+    releaseSlices: releaseSlices.map((slice, index) => ({
+      id: `slice_${index + 1}`,
+      name: slice.name,
+      goal: slice.goal,
+    })),
+    stories: stories.map((story, index) => ({
+      id: `story_${index + 1}`,
+      title: story.title,
+      description: story.description || null,
+      order: index + 1,
+    })),
+  };
+}
+
+async function persistBacklogContractArtifact(projectUuid, projectRecord, backlogMarkdown) {
+  const stageTask = await ensureStageTask(projectUuid, 'project_manager');
+  if (!stageTask) return null;
+
+  const backlogContract = buildBacklogContract(backlogMarkdown, projectRecord?.intakeConfig?.projectDna || null);
+
+  await prisma.project.update({
+    where: { uuid: projectUuid },
+    data: {
+      intakeConfig: {
+        ...(projectRecord?.intakeConfig || {}),
+        backlogContract,
+      },
+    },
+  });
+
+  return createSystemTaskArtifact(stageTask.uuid, {
+    artifactType: 'custom',
+    title: '[SYSTEM] Backlog Contract',
+    content: JSON.stringify(backlogContract, null, 2),
+    contentFormat: 'json',
+    createdByAgentName: 'system',
+  });
+}
+
+function buildRequirementSpec(requirementsMarkdown, context = {}) {
+  const getSection = (title) => extractMarkdownSection(requirementsMarkdown, title);
+
+  const userStory = getSection('User Story Refinada');
+  const functionalRequirements = normalizeBacklogContractList(
+    String(getSection('Requisitos Funcionais') || '')
+      .split('\n')
+      .map((line) => line.replace(/^###\s+RF-\d+\s*$/i, '').trim())
+  );
+  const mainFlow = normalizeBacklogContractList(
+    String(getSection('Fluxo Principal') || '')
+      .split('\n')
+      .map((line) => line.replace(/^\d+\.\s*/, '').trim())
+  );
+  const alternativeFlows = normalizeBacklogContractList(extractBulletLines(getSection('Fluxos Alternativos')));
+  const exceptionFlows = normalizeBacklogContractList(extractBulletLines(getSection('Fluxos de Excecao')));
+  const businessRules = normalizeBacklogContractList(
+    String(getSection('Regras de Negocio') || '')
+      .split('\n')
+      .map((line) => line.replace(/^\d+\.\s*/, '').trim())
+  );
+  const uiStates = normalizeBacklogContractList(extractBulletLines(getSection('Estados da Interface e Feedback')));
+  const validationsAndData = normalizeBacklogContractList(extractBulletLines(getSection('Validacoes e Dados')));
+  const permissionsAndAudit = normalizeBacklogContractList(extractBulletLines(getSection('Permissoes e Auditoria')));
+  const acceptanceCriteria = normalizeBacklogContractList(
+    String(getSection('Criterios de Aceite (BDD)') || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+  );
+  const assumptions = normalizeBacklogContractList(extractBulletLines(getSection('Premissas e Pontos a Validar')));
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    source: 'requirements_analyst',
+    task: {
+      uuid: context.taskUuid || null,
+      title: context.taskTitle || null,
+      projectUuid: context.projectUuid || null,
+      projectName: context.projectName || null,
+    },
+    projectDnaSnapshot: context.projectDna || null,
+    userStory: userStory || null,
+    functionalRequirements,
+    flows: {
+      main: mainFlow,
+      alternatives: alternativeFlows,
+      exceptions: exceptionFlows,
+    },
+    businessRules,
+    uiStates,
+    validationsAndData,
+    permissionsAndAudit,
+    acceptanceCriteria,
+    assumptions,
+  };
+}
+
+export async function createRequirementsArtifacts(taskUuid, metadata = {}) {
+  const task = await prisma.task.findUnique({
+    where: { uuid: taskUuid },
+    select: {
+      uuid: true,
+      title: true,
+      project: {
+        select: {
+          uuid: true,
+          name: true,
+          intakeConfig: true,
+        },
+      },
+    },
+  });
+
+  if (!task) {
+    throw new Error('Tarefa não encontrada.');
+  }
+
+  const requirementsArtifact = await createTaskArtifact(taskUuid, {
+    artifactType: 'requirements',
+    title: metadata.title || `Requisitos refinados - ${task.title}`,
+    content: metadata.content || '',
+    contentFormat: metadata.contentFormat || 'markdown',
+    createdByAgentName: metadata.createdByAgentName || 'requirements_analyst',
+    agentRunId: metadata.agentRunId || null,
+  });
+
+  const requirementSpec = buildRequirementSpec(metadata.content || '', {
+    taskUuid: task.uuid,
+    taskTitle: task.title,
+    projectUuid: task.project?.uuid || null,
+    projectName: task.project?.name || null,
+    projectDna: task.project?.intakeConfig?.projectDna || null,
+  });
+
+  const requirementSpecArtifact = await createSystemTaskArtifact(taskUuid, {
+    artifactType: 'custom',
+    title: '[SYSTEM] Requirement Spec',
+    content: JSON.stringify(requirementSpec, null, 2),
+    contentFormat: 'json',
+    createdByAgentName: 'system',
+    agentRunId: metadata.agentRunId || null,
+  });
+
+  return {
+    requirementsArtifact,
+    requirementSpecArtifact,
+    requirementSpec,
+  };
+}
+
+function buildTestSpec(testPlanMarkdown, context = {}) {
+  const getSection = (title) => extractMarkdownSection(testPlanMarkdown, title);
+  const asBulletList = (title) => normalizeBacklogContractList(extractBulletLines(getSection(title)));
+  const asLines = (title) =>
+    normalizeBacklogContractList(
+      String(getSection(title) || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+    );
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    source: 'qa_engineer',
+    task: {
+      uuid: context.taskUuid || null,
+      title: context.taskTitle || null,
+      projectUuid: context.projectUuid || null,
+      projectName: context.projectName || null,
+    },
+    projectDnaSnapshot: context.projectDna || null,
+    requirementSpecSnapshot: context.requirementSpec || null,
+    strategy: asLines('Estrategia de testes'),
+    testData: asBulletList('Dados de teste'),
+    risksAndMetrics: asBulletList('Riscos e metricas'),
+    nonFunctionalQuality: asBulletList('Qualidade nao funcional'),
+    acceptanceTraceability: asLines('Rastreabilidade dos Criterios de Aceite'),
+    minimumSmoke: asLines('Smoke Minimo da Feature'),
+    scenarios: asLines('Cenarios de teste'),
+    functionalCases: asLines('Casos de teste funcionais'),
+    usabilityAndAccessibility: asBulletList('Usabilidade e acessibilidade'),
+  };
+}
+
+function buildSolutionBlueprint(architectureMarkdown, context = {}) {
+  const getSection = (title) => extractMarkdownSection(architectureMarkdown, title);
+  const asBulletList = (title) => normalizeBacklogContractList(extractBulletLines(getSection(title)));
+  const asLines = (title) =>
+    normalizeBacklogContractList(
+      String(getSection(title) || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+    );
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    source: 'architect',
+    project: {
+      uuid: context.projectUuid || null,
+      name: context.projectName || null,
+    },
+    projectDnaSnapshot: context.projectDna || null,
+    backlogContractSnapshot: context.backlogContract || null,
+    overview: getSection('Visao Geral') || null,
+    stack: asBulletList('Stack Tecnologico'),
+    modulesAndResponsibilities: asLines('Modulos e Responsabilidades'),
+    architectureDiagram: getSection('Diagrama de Arquitetura') || null,
+    suggestedDirectories: asLines('Estrutura de Diretorios Sugerida'),
+    dataModelAndEntities: asLines('Modelo de Dados e Entidades Principais'),
+    contractsAndIntegrations: asLines('Contratos e Integracoes'),
+    designPatterns: asLines('Padroes de Design'),
+    observabilityAndOperations: asLines('Observabilidade e Operacao'),
+    deployStrategy: asLines('Estrategia de Deploy'),
+    security: asLines('Seguranca'),
+    technicalRisksAndTradeoffs: asLines('Riscos Tecnicos e Trade-offs'),
+    implementationSequence: asLines('Sequencia Recomendada de Implementacao'),
+  };
+}
+
+async function persistSolutionBlueprintArtifact(projectUuid, projectRecord, architectureMarkdown) {
+  const stageTask = await ensureStageTask(projectUuid, 'architect');
+  if (!stageTask) return null;
+
+  const solutionBlueprint = buildSolutionBlueprint(architectureMarkdown, {
+    projectUuid,
+    projectName: projectRecord?.name || null,
+    projectDna: projectRecord?.intakeConfig?.projectDna || null,
+    backlogContract: projectRecord?.intakeConfig?.backlogContract || null,
+  });
+
+  await prisma.project.update({
+    where: { uuid: projectUuid },
+    data: {
+      intakeConfig: {
+        ...(projectRecord?.intakeConfig || {}),
+        solutionBlueprint,
+      },
+    },
+  });
+
+  return createSystemTaskArtifact(stageTask.uuid, {
+    artifactType: 'custom',
+    title: '[SYSTEM] Solution Blueprint',
+    content: JSON.stringify(solutionBlueprint, null, 2),
+    contentFormat: 'json',
+    createdByAgentName: 'system',
+  });
+}
+
+export async function createQaArtifacts(taskUuid, metadata = {}) {
+  const task = await prisma.task.findUnique({
+    where: { uuid: taskUuid },
+    select: {
+      uuid: true,
+      title: true,
+      project: {
+        select: {
+          uuid: true,
+          name: true,
+          intakeConfig: true,
+        },
+      },
+      artifacts: {
+        where: {
+          isCurrent: true,
+          artifactScope: 'refinement',
+          title: '[SYSTEM] Requirement Spec',
+        },
+        select: {
+          content: true,
+        },
+        take: 1,
+      },
+    },
+  });
+
+  if (!task) {
+    throw new Error('Tarefa não encontrada.');
+  }
+
+  const testPlanArtifact = await createTaskArtifact(taskUuid, {
+    artifactType: 'test_plan',
+    title: metadata.title || `Plano de testes - ${task.title}`,
+    content: metadata.content || '',
+    contentFormat: metadata.contentFormat || 'markdown',
+    createdByAgentName: metadata.createdByAgentName || 'qa_engineer',
+    agentRunId: metadata.agentRunId || null,
+  });
+
+  let requirementSpec = null;
+  try {
+    requirementSpec = task.artifacts?.[0]?.content ? JSON.parse(task.artifacts[0].content) : null;
+  } catch {
+    requirementSpec = null;
+  }
+
+  const testSpec = buildTestSpec(metadata.content || '', {
+    taskUuid: task.uuid,
+    taskTitle: task.title,
+    projectUuid: task.project?.uuid || null,
+    projectName: task.project?.name || null,
+    projectDna: task.project?.intakeConfig?.projectDna || null,
+    requirementSpec,
+  });
+
+  const testSpecArtifact = await createSystemTaskArtifact(taskUuid, {
+    artifactType: 'custom',
+    title: '[SYSTEM] Test Spec',
+    content: JSON.stringify(testSpec, null, 2),
+    contentFormat: 'json',
+    createdByAgentName: 'system',
+    agentRunId: metadata.agentRunId || null,
+  });
+
+  return {
+    testPlanArtifact,
+    testSpecArtifact,
+    testSpec,
+  };
+}
+
 export async function importBacklogTasks(projectUuid, backlogMarkdown) {
   const project = await prisma.project.findUnique({
     where: { uuid: projectUuid },
@@ -1662,6 +2216,62 @@ export async function createTaskArtifact(taskUuid, input) {
       isApproved: input.isApproved || false,
       createdByUserId: input.createdByUserId || null,
       createdByAgentName: input.createdByAgentName || null,
+    },
+  });
+}
+
+export async function createSystemTaskArtifact(taskUuid, input) {
+  const task = await prisma.task.findUnique({
+    where: { uuid: taskUuid },
+    select: { id: true },
+  });
+
+  if (!task) {
+    throw new Error('Tarefa nÃ£o encontrada.');
+  }
+
+  const artifactScope = input.artifactScope || 'refinement';
+
+  await prisma.taskArtifact.updateMany({
+    where: {
+      taskId: task.id,
+      artifactType: input.artifactType || 'custom',
+      artifactScope,
+      title: input.title,
+      isCurrent: true,
+    },
+    data: {
+      isCurrent: false,
+    },
+  });
+
+  const latestArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      artifactType: input.artifactType || 'custom',
+      artifactScope,
+      title: input.title,
+    },
+    orderBy: { version: 'desc' },
+    select: { version: true },
+  });
+
+  return prisma.taskArtifact.create({
+    data: {
+      uuid: randomUUID(),
+      taskId: task.id,
+      taskImplementationId: input.taskImplementationId || null,
+      agentRunId: input.agentRunId || null,
+      artifactType: input.artifactType || 'custom',
+      artifactScope,
+      title: input.title,
+      content: input.content,
+      contentFormat: input.contentFormat || 'json',
+      version: (latestArtifact?.version || 0) + 1,
+      isCurrent: true,
+      isApproved: input.isApproved || false,
+      createdByUserId: input.createdByUserId || null,
+      createdByAgentName: input.createdByAgentName || 'system',
     },
   });
 }
@@ -2378,7 +2988,20 @@ export async function persistAgentResult(projectUuid, agentName, payload, result
   });
 
   if (agentName === 'project_manager') {
+    const projectRecord = await prisma.project.findUnique({
+      where: { uuid: projectUuid },
+      select: { intakeConfig: true },
+    });
+    await persistBacklogContractArtifact(projectUuid, projectRecord, content);
     await importBacklogTasks(projectUuid, content);
+  }
+
+  if (agentName === 'architect') {
+    const projectRecord = await prisma.project.findUnique({
+      where: { uuid: projectUuid },
+      select: { name: true, intakeConfig: true },
+    });
+    await persistSolutionBlueprintArtifact(projectUuid, projectRecord, content);
   }
 
   recordRuntimeEvent('stage_artifact_persisted', {

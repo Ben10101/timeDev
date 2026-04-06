@@ -7,6 +7,20 @@ function serializeError(error) {
   };
 }
 
+function toSerializable(value) {
+  return JSON.parse(
+    JSON.stringify(value, (_key, current) => {
+      if (typeof current === 'bigint') {
+        return Number.isSafeInteger(Number(current)) ? Number(current) : String(current);
+      }
+      if (current instanceof Error) {
+        return serializeError(current);
+      }
+      return current;
+    })
+  );
+}
+
 export function logStructured(level = 'info', event = 'log', payload = {}) {
   const entry = {
     timestamp: new Date().toISOString(),
@@ -26,7 +40,7 @@ export function logStructured(level = 'info', event = 'log', payload = {}) {
         ? console.warn
         : console.log;
 
-  method(JSON.stringify(entry));
+  method(JSON.stringify(toSerializable(entry)));
   return entry;
 }
 

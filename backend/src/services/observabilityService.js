@@ -54,6 +54,23 @@ function averageNullable(values = []) {
   return Math.round(filtered.reduce((sum, value) => sum + Number(value), 0) / filtered.length);
 }
 
+function percent(value, total) {
+  if (!total) return 0;
+  return Math.round((Number(value || 0) / Number(total || 1)) * 100);
+}
+
+function startsWithTitle(artifacts = [], prefix = '') {
+  return artifacts.find((artifact) => String(artifact?.title || '').startsWith(prefix)) || null;
+}
+
+function countDriftFlags(frequencies, driftFlags = []) {
+  for (const flag of driftFlags) {
+    const key = String(flag || '').trim();
+    if (!key) continue;
+    frequencies[key] = (frequencies[key] || 0) + 1;
+  }
+}
+
 export async function getOperationalHealth() {
   let database = 'degraded';
   try {
@@ -926,6 +943,297 @@ export async function getActiveAlerts(userUuid, { projectUuid = null } = {}) {
   }
 
   return alerts.slice(0, 10);
+}
+
+export async function getPipelineCoherenceOverview(userUuid, { projectUuid = null } = {}) {
+  const projects = await prisma.project.findMany({
+    where: {
+      workspace: {
+        ownerUser: {
+          uuid: userUuid,
+        },
+      },
+      ...(projectUuid ? { uuid: projectUuid } : {}),
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      uuid: true,
+      name: true,
+      status: true,
+      templateKey: true,
+      updatedAt: true,
+      intakeConfig: true,
+      tasks: {
+        where: {
+          taskType: { not: 'agent_job' },
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          uuid: true,
+          title: true,
+          status: true,
+          updatedAt: true,
+          artifacts: {
+            where: {
+              isCurrent: true,
+              title: {
+                in: ['[SYSTEM] Requirement Spec', '[SYSTEM] Test Spec'],
+              },
+            },
+            select: {
+              title: true,
+              createdAt: true,
+            },
+          },
+          implementations: {
+            orderBy: { updatedAt: 'desc' },
+            select: {
+              uuid: true,
+              status: true,
+              buildStatus: true,
+              testStatus: true,
+              updatedAt: true,
+              artifacts: {
+                where: {
+                  isCurrent: true,
+                  OR: [
+                    { title: { startsWith: 'Implementation Manifest -' } },
+                    { title: { startsWith: 'Coherence Report -' } },
+                  ],
+                },
+                select: {
+                  title: true,
+                  content: true,
+                  createdAt: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const driftFlagFrequencies = {};
+  const projectSnapshots = projects.map((project) => {
+    const intakeConfig = project.intakeConfig || {};
+    const hasProjectDna = Boolean(intakeConfig.projectDna);
+    const hasBacklogContract = Boolean(intakeConfig.backlogContract);
+    const hasSolutionBlueprint = Boolean(intakeConfig.solutionBlueprint);
+
+    let requirementSpecCount = 0;
+    let testSpecCount = 0;
+    let implementationCount = 0;
+    let implementationManifestCount = 0;
+    let coherenceApprovedCount = 0;
+    let coherenceWarningCount = 0;
+    let coherenceBlockedCount = 0;
+    let coherenceUnknownCount = 0;
+    let latestCoherenceAt = null;
+
+    for (const task of project.tasks) {
+      if (task.artifacts.some((artifact) => artifact.title === '[SYSTEM] Requirement Spec')) {
+        requirementSpecCount += 1;
+      }
+      if (task.artifacts.some((artifact) => artifact.title === '[SYSTEM] Test Spec')) {
+        testSpecCount += 1;
+      }
+
+      for (const implementation of task.implementations) {
+        implementationCount += 1;
+
+        const manifestArtifact = startsWithTitle(implementation.artifacts, 'Implementation Manifest -');
+        if (manifestArtifact) {
+          implementationManifestCount += 1;
+        }
+
+        const coherenceArtifact = startsWithTitle(implementation.artifacts, 'Coherence Report -');
+        if (!coherenceArtifact) {
+          continue;
+        }
+
+        latestCoherenceAt =
+          !latestCoherenceAt || new Date(coherenceArtifact.createdAt) > new Date(latestCoherenceAt)
+            ? coherenceArtifact.createdAt
+            : latestCoherenceAt;
+
+        const parsed = parseJsonContent(coherenceArtifact.content);
+        const status = String(parsed?.status || '').toLowerCase();
+        countDriftFlags(driftFlagFrequencies, parsed?.driftFlags || []);
+
+        if (status === 'approved') {
+          coherenceApprovedCount += 1;
+        } else if (status === 'warning') {
+          coherenceWarningCount += 1;
+        } else if (status === 'blocked') {
+          coherenceBlockedCount += 1;
+        } else {
+          coherenceUnknownCount += 1;
+        }
+      }
+    }
+
+    const storyCount = project.tasks.length;
+    const requirementCoveragePercent = percent(requirementSpecCount, storyCount);
+    const testCoveragePercent = percent(testSpecCount, storyCount);
+    const manifestCoveragePercent = percent(implementationManifestCount, implementationCount);
+    const coherenceCoveragePercent = percent(
+      coherenceApprovedCount + coherenceWarningCount + coherenceBlockedCount + coherenceUnknownCount,
+      implementationCount
+    );
+
+    const coherenceScore = averageNullable([
+      hasProjectDna ? 100 : 0,
+      hasBacklogContract ? 100 : 0,
+      hasSolutionBlueprint ? 100 : 0,
+      requirementCoveragePercent,
+      testCoveragePercent,
+      manifestCoveragePercent,
+      coherenceCoveragePercent,
+    ]);
+
+    const alerts = [
+      ...(!hasProjectDna ? ['missing_project_dna'] : []),
+      ...(!hasBacklogContract ? ['missing_backlog_contract'] : []),
+      ...(!hasSolutionBlueprint ? ['missing_solution_blueprint'] : []),
+      ...(requirementCoveragePercent < 100 ? ['requirements_contract_gap'] : []),
+      ...(testCoveragePercent < 100 ? ['qa_contract_gap'] : []),
+      ...(manifestCoveragePercent < 100 ? ['implementation_manifest_gap'] : []),
+      ...(coherenceBlockedCount > 0 ? ['coherence_blocked'] : []),
+    ];
+
+    return {
+      projectUuid: project.uuid,
+      projectName: project.name,
+      status: project.status,
+      templateKey: project.templateKey,
+      updatedAt: project.updatedAt,
+      latestCoherenceAt,
+      coherenceScore,
+      contracts: {
+        projectDna: hasProjectDna,
+        backlogContract: hasBacklogContract,
+        solutionBlueprint: hasSolutionBlueprint,
+      },
+      stories: {
+        total: storyCount,
+        requirementSpecCount,
+        testSpecCount,
+        requirementCoveragePercent,
+        testCoveragePercent,
+      },
+      implementations: {
+        total: implementationCount,
+        implementationManifestCount,
+        manifestCoveragePercent,
+        coherenceCoveragePercent,
+        approved: coherenceApprovedCount,
+        warning: coherenceWarningCount,
+        blocked: coherenceBlockedCount,
+        unknown: coherenceUnknownCount,
+      },
+      alerts,
+    };
+  });
+
+  const summary = {
+    projects: projectSnapshots.length,
+    stories: projectSnapshots.reduce((sum, item) => sum + item.stories.total, 0),
+    implementations: projectSnapshots.reduce((sum, item) => sum + item.implementations.total, 0),
+    averageCoherenceScore: averageNullable(projectSnapshots.map((item) => item.coherenceScore)),
+    blockedImplementations: projectSnapshots.reduce((sum, item) => sum + item.implementations.blocked, 0),
+    warningImplementations: projectSnapshots.reduce((sum, item) => sum + item.implementations.warning, 0),
+    approvedImplementations: projectSnapshots.reduce((sum, item) => sum + item.implementations.approved, 0),
+  };
+
+  const contractCoverage = {
+    projectDnaPercent: percent(projectSnapshots.filter((item) => item.contracts.projectDna).length, projectSnapshots.length),
+    backlogContractPercent: percent(
+      projectSnapshots.filter((item) => item.contracts.backlogContract).length,
+      projectSnapshots.length
+    ),
+    solutionBlueprintPercent: percent(
+      projectSnapshots.filter((item) => item.contracts.solutionBlueprint).length,
+      projectSnapshots.length
+    ),
+    requirementSpecPercent: percent(
+      projectSnapshots.reduce((sum, item) => sum + item.stories.requirementSpecCount, 0),
+      summary.stories
+    ),
+    testSpecPercent: percent(
+      projectSnapshots.reduce((sum, item) => sum + item.stories.testSpecCount, 0),
+      summary.stories
+    ),
+    implementationManifestPercent: percent(
+      projectSnapshots.reduce((sum, item) => sum + item.implementations.implementationManifestCount, 0),
+      summary.implementations
+    ),
+    coherenceReportPercent: percent(
+      projectSnapshots.reduce(
+        (sum, item) =>
+          sum +
+          item.implementations.approved +
+          item.implementations.warning +
+          item.implementations.blocked +
+          item.implementations.unknown,
+        0
+      ),
+      summary.implementations
+    ),
+  };
+
+  const topDriftFlags = Object.entries(driftFlagFrequencies)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([flag, count]) => ({ flag, count }));
+
+  const alerts = [
+    ...(summary.blockedImplementations > 0
+      ? [
+          {
+            code: 'pipeline_coherence_blocked',
+            severity: 'high',
+            message: `Existem ${summary.blockedImplementations} implementacoes bloqueadas pelo guardiao de coerencia.`,
+          },
+        ]
+      : []),
+    ...(summary.averageCoherenceScore !== null && summary.averageCoherenceScore < 80
+      ? [
+          {
+            code: 'pipeline_coherence_score_low',
+            severity: 'medium',
+            message: `A coerencia media da esteira caiu para ${summary.averageCoherenceScore}.`,
+          },
+        ]
+      : []),
+    ...(contractCoverage.requirementSpecPercent < 100
+      ? [
+          {
+            code: 'pipeline_requirement_gap',
+            severity: 'medium',
+            message: 'Nem todas as stories possuem Requirement Spec estruturado.',
+          },
+        ]
+      : []),
+    ...(contractCoverage.testSpecPercent < 100
+      ? [
+          {
+            code: 'pipeline_test_gap',
+            severity: 'medium',
+            message: 'Nem todas as stories possuem Test Spec estruturado.',
+          },
+        ]
+      : []),
+  ];
+
+  return {
+    checkedAt: new Date().toISOString(),
+    summary,
+    contractCoverage,
+    topDriftFlags,
+    alerts,
+    projects: projectSnapshots,
+  };
 }
 
 export function buildBudgetPreview(agentName, payload) {

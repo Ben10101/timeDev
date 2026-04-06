@@ -31,6 +31,7 @@ const CASE_COMMANDS = {
   'ui-archetype-generalization': ['node scripts/agent-evals/validate-ui-archetypes.mjs'],
   'component-map-generalization': ['node scripts/agent-evals/validate-component-map.mjs'],
   'project-manager-backlog-quality': ['node scripts/agent-evals/validate-pm-backlog.mjs'],
+  'pipeline-coherence-observability': ['npm --prefix backend run test:pipeline-coherence:smoke'],
 };
 
 function usage() {

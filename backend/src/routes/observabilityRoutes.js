@@ -7,6 +7,7 @@ import {
   governanceOverviewController,
   healthController,
   operationalHistoryController,
+  pipelineCoherenceController,
   productionReadinessController,
   runtimeOperationsController,
 } from '../controllers/observabilityController.js';
@@ -21,5 +22,6 @@ router.get('/observability/audit', requireAuth, auditTrailController);
 router.get('/observability/governance', requireAuth, governanceOverviewController);
 router.get('/observability/history', requireAuth, operationalHistoryController);
 router.get('/observability/alerts', requireAuth, activeAlertsController);
+router.get('/observability/pipeline', requireAuth, pipelineCoherenceController);
 
 export default router;

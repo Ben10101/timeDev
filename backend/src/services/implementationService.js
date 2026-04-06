@@ -2104,6 +2104,60 @@ ${featureLines}
   };
 }
 
+function buildAppCompositionManifest({ project, generatedApp, routeSpecs = [], projectTemplate = null }) {
+  const sortedRouteSpecs = sortRouteSpecsByProjectTemplate(routeSpecs, projectTemplate);
+  const visualTone = projectTemplate?.frontend?.visualTone || 'profissional';
+  const navigationStyle = projectTemplate?.frontend?.navigationStyle || 'generic-suite';
+  const homeLabel = projectTemplate?.frontend?.homeLabel || 'Workspace do produto';
+  const productMode = project?.intakeConfig?.projectDna?.project?.productMode || null;
+  const experienceStyle = project?.intakeConfig?.projectDna?.project?.experienceStyle || null;
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    project: {
+      uuid: project?.uuid || null,
+      name: project?.name || null,
+      slug: project?.slug || null,
+      generatedAppUuid: generatedApp?.uuid || null,
+    },
+    identity: {
+      homeLabel,
+      navigationStyle,
+      visualTone,
+      productMode,
+      experienceStyle,
+    },
+    frontend: {
+      shell: {
+        frame: 'AppFrame',
+        header: 'AppHeader',
+        sidebar: 'SidebarNav',
+        home: 'StudioHome',
+      },
+      routes: sortedRouteSpecs.map((spec) => ({
+        featureKey: spec.featureKey,
+        path: spec.frontend?.suggestedRoute || null,
+        label: spec.frontend?.navigationLabel || spec.entityName || spec.featureKey,
+        pageComponentName: spec.frontend?.pageComponentName || null,
+        uiFamily:
+          spec.implementationManifest?.classification?.uiFamily ||
+          spec.frontend?.uiFamily ||
+          spec.structured?.classification?.uiFamily ||
+          null,
+      })),
+    },
+    backend: {
+      healthRoute: '/health',
+      routes: sortedRouteSpecs.map((spec) => ({
+        featureKey: spec.featureKey,
+        routeBase: spec.backend?.routeBase || null,
+        routerName: spec.backend?.routerName || null,
+      })),
+    },
+  };
+}
+
 async function getTaskWithArtifactsOrThrow(taskUuid) {
   const task = await prisma.task.findUnique({
     where: { uuid: taskUuid },
@@ -2114,6 +2168,10 @@ async function getTaskWithArtifactsOrThrow(taskUuid) {
           uuid: true,
           name: true,
           slug: true,
+          description: true,
+          vision: true,
+          templateKey: true,
+          intakeConfig: true,
           creator: {
             select: {
               uuid: true,
@@ -2133,6 +2191,304 @@ async function getTaskWithArtifactsOrThrow(taskUuid) {
   }
 
   return task;
+}
+
+function buildImplementationManifest(task, technicalSpec) {
+  const currentArtifacts = task?.artifacts || [];
+  const requirementSpec = parseJsonArtifactContent(
+    currentArtifacts.find((artifact) => artifact.title === '[SYSTEM] Requirement Spec' && artifact.isCurrent)
+  );
+  const testSpec = parseJsonArtifactContent(
+    currentArtifacts.find((artifact) => artifact.title === '[SYSTEM] Test Spec' && artifact.isCurrent)
+  );
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    source: 'implementation_planner',
+    task: {
+      uuid: task.uuid,
+      title: task.title,
+      description: task.description || null,
+    },
+    project: {
+      uuid: task.project?.uuid || null,
+      name: task.project?.name || null,
+      slug: task.project?.slug || null,
+    },
+    upstreamContracts: {
+      projectDna: task.project?.intakeConfig?.projectDna || null,
+      requirementSpec,
+      testSpec,
+    },
+    classification: {
+      featureKey: technicalSpec.featureKey,
+      domain: technicalSpec.structured?.classification?.domain || technicalSpec.featureKey,
+      entityName: technicalSpec.entityName,
+      intent: technicalSpec.structured?.classification?.intent || null,
+      templateKey: technicalSpec.structured?.classification?.templateKey || null,
+      screenTemplate:
+        technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud',
+      productMode: technicalSpec.frontend?.productMode || technicalSpec.structured?.classification?.productMode || null,
+      uiFamily:
+        technicalSpec.architecture?.screenTemplate === 'settings'
+          ? 'settings-console'
+          : technicalSpec.architecture?.screenTemplate === 'dashboard'
+            ? 'executive-cockpit'
+            : technicalSpec.architecture?.screenTemplate === 'workspace' &&
+                String(
+                  technicalSpec.frontend?.productMode || technicalSpec.structured?.classification?.productMode || ''
+                ).includes('planner')
+              ? 'planner-workbench'
+              : 'operations-workspace',
+    },
+    objective: technicalSpec.implementationObjective || null,
+    routes: {
+      frontend: technicalSpec.frontend?.suggestedRoute || null,
+      backend: technicalSpec.backend?.routeBase || null,
+    },
+    contracts: {
+      request: technicalSpec.shared?.requestContractName || null,
+      response: technicalSpec.shared?.responseContractName || null,
+      sharedContractPath: technicalSpec.shared?.contractPath || null,
+    },
+    files: technicalSpec.files || null,
+    frontend: {
+      featurePath: technicalSpec.frontend?.featurePath || null,
+      pageTitle: technicalSpec.frontend?.pageTitle || null,
+      navigationLabel: technicalSpec.frontend?.navigationLabel || null,
+      componentMap: technicalSpec.generationIR?.frontend?.screenSpec?.componentMap || null,
+      screenSpec: technicalSpec.generationIR?.frontend?.screenSpec || null,
+      dataSpec: technicalSpec.generationIR?.frontend?.dataSpec || null,
+    },
+    backend: {
+      modulePath: technicalSpec.backend?.modulePath || null,
+      routerName: technicalSpec.backend?.routerName || null,
+      serviceName: technicalSpec.backend?.serviceInstanceName || null,
+      operationMap: technicalSpec.generationIR?.backend?.moduleSpec?.operationMap || null,
+      moduleSpec: technicalSpec.generationIR?.backend?.moduleSpec || null,
+    },
+    architecture: {
+      sourceSummary: technicalSpec.architecture?.sourceSummary || null,
+    },
+    qualityTargets: {
+      reviewScore: 85,
+      validationScore: 80,
+      specialistApproval: true,
+    },
+  };
+}
+
+async function loadProjectCoherenceContracts(projectId) {
+  const systemTasks = await prisma.task.findMany({
+    where: {
+      projectId,
+      title: {
+        in: ['[SYSTEM] Backlog Master', '[SYSTEM] Architecture Master'],
+      },
+    },
+    select: {
+      title: true,
+      artifacts: {
+        where: { isCurrent: true },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          title: true,
+          artifactType: true,
+          content: true,
+          isApproved: true,
+        },
+      },
+    },
+  });
+
+  const backlogTask = systemTasks.find((task) => task.title === '[SYSTEM] Backlog Master');
+  const architectureTask = systemTasks.find((task) => task.title === '[SYSTEM] Architecture Master');
+
+  return {
+    backlogContract: parseJsonArtifactContent(
+      backlogTask?.artifacts?.find((artifact) => artifact.title === '[SYSTEM] Backlog Contract')
+    ),
+    architectureArtifact: architectureTask?.artifacts?.find((artifact) => artifact.artifactType === 'architecture') || null,
+  };
+}
+
+function buildCoherenceReport(task, technicalSpec, implementationManifest, coherenceContracts = {}) {
+  const requirementSpec = implementationManifest?.upstreamContracts?.requirementSpec || null;
+  const testSpec = implementationManifest?.upstreamContracts?.testSpec || null;
+  const projectDna = implementationManifest?.upstreamContracts?.projectDna || null;
+  const backlogContract = coherenceContracts.backlogContract || null;
+  const architectureArtifact = coherenceContracts.architectureArtifact || null;
+  const domainLanguage = Array.isArray(projectDna?.project?.domainLanguage) ? projectDna.project.domainLanguage : [];
+  const normalizedDomainTerms = domainLanguage.map((term) => normalizeSemanticText(term)).filter(Boolean);
+
+  const taskTokens = new Set(
+    normalizeSemanticText(task.title)
+      .split(/\s+/)
+      .filter((token) => token.length >= 4)
+  );
+  const isBacklogStoryMatch = (storyTitle = '') => {
+    const normalizedStoryTitle = normalizeSemanticText(storyTitle);
+    const normalizedTaskTitle = normalizeSemanticText(task.title);
+
+    if (!normalizedStoryTitle) return false;
+    if (normalizedStoryTitle === normalizedTaskTitle) return true;
+    if (normalizedStoryTitle.includes(normalizedTaskTitle) || normalizedTaskTitle.includes(normalizedStoryTitle)) {
+      return true;
+    }
+
+    const storyTokens = new Set(
+      normalizedStoryTitle
+        .split(/\s+/)
+        .filter((token) => token.length >= 4)
+    );
+    if (!storyTokens.size || !taskTokens.size) return false;
+
+    let intersection = 0;
+    for (const token of storyTokens) {
+      if (taskTokens.has(token)) intersection += 1;
+    }
+
+    const overlap = intersection / Math.max(storyTokens.size, taskTokens.size);
+    return overlap >= 0.6;
+  };
+
+  const taskInBacklog = Boolean(
+    backlogContract?.stories?.some((story) => isBacklogStoryMatch(story.title))
+  );
+
+  const semanticCorpus = normalizeSemanticText(
+    [
+      task.title,
+      task.description,
+      requirementSpec?.userStory,
+      ...(requirementSpec?.functionalRequirements || []),
+      ...(requirementSpec?.businessRules || []),
+      ...(testSpec?.scenarios || []),
+      ...(testSpec?.functionalCases || []),
+      technicalSpec.featureKey,
+      technicalSpec.backend?.routeBase,
+      technicalSpec.frontend?.suggestedRoute,
+      technicalSpec.summary,
+    ]
+      .flat()
+      .filter(Boolean)
+      .join('\n')
+  );
+
+  const matchedDomainTerms = normalizedDomainTerms.filter((term) => semanticCorpus.includes(term));
+  const missingDomainTerms = normalizedDomainTerms.filter((term) => !matchedDomainTerms.includes(term));
+
+  const allowedScreenFamilies = Array.isArray(projectDna?.designSystem?.allowedScreenFamilies)
+    ? projectDna.designSystem.allowedScreenFamilies
+    : [];
+  const actualUiFamily =
+    implementationManifest?.classification?.uiFamily ||
+    technicalSpec.frontend?.uiFamily ||
+    technicalSpec.structured?.classification?.uiFamily ||
+    null;
+  const actualScreenTemplate =
+    implementationManifest?.classification?.screenTemplate ||
+    technicalSpec.architecture?.screenTemplate ||
+    technicalSpec.structured?.classification?.screenTemplate ||
+    null;
+  const screenFamilyMatch = !allowedScreenFamilies.length || allowedScreenFamilies.includes(actualUiFamily);
+
+  const expectedProductMode = projectDna?.project?.productMode || null;
+  const actualProductMode = implementationManifest?.classification?.productMode || null;
+  const productModeMatch = !expectedProductMode || !actualProductMode || expectedProductMode === actualProductMode;
+
+  const driftFlags = [];
+  if (!projectDna) {
+    driftFlags.push({ severity: 'high', code: 'missing_project_dna', message: 'Project DNA ausente para a task.' });
+  }
+  if (!backlogContract) {
+    driftFlags.push({ severity: 'medium', code: 'missing_backlog_contract', message: 'Backlog Contract ausente no projeto.' });
+  }
+  if (!taskInBacklog) {
+    driftFlags.push({ severity: 'medium', code: 'task_not_in_backlog_contract', message: 'A task atual nao foi localizada no Backlog Contract.' });
+  }
+  if (!requirementSpec) {
+    driftFlags.push({ severity: 'high', code: 'missing_requirement_spec', message: 'Requirement Spec ausente para a task.' });
+  }
+  if (!testSpec) {
+    driftFlags.push({ severity: 'high', code: 'missing_test_spec', message: 'Test Spec ausente para a task.' });
+  }
+  if (!architectureArtifact?.content) {
+    driftFlags.push({ severity: 'high', code: 'missing_architecture', message: 'Arquitetura atual do projeto nao esta disponivel.' });
+  }
+  if (normalizedDomainTerms.length && !matchedDomainTerms.length) {
+    driftFlags.push({
+      severity: 'high',
+      code: 'domain_language_missing',
+      message: 'O dominio inferido para a implementacao nao preserva a linguagem central do projeto.',
+    });
+  }
+  if (!screenFamilyMatch) {
+    driftFlags.push({
+      severity: 'medium',
+      code: 'ui_family_outside_dna',
+      message: `A familia visual ${actualUiFamily || 'indefinida'} nao pertence as familias previstas no Project DNA.`,
+    });
+  }
+  if (!productModeMatch) {
+    driftFlags.push({
+      severity: 'medium',
+      code: 'product_mode_mismatch',
+      message: `O product mode ${actualProductMode || 'indefinido'} diverge do esperado ${expectedProductMode}.`,
+    });
+  }
+
+  const status = driftFlags.some((flag) => flag.severity === 'high')
+    ? 'blocked'
+    : driftFlags.length
+      ? 'warning'
+      : 'approved';
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    stage: 'pre_implementation_planning',
+    status,
+    task: {
+      uuid: task.uuid,
+      title: task.title,
+    },
+    alignment: {
+      taskInBacklog,
+      productMode: {
+        expected: expectedProductMode,
+        actual: actualProductMode,
+        match: productModeMatch,
+      },
+      screenTemplate: {
+        allowed: allowedScreenFamilies,
+        actual: actualScreenTemplate,
+      },
+      uiFamily: {
+        allowed: allowedScreenFamilies,
+        actual: actualUiFamily,
+        match: screenFamilyMatch,
+      },
+      domainLanguage: {
+        expected: domainLanguage,
+        matched: matchedDomainTerms,
+        missing: missingDomainTerms,
+      },
+      routes: {
+        frontend: implementationManifest?.routes?.frontend || null,
+        backend: implementationManifest?.routes?.backend || null,
+      },
+    },
+    upstreamContracts: {
+      hasProjectDna: Boolean(projectDna),
+      hasBacklogContract: Boolean(backlogContract),
+      hasRequirementSpec: Boolean(requirementSpec),
+      hasTestSpec: Boolean(testSpec),
+      hasArchitecture: Boolean(architectureArtifact?.content),
+    },
+    driftFlags,
+  };
 }
 
 async function ensureDevelopmentStageTask(projectId) {
@@ -4411,32 +4767,38 @@ function normalizeTechnicalSpec(rawSpec, task) {
   };
 }
 
-function buildImplementationPlan(task, generatedApp, technicalSpec) {
-  const screenTemplate = technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud';
+function buildImplementationPlan(task, generatedApp, technicalSpec, implementationManifest = null, coherenceReport = null) {
+  const screenTemplate =
+    implementationManifest?.classification?.screenTemplate ||
+    technicalSpec.architecture?.screenTemplate ||
+    technicalSpec.structured?.classification?.screenTemplate ||
+    'crud';
   const reuseHints = buildProjectMemoryReuseHints(technicalSpec.projectMemory, technicalSpec, task.title);
-  const sharedContractPath = technicalSpec.shared.contractPath;
+  const sharedContractPath = implementationManifest?.contracts?.sharedContractPath || technicalSpec.shared.contractPath;
   const backendFiles = [
-    `${technicalSpec.backend.modulePath}/service.ts`,
-    `${technicalSpec.backend.modulePath}/router.ts`,
-    `${technicalSpec.backend.modulePath}/index.ts`,
+    `${implementationManifest?.backend?.modulePath || technicalSpec.backend.modulePath}/service.ts`,
+    `${implementationManifest?.backend?.modulePath || technicalSpec.backend.modulePath}/router.ts`,
+    `${implementationManifest?.backend?.modulePath || technicalSpec.backend.modulePath}/index.ts`,
     'apps/api/src/server.ts',
   ];
   const frontendFiles = [
-    `${technicalSpec.frontend.featurePath}/page.tsx`,
-    `${technicalSpec.frontend.featurePath}/service.ts`,
-    `${technicalSpec.frontend.featurePath}/index.ts`,
+    `${implementationManifest?.frontend?.featurePath || technicalSpec.frontend.featurePath}/page.tsx`,
+    `${implementationManifest?.frontend?.featurePath || technicalSpec.frontend.featurePath}/service.ts`,
+    `${implementationManifest?.frontend?.featurePath || technicalSpec.frontend.featurePath}/index.ts`,
     'apps/web/src/App.tsx',
   ];
   const persistenceFiles = [technicalSpec.database.schemaPath];
-  const documentationFiles = [`docs/implementations/${technicalSpec.featureKey}.md`];
+  const documentationFiles = [`docs/implementations/${implementationManifest?.classification?.featureKey || technicalSpec.featureKey}.md`];
 
   return {
-    version: 3,
+    version: 4,
     taskUuid: task.uuid,
     generatedAppUuid: generatedApp.uuid,
     generatedAppRoot: generatedApp.rootPath,
     executionModel: 'goal_driven_incremental',
-    objective: technicalSpec.implementationObjective,
+    objective: implementationManifest?.objective || technicalSpec.implementationObjective,
+    implementationManifest,
+    coherenceReport,
     reuseGuidance: reuseHints,
     steps: [
       'Ler o contexto atual do monorepo gerado',
@@ -5161,15 +5523,21 @@ async function cleanupImplementationFiles(generatedAppRoot, implementation) {
 }
 
 async function updateApiServer(generatedAppRoot, routeSpecs, appSlug = 'generated-app') {
-  const uniqueRouteSpecs = Array.from(
-    new Map(routeSpecs.map((spec) => [`${spec.featureKey}:${spec.backend.routeBase}`, spec])).values()
-  );
+  const backendRoutes = Array.isArray(routeSpecs?.backend?.routes)
+    ? routeSpecs.backend.routes
+    : Array.from(new Map((routeSpecs || []).map((spec) => [`${spec.featureKey}:${spec.backend.routeBase}`, spec])).values()).map(
+        (spec) => ({
+          featureKey: spec.featureKey,
+          routeBase: spec.backend.routeBase,
+          routerName: spec.backend.routerName,
+        })
+      );
   const serverPath = path.join(generatedAppRoot, 'apps/api/src/server.ts');
-  const importLines = uniqueRouteSpecs
-    .map((spec) => `import { ${spec.backend.routerName} } from './modules/${spec.featureKey}/index'`)
+  const importLines = backendRoutes
+    .map((spec) => `import { ${spec.routerName} } from './modules/${spec.featureKey}/index'`)
     .join('\n');
-  const useLines = uniqueRouteSpecs
-    .map((spec) => `app.use('${spec.backend.routeBase}', ${spec.backend.routerName})`)
+  const useLines = backendRoutes
+    .map((spec) => `app.use('${spec.routeBase}', ${spec.routerName})`)
     .join('\n');
 
   const content = `import express from 'express'\nimport cors from 'cors'\nimport pino from 'pino'\n${importLines ? `${importLines}\n` : ''}\nconst app = express()\nconst logger = pino({ name: '${appSlug}-api' })\nconst port = Number(process.env.PORT || 3001)\nconst allowedOrigins = (process.env.FRONTEND_ORIGIN || '')\n  .split(',')\n  .map((item) => item.trim())\n  .filter(Boolean)\n\napp.use(\n  cors({\n    origin(origin, callback) {\n      if (!origin || !allowedOrigins.length || allowedOrigins.includes(origin)) {\n        return callback(null, true)\n      }\n\n      return callback(new Error(\`Origin not allowed: \${origin}\`))\n    },\n    credentials: true,\n  })\n)\napp.use(express.json({ limit: '1mb' }))\n\napp.get('/health', (_req, res) => {\n  res.json({ status: 'ok', app: '${appSlug}' })\n})\n\n${useLines}\n\napp.listen(port, () => {\n  logger.info({ port }, 'API running')\n})\n`;
@@ -5180,6 +5548,17 @@ async function updateApiServer(generatedAppRoot, routeSpecs, appSlug = 'generate
     relativePath: 'apps/api/src/server.ts',
     content,
     fileType: 'ts',
+  };
+}
+
+async function writeCompositionManifest(generatedAppRoot, compositionManifest) {
+  const relativePath = 'docs/system/app-composition.manifest.json';
+  const content = `${JSON.stringify(compositionManifest, null, 2)}\n`;
+  await writeText(path.join(generatedAppRoot, relativePath), content);
+  return {
+    relativePath,
+    content,
+    fileType: 'json',
   };
 }
 
@@ -5499,22 +5878,29 @@ async function updateWebApp(generatedAppRoot, routeSpecs, projectName, options =
       projectName,
       label: projectName,
     });
-  const uniqueRouteSpecs = sortRouteSpecsByProjectTemplate(
-    Array.from(new Map(routeSpecs.map((spec) => [`${spec.featureKey}:${spec.frontend.suggestedRoute}`, spec])).values()),
-    projectTemplate
-  );
+  const frontendRoutes = Array.isArray(routeSpecs?.frontend?.routes)
+    ? routeSpecs.frontend.routes
+    : sortRouteSpecsByProjectTemplate(
+        Array.from(new Map((routeSpecs || []).map((spec) => [`${spec.featureKey}:${spec.frontend.suggestedRoute}`, spec])).values()),
+        projectTemplate
+      ).map((spec) => ({
+        featureKey: spec.featureKey,
+        path: spec.frontend.suggestedRoute,
+        label: spec.frontend.navigationLabel || spec.entityName,
+        pageComponentName: spec.frontend.pageComponentName,
+      }));
   const appPath = path.join(generatedAppRoot, 'apps/web/src/App.tsx');
-  const importLines = uniqueRouteSpecs
+  const importLines = frontendRoutes
     .map(
       (spec) =>
-        `const ${spec.frontend.pageComponentName} = lazy(() => import('./features/${spec.featureKey}/index').then((module) => ({ default: module.${spec.frontend.pageComponentName} })))`
+        `const ${spec.pageComponentName} = lazy(() => import('./features/${spec.featureKey}/index').then((module) => ({ default: module.${spec.pageComponentName} })))`
     )
     .join('\n');
   const shellImport = `import { AppFrame, AppHeader, MetricRow, SidebarNav, StudioHome, SurfaceCard } from '../../../packages/ui/src/index.tsx'`;
-  const routeLines = uniqueRouteSpecs
+  const routeLines = frontendRoutes
     .map(
       (spec) =>
-        `  { path: '${spec.frontend.suggestedRoute}', label: '${escapeTemplate(spec.frontend.navigationLabel || spec.entityName)}', render: () => <${spec.frontend.pageComponentName} /> },`
+        `  { path: '${spec.path}', label: '${escapeTemplate(spec.label)}', render: () => <${spec.pageComponentName} /> },`
     )
     .join('\n');
   const homeDescription = escapeTemplate(
@@ -6593,6 +6979,20 @@ async function createRefactorPlanArtifact(task, implementation, technicalSpec, r
 
 async function materializeImplementationFiles({ task, implementation, technicalSpec, generatedApp, workstreamIds = null }) {
   const routeSpecs = await getIntegratedTechnicalSpecs(generatedApp.id, technicalSpec);
+  const projectTemplate = resolveProjectTemplate(
+    task.project?.templateKey || task.project?.intakeConfig?.projectTemplateKey || null,
+    {
+      projectName: task.project.name,
+      label: task.project.name,
+      summary: task.project.description || task.project.vision || '',
+    }
+  );
+  const compositionManifest = buildAppCompositionManifest({
+    project: task.project,
+    generatedApp,
+    routeSpecs,
+    projectTemplate,
+  });
   const featureFiles = Array.from(
     new Map(
       routeSpecs
@@ -6639,14 +7039,19 @@ async function materializeImplementationFiles({ task, implementation, technicalS
       workstreamId: 'persistence_and_docs',
     },
     {
-      ...(await updateApiServer(generatedApp.rootPath, routeSpecs, generatedApp.slug)),
+      ...(await updateApiServer(generatedApp.rootPath, compositionManifest, generatedApp.slug)),
       lane: 'backend',
       workstreamId: 'backend_module',
     },
     {
-      ...(await updateWebApp(generatedApp.rootPath, routeSpecs, task.project.name)),
+      ...(await updateWebApp(generatedApp.rootPath, compositionManifest, task.project.name, { projectTemplate })),
       lane: 'frontend',
       workstreamId: 'frontend_feature',
+    },
+    {
+      ...(await writeCompositionManifest(generatedApp.rootPath, compositionManifest)),
+      lane: 'shared',
+      workstreamId: 'shared_contracts',
     },
   ];
 
@@ -6997,14 +7402,33 @@ export async function planTaskImplementation(taskUuid, userUuid = null, options 
     projectMemory,
   };
   technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid, null, options);
+  const implementationManifest = buildImplementationManifest(task, technicalSpec);
+  const coherenceContracts = await loadProjectCoherenceContracts(task.project.id);
+  const coherenceReport = buildCoherenceReport(task, technicalSpec, implementationManifest, coherenceContracts);
+  const coherenceArtifact = await createCurrentArtifact(
+    task.id,
+    `Coherence Report - ${task.title}`,
+    JSON.stringify(coherenceReport, null, 2),
+    'coherence_guardian'
+  );
+  if (coherenceReport.status === 'blocked') {
+    const reasons = (coherenceReport.driftFlags || []).map((flag) => `- ${flag.message}`).join('\n');
+    throw new Error(`A task falhou no gate de coerencia antes do planejamento tecnico.\n${reasons}`);
+  }
   const technicalSpecArtifact = await createCurrentArtifact(
     task.id,
     `Technical Spec - ${task.title}`,
     JSON.stringify(technicalSpec, null, 2),
     'implementation_architect'
   );
+  const implementationManifestArtifact = await createCurrentArtifact(
+    task.id,
+    `Implementation Manifest - ${task.title}`,
+    JSON.stringify(implementationManifest, null, 2),
+    'implementation_architect'
+  );
 
-  const plan = buildImplementationPlan(task, generatedApp, technicalSpec);
+  const plan = buildImplementationPlan(task, generatedApp, technicalSpec, implementationManifest, coherenceReport);
   const strategy = buildExecutionStrategy(task, generatedApp, technicalSpec, projectMemory);
   const impactAnalysis = buildImplementationImpactAnalysis(task, generatedApp, technicalSpec, projectMemory);
   const planArtifact = await createCurrentArtifact(
@@ -7087,7 +7511,7 @@ export async function planTaskImplementation(taskUuid, userUuid = null, options 
   await prisma.taskArtifact.updateMany({
     where: {
       id: {
-        in: [technicalSpecArtifact.id, planArtifact.id, strategyArtifact.id, impactArtifact.id],
+        in: [coherenceArtifact.id, technicalSpecArtifact.id, implementationManifestArtifact.id, planArtifact.id, strategyArtifact.id, impactArtifact.id],
       },
     },
     data: {
