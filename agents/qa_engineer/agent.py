@@ -27,6 +27,8 @@ class QAEngineer:
         "Dados de teste",
         "Riscos e metricas",
         "Qualidade nao funcional",
+        "Rastreabilidade dos Criterios de Aceite",
+        "Smoke Minimo da Feature",
         "Cenarios de teste",
         "Casos de teste funcionais",
         "Usabilidade e acessibilidade",
@@ -55,6 +57,9 @@ class QAEngineer:
             "Fluxos Alternativos",
             "Fluxos de Excecao",
             "Regras de Negocio",
+            "Estados da Interface e Feedback",
+            "Validacoes e Dados",
+            "Permissoes e Auditoria",
             "Criterios de Aceite",
         ]
 
@@ -290,7 +295,9 @@ Regras gerais:
 Gere APENAS estas secoes em Markdown:
 
 ## Estrategia de testes
-Inclua testes unitarios, integracao, API, UI e E2E em no maximo 5 bullets.
+Inclua testes unitarios, integracao, API, UI e E2E em no maximo 6 bullets.
+- Cite explicitamente qual camada deve absorver o maior risco.
+- Diga quando algo e "Nao se aplica" em vez de inventar cobertura.
 
 ## Dados de teste
 Inclua dados validos, invalidos, limites e cenarios de falha em no maximo 5 bullets.
@@ -339,6 +346,33 @@ Para cada caso, use explicitamente as linhas:
                     body = self._extract_section(functional_result, title)
                     if not body:
                         raise RuntimeError(f"Bloco funcional sem secao {title}.")
+                    sections[title] = body
+
+                traceability_prompt = f"""
+{base_context}
+
+Gere APENAS estas secoes em Markdown:
+
+## Rastreabilidade dos Criterios de Aceite
+- Liste entre 3 e 6 bullets no formato:
+  - CA-01 -> testes/cenarios relacionados
+- Faça a ponte entre criterios de aceite, regras de negocio e testes planejados.
+- Se algum criterio nao estiver claro, sinalize como "Ponto a validar".
+
+## Smoke Minimo da Feature
+- Liste entre 3 e 5 verificacoes minimas de smoke que provam o fluxo principal.
+- Cubra o essencial de UI/API/fluxo quando aplicavel.
+- Se alguma camada nao se aplicar, escreva "Nao se aplica" na linha correspondente.
+"""
+                traceability_result = self._generate_block(
+                    traceability_prompt,
+                    qa_model,
+                    num_predict=os.getenv("QA_BLOCK_TRACEABILITY_NUM_PREDICT", "360"),
+                )
+                for title in ["Rastreabilidade dos Criterios de Aceite", "Smoke Minimo da Feature"]:
+                    body = self._extract_section(traceability_result, title)
+                    if not body:
+                        raise RuntimeError(f"Bloco de rastreabilidade sem secao {title}.")
                     sections[title] = body
 
                 quality_prompt = f"""

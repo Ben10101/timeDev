@@ -28,6 +28,9 @@ class RequirementsAnalyst:
         "Fluxos Alternativos",
         "Fluxos de Excecao",
         "Regras de Negocio",
+        "Estados da Interface e Feedback",
+        "Validacoes e Dados",
+        "Permissoes e Auditoria",
         "Criterios de Aceite (BDD)",
     ]
 
@@ -38,6 +41,9 @@ class RequirementsAnalyst:
         "fluxos alternativos": "Fluxos Alternativos",
         "fluxos de excecao": "Fluxos de Excecao",
         "regras de negocio": "Regras de Negocio",
+        "estados da interface e feedback": "Estados da Interface e Feedback",
+        "validacoes e dados": "Validacoes e Dados",
+        "permissoes e auditoria": "Permissoes e Auditoria",
         "criterios de aceite": "Criterios de Aceite (BDD)",
     }
 
@@ -185,6 +191,25 @@ SECAO OPCIONAL:
 
 ## Regras de Negocio
 (Lista numerada, clara e sem ambiguidade)
+
+---
+
+## Estados da Interface e Feedback
+- Liste estados relevantes como carregando, vazio, sucesso, erro, bloqueado ou "Nao se aplica".
+- Se a historia nao expuser interface direta, escreva "Nao se aplica" e justifique em uma linha.
+
+---
+
+## Validacoes e Dados
+- Liste campos, validacoes, formatos, obrigatoriedades, consistencia e "Ponto a validar" quando faltar evidência.
+- Se a historia nao exigir entrada de dados, escreva "Nao se aplica" e justifique em uma linha.
+
+---
+
+## Permissoes e Auditoria
+- Liste quem pode executar, aprovar, visualizar, editar, auditar ou "Nao se aplica".
+- Registre necessidade de rastreabilidade, historico ou justificativa quando houver decisao sensivel.
+- Se a historia nao exigir controle adicional, escreva "Nao se aplica" e justifique em uma linha.
 
 ---
 

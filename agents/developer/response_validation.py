@@ -100,6 +100,44 @@ def _story_similarity_key(title_line):
     return " ".join(normalized.split()[:8])
 
 
+def parse_bullets_from_section(section_text):
+    bullet_items = [
+        re.sub(r"^\s*(?:[-*]\s*|\d+[\.\)]\s*)", "", line).strip()
+        for line in (section_text or "").splitlines()
+        if re.match(r"^\s*(?:[-*]\s+|\d+[\.\)]\s+).+", line.strip())
+    ]
+    if len(bullet_items) >= 3:
+        return bullet_items
+
+    slices = []
+    current_title = ""
+    current_lines = []
+
+    def flush_current():
+        if not current_title:
+            return
+        body = " ".join(line.strip(" -*") for line in current_lines if line.strip()).strip()
+        if body:
+            slices.append(f"{current_title}: {body}")
+        else:
+            slices.append(current_title)
+
+    for raw_line in (section_text or "").splitlines():
+        line = raw_line.strip()
+        heading_match = re.match(r"^#{1,6}\s*(MVP|Fase\s+2|Fase\s+3)\b[:\-\s]*", line, re.IGNORECASE)
+        if heading_match:
+            flush_current()
+            current_title = re.sub(r"\s+", " ", heading_match.group(1)).strip()
+            current_lines = []
+            continue
+
+        if current_title and line:
+            current_lines.append(line)
+
+    flush_current()
+    return slices
+
+
 def validate_requirements_output(result):
     text, normalized = _normalize_text(result)
     required_sections = [
@@ -109,6 +147,9 @@ def validate_requirements_output(result):
         "fluxos alternativos",
         "fluxos de excecao",
         "regras de negocio",
+        "estados da interface e feedback",
+        "validacoes e dados",
+        "permissoes e auditoria",
         "criterios de aceite",
     ]
 
@@ -118,6 +159,41 @@ def validate_requirements_output(result):
 
     if not re.search(r"\bdado\b", normalized) or not re.search(r"\bquando\b", normalized) or not re.search(r"\bentao\b", normalized):
         return False, "Criterios de aceite sem estrutura BDD completa."
+
+    rf_matches = re.findall(r"###\s*rf[-\s]?\d+", normalized, re.IGNORECASE)
+    if len(rf_matches) < 1:
+        return False, "Requisitos funcionais sem RFs estruturados."
+
+    flow_section = re.search(r"##\s+fluxo principal([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    if not flow_section or len(re.findall(r"(?:^|\n)\s*\d+[\.\)]", flow_section.group(1))) < 3:
+        return False, "Fluxo principal sem passos suficientes."
+
+    rules_section = re.search(r"##\s+regras de negocio([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    if not rules_section or len(re.findall(r"(?:^|\n)\s*(?:\d+[\.\)]|[-*]\s+)", rules_section.group(1))) < 2:
+        return False, "Regras de negocio insuficientes."
+
+    interface_section = re.search(r"##\s+estados da interface e feedback([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    validations_section = re.search(r"##\s+validacoes e dados([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    permissions_section = re.search(r"##\s+permissoes e auditoria([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+
+    def _section_has_content_or_na(section_match):
+        if not section_match:
+            return False
+        body = section_match.group(1).strip()
+        if not body:
+            return False
+        if re.search(r"nao se aplica", body, re.IGNORECASE):
+            return True
+        return len(re.findall(r"(?:^|\n)\s*(?:\d+[\.\)]|[-*]\s+)", body)) >= 1 or len(body.split()) >= 6
+
+    if not _section_has_content_or_na(interface_section):
+        return False, "Estados da interface e feedback sem detalhe suficiente."
+
+    if not _section_has_content_or_na(validations_section):
+        return False, "Validacoes e dados sem detalhe suficiente."
+
+    if not _section_has_content_or_na(permissions_section):
+        return False, "Permissoes e auditoria sem detalhe suficiente."
 
     if "fim_do_refinamento" not in normalized:
         return False, "Marcador final do refinamento nao foi encontrado."
@@ -135,6 +211,8 @@ def validate_qa_output(result):
         "dados de teste",
         "riscos e metricas",
         "qualidade nao funcional",
+        "rastreabilidade dos criterios de aceite",
+        "smoke minimo da feature",
         "cenarios de teste",
         "casos de teste funcionais",
         "usabilidade e acessibilidade",
@@ -172,6 +250,16 @@ def validate_qa_output(result):
         normalized,
         "casos de teste funcionais",
         ["usabilidade e acessibilidade", "fim_do_plano_de_testes"],
+    )
+    traceability_section = extract_section_body(
+        normalized,
+        "rastreabilidade dos criterios de aceite",
+        ["smoke minimo da feature", "qualidade nao funcional", "cenarios de teste"],
+    )
+    smoke_section = extract_section_body(
+        normalized,
+        "smoke minimo da feature",
+        ["qualidade nao funcional", "cenarios de teste", "casos de teste funcionais"],
     )
     scenarios_section = extract_section_body(
         normalized,
@@ -220,6 +308,14 @@ def validate_qa_output(result):
 
     if covered_non_functional_topics < 3:
         return False, "Cobertura nao funcional insuficiente."
+
+    traceability_count = len(re.findall(r"(?:^|\n)\s*[-*]\s*ca-\d+", traceability_section, re.IGNORECASE))
+    if traceability_count < 2 and "ponto a validar" not in traceability_section:
+        return False, "Rastreabilidade dos criterios de aceite insuficiente."
+
+    smoke_items = len(re.findall(r"(?:^|\n)\s*[-*]\s+", smoke_section))
+    if smoke_items < 3 and "nao se aplica" not in smoke_section:
+        return False, "Smoke minimo da feature insuficiente."
 
     if "fim_do_plano_de_testes" not in normalized:
         return False, "Marcador final do plano de testes nao foi encontrado."
@@ -306,15 +402,33 @@ def validate_backlog_output(result):
             return 0
         return len(re.findall(r"(?:^|\n)\s*[-*]\s+", section_match.group(1)))
 
-    if _count_bullets(capabilities_section) < 3:
+    capabilities_count = _count_bullets(capabilities_section)
+    epics_count = _count_bullets(epics_section)
+
+    if capabilities_count < 4:
         return False, "Capacidades do produto insuficientes."
 
-    if _count_bullets(epics_section) < 3:
+    if epics_count < 4:
         return False, "Epicos recomendados insuficientes."
 
+    if capabilities_count > 6:
+        return False, "Capacidades do produto em excesso."
+
+    if epics_count > 6:
+        return False, "Epicos recomendados em excesso."
+
     release_text = release_section.group(1) if release_section else ""
-    if "mvp" not in release_text or "fase 2" not in release_text:
-        return False, "Fatias de release sem MVP e Fase 2 explicitos."
+    release_items = parse_bullets_from_section(release_text)
+    release_joined = " ".join(release_items)
+    if "mvp" not in release_joined or "fase 2" not in release_joined or "fase 3" not in release_joined:
+        return False, "Fatias de release sem MVP, Fase 2 e Fase 3 explicitos."
+
+    if len(release_items) < 3:
+        return False, "Fatias de release insuficientes."
+
+    mvp_line = next((item for item in release_items if "mvp" in item.lower()), "")
+    if not re.search(r"\b(fundacao|espinha|fluxo principal|primeira versao|base)\b", mvp_line, re.IGNORECASE):
+        return False, "MVP sem foco explicito na fundacao do produto."
 
     foundation_signals = [
         r"\bcriar\b",
@@ -328,6 +442,19 @@ def validate_backlog_output(result):
     covered_signals = sum(1 for pattern in foundation_signals if any(re.search(pattern, line, re.IGNORECASE) for line in normalized_story_lines))
     if covered_signals < 4:
         return False, "Backlog sem cobertura suficiente da espinha dorsal do produto."
+
+    lane_signal_groups = {
+        "fundacao": [r"\bcriar\b", r"\bcadastrar\b", r"\bregistrar\b", r"\bconfigurar\b", r"\bplanejar\b"],
+        "operacao": [r"\bacompanhar\b", r"\batualizar\b", r"\bexecut", r"\bmonitorar\b", r"\bstatus\b"],
+        "gestao": [r"\bvisualizar\b", r"\bconsultar\b", r"\bdashboard\b", r"\brelatorio\b", r"\bpainel\b", r"\bresumo\b"],
+        "governanca": [r"\baprovar\b", r"\bvalidar\b", r"\bautorizar\b", r"\bauditor", r"\bpermiss", r"\bgovernanca\b"],
+    }
+    covered_lanes = 0
+    for patterns in lane_signal_groups.values():
+        if any(any(re.search(pattern, line, re.IGNORECASE) for line in normalized_story_lines) for pattern in patterns):
+            covered_lanes += 1
+    if covered_lanes < 4:
+        return False, "Backlog sem cobertura suficiente de fundacao, operacao, gestao e governanca."
 
     # O marcador final continua sendo desejavel, mas nao deve derrubar um backlog
     # estruturalmente completo quando o modelo apenas esquece a linha final.

@@ -23,6 +23,12 @@ from agents.developer.response_validation import validate_backlog_output
 
 class ProjectManager:
     STORY_RANGE = (15, 25)
+    PLANNING_LANES = [
+        ("fundacao", "fundacao do produto", "cadastro inicial, configuracao basica, entidade principal e primeiro fluxo utilizavel"),
+        ("operacao", "operacao principal", "acompanhamento, execucao, atualizacao de status, filas e trabalho do dia a dia"),
+        ("gestao", "gestao e visibilidade", "consultas gerenciais, relatorios, dashboards e leitura consolidada"),
+        ("governanca", "governanca e controle", "aprovacoes, permissoes, auditoria, compliance e controle de mudancas"),
+    ]
     FOUNDATION_SIGNAL_PROMPTS = [
         {
             "key": "criar",
@@ -65,6 +71,53 @@ class ProjectManager:
         "administrador do sistema": "administrador",
         "operador": "atendente",
     }
+    ADVANCED_STORY_PATTERNS = [
+        r"\bwebhook\b",
+        r"\bintegrac",
+        r"\bexportar\b",
+        r"\bcsv\b",
+        r"\bsap\b",
+        r"\berp\b",
+        r"\bcrm\b",
+        r"\bmarketplace\b",
+        r"\bblockchain\b",
+        r"\bwearables?\b",
+        r"\bwhite-?label\b",
+        r"\bgamifica",
+        r"\bpegada de carbono\b",
+        r"\besg\b",
+        r"\broi\b",
+        r"\bia\b",
+        r"\bpredit",
+        r"\bbenchmark",
+    ]
+    FOUNDATION_FRONTLOAD_RULES = [
+        ("criar", r"\b(criar|cadastrar|registrar|abrir)\b"),
+        ("configurar", r"\b(configurar|definir|planejar|organizar|montar)\b"),
+        ("visualizar", r"\b(visualizar|consultar|listar|buscar|resumo|painel)\b"),
+        ("acompanhar", r"\b(acompanhar|monitorar|atualizar|gerenciar|status)\b"),
+        ("aprovar", r"\b(aprovar|validar|autorizar|revisar)\b"),
+    ]
+    CORE_PACK_REQUIREMENTS = [
+        ("criar_evento", "Criar a entidade principal do produto"),
+        ("definir_escopo", "Definir escopo, configuracao ou planejamento inicial"),
+        ("registrar_orcamento", "Registrar orcamento ou informacao operacional central"),
+        ("cadastrar_fornecedor", "Cadastrar fornecedor, recurso ou parceiro essencial"),
+        ("cadastrar_convidado", "Cadastrar convidado, participante ou publico principal"),
+        ("aprovar_fluxo", "Aprovar ou validar o fluxo basico"),
+        ("visualizar_resumo", "Visualizar resumo ou painel inicial do trabalho"),
+        ("acompanhar_status", "Acompanhar status ou atualizacao operacional"),
+    ]
+    CORE_PACK_SLOTS = [
+        ("criar_evento", "criar o evento principal com campos basicos"),
+        ("definir_escopo", "definir escopo ou planejamento inicial do evento"),
+        ("registrar_orcamento", "registrar orcamento inicial ou categorias de custo"),
+        ("cadastrar_fornecedor", "cadastrar fornecedor ou recurso essencial"),
+        ("cadastrar_convidado", "cadastrar convidado, participante ou lista inicial"),
+        ("aprovar_fluxo", "aprovar ou validar o fluxo basico do evento"),
+        ("visualizar_resumo", "visualizar resumo inicial ou painel do evento"),
+        ("acompanhar_status", "acompanhar ou atualizar status/andamento do trabalho"),
+    ]
 
     def __init__(self, project_id):
         self.project_id = project_id
@@ -81,6 +134,125 @@ class ProjectManager:
         if len(text) <= 1800:
             return text
         return text[:1800].rsplit(" ", 1)[0] + "..."
+
+    def _infer_core_pack_terms(self, base_context):
+        semantic_source = (base_context or "").strip()
+        briefing_match = re.search(
+            r"\bBRIEFING\b\s*(.*?)(?=\n(?:REGRAS GERAIS|EXPECTATIVA|PLANO ESTRUTURAL DO BACKLOG|## )\b|$)",
+            semantic_source,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if briefing_match and briefing_match.group(1).strip():
+            semantic_source = briefing_match.group(1).strip()
+
+        _, normalized = self._normalize_text(semantic_source)
+
+        entity_label = "item principal"
+        entity_article = "o"
+        if re.search(r"\bevento|credenci|convidad\b", normalized):
+            entity_label = "evento"
+            entity_article = "o"
+        elif re.search(r"\bvisita|visitante|portaria\b", normalized):
+            entity_label = "visita"
+            entity_article = "a"
+        elif re.search(r"\bchamad|ticket|incidente|suporte\b", normalized):
+            entity_label = "chamado"
+            entity_article = "o"
+        elif re.search(r"\breembolso|despesa|prestacao de contas\b", normalized):
+            entity_label = "reembolso"
+            entity_article = "o"
+        elif re.search(r"\bcurso|matricula|aluno|ead\b", normalized):
+            entity_label = "curso"
+            entity_article = "o"
+        elif re.search(r"\bcontrato|fornecedor|compra\b", normalized):
+            entity_label = "contrato"
+            entity_article = "o"
+
+        participant_label = "participante"
+        if re.search(r"\bconvidad\b", normalized):
+            participant_label = "convidado"
+        elif re.search(r"\bcredenci\b", normalized):
+            participant_label = "participante"
+        elif re.search(r"\bvisitante|visita\b", normalized):
+            participant_label = "visitante"
+        elif re.search(r"\baluno|matricula\b", normalized):
+            participant_label = "aluno"
+        elif re.search(r"\bcolaborador|usuario interno\b", normalized):
+            participant_label = "colaborador"
+
+        supplier_label = "recurso essencial"
+        if re.search(r"\bfornecedor|prestador|parceiro|buffet|espaco|servico\b", normalized):
+            supplier_label = "fornecedor"
+        elif re.search(r"\bequipe|responsavel|area interna\b", normalized):
+            supplier_label = "responsavel operacional"
+
+        baseline_label = "registro operacional inicial"
+        baseline_article = "o"
+        if re.search(r"\borcamento|custo|verba|despesa|financeir\b", normalized):
+            baseline_label = "orcamento"
+            baseline_article = "o"
+        elif entity_label == "visita":
+            baseline_label = "dados iniciais de autorizacao"
+            baseline_article = "os"
+        elif entity_label == "chamado":
+            baseline_label = "classificacao inicial"
+            baseline_article = "a"
+        elif entity_label == "curso":
+            baseline_label = "configuracao inicial"
+            baseline_article = "a"
+
+        summary_label = f"resumo do {entity_label}"
+        if entity_label in {"visita", "chamado", "reembolso", "curso", "contrato"}:
+            summary_label = f"resumo da {entity_label}" if entity_label in {"visita"} else f"resumo do {entity_label}"
+
+        owner_persona = "Mariana, coordenadora operacional"
+        finance_persona = "Carlos, analista financeiro"
+        support_persona = "Felipe, assistente operacional"
+        approver_persona = "Roberto, gestor responsavel"
+
+        if entity_label == "evento":
+            owner_persona = "Mariana, coordenadora de eventos"
+            finance_persona = "Carlos, analista financeiro"
+            support_persona = "Felipe, assistente de eventos"
+            approver_persona = "Roberto, diretor financeiro"
+        elif entity_label == "visita":
+            owner_persona = "Patricia, supervisora de recepcao"
+            finance_persona = "Luciana, analista administrativa"
+            support_persona = "Bruno, assistente de recepcao"
+            approver_persona = "Rafael, gestor da unidade"
+        elif entity_label == "chamado":
+            owner_persona = "Mariana, coordenadora de suporte"
+            finance_persona = "Carlos, analista operacional"
+            support_persona = "Felipe, atendente"
+            approver_persona = "Roberto, gestor de suporte"
+
+        return {
+            "entity_label": entity_label,
+            "entity_article": entity_article,
+            "participant_label": participant_label,
+            "supplier_label": supplier_label,
+            "baseline_label": baseline_label,
+            "baseline_article": baseline_article,
+            "summary_label": summary_label,
+            "owner_persona": owner_persona,
+            "finance_persona": finance_persona,
+            "support_persona": support_persona,
+            "approver_persona": approver_persona,
+        }
+
+    def _article_for_term(self, term):
+        _, normalized = self._normalize_text(term)
+        if re.search(r"\bdados\b", normalized):
+            return "os"
+        if normalized.endswith("a") or normalized.endswith("cao") or normalized.endswith("sao"):
+            return "a"
+        return "o"
+
+    def _prep_article_for_entity(self, article):
+        return "da" if article == "a" else "do"
+
+    def _article_for_summary(self, summary_label):
+        return "o"
 
     def _is_unusable_llm_response(self, result):
         if not result or is_error_text_response(result):
@@ -225,6 +397,125 @@ class ProjectManager:
 
         return True
 
+    def _is_advanced_story(self, story_block):
+        title = self._story_seed_title(story_block)
+        _, normalized = self._normalize_text(title)
+        return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in self.ADVANCED_STORY_PATTERNS)
+
+    def _story_priority_score(self, story_block):
+        title = self._story_seed_title(story_block)
+        _, normalized = self._normalize_text(title)
+
+        score = 0
+        if re.search(r"\b(criar|cadastrar|registrar|abrir)\b", normalized):
+            score += 5
+        if re.search(r"\b(configurar|definir|planejar|montar|organizar)\b", normalized):
+            score += 4
+        if re.search(r"\b(aprovar|validar|autorizar|revisar)\b", normalized):
+            score += 4
+        if re.search(r"\b(visualizar|consultar|listar|resumo|painel)\b", normalized):
+            score += 3
+        if re.search(r"\b(acompanhar|monitorar|atualizar|gerenciar|status)\b", normalized):
+            score += 3
+        if re.search(r"\b(fornecedor|orcamento|cronograma|convidad|credenciamento|evento)\b", normalized):
+            score += 2
+        if self._is_advanced_story(story_block):
+            score -= 6
+        return score
+
+    def _story_stage_rank(self, story_block):
+        title = self._story_seed_title(story_block)
+        _, normalized = self._normalize_text(title)
+
+        if re.search(r"\b(criar|cadastrar|registrar|abrir)\b", normalized) and re.search(r"\bevento\b", normalized):
+            return 1
+        if re.search(r"\b(definir|configurar|planejar|montar|organizar)\b", normalized) and re.search(r"\b(escopo|evento|workspace|conta|categoria|cronograma)\b", normalized):
+            return 2
+        if re.search(r"\b(cadastrar|registrar|definir|inserir)\b", normalized) and re.search(r"\b(orcamento|custo|verba|despesa)\b", normalized):
+            return 3
+        if re.search(r"\b(cadastrar|registrar|vincular|gerenciar)\b", normalized) and re.search(r"\bfornecedor|parceiro|prestador\b", normalized):
+            return 4
+        if re.search(r"\b(cadastrar|registrar|confirmar|gerar)\b", normalized) and re.search(r"\b(convidad|participante|credencial|check-?in)\b", normalized):
+            return 5
+        if re.search(r"\b(aprovar|validar|autorizar|revisar)\b", normalized):
+            return 6
+        if re.search(r"\b(visualizar|consultar|listar)\b", normalized) and re.search(r"\b(resumo|painel|evento|status|orcamento)\b", normalized):
+            return 7
+        if re.search(r"\b(acompanhar|monitorar|atualizar|gerenciar|alterar)\b", normalized) and re.search(r"\b(status|andamento|evento|tarefa|execucao)\b", normalized):
+            return 8
+        if self._is_advanced_story(story_block):
+            return 20
+        return 12
+
+    def _prioritize_story_blocks(self, story_blocks):
+        prioritized = sorted(
+            story_blocks,
+            key=lambda block: (
+                self._story_priority_score(block),
+                -len(self._story_seed_title(block)),
+            ),
+            reverse=True,
+        )
+        return prioritized
+
+    def _sequence_story_blocks_for_mvp(self, story_blocks, *, window=8):
+        head = list(story_blocks[:window])
+        tail = list(story_blocks[window:])
+        head = sorted(
+            head,
+            key=lambda block: (
+                self._story_stage_rank(block),
+                -self._story_priority_score(block),
+                self._story_seed_title(block),
+            ),
+        )
+        tail = sorted(
+            tail,
+            key=lambda block: (
+                self._story_stage_rank(block),
+                -self._story_priority_score(block),
+                self._story_seed_title(block),
+            ),
+        )
+        return head + tail
+
+    def _frontload_foundation_coverage(self, story_blocks, window=8):
+        selected = story_blocks[:window]
+        covered = set()
+        for block in selected:
+            title = self._story_seed_title(block)
+            _, normalized = self._normalize_text(title)
+            for key, pattern in self.FOUNDATION_FRONTLOAD_RULES:
+                if re.search(pattern, normalized, re.IGNORECASE):
+                    covered.add(key)
+        return covered
+
+    def _core_pack_coverage(self, story_blocks, window=8):
+        selected = story_blocks[:window]
+        coverage = set()
+
+        for block in selected:
+            title = self._story_seed_title(block)
+            _, normalized = self._normalize_text(title)
+            if re.search(r"\b(criar|cadastrar|registrar|abrir)\b", normalized) and re.search(r"\bevento\b", normalized):
+                coverage.add("criar_evento")
+            if re.search(r"\b(definir|configurar|planejar|montar|organizar)\b", normalized):
+                coverage.add("definir_escopo")
+            if re.search(r"\b(orcamento|custo|verba)\b", normalized) and re.search(r"\b(registrar|definir|visualizar|controlar)\b", normalized):
+                coverage.add("registrar_orcamento")
+            if re.search(r"\bfornecedor|parceiro|prestador\b", normalized) and re.search(r"\b(criar|cadastrar|registrar|vincular|gerenciar)\b", normalized):
+                coverage.add("cadastrar_fornecedor")
+            if re.search(r"\b(convidad|participante|publico)\b", normalized) and re.search(r"\b(criar|cadastrar|registrar|confirmar|gerenciar)\b", normalized):
+                coverage.add("cadastrar_convidado")
+            if re.search(r"\b(aprovar|validar|autorizar|revisar)\b", normalized):
+                coverage.add("aprovar_fluxo")
+            if re.search(r"\b(visualizar|consultar|listar)\b", normalized) and re.search(r"\b(resumo|painel|evento|orcamento|status)\b", normalized):
+                coverage.add("visualizar_resumo")
+            if re.search(r"\b(acompanhar|monitorar|atualizar|gerenciar)\b", normalized) and re.search(r"\b(status|evento|execucao|andamento)\b", normalized):
+                coverage.add("acompanhar_status")
+
+        return coverage
+
     def _dedupe_and_polish_stories(self, story_blocks):
         cleaned = []
         seen = set()
@@ -329,10 +620,405 @@ class ProjectManager:
 
     def _extract_bullet_lines(self, content):
         return [
-            re.sub(r"^\s*[-*]\s*", "", line).strip()
+            re.sub(r"^\s*(?:[-*]\s*|\d+[\.\)]\s*)", "", line).strip().strip("*").strip()
             for line in (content or "").splitlines()
-            if re.match(r"^\s*[-*]\s+.+", line.strip())
+            if re.match(r"^\s*(?:[-*]\s+|\d+[\.\)]\s+).+", line.strip())
         ]
+
+    def _extract_release_slices(self, content):
+        bullet_lines = self._extract_bullet_lines(content)
+        if len(bullet_lines) >= 3:
+            return self._normalize_release_slices(bullet_lines)
+
+        slices = []
+        current_title = ""
+        current_lines = []
+
+        def flush_current():
+            if not current_title:
+                return
+            body = " ".join(line.strip(" -*") for line in current_lines if line.strip()).strip()
+            if body:
+                slices.append(f"{current_title}: {body}")
+            else:
+                slices.append(current_title)
+
+        for raw_line in (content or "").splitlines():
+            line = raw_line.strip()
+            heading_match = re.match(r"^#{1,6}\s*(MVP|Fase\s+2|Fase\s+3)\b[:\-\s]*", line, re.IGNORECASE)
+            if heading_match:
+                flush_current()
+                current_title = re.sub(r"\s+", " ", heading_match.group(1)).strip()
+                current_lines = []
+                continue
+
+            if current_title and line:
+                current_lines.append(line)
+
+        flush_current()
+        return self._normalize_release_slices(slices)
+
+    def _normalize_release_slices(self, release_slices):
+        normalized = [item.strip() for item in (release_slices or []) if item and item.strip()]
+        adjusted = []
+        for item in normalized:
+            lowered = item.lower()
+            if "mvp" in lowered and not re.search(r"\b(fundacao|espinha|fluxo principal|primeira versao|base)\b", lowered, re.IGNORECASE):
+                if ":" in item:
+                    head, tail = item.split(":", 1)
+                    item = f"{head}: foco na espinha dorsal do produto, {tail.strip()}"
+                else:
+                    item = f"{item} com foco na espinha dorsal do produto"
+            adjusted.append(item)
+        return adjusted
+
+    def _build_default_release_slices(self, overview, capabilities, epics):
+        capability_preview = ", ".join(item.split("**")[0].strip(" -*") for item in capabilities[:3] if item).strip()
+        epic_preview = ", ".join(item.split("**")[0].strip(" -*") for item in epics[:3] if item).strip()
+        mvp_focus = capability_preview or "criacao da entidade principal, fluxo basico e operacao inicial"
+        phase2_focus = epic_preview or "expansao operacional, controles e visibilidade gerencial"
+        return [
+            f"MVP: foco na espinha dorsal do produto, priorizando {mvp_focus}. O que fica para depois: automacoes sofisticadas, integracoes avancadas e analytics profundo.",
+            f"Fase 2: foco em ampliar a operacao com {phase2_focus}. O que fica para depois: inteligencia avancada, ecossistema aberto e features premium.",
+            "Fase 3: foco em inteligencia, automacao avancada e expansao do produto. O que fica para depois: iniciativas experimentais e especializacoes de nicho.",
+        ]
+
+    def _build_planning_context(self, overview, capabilities, epics, release_slices):
+        capabilities_text = "\n".join(f"- {item}" for item in capabilities if item).strip() or "- Sem capacidades consolidadas."
+        epics_text = "\n".join(f"- {item}" for item in epics if item).strip() or "- Sem epicos consolidados."
+        releases_text = "\n".join(f"- {item}" for item in release_slices if item).strip() or "- MVP: espinha dorsal do produto."
+        return (
+            "PLANO ESTRUTURAL DO BACKLOG\n"
+            f"## Visao Geral\n{(overview or '').strip()}\n\n"
+            f"## Capacidades do Produto\n{capabilities_text}\n\n"
+            f"## Epicos Recomendados\n{epics_text}\n\n"
+            f"## Fatias de Release\n{releases_text}"
+        ).strip()
+
+    def _generate_backlog_blueprint(self, base_context):
+        lane_text = "\n".join(
+            f"- {label}: {guidance}" for _, label, guidance in self.PLANNING_LANES
+        )
+        prompt = f"""
+{base_context}
+
+TAREFA
+Gere APENAS as secoes abaixo em Markdown:
+
+## Visao Geral
+## Capacidades do Produto
+## Epicos Recomendados
+## Fatias de Release
+
+REGRAS
+- A visao geral deve resumir problema, objetivo e primeira versao do produto em no maximo 5 linhas.
+- Gere entre 4 e 6 capacidades do produto.
+- Gere entre 4 e 6 epicos recomendados.
+- Gere exatamente 3 fatias de release: MVP, Fase 2 e Fase 3.
+- O MVP deve cobrir a espinha dorsal do produto.
+- Cada fatia deve explicitar foco e o que fica para depois.
+- Distribua capacidades e epicos cobrindo estes eixos:
+{lane_text}
+- Nao escreva user stories nesta resposta.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLUEPRINT_NUM_PREDICT", "900"),
+        )
+        overview = self._extract_section(result, "Visao Geral")
+        capabilities = self._extract_bullet_lines(self._extract_section(result, "Capacidades do Produto"))
+        epics = self._extract_bullet_lines(self._extract_section(result, "Epicos Recomendados"))
+        release_slices = self._extract_release_slices(self._extract_section(result, "Fatias de Release"))
+
+        if not overview:
+            raise RuntimeError("Planner do PM nao gerou visao geral.")
+        if len(capabilities) < 4:
+            raise RuntimeError("Planner do PM gerou poucas capacidades.")
+        if len(epics) < 4:
+            raise RuntimeError("Planner do PM gerou poucos epicos.")
+        normalized_release_text = " ".join(release_slices).lower()
+        if len(release_slices) < 3 or "mvp" not in normalized_release_text or "fase 2" not in normalized_release_text or "fase 3" not in normalized_release_text:
+            release_slices = self._generate_simple_bullet_section(
+                base_context,
+                section_title="Fatias de Release",
+                task_label="releases",
+                rules="- Liste exatamente 3 fatias de release: MVP, Fase 2 e Fase 3.\n- Em cada item, diga o foco da fatia e o que fica para depois.\n- O MVP deve citar explicitamente a espinha dorsal, fundacao ou fluxo principal.\n- Nao escreva user stories.",
+                num_predict=os.getenv("PROJECT_MANAGER_BLOCK_RELEASES_NUM_PREDICT", "420"),
+            )
+            normalized_release_text = " ".join(release_slices).lower()
+
+        if len(release_slices) < 3 or "mvp" not in normalized_release_text or "fase 2" not in normalized_release_text or "fase 3" not in normalized_release_text:
+            release_slices = self._build_default_release_slices(overview, capabilities, epics)
+            normalized_release_text = " ".join(release_slices).lower()
+
+        if len(release_slices) < 3:
+            raise RuntimeError("Planner do PM gerou poucas fatias de release.")
+        if "mvp" not in normalized_release_text or "fase 2" not in normalized_release_text or "fase 3" not in normalized_release_text:
+            raise RuntimeError("Planner do PM nao marcou MVP, Fase 2 e Fase 3 explicitamente.")
+
+        return overview.strip(), capabilities[:6], epics[:6], release_slices[:3]
+
+    def _estimate_story_lane(self, story_block):
+        title = self._story_seed_title(story_block)
+        _, normalized = self._normalize_text(title)
+        lane_patterns = {
+            "fundacao": r"\b(criar|cadastrar|registrar|abrir|definir|configurar|planejar)\b",
+            "operacao": r"\b(atualizar|acompanhar|executar|monitorar|registrar ocorrencia|fila|status)\b",
+            "gestao": r"\b(visualizar|consultar|relatorio|dashboard|painel|resumo)\b",
+            "governanca": r"\b(aprovar|validar|autorizar|auditar|permiss|governanca|controle)\b",
+        }
+        for lane, pattern in lane_patterns.items():
+            if re.search(pattern, normalized, re.IGNORECASE):
+                return lane
+        return "operacao"
+
+    def _ensure_lane_story_coverage(self, base_context, story_blocks, *, min_stories, max_stories):
+        consolidated = list(story_blocks)
+        covered = {self._estimate_story_lane(block) for block in consolidated}
+        missing_lanes = [lane for lane, _, _ in self.PLANNING_LANES if lane not in covered]
+        if not missing_lanes:
+            return consolidated[:max_stories]
+
+        focus_lines = []
+        for lane, label, guidance in self.PLANNING_LANES:
+            if lane in missing_lanes:
+                focus_lines.append(f"- {label}: {guidance}")
+
+        existing_titles = "\n".join(f"- {self._story_seed_title(block)}" for block in consolidated[:30]) or "- Nenhuma historia consolidada."
+        prompt = f"""
+{base_context}
+
+HISTORIAS JA CONSOLIDADAS
+{existing_titles}
+
+EIXOS QUE AINDA FALTAM NO BACKLOG
+{chr(10).join(focus_lines)}
+
+TAREFA
+Gere APENAS esta secao em Markdown:
+
+## Historias de Usuario
+
+REGRAS
+- Gere entre {len(missing_lanes)} e {len(missing_lanes) + 2} historias.
+- Cubra SOMENTE os eixos ausentes.
+- Nao repita nem reformule historias ja consolidadas.
+- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Nao invente escopo fora do briefing.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLOCK_LANE_COVERAGE_NUM_PREDICT", "850"),
+        )
+        extra_section = self._extract_section(result, "Historias de Usuario")
+        extra_blocks = self._extract_story_lines(extra_section)
+        if extra_blocks:
+            consolidated = self._dedupe_and_polish_stories(consolidated + extra_blocks)
+            consolidated = self._ensure_minimum_story_count(
+                base_context,
+                consolidated,
+                min_stories=min_stories,
+                max_stories=max_stories,
+            )
+        return consolidated[:max_stories]
+
+    def _generate_mvp_frontload_stories(self, base_context, existing_story_blocks):
+        existing_titles = [
+            self._story_seed_title(block)
+            for block in existing_story_blocks
+            if block and self._story_seed_title(block)
+        ]
+        existing_titles_text = "\n".join(f"- {title}" for title in existing_titles[:30]) or "- Nenhuma historia consolidada."
+
+        prompt = f"""
+{base_context}
+
+HISTORIAS JA CONSOLIDADAS
+{existing_titles_text}
+
+TAREFA
+Gere APENAS a secao abaixo em Markdown:
+
+## Historias de Usuario
+
+REGRAS
+- Gere entre 6 e 8 historias fundadoras para abrir o backlog.
+- Priorize estas coberturas no comeco do produto:
+  - criar a entidade principal
+  - definir escopo, configuracao ou planejamento inicial
+  - cadastrar recursos ou fornecedores essenciais
+  - registrar orcamento ou informacao operacional central
+  - aprovar ou validar o fluxo basico
+  - visualizar resumo inicial do trabalho
+  - acompanhar atualizacao de status
+- Evite integrações, webhooks, exportacoes, IA, ESG, ROI, marketplace, analytics avancado e automacoes sofisticadas.
+- Nao repita nem reformule historias ja consolidadas.
+- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Nao invente escopo fora do briefing.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLOCK_FRONTLOAD_NUM_PREDICT", "900"),
+        )
+        frontload_section = self._extract_section(result, "Historias de Usuario")
+        if not frontload_section:
+            return []
+        return self._extract_story_lines(frontload_section)
+
+    def _generate_core_pack_stories(self, base_context, existing_story_blocks, missing_requirements):
+        if not missing_requirements:
+            return []
+
+        existing_titles = [
+            self._story_seed_title(block)
+            for block in existing_story_blocks
+            if block and self._story_seed_title(block)
+        ]
+        existing_titles_text = "\n".join(f"- {title}" for title in existing_titles[:30]) or "- Nenhuma historia consolidada."
+        requirement_lines = "\n".join(f"- {label}" for _key, label in missing_requirements)
+
+        prompt = f"""
+{base_context}
+
+HISTORIAS JA CONSOLIDADAS
+{existing_titles_text}
+
+CORE PACK OBRIGATORIO AINDA FALTANTE
+{requirement_lines}
+
+TAREFA
+Gere APENAS a secao abaixo em Markdown:
+
+## Historias de Usuario
+
+REGRAS
+- Gere entre {len(missing_requirements)} e {len(missing_requirements) + 1} historias.
+- Cubra SOMENTE os itens faltantes do core pack.
+- Escreva historias claramente fundadoras, de MVP, e evite qualquer sofisticacao desnecessaria.
+- Nao use integracoes, webhooks, exportacoes, IA, ESG, ROI, marketplace, analytics avancado, templates complexos ou automacoes sofisticadas.
+- Nao repita nem reformule historias ja consolidadas.
+- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Nao invente escopo fora do briefing.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLOCK_CORE_PACK_NUM_PREDICT", "950"),
+        )
+        section = self._extract_section(result, "Historias de Usuario")
+        if not section:
+            return []
+        return self._extract_story_lines(section)
+
+    def _generate_fixed_core_pack_stories(self, base_context):
+        inferred = self._infer_core_pack_terms(base_context)
+        entity_label = inferred["entity_label"]
+        entity_article = inferred["entity_article"]
+        participant_label = inferred["participant_label"]
+        supplier_label = inferred["supplier_label"]
+        baseline_label = inferred["baseline_label"]
+        baseline_article = inferred["baseline_article"]
+        summary_label = inferred["summary_label"]
+        owner_persona = inferred["owner_persona"]
+        finance_persona = inferred["finance_persona"]
+        support_persona = inferred["support_persona"]
+        approver_persona = inferred["approver_persona"]
+        supplier_article = self._article_for_term(supplier_label)
+        summary_article = self._article_for_summary(summary_label)
+        entity_prep = self._prep_article_for_entity(entity_article)
+        stories = [
+            f"Como {owner_persona}, eu quero criar {entity_article} {entity_label} informando nome, objetivo, data e contexto inicial, para iniciar o fluxo principal de forma estruturada.",
+            f"Como {owner_persona}, eu quero definir o escopo basico {entity_prep} {entity_label} com volume estimado, formato e parametros principais, para dimensionar os recursos iniciais corretamente.",
+            f"Como {finance_persona}, eu quero registrar {baseline_article} {baseline_label} {entity_prep} {entity_label}, para ter uma referencia operacional antes da aprovacao.",
+            f"Como {support_persona}, eu quero cadastrar {supplier_article} {supplier_label} com nome, contato e tipo de suporte, para vincular os recursos essenciais {entity_prep} {entity_label}.",
+            f"Como {support_persona}, eu quero cadastrar a lista inicial de {participant_label}s {entity_prep} {entity_label}, para preparar a operacao sem depender de planilhas.",
+            f"Como {approver_persona}, eu quero aprovar ou reprovar {baseline_article} {baseline_label} {entity_prep} {entity_label} com justificativa, para liberar a execucao com controle minimo.",
+            f"Como {owner_persona}, eu quero visualizar {summary_article} {summary_label}, com escopo, base operacional e status atual, para confirmar se o planejamento inicial esta completo.",
+            f"Como {support_persona}, eu quero atualizar o status {entity_prep} {entity_label} entre rascunho, em planejamento, em aprovacao e aprovado, para acompanhar o andamento operacional do trabalho.",
+        ]
+        return stories
+
+    def _ensure_core_pack_frontload(self, base_context, story_blocks, *, min_stories, max_stories):
+        consolidated = self._dedupe_and_polish_stories(story_blocks)
+        consolidated = self._prioritize_story_blocks(consolidated)
+
+        fixed_core_pack = self._generate_fixed_core_pack_stories(base_context)
+        if fixed_core_pack and len(fixed_core_pack) >= 6:
+            head_blocks = self._dedupe_and_polish_stories(fixed_core_pack)[:8]
+            tail_candidates = []
+            core_keys = {self._story_similarity_key(block) for block in head_blocks}
+            for block in consolidated:
+                key = self._story_similarity_key(block)
+                if not key or key in core_keys:
+                    continue
+                tail_candidates.append(block)
+            tail_non_advanced = [block for block in tail_candidates if not self._is_advanced_story(block)]
+            tail_advanced = [block for block in tail_candidates if self._is_advanced_story(block)]
+            consolidated = self._dedupe_and_polish_stories(head_blocks + tail_non_advanced + tail_advanced)
+            consolidated = self._ensure_minimum_story_count(
+                base_context,
+                consolidated,
+                min_stories=min_stories,
+                max_stories=max_stories,
+            )
+            # Preserve the deterministic head even after count repair.
+            remaining = []
+            head_keys = {self._story_similarity_key(block) for block in head_blocks}
+            for block in consolidated:
+                key = self._story_similarity_key(block)
+                if key in head_keys:
+                    continue
+                remaining.append(block)
+            consolidated = (head_blocks + remaining)[:max_stories]
+            return consolidated[:max_stories]
+        else:
+            coverage = self._core_pack_coverage(consolidated)
+            missing_requirements = [item for item in self.CORE_PACK_REQUIREMENTS if item[0] not in coverage]
+            if missing_requirements:
+                core_pack_blocks = self._generate_core_pack_stories(base_context, consolidated, missing_requirements)
+                if core_pack_blocks:
+                    consolidated = self._dedupe_and_polish_stories(core_pack_blocks + consolidated)
+                    consolidated = self._prioritize_story_blocks(consolidated)
+
+        front = [block for block in consolidated if not self._is_advanced_story(block)]
+        tail = [block for block in consolidated if self._is_advanced_story(block)]
+        consolidated = (front + tail)[:max_stories]
+        consolidated = self._sequence_story_blocks_for_mvp(consolidated, window=min(8, len(consolidated)))
+        consolidated = self._ensure_minimum_story_count(
+            base_context,
+            consolidated,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )
+        return consolidated[:max_stories]
+
+    def _rebalance_story_batch_for_mvp(self, base_context, story_blocks, *, min_stories, max_stories):
+        consolidated = self._dedupe_and_polish_stories(story_blocks)
+        consolidated = self._prioritize_story_blocks(consolidated)
+
+        frontload_coverage = self._frontload_foundation_coverage(consolidated)
+        if len(frontload_coverage) < 5:
+            frontload_blocks = self._generate_mvp_frontload_stories(base_context, consolidated)
+            if frontload_blocks:
+                consolidated = self._dedupe_and_polish_stories(frontload_blocks + consolidated)
+                consolidated = self._prioritize_story_blocks(consolidated)
+
+        # If the top of the backlog is still too advanced, push advanced items down.
+        front = [block for block in consolidated if not self._is_advanced_story(block)]
+        tail = [block for block in consolidated if self._is_advanced_story(block)]
+        consolidated = (front + tail)[:max_stories]
+        consolidated = self._ensure_core_pack_frontload(
+            base_context,
+            consolidated,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )
+        consolidated = self._ensure_minimum_story_count(
+            base_context,
+            consolidated,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )
+        return consolidated[:max_stories]
 
     def _generate_simple_bullet_section(self, base_context, *, section_title, task_label, rules, num_predict):
         prompt = f"""
@@ -350,7 +1036,10 @@ REGRAS
         section = self._extract_section(result, section_title)
         if not section:
             raise RuntimeError(f"Secao {section_title} vazia.")
-        bullets = self._extract_bullet_lines(section)
+        if section_title.strip().lower() == "fatias de release":
+            bullets = self._extract_release_slices(section)
+        else:
+            bullets = self._extract_bullet_lines(section)
         if not bullets:
             raise RuntimeError(f"Secao {section_title} sem itens.")
         return bullets
@@ -360,7 +1049,7 @@ REGRAS
         extracted_overview = self._extract_section(full_backlog, "Visao Geral")
         extracted_capabilities = self._extract_bullet_lines(self._extract_section(full_backlog, "Capacidades do Produto"))
         extracted_epics = self._extract_bullet_lines(self._extract_section(full_backlog, "Epicos Recomendados"))
-        extracted_releases = self._extract_bullet_lines(self._extract_section(full_backlog, "Fatias de Release"))
+        extracted_releases = self._extract_release_slices(self._extract_section(full_backlog, "Fatias de Release"))
         if not repaired_overview and extracted_overview:
             repaired_overview = extracted_overview.strip()
 
@@ -428,6 +1117,12 @@ Gere APENAS esta secao em Markdown:
             min_stories=min_stories,
             max_stories=max_stories,
         )
+        consolidated_blocks = self._rebalance_story_batch_for_mvp(
+            base_context,
+            consolidated_blocks,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )
 
         if len(consolidated_blocks) < min_stories:
             fallback_blocks = self._generate_missing_stories_fallback(
@@ -454,6 +1149,12 @@ Gere APENAS esta secao em Markdown:
             max_stories=max_stories,
         )[:max_stories]
         consolidated_blocks = self._ensure_foundation_story_coverage(
+            base_context,
+            consolidated_blocks,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )[:max_stories]
+        consolidated_blocks = self._rebalance_story_batch_for_mvp(
             base_context,
             consolidated_blocks,
             min_stories=min_stories,
@@ -503,6 +1204,8 @@ REGRAS DE CURADORIA
 - Nao deixe historias truncadas.
 - Nao deixe nenhuma historia terminar com frase cortada ou titulo generico.
 - Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Garanta que as primeiras 8 historias representem o MVP e cubram majoritariamente criacao, configuracao, consulta, aprovacao e acompanhamento do fluxo principal.
+- Empurre para o fim ou remova historias de integracoes, exportacoes, analytics avancado, IA, ESG, marketplace, webhooks e automacoes sofisticadas quando ainda faltarem historias basicas.
 - Nao invente escopo fora do briefing.
 - Responda APENAS com:
   - ## Historias de Usuario
@@ -883,6 +1586,12 @@ REGRAS
                 min_stories=min_stories,
                 max_stories=max_stories,
             )
+            consolidated = self._rebalance_story_batch_for_mvp(
+                base_context,
+                consolidated,
+                min_stories=min_stories,
+                max_stories=max_stories,
+            )
 
         if len(consolidated) < min_stories:
             seed_titles_from_fallback = self._generate_seed_titles_fallback(
@@ -919,6 +1628,12 @@ REGRAS
                     min_stories=min_stories,
                     max_stories=max_stories,
                 )
+                consolidated = self._rebalance_story_batch_for_mvp(
+                    base_context,
+                    consolidated,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
 
         return consolidated[:max_stories]
 
@@ -928,7 +1643,23 @@ REGRAS
         retry_count = max(1, int(os.getenv("PROJECT_MANAGER_MAX_RETRIES", "1")))
         last_reason = "sem detalhes"
 
-        base_context = f"""
+        planning_context_base = f"""
+Voce e um Project Manager Senior especializado em discovery e definicao de backlog.
+
+PROJETO
+ID: {self.project_id}
+
+BRIEFING
+{compact_briefing}
+
+REGRAS GERAIS
+- Responda em portugues.
+- Pense primeiro na estrutura do backlog antes de escrever historias.
+- Use linguagem de produto clara, especifica e executavel.
+- Cubra fundacao, operacao, gestao e governanca.
+"""
+
+        story_generation_base = f"""
 Voce e um Project Manager Senior especializado em discovery e definicao de backlog.
 
 PROJETO
@@ -949,55 +1680,19 @@ REGRAS GERAIS
 
         for _attempt in range(1, retry_count + 1):
             try:
-                overview_prompt = f"""
-{base_context}
-
-Gere APENAS esta secao em Markdown:
-
-## Visao Geral
-- Resuma o problema, o objetivo e a primeira versao do produto em no maximo 5 linhas.
-"""
-                overview_result = self._generate_block(
-                    overview_prompt,
-                    num_predict=os.getenv("PROJECT_MANAGER_BLOCK_OVERVIEW_NUM_PREDICT", "240"),
-                )
-                overview = self._extract_section(overview_result, "Visao Geral")
-                if not overview:
-                    raise RuntimeError("Bloco de visao geral sem conteudo.")
-
-                capabilities = self._generate_simple_bullet_section(
-                    base_context,
-                    section_title="Capacidades do Produto",
-                    task_label="capacidades",
-                    rules="- Liste entre 4 e 6 capacidades do produto.\n- Foque no que o produto precisa permitir, nao em tarefas tecnicas.\n- Cada item deve ser um bullet curto e claro.\n- Nao escreva user stories.",
-                    num_predict=os.getenv("PROJECT_MANAGER_BLOCK_CAPABILITIES_NUM_PREDICT", "320"),
-                )
-
-                epics = self._generate_simple_bullet_section(
-                    base_context,
-                    section_title="Epicos Recomendados",
-                    task_label="epicos",
-                    rules="- Liste entre 4 e 6 epicos recomendados.\n- Cada bullet deve trazer o nome do epic e o foco funcional em uma linha.\n- Os epicos devem cobrir fundacao, operacao, governanca e relatorios.\n- Nao escreva user stories.",
-                    num_predict=os.getenv("PROJECT_MANAGER_BLOCK_EPICS_NUM_PREDICT", "360"),
-                )
-
-                release_slices = self._generate_simple_bullet_section(
-                    base_context,
-                    section_title="Fatias de Release",
-                    task_label="releases",
-                    rules="- Liste exatamente 3 fatias: MVP, Fase 2 e Fase 3.\n- Cada bullet deve dizer o foco da fatia e o que fica para depois.\n- O MVP deve priorizar a espinha dorsal do produto.",
-                    num_predict=os.getenv("PROJECT_MANAGER_BLOCK_RELEASES_NUM_PREDICT", "320"),
-                )
+                overview, capabilities, epics, release_slices = self._generate_backlog_blueprint(planning_context_base)
+                planning_context = self._build_planning_context(overview, capabilities, epics, release_slices)
+                execution_context = f"{story_generation_base}\n\n{planning_context}".strip()
 
                 combined_story_blocks = self._collect_story_blocks_incrementally(
-                    base_context,
+                    execution_context,
                     min_stories=min_stories,
                     max_stories=max_stories,
                 )
 
                 if len(combined_story_blocks) >= min_stories:
                     curated_section = self._curate_story_batch(
-                        base_context,
+                        execution_context,
                         combined_story_blocks,
                         min_stories=min_stories,
                         max_stories=max_stories,
@@ -1007,13 +1702,25 @@ Gere APENAS esta secao em Markdown:
                     )
 
                 combined_story_blocks = self._ensure_minimum_story_count(
-                    base_context,
+                    execution_context,
                     combined_story_blocks,
                     min_stories=min_stories,
                     max_stories=max_stories,
                 )
                 combined_story_blocks = self._ensure_foundation_story_coverage(
-                    base_context,
+                    execution_context,
+                    combined_story_blocks,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
+                combined_story_blocks = self._ensure_lane_story_coverage(
+                    execution_context,
+                    combined_story_blocks,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
+                combined_story_blocks = self._rebalance_story_batch_for_mvp(
+                    execution_context,
                     combined_story_blocks,
                     min_stories=min_stories,
                     max_stories=max_stories,
@@ -1021,7 +1728,7 @@ Gere APENAS esta secao em Markdown:
 
                 if len(combined_story_blocks) < min_stories:
                     fallback_blocks = self._generate_missing_stories_fallback(
-                        base_context,
+                        execution_context,
                         combined_story_blocks,
                         needed_count=min_stories - len(combined_story_blocks),
                     )
@@ -1031,13 +1738,25 @@ Gere APENAS esta secao em Markdown:
                         )
 
                 combined_story_blocks = self._ensure_minimum_story_count(
-                    base_context,
+                    execution_context,
                     combined_story_blocks,
                     min_stories=min_stories,
                     max_stories=max_stories,
                 )
                 combined_story_blocks = self._ensure_foundation_story_coverage(
-                    base_context,
+                    execution_context,
+                    combined_story_blocks,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
+                combined_story_blocks = self._ensure_lane_story_coverage(
+                    execution_context,
+                    combined_story_blocks,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
+                combined_story_blocks = self._rebalance_story_batch_for_mvp(
+                    execution_context,
                     combined_story_blocks,
                     min_stories=min_stories,
                     max_stories=max_stories,
@@ -1064,7 +1783,7 @@ Gere APENAS esta secao em Markdown:
                     return full_backlog
 
                 repaired_backlog = self._repair_backlog_output(
-                    base_context,
+                    execution_context,
                     full_backlog,
                     overview,
                     combined_story_blocks,

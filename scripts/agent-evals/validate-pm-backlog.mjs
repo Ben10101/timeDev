@@ -74,18 +74,41 @@ function analyzeBacklog(content = '') {
   const duplicateCount = stories.length - new Set(stories.map((story) => similarityKey(story))).size;
   const truncatedStories = stories.filter((story) => !/\bpara\b.+/i.test(story) || story.trim().length < 30);
   const foundationCoverage = hasFoundationCoverage(stories);
+  const laneSignals = {
+    fundacao: [/\bcriar\b/i, /\bcadastrar\b/i, /\bregistrar\b/i, /\bconfigurar\b/i, /\bplanejar\b/i],
+    operacao: [/\bacompanhar\b/i, /\batualizar\b/i, /\bexecut/i, /\bmonitorar\b/i, /\bstatus\b/i],
+    gestao: [/\bvisualizar\b/i, /\bconsultar\b/i, /\bdashboard\b/i, /\brelatorio\b/i, /\bpainel\b/i, /\bresumo\b/i],
+    governanca: [/\baprovar\b/i, /\bvalidar\b/i, /\bautorizar\b/i, /\bauditor/i, /\bpermiss/i, /\bgovernan/i],
+  };
+  const coveredLanes = Object.values(laneSignals).filter((patterns) =>
+    patterns.some((pattern) => stories.some((story) => pattern.test(normalize(story))))
+  ).length;
 
   const issues = [];
   if (!normalized.includes('## visao geral')) issues.push('missing_overview');
-  if (capabilities.length < 3) issues.push('weak_capabilities');
-  if (epics.length < 3) issues.push('weak_epics');
+  if (capabilities.length < 4) issues.push('weak_capabilities');
+  if (epics.length < 4) issues.push('weak_epics');
   if (!releaseSlices.some((item) => /mvp/i.test(item))) issues.push('missing_mvp_slice');
   if (!releaseSlices.some((item) => /fase 2/i.test(item))) issues.push('missing_phase2_slice');
+  if (!releaseSlices.some((item) => /fase 3/i.test(item))) issues.push('missing_phase3_slice');
   if (stories.length < 15) issues.push('too_few_stories');
   if (duplicateCount > 0) issues.push('duplicate_stories');
   if (truncatedStories.length > 0) issues.push('truncated_stories');
   if (personas.length >= 3 && new Set(personas).size < 2) issues.push('low_persona_diversity');
   if (foundationCoverage < 4) issues.push('weak_foundation_coverage');
+  if (coveredLanes < 4) issues.push('weak_lane_coverage');
+
+  const score =
+    (normalized.includes('## visao geral') ? 10 : 0) +
+    Math.min(20, capabilities.length * 4) +
+    Math.min(20, epics.length * 4) +
+    (releaseSlices.some((item) => /mvp/i.test(item)) ? 7 : 0) +
+    (releaseSlices.some((item) => /fase 2/i.test(item)) ? 7 : 0) +
+    (releaseSlices.some((item) => /fase 3/i.test(item)) ? 6 : 0) +
+    Math.min(15, foundationCoverage * 3) +
+    Math.min(10, coveredLanes * 2.5) +
+    (duplicateCount === 0 ? 3 : 0) +
+    (truncatedStories.length === 0 ? 2 : 0);
 
   return {
     valid: issues.length === 0,
@@ -97,8 +120,10 @@ function analyzeBacklog(content = '') {
       epicsCount: epics.length,
       releaseSliceCount: releaseSlices.length,
       foundationCoverage,
+      coveredLanes,
       duplicateCount,
       truncatedStoryCount: truncatedStories.length,
+      score,
     },
   };
 }

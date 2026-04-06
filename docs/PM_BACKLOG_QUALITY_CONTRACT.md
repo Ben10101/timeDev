@@ -83,3 +83,26 @@ As novas secoes existem para:
 - melhorar revisao humana
 - dar mais contexto para avaliacao do backlog
 - facilitar reorganizacao em MVP e fases seguintes
+
+
+## 6. Cobertura por lane
+
+O backlog precisa demonstrar cobertura minima destas quatro frentes:
+
+- fundacao
+- operacao
+- gestao
+- governanca
+
+Essas frentes devem aparecer tanto nas secoes de planejamento quanto nas historias finais.
+
+## 7. Rubrica sugerida
+
+A avaliacao do PM deve considerar pelo menos:
+
+- estrutura do backlog
+- cobertura da espinha dorsal
+- cobertura por lane
+- qualidade das fatias de release
+- qualidade das historias
+- ausencia de truncamento ou duplicacao
