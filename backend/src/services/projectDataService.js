@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma.js';
+import { recoverBlockingAgentRunsForStart } from './agentRunRecoveryService.js';
 import { estimateTokenCount } from '../utils/aiRunMetrics.js';
 import { DEFAULT_AI_SETTINGS, getAiSettingsForUser } from './aiSettingsService.js';
 import { inferProjectTemplateKey, resolveProjectTemplate } from '../templates/projects/index.js';
@@ -2126,6 +2127,16 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
     });
     taskId = task?.id || null;
   }
+
+  const blockingRunRecoveryWindowSeconds = Number(
+    process.env.AGENT_RUN_BLOCKING_RECOVERY_WINDOW_SECONDS || 180
+  );
+  await recoverBlockingAgentRunsForStart({
+    projectId: project.id,
+    agentName,
+    taskId,
+    maxAgeSeconds: blockingRunRecoveryWindowSeconds,
+  });
 
   const existingRunningRun = await prisma.agentRun.findFirst({
     where: {

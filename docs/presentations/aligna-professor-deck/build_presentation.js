@@ -719,6 +719,53 @@ function finalizeSlide(slide, page) {
 // Slide 12
 {
   const slide = pptx.addSlide();
+  addBg(slide);
+  addHeaderBand(slide, "Status de maturidade do produto", "LEITURA EXECUTIVA");
+  slide.addText("Hoje o Aligna ja saiu da fase experimental e entrou em uma fase de produto operacional, mas ainda nao esta em maturidade plena de producao.", {
+    x: 0.55,
+    y: 1.35,
+    w: 10.7,
+    h: 0.46,
+    fontFace: "Arial",
+    fontSize: 19,
+    bold: true,
+    color: COLORS.ink,
+    margin: 0,
+  });
+  addStatCard(slide, 0.55, 2.0, 2.35, 1.08, "Maturidade geral", "7 / 10", COLORS.ice, COLORS.blue);
+  addStatCard(slide, 3.1, 2.0, 2.7, 1.08, "Fabrica de agentes", "forte", COLORS.mint, COLORS.teal);
+  addStatCard(slide, 6.0, 2.0, 2.55, 1.08, "Prontidao de producao", "parcial", COLORS.sand, COLORS.amber);
+  addStatCard(slide, 8.75, 2.0, 3.05, 1.08, "Principal proximo salto", "convergencia do runtime", "F5F3FF", COLORS.violet);
+  addPanel(slide, 0.55, 3.45, 3.9, 2.65, "Forcas atuais", [
+    "backlog, requisitos e arquitetura mais maduros",
+    "geracao ja guiada por IR e composicao",
+    "evals e comparabilidade reais",
+    "seguranca basica e governanca mais fortes",
+  ], COLORS.white);
+  addPanel(slide, 4.7, 3.45, 3.9, 2.65, "Fragilidades atuais", [
+    "alguns fluxos ainda exigem reconciliacao manual",
+    "readiness de producao ainda nao esta fechado",
+    "runtime legado e moderno ainda convivem",
+    "generalizacao ainda precisa de mais prova em casos novos",
+  ], COLORS.soft);
+  addPanel(slide, 8.85, 3.45, 3.95, 2.65, "Leitura executiva", "O produto ja demonstra valor real, fluxo consistente e evolucao arquitetural clara. O risco atual nao e mais viabilidade, e sim robustez operacional para escala e producao.", COLORS.ice);
+  slide.addText("Sintese: o Aligna hoje pode ser apresentado como plataforma operacional em maturacao avancada, com base tecnica forte e pendencias concentradas em robustez final de runtime e readiness.", {
+    x: 0.7,
+    y: 6.42,
+    w: 12.0,
+    h: 0.35,
+    fontFace: "Arial",
+    fontSize: 13.5,
+    color: COLORS.ink,
+    bold: true,
+    margin: 0,
+  });
+  finalizeSlide(slide, 12);
+}
+
+// Slide 13
+{
+  const slide = pptx.addSlide();
   addBg(slide, COLORS.navy);
   slide.addText("Fechamento", {
     x: 0.7,
@@ -789,7 +836,7 @@ function finalizeSlide(slide, page) {
     bold: true,
     color: "FDE68A",
   });
-  finalizeSlide(slide, 12);
+  finalizeSlide(slide, 13);
 }
 
 (async () => {

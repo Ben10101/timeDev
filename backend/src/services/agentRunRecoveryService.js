@@ -1,5 +1,9 @@
 import { prisma } from '../lib/prisma.js';
 
+function resolveRunAgeCutoff(maxAgeSeconds) {
+  return new Date(Date.now() - Math.max(30, Number(maxAgeSeconds || 720)) * 1000);
+}
+
 function getRecoveryTargetStatus(task) {
   const artifacts = task?.artifacts || [];
   const hasRequirements = artifacts.some(
@@ -77,7 +81,7 @@ export async function recoverStaleAgentRuns({
   maxAgeSeconds = 720,
   reason = 'Execucao interrompida por reinicio ou encerramento inesperado do backend.',
 } = {}) {
-  const cutoff = new Date(Date.now() - Math.max(30, Number(maxAgeSeconds || 720)) * 1000);
+  const cutoff = resolveRunAgeCutoff(maxAgeSeconds);
   const staleRuns = await prisma.agentRun.findMany({
     where: {
       status: 'running',
@@ -110,6 +114,70 @@ export async function recoverStaleAgentRuns({
           tx,
           run.taskId,
           `Execucao antiga recuperada automaticamente. ${reason}`
+        );
+      }
+    });
+  }
+
+  return {
+    recoveredCount: staleRuns.length,
+    runs: staleRuns.map((run) => ({
+      uuid: run.uuid,
+      agentName: run.agentName,
+      startedAt: run.startedAt,
+    })),
+  };
+}
+
+export async function recoverBlockingAgentRunsForStart({
+  projectId,
+  agentName,
+  taskId = null,
+  maxAgeSeconds = 720,
+  reason = 'Execucao travada recuperada automaticamente antes de iniciar uma nova tentativa.',
+} = {}) {
+  if (!projectId || !agentName) {
+    return {
+      recoveredCount: 0,
+      runs: [],
+    };
+  }
+
+  const cutoff = resolveRunAgeCutoff(maxAgeSeconds);
+  const staleRuns = await prisma.agentRun.findMany({
+    where: {
+      projectId,
+      agentName,
+      taskId,
+      status: 'running',
+      startedAt: { lt: cutoff },
+    },
+    select: {
+      id: true,
+      uuid: true,
+      agentName: true,
+      taskId: true,
+      startedAt: true,
+    },
+    orderBy: { startedAt: 'asc' },
+  });
+
+  for (const run of staleRuns) {
+    await prisma.$transaction(async (tx) => {
+      await tx.agentRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'failed',
+          finishedAt: new Date(),
+          errorMessage: reason,
+        },
+      });
+
+      if (run.taskId) {
+        await reconcileTaskAfterRecoveredRun(
+          tx,
+          run.taskId,
+          `Execucao travada liberada automaticamente para nova tentativa. ${reason}`
         );
       }
     });

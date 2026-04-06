@@ -58,6 +58,26 @@ jobs:
         working-directory: backend
         run: npm run test:auth-user-flow:smoke
 
+      - name: Run agent run recovery smoke test
+        working-directory: backend
+        run: npm run test:agent-run-recovery:smoke
+
+      - name: Run project manager recovery smoke test
+        working-directory: backend
+        run: npm run test:project-manager-recovery:smoke
+
+      - name: Run architect recovery smoke test
+        working-directory: backend
+        run: npm run test:architect-recovery:smoke
+
+      - name: Run requirements recovery smoke test
+        working-directory: backend
+        run: npm run test:requirements-recovery:smoke
+
+      - name: Run QA recovery smoke test
+        working-directory: backend
+        run: npm run test:qa-recovery:smoke
+
       - name: Build frontend
         working-directory: frontend
         run: npm run build
