@@ -1,4 +1,23 @@
 export const DOMAIN_TEMPLATE_CATALOG = {
+  'event-schedules': {
+    templateKey: 'events/schedules',
+    screenTemplate: 'workspace',
+    productMode: 'timeline-planner',
+    heroEyebrow: 'Planejamento',
+    heroTitle: 'Estruture o cronograma do evento',
+    heroDescription: 'Monte etapas, prazos e notas operacionais para organizar a execucao do evento com previsibilidade.',
+    formCardTitle: 'Nova etapa',
+    formCardDescription: 'Registre a etapa com prazo e contexto minimo para orientar a operacao.',
+    recordsTitle: 'Etapas do cronograma',
+    recordsEmptyState: 'Nenhuma etapa registrada ainda para este evento.',
+    highlights: [
+      'Etapas claras deixam o handoff entre times mais previsivel.',
+      'Prazos visiveis ajudam a antecipar gargalos antes da execucao.',
+      'Notas operacionais reduzem ruído na transicao do planejamento para a entrega.',
+    ],
+    profileSummaryTitle: 'Leitura do planejamento',
+    profileSummaryDescription: 'Veja rapidamente quais etapas ja estao planejadas e onde ainda falta contexto operacional.',
+  },
   'event-suppliers': {
     templateKey: 'events/suppliers',
     screenTemplate: 'workspace',

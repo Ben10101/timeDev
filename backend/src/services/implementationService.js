@@ -251,6 +251,24 @@ async function removeFileIfExists(targetPath) {
   }
 }
 
+async function removeEmptyParentDirectories(filePath, stopAtPath) {
+  let currentPath = path.dirname(filePath);
+  const normalizedStop = path.resolve(stopAtPath);
+
+  while (currentPath.startsWith(normalizedStop) && currentPath !== normalizedStop) {
+    try {
+      const entries = await readdir(currentPath);
+      if (entries.length > 0) {
+        break;
+      }
+      await rm(currentPath, { recursive: true, force: true });
+      currentPath = path.dirname(currentPath);
+    } catch {
+      break;
+    }
+  }
+}
+
 function collectDuplicateLines(content, predicate) {
   const lines = String(content || '')
     .split(/\r?\n/)
@@ -965,6 +983,8 @@ function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '')
 
 function getExpectedDomainKeywords(domainKey = '') {
   const catalog = {
+    events: ['evento', 'eventos', 'operacao', 'operacional', 'planejamento', 'execucao'],
+    'event-schedules': ['evento', 'eventos', 'cronograma', 'etapa', 'etapas', 'prazo', 'prazos', 'planejamento', 'execucao'],
     'event-suppliers': ['evento', 'eventos', 'fornecedor', 'fornecedores', 'prestador', 'parceiro', 'categoria', 'servico', 'contato'],
     'support-ticket-attachments': ['support', 'suporte', 'ticket', 'chamado', 'attachment', 'attachments', 'anexo', 'arquivo', 'documento', 'comprovante', 'fiscal'],
     'access-control': ['access', 'acesso', 'permission', 'permissao', 'role', 'funcao', 'perfil'],
@@ -1015,6 +1035,7 @@ function inferImplementedDomain(featureKey = '', routeBase = '') {
   const normalizedRouteBase = normalizeSemanticText(routeBase);
   const source = `${normalizedFeatureKey} ${normalizedRouteBase}`;
   const candidates = [
+    'event-schedules',
     'event-suppliers',
     'support-ticket-attachments',
     'ticket-notification-preferences',
@@ -1068,6 +1089,7 @@ function inferImplementedDomain(featureKey = '', routeBase = '') {
 function areDomainKeysAligned(expectedDomain = '', implementedDomain = '') {
   const expected = normalizeSemanticText(expectedDomain);
   const implemented = normalizeSemanticText(implementedDomain);
+  const toStem = (value) => String(value || '').replace(/s$/, '');
 
   if (!expected || !implemented || expected === implemented) {
     return Boolean(expected) && Boolean(implemented) ? expected === implemented : false;
@@ -1075,7 +1097,7 @@ function areDomainKeysAligned(expectedDomain = '', implementedDomain = '') {
 
   const expectedBase = expected.split(/[-_/]/)[0];
   const implementedBase = implemented.split(/[-_/]/)[0];
-  if (expectedBase && implementedBase && expectedBase === implementedBase) {
+  if (expectedBase && implementedBase && (expectedBase === implementedBase || toStem(expectedBase) === toStem(implementedBase))) {
     return true;
   }
 
@@ -1091,7 +1113,7 @@ function areDomainKeysAligned(expectedDomain = '', implementedDomain = '') {
   ].map((item) => normalizeSemanticText(item)).filter(Boolean));
 
   for (const keyword of expectedKeywords) {
-    if (implementedKeywords.has(keyword)) return true;
+    if (implementedKeywords.has(keyword) || implementedKeywords.has(toStem(keyword))) return true;
   }
 
   return false;
@@ -2155,6 +2177,53 @@ function resolveImplementationUserUuid(task, explicitUserUuid = null) {
 function inferFieldDefinitions(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
 
+  if (actionSpec?.domainKey === 'event-schedules') {
+    return [
+      {
+        name: 'stageName',
+        label: 'Etapa do cronograma',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Nomeie a etapa principal para deixar o plano facil de acompanhar.',
+        placeholder: 'Ex.: Confirmacao de fornecedores',
+        defaultValue: '',
+        sampleValue: 'Confirmacao de fornecedores',
+        validations: ['required', 'min:3'],
+      },
+      {
+        name: 'plannedDeadline',
+        label: 'Prazo planejado',
+        inputType: 'date',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Defina a data alvo dessa etapa para dar previsibilidade ao time.',
+        placeholder: '2026-04-20',
+        defaultValue: '',
+        sampleValue: '2026-04-20',
+        validations: ['required'],
+      },
+      {
+        name: 'executionNotes',
+        label: 'Notas operacionais',
+        inputType: 'textarea',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Registre o contexto minimo da etapa para facilitar a execucao e o handoff.',
+        placeholder: 'Dependencias, criterio de prontidao e observacoes importantes.',
+        defaultValue: '',
+        sampleValue: 'Confirmar briefing final e checklist de liberacao antes de acionar o fornecedor.',
+        validations: ['required', 'min:10'],
+      },
+    ];
+  }
+
   if (actionSpec?.domainKey === 'event-suppliers') {
     return [
       {
@@ -2696,6 +2765,12 @@ function inferActionSpec(task, sourceText) {
         /\bcategoria\b|\bservico\b|\bcontato\b|\bcontatos\b/.test(normalized))) &&
     (/\bevento\b|\beventos\b/.test(titleNormalized) ||
       /\bevento\b|\beventos\b|\boperacao\b|\boperacional\b|\bcoordenador de eventos\b/.test(normalized));
+  const looksLikeEventSchedule =
+    (/\bcronograma\b|\betapa\b|\betapas\b|\bprazo\b|\bprazos\b|\bmarco\b|\bagenda operacional\b/.test(titleNormalized) ||
+      ((/\bcronograma\b|\betapa\b|\betapas\b|\bprazo\b|\bprazos\b|\bmarco\b/.test(normalized)) &&
+        /\bplanejamento\b|\bexecucao\b|\bevento\b|\beventos\b/.test(normalized))) &&
+    (/\bevento\b|\beventos\b/.test(titleNormalized) ||
+      /\bevento\b|\beventos\b|\boperacao\b|\bplanejamento\b|\bcoordenador de eventos\b/.test(normalized));
   const looksLikeAccessControl =
     (/\bpermiss/.test(titleNormalized) || /\brole\b|\broles\b|\bfunca/.test(titleNormalized)) &&
     (/\bacesso\b/.test(titleNormalized) || /\bperfil\b|\bperfis\b/.test(titleNormalized) || /\bseguranc/.test(titleNormalized));
@@ -2769,6 +2844,23 @@ function inferActionSpec(task, sourceText) {
       pageDescription: 'Centralize parceiros com categoria de servico e contatos principais para acionar a operacao com menos retrabalho.',
       successMessage: 'Fornecedor cadastrado com sucesso.',
       summary: 'Permite cadastrar fornecedores com categoria de servico e contatos principais para manter a operacao de eventos centralizada.',
+    };
+  }
+
+  if (looksLikeEventSchedule) {
+    return {
+      domainKey: 'event-schedules',
+      entityName: 'EventSchedule',
+      routeBase: '/api/event-schedules',
+      frontendRoute: '/operations/schedules',
+      pageComponentName: 'EventSchedulesPage',
+      serviceName: 'EventSchedulesService',
+      submitLabel: 'Adicionar Etapa',
+      navigationLabel: 'Cronograma',
+      pageTitle: 'Monte o cronograma inicial do evento',
+      pageDescription: 'Organize etapas, prazos e responsaveis para manter a execucao do evento previsivel desde o planejamento.',
+      successMessage: 'Etapa do cronograma registrada com sucesso.',
+      summary: 'Permite estruturar o cronograma inicial do evento com etapas e prazos para dar previsibilidade a execucao.',
     };
   }
 
@@ -3404,6 +3496,13 @@ function inferBusinessRules(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const rules = [];
 
+  if (actionSpec?.domainKey === 'event-schedules') {
+    rules.push('Cada etapa do cronograma precisa ter um nome claro para facilitar acompanhamento e comunicacao entre os times.');
+    rules.push('O cronograma inicial deve registrar um prazo planejado para cada etapa antes da execucao do evento.');
+    rules.push('As notas operacionais precisam trazer contexto suficiente para orientar handoff e preparo da etapa.');
+    return rules;
+  }
+
   if (actionSpec?.domainKey === 'event-suppliers') {
     rules.push('O fornecedor precisa ter nome unico para evitar duplicidade na base operacional.');
     rules.push('Cada fornecedor deve estar associado a pelo menos uma categoria de servico valida para facilitar triagem e acionamento.');
@@ -3475,6 +3574,14 @@ function inferBusinessRules(sourceText, actionSpec = null) {
 function inferQaScenarios(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const scenarios = [];
+
+  if (actionSpec?.domainKey === 'event-schedules') {
+    scenarios.push({ code: 'missing_stage_name', message: 'Informe o nome da etapa antes de salvar o cronograma.' });
+    scenarios.push({ code: 'missing_planned_deadline', message: 'Defina um prazo planejado para esta etapa do cronograma.' });
+    scenarios.push({ code: 'missing_execution_notes', message: 'Registre notas operacionais minimas para orientar a execucao da etapa.' });
+    scenarios.push({ code: 'duplicated_stage_name', message: 'Ja existe uma etapa com este nome no cronograma atual.' });
+    return scenarios;
+  }
 
   if (actionSpec?.domainKey === 'event-suppliers') {
     scenarios.push({ code: 'missing_supplier_name', message: 'Informe o nome do fornecedor antes de concluir o cadastro.' });
@@ -3669,6 +3776,15 @@ function buildServiceFieldValidation(field) {
 }
 
 function buildDomainSpecificValidation(actionSpec, fields) {
+  if (actionSpec.domainKey === 'event-schedules') {
+    return [
+      `  const duplicatedStage = records.find((record) => String(record.stageName || '').toLowerCase() === String(input.stageName || '').toLowerCase());`,
+      `  if (duplicatedStage) throw new Error('Ja existe uma etapa cadastrada com este nome no cronograma.');`,
+      `  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(input.plannedDeadline || ''))) throw new Error('Informe um prazo planejado valido para a etapa.');`,
+      `  if (String(input.executionNotes || '').trim().length < 10) throw new Error('Descreva melhor o contexto operacional desta etapa.');`,
+    ];
+  }
+
   if (actionSpec.domainKey === 'access-control-roles') {
     return [
       `  const duplicatedRole = records.find((record) => record.roleName === input.roleName);`,
@@ -3743,6 +3859,7 @@ function inferDomainName(actionSpec, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
 
   if (actionSpec.domainKey.startsWith('auth-')) return 'auth';
+  if (actionSpec.domainKey === 'event-schedules') return 'events';
   if (actionSpec.domainKey === 'event-suppliers') return 'events';
   if (actionSpec.domainKey === 'support-performance-dashboard' || /\bpainel\b|\bdashboard\b|\brelatorio\b/.test(normalized) && /\bchamado\b|\batendimento\b|\bperformance\b/.test(normalized)) return 'support';
   if (actionSpec.domainKey === 'support-ticket-attachments' || /\bchamado\b|\bsuporte\b|\bticket\b/.test(normalized) && /\banexo\b|\barquivo\b|\bdocumento\b/.test(normalized)) return 'support';
@@ -3763,6 +3880,7 @@ function inferIntent(actionSpec, sourceText) {
 
   if (actionSpec.domainKey === 'auth-login' || /\blogin\b|\bentrar\b|\bautentic/.test(normalized)) return 'login';
   if (actionSpec.domainKey === 'auth-register' || /\bregistr/.test(normalized) || /\bcadastr/.test(normalized)) return 'register';
+  if (actionSpec.domainKey === 'event-schedules') return 'plan';
   if (actionSpec.domainKey === 'event-suppliers') return 'register';
   if (actionSpec.domainKey === 'support-performance-dashboard') return 'monitor';
   if (actionSpec.domainKey === 'support-ticket-attachments') return 'attach';
@@ -3784,6 +3902,7 @@ function inferScreenTemplate(actionSpec, fields, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const hasFewFields = (fields || []).length <= 3;
 
+  if (actionSpec.domainKey === 'event-schedules') return 'workspace';
   if (actionSpec.domainKey === 'event-suppliers') return 'workspace';
   if (actionSpec.domainKey === 'support-performance-dashboard') return 'dashboard';
   if (actionSpec.domainKey === 'support-ticket-attachments') return 'workspace';
@@ -5019,7 +5138,9 @@ async function cleanupImplementationFiles(generatedAppRoot, implementation) {
   const filePaths = [...new Set((implementation?.generatedFiles || []).map((file) => file.filePath))];
 
   for (const filePath of filePaths) {
-    await removeFileIfExists(path.join(generatedAppRoot, filePath));
+    const absoluteFilePath = path.join(generatedAppRoot, filePath);
+    await removeFileIfExists(absoluteFilePath);
+    await removeEmptyParentDirectories(absoluteFilePath, generatedAppRoot);
   }
 
   if (implementation?.id) {
@@ -5345,7 +5466,7 @@ function buildSyntheticTaskFromSpec(technicalSpec) {
 
 async function ensureValidationScripts(generatedAppRoot) {
   const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\nconst hasPremiumShellSignals =\n  appContent.includes('AppFrame') &&\n  appContent.includes('AppHeader') &&\n  appContent.includes('StudioHome') &&\n  appContent.includes('MetricRow') &&\n  appContent.includes('SurfaceCard') &&\n  appContent.includes('function HomePage()') &&\n  appContent.includes('Resumo do workspace');\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !hasPremiumShellSignals) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem textos genericos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluido sem problemas.');\n`;
-  const testContent = `import { access, readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatorio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nasync function listDirectories(relativePath) {\n  try {\n    const entries = await readdir(path.join(root, relativePath), { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\nconst webFeatures = await listDirectories('apps/web/src/features');\nconst apiModules = await listDirectories('apps/api/src/modules');\nconst contractFiles = await readdir(path.join(root, 'packages', 'shared', 'src', 'contracts')).catch(() => []);\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nfor (const featureDir of webFeatures) {\n  await assertFile(\`apps/web/src/features/\${featureDir}/page.tsx\`);\n  await assertFile(\`apps/web/src/features/\${featureDir}/service.ts\`);\n  await assertFile(\`apps/api/src/modules/\${featureDir}/router.ts\`);\n  await assertFile(\`apps/api/src/modules/\${featureDir}/service.ts\`);\n  await assertFile(\`packages/shared/src/contracts/\${featureDir}.ts\`);\n\n  const pageContent = await readSafe(\`apps/web/src/features/\${featureDir}/page.tsx\`);\n  const routerContent = await readSafe(\`apps/api/src/modules/\${featureDir}/router.ts\`);\n  const serviceContent = await readSafe(\`apps/api/src/modules/\${featureDir}/service.ts\`);\n  const contractContent = await readSafe(\`packages/shared/src/contracts/\${featureDir}.ts\`);\n\n  if (!pageContent.includes('packages/ui/src/index.tsx')) {\n    throw new Error(\`Feature \${featureDir} nao usa o kit visual compartilhado.\`);\n  }\n\n  if (!routerContent.includes(\".get('/',\") || !routerContent.includes(\".post('/',\")) {\n    throw new Error(\`Modulo \${featureDir} sem rotas GET/POST basicas.\`);\n  }\n\n  if (!serviceContent.includes('buildSeedRecordsFromTask')) {\n    throw new Error(\`Modulo \${featureDir} sem seeds basicos para validacao incremental.\`);\n  }\n\n  if (!/Request\\s*\\{/.test(contractContent) || !/Response\\s*\\{/.test(contractContent) || !/ListResponse\\s*\\{/.test(contractContent)) {\n    throw new Error(\`Contrato \${featureDir} sem Request/Response/ListResponse completos.\`);\n  }\n\n  const expectedModelName = contractContent.match(/export interface ([A-Za-z0-9]+)Request/)?.[1]?.replace(/Request$/, '');\n  if (expectedModelName && !schemaContent.includes(\`model \${expectedModelName} {\`)) {\n    throw new Error(\`Schema Prisma sem model esperado para \${featureDir}: \${expectedModelName}.\`);\n  }\n}\n\nif (webFeatures.length !== apiModules.length) {\n  throw new Error('Quantidade de features web difere da quantidade de modulos da API.');\n}\n\nif (webFeatures.length !== contractFiles.filter((file) => String(file).endsWith('.ts')).length) {\n  throw new Error('Quantidade de contratos compartilhados difere das features geradas.');\n}\n\nif (!/createdAt\\s+DateTime/.test(schemaContent) || !/updatedAt\\s+DateTime/.test(schemaContent)) {\n  throw new Error('Schema Prisma sem trilha minima de datas nas models geradas.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluidos com sucesso.');\n`;
+  const testContent = `import { access, readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatorio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nasync function listFeatureDirs() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nasync function listDirectories(relativePath) {\n  try {\n    const entries = await readdir(path.join(root, relativePath), { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nconst requiredFiles = [\n  'apps/api/src/server.ts',\n  'apps/web/src/App.tsx',\n  'prisma/schema.prisma',\n];\n\nfor (const file of requiredFiles) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\nconst featureDirs = await listFeatureDirs();\nconst apiModuleDirs = await listDirectories('apps/api/src/modules');\nconst contractFiles = await readdir(path.join(root, 'packages', 'shared', 'src', 'contracts')).catch(() => []);\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nfor (const featureDir of featureDirs) {\n  const pagePath = \`apps/web/src/features/\${featureDir}/page.tsx\`;\n  const servicePath = \`apps/web/src/features/\${featureDir}/service.ts\`;\n  const apiRouterPath = \`apps/api/src/modules/\${featureDir}/router.ts\`;\n  const apiServicePath = \`apps/api/src/modules/\${featureDir}/service.ts\`;\n  const contractPath = \`packages/shared/src/contracts/\${featureDir}.ts\`;\n  await assertFile(pagePath);\n  await assertFile(servicePath);\n  await assertFile(apiRouterPath);\n  await assertFile(apiServicePath);\n  await assertFile(contractPath);\n\n  const pageContent = await readSafe(pagePath);\n  const routerContent = await readSafe(apiRouterPath);\n  const backendServiceContent = await readSafe(apiServicePath);\n  const contractContent = await readSafe(contractPath);\n  const usesSharedUi =\n    pageContent.includes('packages/ui/src/index.tsx') &&\n    (pageContent.includes('FeatureWorkbench') ||\n      pageContent.includes('SettingsWorkbench') ||\n      pageContent.includes('FeaturePage'));\n  if (!usesSharedUi) {\n    throw new Error(\`Feature \${featureDir} nao esta usando o design system compartilhado.\`);\n  }\n  if (!routerContent.includes(\".get('/',\") || !routerContent.includes(\".post('/',\")) {\n    throw new Error(\`Modulo \${featureDir} sem rotas GET/POST basicas.\`);\n  }\n  if (!backendServiceContent.includes('buildSeedRecordsFromTask')) {\n    throw new Error(\`Modulo \${featureDir} sem seeds basicos para validacao incremental.\`);\n  }\n  if (!/Request\\s*\\{/.test(contractContent) || !/Response\\s*\\{/.test(contractContent) || !/ListResponse\\s*\\{/.test(contractContent)) {\n    throw new Error(\`Contrato \${featureDir} sem Request/Response/ListResponse completos.\`);\n  }\n  const expectedModelName = contractContent.match(/export interface ([A-Za-z0-9]+)Request/)?.[1]?.replace(/Request$/, '');\n  if (expectedModelName && !schemaContent.includes(\`model \${expectedModelName} {\`)) {\n    throw new Error(\`Schema Prisma sem model esperado para \${featureDir}: \${expectedModelName}.\`);\n  }\n}\n\nconst frontendRoutes = [...appContent.matchAll(/path:\\s*'([^']+)'/g)].map((match) => match[1]);\nconst apiRoutes = [...serverContent.matchAll(/app\\.use\\('([^']+)'/g)].map((match) => match[1]);\n\nif (featureDirs.length && frontendRoutes.length < featureDirs.length) {\n  throw new Error('O frontend nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length && apiRoutes.length < featureDirs.length) {\n  throw new Error('A API nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length !== apiModuleDirs.length) {\n  throw new Error('Quantidade de features web difere da quantidade de modulos da API.');\n}\n\nif (featureDirs.length !== contractFiles.filter((file) => String(file).endsWith('.ts')).length) {\n  throw new Error('Quantidade de contratos compartilhados difere das features geradas.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nif (!/createdAt\\s+DateTime/.test(schemaContent) || !/updatedAt\\s+DateTime/.test(schemaContent)) {\n  throw new Error('Schema Prisma sem trilha minima de datas nas models geradas.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluidos com sucesso.');\n`;
 
   return [
     {
