@@ -190,7 +190,7 @@ export default function GovernancePage() {
     if (summary.staleRunningRuns > 0) {
       items.push({
         title: `${summary.staleRunningRuns} run${summary.staleRunningRuns > 1 ?'s' : ''} travada${summary.staleRunningRuns > 1 ?'s' : ''}`,
-        subtitle: 'Revise timeout, watchdog e recupera??o automatica antes da próxima rodada.',
+        subtitle: 'Revise timeout, watchdog e recupera??o autom?tica antes da próxima rodada.',
         tone: 'rose',
       });
     }
@@ -222,7 +222,7 @@ export default function GovernancePage() {
 
     if (!items.length) {
       items.push({
-        title: 'Opera??o estavel neste momento',
+        title: 'Opera??o est?vel neste momento',
         subtitle: 'Sem alertas cr?ticos ativos, sem runs travadas e com health consistente.',
         tone: 'emerald',
       });
@@ -250,7 +250,7 @@ export default function GovernancePage() {
                 Veja o que precisa de atenÃ§Ã£o agora sem misturar isso com o fluxo de produto.
               </h2>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
-                Esta area concentra sa?de da API, estabilidade dos agentes, custos, trilha de auditoria e alertas ativos.
+                Esta ?rea concentra sa?de da API, estabilidade dos agentes, custos, trilha de auditoria e alertas ativos.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
@@ -316,7 +316,7 @@ export default function GovernancePage() {
               <InsightCard
                 label="P95 de execuÃ§Ã£o"
                 value={`${summary.p95RunDurationSeconds || 0}s`}
-                hint="Mostra a cauda lenta das execu??es recentes."
+                hint="Mostra a cauda lenta das execu?es recentes."
               />
             </div>
           </div>
@@ -492,7 +492,7 @@ export default function GovernancePage() {
                   />
                 ))
               ) : (
-                <EmptyPanel title="Sem historico recente" subtitle="As tend?ncias dos ultimos dias aparecem aqui assim que a operação gerar dados." />
+                <EmptyPanel title="Sem hist?rico recente" subtitle="As tend?ncias dos ?ltimos dias aparecem aqui assim que a operação gerar dados." />
               )}
             </div>
           </motion.section>

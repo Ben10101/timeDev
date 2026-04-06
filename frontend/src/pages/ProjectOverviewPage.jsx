@@ -18,8 +18,8 @@ const STORY_SHORTCUT_EXAMPLES = [
     idea: 'Plataforma para times operacionais registrarem solicitacoes, acompanharem status, anexarem evidencias e aprovarem excecoes com trilha de auditoria.',
     objective: 'Reduzir retrabalho operacional e dar visibilidade do fluxo ponta a ponta.',
     audience: 'Analistas de operacoes, lideres de equipe e gestores.',
-    mainFlows: 'Abrir solicitacao, priorizar fila, aprovar excecao, acompanhar SLA e consultar historico.',
-    constraints: 'Controle de acesso por perfil, historico imutavel e notificacoes de atraso.',
+    mainFlows: 'Abrir solicitacao, priorizar fila, aprovar excecao, acompanhar SLA e consultar hist?rico.',
+    constraints: 'Controle de acesso por perfil, hist?rico imutavel e notificacoes de atraso.',
   },
   {
     label: 'Portal do cliente',

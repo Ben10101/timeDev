@@ -33,7 +33,7 @@ for (const pagePath of await listFeaturePages()) {
     failures.push(`${path.relative(root, pagePath)} n?o define highlights de experiência.`);
   }
   if (!/metrics=\{\[/.test(pageContent)) {
-    failures.push(`${path.relative(root, pagePath)} n?o define metricas de tela.`);
+    failures.push(`${path.relative(root, pagePath)} n?o define m?tricas de tela.`);
   }
   if (!/layout="(crud|split|settings|wizard|dashboard)"/.test(pageContent)) {
     failures.push(`${path.relative(root, pagePath)} n?o declara layout do design system.`);

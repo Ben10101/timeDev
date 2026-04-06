@@ -4,8 +4,8 @@ import PipelineExecutor from '../components/PipelineExecutor';
 
 export default function PipelinePage() {
   const location = useLocation();
-  const idea = location.stat??.idea;
-  const answers = location.stat??.answers;
+  const idea = location.state?.idea;
+  const answers = location.state?.answers;
 
   if (!idea) {
     return <Navigate to="/" />;

@@ -449,7 +449,7 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       listArchetype: 'policies',
       spatialModel: 'hero dark + matriz primaria + trilha secundaria de governanca',
       heroStyle: 'command-center',
-      panelRelationship: 'controle primeiro, historico depois',
+      panelRelationship: 'controle primeiro, hist?rico depois',
       metricLabels: ['Cobertura', 'Risco', 'Governanca'],
       metricValues: ["isLoading ? 'Mapeando' : String(items.length || 0)", "isLoading ? 'Analisando' : 'Controlado'", "'Ativa'"],
       collectionMeta: "isLoading ? 'Carregando perfis' : items.length ? `${items.length} perfil(is) ativos` : 'Nenhum perfil configurado'",
@@ -2994,10 +2994,10 @@ function getDomainTemplateLegacy(technicalSpec) {
       highlights: [
         'Validação imediata de e-mail antes da persistência.',
         'Senha forte exigida para concluir o cadastro.',
-        'Prote??o contra e-mails duplicados no fluxo incremental.',
+        'Prote?o contra e-mails duplicados no fluxo incremental.',
       ],
       profileSummaryTitle: 'Checklist de cadastro',
-      profileSummaryDescription: 'O fluxo precisa validar e-mail, senha e evitar duplicidade antes da cria??o da conta.',
+      profileSummaryDescription: 'O fluxo precisa validar e-mail, senha e evitar duplicidade antes da cria?o da conta.',
     };
   }
 
@@ -3029,11 +3029,11 @@ function getDomainTemplateLegacy(technicalSpec) {
       heroDescription: 'Mantenha nome, foto e dados principais da conta sempre consistentes.',
       formCardTitle: 'Dados do perfil',
       formCardDescription: 'Edite as informações visíveis na conta e salve as alterações.',
-      recordsTitle: 'Hist?rico de altera??es',
-      recordsEmptyState: 'Nenhuma altera??o realizada at? o momento.',
+      recordsTitle: 'Hist?rico de altera?es',
+      recordsEmptyState: 'Nenhuma altera?o realizada at? o momento.',
       highlights: [
-        'Nome obrigat?rio para exibi??o correta do perfil.',
-        'Foto de perfil com valida??o de formato e limite de tamanho.',
+        'Nome obrigat?rio para exibi?o correta do perfil.',
+        'Foto de perfil com valida?o de formato e limite de tamanho.',
         'Hist?rico preparado para auditoria de atualiza��es.',
       ],
       profileSummaryTitle: 'Boas pr?ticas do perfil',
@@ -3153,7 +3153,7 @@ function runUiProductPolishPass(draft = {}, context = {}) {
     polished.navigationLabel = context.navigationLabel || polished.navigationLabel;
   }
 
-  if (!polished.recordsTitle || /ultimos registros|registros ativos|atividade recente|rotina de acompanhamento/i.test(polished.recordsTitle)) {
+  if (!polished.recordsTitle || /ultimos registros|registros ativos|atividade recente|rotina de acompanhamento/i.test(stripAccents(polished.recordsTitle))) {
     polished.recordsTitle = pickPreferredLabel(examples.sectionLabels, polished.recordsTitle || 'Resumo atual');
   }
 
@@ -3167,7 +3167,7 @@ function runUiProductPolishPass(draft = {}, context = {}) {
 
   if (screenTemplate === 'settings') {
     polished.recordsTitle = pickPreferredLabel(examples.sectionLabels, 'Resumo atual');
-    if (/historico|fila|registros/i.test(stripAccents(polished.recordsTitle).toLowerCase())) {
+    if (/hist?rico|fila|registros/i.test(stripAccents(polished.recordsTitle).toLowerCase())) {
       polished.recordsTitle = 'Resumo atual';
     }
     if (!polished.formCardTitle || /concluir operacao|preencha os dados/i.test(stripAccents(polished.formCardTitle).toLowerCase())) {
@@ -3237,7 +3237,7 @@ function polishGeneratedUiDraft(rawDraft = {}, context = {}) {
   }
 
   if (context.productMode === 'manager-cockpit') {
-    if (!polished.recordsTitle || /registro|ultimos/i.test(polished.recordsTitle)) {
+    if (!polished.recordsTitle || /registro|ultimos/i.test(stripAccents(polished.recordsTitle))) {
       polished.recordsTitle = 'Recortes principais';
     }
     if (!polished.profileSummaryTitle || /registro|acompanhamento|visao atual/i.test(polished.profileSummaryTitle)) {
@@ -3370,7 +3370,7 @@ function inferBusinessRules(sourceText, actionSpec = null) {
   }
 
   if (/\bperfil\b/.test(normalized) && /\blog de todas as atualizacoes\b|\blog de atualizacoes\b/.test(normalized)) {
-    rules.push('As alteracoes de perfil devem ser registradas em historico para auditoria.');
+    rules.push('As alteracoes de perfil devem ser registradas em hist?rico para auditoria.');
   }
 
   if (/\be-?mail ja cadastrado\b|\bemails duplicados\b|\bduplicad/.test(normalized)) {
@@ -5370,7 +5370,7 @@ function buildPrismaModelFromContract(contractName, contractContent) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => line.match(/^([A-Za-z0-9_]+)\??:\s*([^;]+);?$/))
+    .map((line) => line.match(/^([A-Za-z0-9_]+)\?:\s*([^;]+);?$/))
     .filter(Boolean)
     .map((match) => buildPrismaFieldLineFromContractField(match[1], match[2]))
     .filter(Boolean);
@@ -5755,7 +5755,7 @@ function buildFixPlan(findings, technicalSpec) {
       category: categorizeFinding(finding.code),
       priority: finding.severity === 'high' ? 'high' : 'medium',
       filePath: finding.filePath,
-      action: 'Ajustar o arquivo para alinhar a implementa??o ao structured spec e rodar review novamente.',
+      action: 'Ajustar o arquivo para alinhar a implementa?o ao structured spec e rodar review novamente.',
       suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
     };
   });
@@ -7354,7 +7354,7 @@ export async function reviewTaskImplementation(taskUuid) {
   const implementation = await getLatestTaskImplementation(task.id);
 
   if (!implementation?.technicalSpecArtifact || !implementation?.generatedApp) {
-    throw new Error('A task ainda n?o possui implementa??o gerada para revisar.');
+    throw new Error('A task ainda n?o possui implementa?o gerada para revisar.');
   }
 
   const run = await prisma.generatedAppRun.create({

@@ -254,7 +254,7 @@ function getFeatureModeProfile(productMode: string) {
       searchLabel: 'Localizar perfil, regra ou escopo',
       tableLabels: ['Perfil', 'Escopo', 'Atualizacao'],
       asideTitle: 'Governanca ativa',
-      asideTone: 'Controle claro para acesso, risco e decisao.',
+      asideTone: 'Controle claro para acesso, risco e decis?o.',
       highlightVariant: 'pills',
       recordsVariant: 'policy-grid',
       formVariant: 'console',
@@ -293,7 +293,7 @@ function getFeatureModeProfile(productMode: string) {
       searchLabel: 'Filtrar indicador ou recorte',
       tableLabels: ['Indicador', 'Estado', 'Atualizacao'],
       asideTitle: 'Leitura executiva',
-      asideTone: 'A tela precisa apoiar decisao, comparacao e visao consolidada.',
+      asideTone: 'A tela precisa apoiar decis?o, comparacao e visao consolidada.',
       highlightVariant: 'cards',
       recordsVariant: 'insights',
       formVariant: 'support',
@@ -419,7 +419,7 @@ function getArchetypeOverrides(pageArchetype: string, fallbackPattern: string, p
       highlightVariant: 'cards',
       recordsVariant: 'insights',
       asideTitle: 'Painel em foco',
-      asideTone: 'Compare sinais, enxergue gargalos e tome decisao com contexto logo no primeiro olhar.',
+      asideTone: 'Compare sinais, enxergue gargalos e tome decis?o com contexto logo no primeiro olhar.',
       searchLabel: 'Filtrar indicador, fila ou recorte',
       tableLabels: ['Indicador', 'Status', 'Leitura'],
     },
@@ -449,7 +449,7 @@ function getArchetypeOverrides(pageArchetype: string, fallbackPattern: string, p
       highlightVariant: 'steps',
       recordsVariant: 'steps',
       asideTitle: 'Fluxo de aprovacao',
-      asideTone: 'Deixe criterios, etapas e checkpoints explicitos para reduzir friccao na decisao.',
+      asideTone: 'Deixe criterios, etapas e checkpoints explicitos para reduzir fric??o na decis?o.',
     },
     'evidence-workbench': {
       reversePanels: true,
@@ -554,7 +554,7 @@ function getUiIntentProfile(uiIntent: string) {
     review: {
       badge: 'Decisao principal',
       summaryTitle: 'Fila em foco',
-      summaryTone: 'Veja o que precisa de decisao agora e mantenha a fila sob controle.',
+      summaryTone: 'Veja o que precisa de decis?o agora e mantenha a fila sob controle.',
     },
     monitor: {
       badge: 'Leitura principal',
@@ -681,9 +681,9 @@ function ApprovalStepsPreview({ accentColor }: { accentColor: string }) {
   return (
     <div style={{ display: 'grid', gap: 10 }}>
       {[
-        ['Preparar contexto', 'Reunir evidencias e criterio de decisao.'],
+        ['Preparar contexto', 'Reunir evidencias e criterio de decis?o.'],
         ['Revisar impacto', 'Validar risco, escopo e responsavel.'],
-        ['Concluir parecer', 'Registrar a decisao e proximo passo.'],
+        ['Concluir parecer', 'Registrar a decis?o e proximo passo.'],
       ].map(([title, tone], index) => (
         <div key={title} style={{ display: 'grid', gridTemplateColumns: '24px 1fr', gap: 12, alignItems: 'start' }}>
           <div
@@ -997,9 +997,9 @@ export function FeatureWorkbench({
   const modeProfile = getFeatureModeProfile(productMode)
   const layoutOverrides = getLayoutVariantOverrides(layoutVariant)
   const archetypeOverrides = getArchetypeOverrides(pageArchetype, fallbackPattern, patternHints)
-  const heroDark = Boolean(archetypeOverrides.heroDark ?? modeProfile.heroDark)
-  const metricDark = Boolean(archetypeOverrides.metricDark ?? modeProfile.metricDark)
-  const reversePanels = Boolean(archetypeOverrides.reversePanels ?? layoutOverrides.reversePanels ?? modeProfile.reversePanels)
+  const heroDark = Boolean(archetypeOverrides.heroDark ? modeProfile.heroDark)
+  const metricDark = Boolean(archetypeOverrides.metricDark ? modeProfile.metricDark)
+  const reversePanels = Boolean(archetypeOverrides.reversePanels ? layoutOverrides.reversePanels ? modeProfile.reversePanels)
   const bodyColumns = String(archetypeOverrides.bodyColumns || layoutOverrides.bodyColumns || modeProfile.bodyColumns || 'minmax(340px, 420px) minmax(0, 1fr)')
   const searchLabel = String(archetypeOverrides.searchLabel || modeProfile.searchLabel || 'Pesquisar...')
   const tableLabels = Array.isArray(archetypeOverrides.tableLabels)
@@ -1379,7 +1379,7 @@ export function SettingsWorkbench({
   const summaryItems = (summaryHighlights?.length ? summaryHighlights : highlights).slice(0, 3)
   const visuals = getWorkbenchVisualTokens(productMode, accentColor)
   const settingsColumns = String(archetypeOverrides.settingsColumns || layoutOverrides.settingsColumns || 'minmax(0, 1.08fr) minmax(320px, 0.92fr)')
-  const settingsReverse = Boolean(archetypeOverrides.settingsReverse ?? layoutOverrides.settingsReverse)
+  const settingsReverse = Boolean(archetypeOverrides.settingsReverse ? layoutOverrides.settingsReverse)
   const settingsHighlightTitle = String(archetypeOverrides.settingsHighlightTitle || layoutOverrides.settingsHighlightTitle || 'Boas praticas')
   const sectionSet = buildSectionSet(sections, ['hero', 'form', 'summary'])
   const showHero = hasSection(sectionSet, 'hero')

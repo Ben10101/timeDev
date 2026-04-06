@@ -18,17 +18,17 @@ export function resolveDomainTemplate(domainKey, fallback = {}) {
     screenTemplate: 'crud',
     productMode: 'structured-workspace',
     heroEyebrow: fallback.frontend?.navigationLabel || fallback.entityName,
-    heroTitle: fallback.frontend?.pageTitle || `Conduza ${fallback.frontend?.navigationLabel || fallback.entityName || 'a operacao'} com mais clareza`,
+    heroTitle: fallback.frontend?.pageTitle || `Conduza ${fallback.frontend?.navigationLabel || fallback.entityName || 'a opera??o'} com mais clareza`,
     heroDescription:
       fallback.frontend?.pageDescription ||
       fallback.summary ||
       'Organize a acao principal desta area em uma experi?ncia mais clara, confiavel e pronta para uso.',
-    formCardTitle: 'Concluir operacao',
-    formCardDescription: 'Preencha apenas o essencial para avancar com seguran?a e contexto.',
+    formCardTitle: 'Concluir opera??o',
+    formCardDescription: 'Preencha apenas o essencial para avan?ar com seguran?a e contexto.',
     recordsTitle: 'Atividade recente',
     recordsEmptyState: 'Nenhuma movimentacao registrada ainda nesta area.',
     highlights: [
-      'Fluxo desenhado para acelerar a operacao com menos friccao.',
+      'Fluxo desenhado para acelerar a opera??o com menos fric??o.',
       'Leitura clara do pr?ximo passo e do contexto desta tela.',
       'Estado preparado para acompanhar evolucao e feedback do usuario.',
     ],

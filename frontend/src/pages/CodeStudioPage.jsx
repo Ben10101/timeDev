@@ -233,7 +233,7 @@ function getImplementationOrder(task, implementation) {
       stage: 'Operação e suporte',
       rank: 4,
       reason: 'Melhora acompanhamento, comunicação, filtros, histórico e eficiência operacional.',
-      keywords: ['historico', 'comentario', 'filtro', 'buscar', 'busca', 'lembrete', 'notific', 'status', 'acompanhar', 'painel', 'fila'],
+      keywords: ['hist?rico', 'comentario', 'filtro', 'buscar', 'busca', 'lembrete', 'notific', 'status', 'acompanhar', 'painel', 'fila'],
     },
     {
       stage: 'Expansão e gestão',
@@ -1243,8 +1243,8 @@ export default function CodeStudioPage() {
                   <p><strong>Domínio esperado:</strong> {selectedImplementation.qualitySummary?.expectedDomain || 'n/a'}</p>
                   <p><strong>Domínio implementado:</strong> {selectedImplementation.qualitySummary?.implementedDomain || 'n/a'}</p>
                   <p><strong>Rastreabilidade:</strong> {selectedImplementation.qualitySummary?.traceability?.traceabilityScore ?? 'n/a'}</p>
-                  <p><strong>Sucesso no projeto:</strong> {selectedImplementation.qualitySummary?.benchmark?.projectSuccessRatePercent ?? 'n/a'}%</p>
-                  <p><strong>Sucesso no dominio:</strong> {selectedImplementation.qualitySummary?.benchmark?.domainSuccessRatePercent ?? 'n/a'}%</p>
+                  <p><strong>Sucesso no projeto:</strong> {(selectedImplementation.qualitySummary?.benchmark?.projectSuccessRatePercent ?? 'n/a')}%</p>
+                  <p><strong>Sucesso no domínio:</strong> {(selectedImplementation.qualitySummary?.benchmark?.domainSuccessRatePercent ?? 'n/a')}%</p>
                   <p><strong>Projeto:</strong> {selectedImplementation.generatedApp?.name || 'App full stack'}</p>
                   <p><strong>Pasta:</strong> {selectedImplementation.generatedApp?.rootPath || 'Ainda não materializado'}</p>
                 </div>

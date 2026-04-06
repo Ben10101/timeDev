@@ -25,7 +25,7 @@ import {
 
 const MOCK_STORIES = [
   'Como um cliente, eu quero adicionar um produto ao carrinho de compras, para que possa continuar com a compra.',
-  'Como um cliente, eu quero atualizar a quantidade de um produto no carrinho de compras, para que possa fazer alteracoes caso necessario.',
+  'Como um cliente, eu quero atualizar a quantidade de um produto no carrinho de compras, para que possa fazer altera??es caso necess?rio.',
   'Como um cliente, eu quero remover um produto do carrinho de compras, para que possa excluir itens que nao necessito mais.',
 ];
 
