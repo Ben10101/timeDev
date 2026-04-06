@@ -7,6 +7,7 @@ import { parseCookies } from '../utils/cookies.js';
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 15;
 const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7;
 const REFRESH_COOKIE_NAME = 'factory_refresh_token';
+const CSRF_COOKIE_NAME = 'factory_csrf_token';
 
 function createAuthError(message, statusCode = 400) {
   const error = new Error(message);
@@ -17,7 +18,7 @@ function createAuthError(message, statusCode = 400) {
 function getAccessSecret() {
   const secret = process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET;
   if (!secret) {
-    return 'dev-auth-secret-change-me';
+    throw createAuthError('AUTH_ACCESS_SECRET ou JWT_SECRET precisa estar configurado no ambiente.', 500);
   }
   return secret;
 }
@@ -38,6 +39,17 @@ function buildRefreshCookieOptions() {
     sameSite: isProduction ? 'strict' : 'lax',
     secure: isProduction,
     path: '/api/auth',
+    maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
+  };
+}
+
+function buildCsrfCookieOptions() {
+  const isProduction = process.env.NODE_ENV === 'production';
+  return {
+    httpOnly: false,
+    sameSite: isProduction ? 'strict' : 'lax',
+    secure: isProduction,
+    path: '/api',
     maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
   };
 }
@@ -99,6 +111,10 @@ function createAccessToken(user) {
 
 function createRefreshToken() {
   return `${randomUUID()}.${randomUUID()}`;
+}
+
+function createCsrfToken() {
+  return `${randomUUID()}${randomUUID()}`.replace(/-/g, '');
 }
 
 export async function registerUserWithWorkspace({ name, email, password, workspaceName }) {
@@ -227,4 +243,16 @@ export function getRefreshCookieName() {
 
 export function getRefreshCookieOptions() {
   return buildRefreshCookieOptions();
+}
+
+export function getCsrfCookieName() {
+  return CSRF_COOKIE_NAME;
+}
+
+export function getCsrfCookieOptions() {
+  return buildCsrfCookieOptions();
+}
+
+export function issueCsrfToken() {
+  return createCsrfToken();
 }

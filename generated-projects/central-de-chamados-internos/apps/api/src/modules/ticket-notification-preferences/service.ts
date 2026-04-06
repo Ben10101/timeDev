@@ -1,31 +1,70 @@
-import { randomUUID } from 'crypto';
-import type { TicketNotificationPreferenceListResponse, TicketNotificationPreferenceRequest, TicketNotificationPreferenceResponse } from '../../../../../packages/shared/src/contracts/ticket-notification-preferences.ts';
-const records: TicketNotificationPreferenceResponse[] = [];
-/**
- * - O sistema nao deve permitir registros com e-mail duplicado.
- * - O e-mail deve ser validado antes do envio para persistencia.
- */
+import pino from 'pino';
+import type {
+  TicketNotificationPreferenceActivityResponse,
+  TicketNotificationPreferenceListResponse,
+  TicketNotificationPreferenceRequest,
+  TicketNotificationPreferenceResponse,
+} from '../../../../../packages/shared/src/contracts/ticket-notification-preferences.ts';
+import { ticketNotificationPreferenceSchema } from './schema';
+import { ticketNotificationPreferencesRepository } from './repository';
+
+const logger = pino({ name: 'ticket-notification-preferences-service' });
+
 export class TicketNotificationPreferencesService {
   list(): TicketNotificationPreferenceListResponse {
-    return { items: records };
-  }
-  create(input: TicketNotificationPreferenceRequest): TicketNotificationPreferenceResponse {
-    const item: TicketNotificationPreferenceResponse = {
-      id: randomUUID(),
-      notificationEmail: input.notificationEmail,
-      ticketUpdateAlerts: input.ticketUpdateAlerts,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-    };
-    records.push(item);
-    return item;
-  }
-  buildSeedFromTask(): TicketNotificationPreferenceRequest {
+    const items = ticketNotificationPreferencesRepository.list();
     return {
-      notificationEmail: 'comercial@empresa.com',
-      ticketUpdateAlerts: 'enabled',
+      items,
+      meta: {
+        mode: 'settings',
+        total: items.length,
+      },
     };
+  }
+
+  activity(): TicketNotificationPreferenceActivityResponse {
+    return {
+      items: ticketNotificationPreferencesRepository.activity(),
+    };
+  }
+
+  create(input: TicketNotificationPreferenceRequest): TicketNotificationPreferenceResponse {
+    const parsedInput = ticketNotificationPreferenceSchema.parse(input);
+    const duplicated = ticketNotificationPreferencesRepository.findByEmail(parsedInput.notificationEmail);
+    if (duplicated) {
+      throw new Error('Ja existe uma configuracao para este e-mail.');
+    }
+
+    const created = ticketNotificationPreferencesRepository.create(parsedInput);
+    logger.info({ notificationEmail: created.notificationEmail }, 'Preferencia de notificacao registrada');
+    return created;
+  }
+
+  update(id: string, input: TicketNotificationPreferenceRequest): TicketNotificationPreferenceResponse {
+    const parsedInput = ticketNotificationPreferenceSchema.parse(input);
+    const duplicated = ticketNotificationPreferencesRepository.findByEmail(parsedInput.notificationEmail);
+    if (duplicated && duplicated.id !== id) {
+      throw new Error('Ja existe uma configuracao para este e-mail.');
+    }
+
+    const updated = ticketNotificationPreferencesRepository.update(id, parsedInput);
+    logger.info({ notificationEmail: updated.notificationEmail }, 'Preferencia de notificacao atualizada');
+    return updated;
+  }
+
+  buildSeedRecordsFromTask(): TicketNotificationPreferenceRequest[] {
+    return [
+      {
+        notificationEmail: 'comercial@empresa.com',
+        ticketUpdateAlerts: 'enabled',
+      },
+      {
+        notificationEmail: 'lider.comercial@empresa.com',
+        ticketUpdateAlerts: 'disabled',
+      },
+    ];
   }
 }
+
 export const TicketNotificationPreferenceServiceInstance = new TicketNotificationPreferencesService();
-records.push(TicketNotificationPreferenceServiceInstance.create(TicketNotificationPreferenceServiceInstance.buildSeedFromTask()));
+ticketNotificationPreferencesRepository.seed(TicketNotificationPreferenceServiceInstance.buildSeedRecordsFromTask());

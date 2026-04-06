@@ -1,5 +1,5 @@
-# Como colaborador da área comercial, eu quero receber notificações por e-mail quando meu chamado for atualizado, para acompanhar o progresso sem acessar o sistema
-Task UUID: 89a096b3-e67d-4af4-9f84-dd3eec0aa3b4
+# Como colaborador, eu quero receber notificações por e-mail sobre atualizações do meu chamado, para acompanhar o andamento sem precisar acessar o sistema
+Task UUID: 75b0be6d-4e59-4c14-8028-ae729d1e77f3
 ## Resumo
 Feature integrada no baseline full stack pos-refinamento.
 ## Template de tela

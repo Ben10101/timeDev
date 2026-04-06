@@ -1,34 +1,60 @@
-import { randomUUID } from 'crypto';
-import type { SupportTicketAttachmentListResponse, SupportTicketAttachmentRequest, SupportTicketAttachmentResponse } from '../../../../../packages/shared/src/contracts/support-ticket-attachments.ts';
-const records: SupportTicketAttachmentResponse[] = [];
-/**
- * - O documento anexado deve permanecer vinculado ao chamado correto para consulta durante o atendimento.
- * - O tipo do documento precisa indicar se o anexo e fiscal, comprovante ou outro apoio operacional.
- * - O anexo precisa registrar uma referencia acessivel para que o suporte consulte o documento sem retrabalho.
- */
+import pino from 'pino';
+import type {
+  SupportTicketAttachmentActivityResponse,
+  SupportTicketAttachmentListResponse,
+  SupportTicketAttachmentRequest,
+  SupportTicketAttachmentResponse,
+} from '../../../../../packages/shared/src/contracts/support-ticket-attachments.ts';
+import { supportTicketAttachmentSchema } from './schema';
+import { supportTicketAttachmentsRepository } from './repository';
+
+const logger = pino({ name: 'support-ticket-attachments-service' });
+
 export class SupportTicketAttachmentsService {
   list(): SupportTicketAttachmentListResponse {
-    return { items: records };
-  }
-  create(input: SupportTicketAttachmentRequest): SupportTicketAttachmentResponse {
-    const item: SupportTicketAttachmentResponse = {
-      id: randomUUID(),
-      documentType: input.documentType,
-      documentDescription: input.documentDescription,
-      fileUrl: input.fileUrl,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-    };
-    records.push(item);
-    return item;
-  }
-  buildSeedFromTask(): SupportTicketAttachmentRequest {
+    const items = supportTicketAttachmentsRepository.list();
     return {
-      documentType: 'comprovante',
-      documentDescription: 'Comprovante referente ao pagamento associado ao chamado aberto pelo financeiro.',
-      fileUrl: 'https://arquivos.empresa.com/documentos/comprovante.pdf',
+      items,
+      meta: {
+        mode: 'evidence',
+        total: items.length,
+      },
     };
+  }
+
+  activity(): SupportTicketAttachmentActivityResponse {
+    return {
+      items: supportTicketAttachmentsRepository.activity(),
+    };
+  }
+
+  create(input: SupportTicketAttachmentRequest): SupportTicketAttachmentResponse {
+    const parsedInput = supportTicketAttachmentSchema.parse(input);
+    const created = supportTicketAttachmentsRepository.create(parsedInput);
+    logger.info({ documentType: created.documentType, fileUrl: created.fileUrl }, 'Evidencia anexada ao caso');
+    return created;
+  }
+
+  buildSeedRecordsFromTask(): SupportTicketAttachmentRequest[] {
+    return [
+      {
+        documentType: 'nota_fiscal',
+        documentDescription: 'Nota fiscal referente ao servico contratado para o chamado financeiro.',
+        fileUrl: 'https://arquivos.empresa.com/documentos/nota-fiscal-4821.pdf',
+      },
+      {
+        documentType: 'comprovante',
+        documentDescription: 'Comprovante de pagamento usado para validar a solicitacao do colaborador.',
+        fileUrl: 'https://arquivos.empresa.com/documentos/comprovante-pagamento-abril.pdf',
+      },
+      {
+        documentType: 'contrato',
+        documentDescription: 'Contrato enviado para contextualizar a origem da cobranca questionada.',
+        fileUrl: 'https://arquivos.empresa.com/documentos/contrato-suporte.pdf',
+      },
+    ];
   }
 }
+
 export const SupportTicketAttachmentServiceInstance = new SupportTicketAttachmentsService();
-records.push(SupportTicketAttachmentServiceInstance.create(SupportTicketAttachmentServiceInstance.buildSeedFromTask()));
+supportTicketAttachmentsRepository.seed(SupportTicketAttachmentServiceInstance.buildSeedRecordsFromTask());

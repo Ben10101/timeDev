@@ -5,6 +5,38 @@ export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/ap
 let accessToken = null
 let refreshPromise = null
 
+function readCookie(name) {
+  const cookies = String(typeof document !== 'undefined' ? document.cookie || '' : '')
+    .split(';')
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  for (const item of cookies) {
+    const separatorIndex = item.indexOf('=')
+    if (separatorIndex === -1) continue
+
+    const key = decodeURIComponent(item.slice(0, separatorIndex))
+    if (key === name) {
+      return decodeURIComponent(item.slice(separatorIndex + 1))
+    }
+  }
+
+  return ''
+}
+
+function attachCsrfHeader(config) {
+  const method = String(config.method || 'get').toUpperCase()
+  const needsCsrf = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || config.url?.includes('/auth/refresh')
+  if (!needsCsrf) return config
+
+  const csrfToken = readCookie('factory_csrf_token')
+  if (!csrfToken) return config
+
+  config.headers = config.headers || {}
+  config.headers['X-CSRF-Token'] = csrfToken
+  return config
+}
+
 export function setApiAccessToken(nextToken) {
   accessToken = nextToken || null
 }
@@ -48,6 +80,9 @@ async function refreshAuthSession() {
         {},
         {
           withCredentials: true,
+          headers: {
+            'X-CSRF-Token': readCookie('factory_csrf_token'),
+          },
         }
       )
       .then((response) => {
@@ -68,6 +103,7 @@ const apiClient = axios.create({
 })
 
 apiClient.interceptors.request.use((config) => {
+  attachCsrfHeader(config)
   if (accessToken) {
     config.headers = config.headers || {}
     config.headers.Authorization = `Bearer ${accessToken}`

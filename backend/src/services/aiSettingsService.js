@@ -1,4 +1,7 @@
 import { prisma } from '../lib/prisma.js';
+import { decryptSensitiveValue, encryptSensitiveValue } from '../utils/crypto.js';
+
+const ENCRYPTED_VALUE_PREFIX = 'enc::';
 
 const DEFAULT_AI_SETTINGS = {
   providerPreference: 'auto',
@@ -55,6 +58,17 @@ const DEFAULT_AI_SETTINGS = {
   },
 };
 
+const REMOTE_PROVIDER_KEYS = ['gemini', 'openai', 'deepseek', 'nvidia', 'anthropic', 'groq', 'openrouter'];
+const ALLOWED_PROVIDER_PREFERENCES = ['auto', 'ollama', ...REMOTE_PROVIDER_KEYS];
+
+function getAiSettingsSecret() {
+  const secret = process.env.AI_SETTINGS_SECRET || process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET;
+  if (!secret?.trim()) {
+    throw new Error('AI_SETTINGS_SECRET ou AUTH_ACCESS_SECRET/JWT_SECRET precisa estar configurado para proteger as credenciais de IA.');
+  }
+  return secret;
+}
+
 function normalizeAgentAliases(value = {}, fallback = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const normalized = { ...fallback };
@@ -66,13 +80,18 @@ function normalizeAgentAliases(value = {}, fallback = {}) {
   return normalized;
 }
 
-const REMOTE_PROVIDER_KEYS = ['gemini', 'openai', 'deepseek', 'nvidia', 'anthropic', 'groq', 'openrouter'];
-
 function normalizeProviderSettings(current = {}, fallback = {}) {
-  return {
+  const source = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
+  const normalized = {
     ...fallback,
-    ...current,
+    ...source,
   };
+
+  delete normalized.apiKeyConfigured;
+  delete normalized.apiKeyPreview;
+  delete normalized.clearApiKey;
+
+  return normalized;
 }
 
 function normalizeModelList(value) {
@@ -92,11 +111,182 @@ function normalizeModelList(value) {
   return [];
 }
 
+function normalizeProviderPreference(value, fallback = DEFAULT_AI_SETTINGS.providerPreference) {
+  return String(value || fallback).trim() || fallback;
+}
+
+function isEncryptedApiKey(value) {
+  return String(value || '').startsWith(ENCRYPTED_VALUE_PREFIX);
+}
+
+function decryptApiKey(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  if (!isEncryptedApiKey(normalized)) return normalized;
+  return decryptSensitiveValue(normalized.slice(ENCRYPTED_VALUE_PREFIX.length), getAiSettingsSecret());
+}
+
+function encryptApiKey(value) {
+  const plain = String(value || '').trim();
+  if (!plain) return '';
+  return `${ENCRYPTED_VALUE_PREFIX}${encryptSensitiveValue(plain, getAiSettingsSecret())}`;
+}
+
+function maskApiKey(value) {
+  const plain = String(value || '').trim();
+  if (!plain) return null;
+  const suffix = plain.slice(-4);
+  return `****${suffix}`;
+}
+
+function exposeRemoteProvider(providerSettings, { includeSecrets = false } = {}) {
+  const normalized = normalizeProviderSettings(providerSettings, { enabled: false, apiKey: '', model: '' });
+  const plainApiKey = decryptApiKey(normalized.apiKey);
+
+  return {
+    ...normalized,
+    apiKey: includeSecrets ? plainApiKey : '',
+    apiKeyConfigured: Boolean(plainApiKey),
+    apiKeyPreview: includeSecrets ? null : maskApiKey(plainApiKey),
+  };
+}
+
+function exposeAiSettings(settings, { includeSecrets = false } = {}) {
+  const normalized = normalizeAiSettings(settings);
+
+  return {
+    providerPreference: normalized.providerPreference,
+    agentAliases: normalized.agentAliases,
+    ollama: normalizeProviderSettings(normalized.ollama, DEFAULT_AI_SETTINGS.ollama),
+    gemini: exposeRemoteProvider(normalized.gemini, { includeSecrets }),
+    openai: exposeRemoteProvider(normalized.openai, { includeSecrets }),
+    deepseek: exposeRemoteProvider(normalized.deepseek, { includeSecrets }),
+    nvidia: exposeRemoteProvider(normalized.nvidia, { includeSecrets }),
+    anthropic: exposeRemoteProvider(normalized.anthropic, { includeSecrets }),
+    groq: exposeRemoteProvider(normalized.groq, { includeSecrets }),
+    openrouter: {
+      ...exposeRemoteProvider(normalized.openrouter, { includeSecrets }),
+      fallbackModels: normalizeModelList(normalized.openrouter?.fallbackModels),
+    },
+  };
+}
+
+function mergeRemoteProvider(currentProvider, inputProvider, fallback, { encryptSecrets = false } = {}) {
+  const current = normalizeProviderSettings(currentProvider, fallback);
+  const patch = inputProvider && typeof inputProvider === 'object' && !Array.isArray(inputProvider) ? inputProvider : {};
+  const next = normalizeProviderSettings(
+    {
+      ...current,
+      ...patch,
+    },
+    fallback
+  );
+
+  const currentPlainApiKey = decryptApiKey(current.apiKey);
+  let nextPlainApiKey = currentPlainApiKey;
+
+  if (patch.clearApiKey === true) {
+    nextPlainApiKey = '';
+  } else if (Object.prototype.hasOwnProperty.call(patch, 'apiKey')) {
+    const candidate = String(patch.apiKey || '').trim();
+    nextPlainApiKey = candidate || currentPlainApiKey;
+  }
+
+  next.apiKey = encryptSecrets ? encryptApiKey(nextPlainApiKey) : nextPlainApiKey;
+  return next;
+}
+
+async function readStoredAiSettingsForUser(userUuid) {
+  const user = await prisma.user.findUnique({
+    where: { uuid: userUuid },
+    select: { aiSettings: true },
+  });
+
+  return normalizeAiSettings(user?.aiSettings || {});
+}
+
+function hasLegacyPlaintextSecrets(settings) {
+  return REMOTE_PROVIDER_KEYS.some((providerKey) => {
+    const apiKey = String(settings?.[providerKey]?.apiKey || '').trim();
+    return apiKey && !isEncryptedApiKey(apiKey);
+  });
+}
+
+function buildEncryptedSettingsSnapshot(settings) {
+  return mergeAiSettings(settings, {}, { encryptSecrets: true });
+}
+
+async function migrateLegacySecretsIfNeeded(userUuid, settings) {
+  if (!hasLegacyPlaintextSecrets(settings)) {
+    return settings;
+  }
+
+  const encryptedSettings = buildEncryptedSettingsSnapshot(settings);
+  await prisma.user.update({
+    where: { uuid: userUuid },
+    data: { aiSettings: encryptedSettings },
+  });
+
+  return encryptedSettings;
+}
+
+function assertValidUrlIfPresent(value, label) {
+  const text = String(value || '').trim();
+  if (!text) return;
+
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new Error(`${label} precisa ser uma URL valida.`);
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`${label} precisa usar http ou https.`);
+  }
+}
+
+function assertTextLength(value, maxLength, label) {
+  if (String(value || '').trim().length > maxLength) {
+    throw new Error(`${label} excede o limite de ${maxLength} caracteres.`);
+  }
+}
+
+function validateAiSettingsPayload(settings) {
+  if (!ALLOWED_PROVIDER_PREFERENCES.includes(settings.providerPreference)) {
+    throw new Error('providerPreference invalido.');
+  }
+
+  assertValidUrlIfPresent(settings.ollama?.host, 'Host do Ollama');
+  assertTextLength(settings.ollama?.model, 120, 'Modelo do Ollama');
+
+  for (const [aliasKey, aliasValue] of Object.entries(settings.agentAliases || {})) {
+    assertTextLength(aliasValue, 60, `Alias do agente ${aliasKey}`);
+  }
+
+  for (const providerKey of REMOTE_PROVIDER_KEYS) {
+    const provider = settings[providerKey] || {};
+    assertTextLength(provider.model, 160, `Modelo de ${providerKey}`);
+
+    const apiKey = decryptApiKey(provider.apiKey);
+    assertTextLength(apiKey, 512, `API key de ${providerKey}`);
+  }
+
+  const fallbackModels = normalizeModelList(settings.openrouter?.fallbackModels);
+  if (fallbackModels.length > 8) {
+    throw new Error('OpenRouter aceita no maximo 8 modelos de fallback.');
+  }
+
+  for (const [index, model] of fallbackModels.entries()) {
+    assertTextLength(model, 160, `Fallback ${index + 1} do OpenRouter`);
+  }
+}
+
 export function normalizeAiSettings(input = {}) {
   const normalizedOpenRouter = normalizeProviderSettings(input.openrouter, DEFAULT_AI_SETTINGS.openrouter);
 
   return {
-    providerPreference: input.providerPreference || DEFAULT_AI_SETTINGS.providerPreference,
+    providerPreference: normalizeProviderPreference(input.providerPreference, DEFAULT_AI_SETTINGS.providerPreference),
     agentAliases: normalizeAgentAliases(input.agentAliases, DEFAULT_AI_SETTINGS.agentAliases),
     ollama: normalizeProviderSettings(input.ollama, DEFAULT_AI_SETTINGS.ollama),
     gemini: normalizeProviderSettings(input.gemini, DEFAULT_AI_SETTINGS.gemini),
@@ -112,41 +302,60 @@ export function normalizeAiSettings(input = {}) {
   };
 }
 
-export async function getAiSettingsForUser(userUuid) {
-  const user = await prisma.user.findUnique({
-    where: { uuid: userUuid },
-    select: { aiSettings: true },
-  });
+export function mergeAiSettings(currentSettings = {}, input = {}, options = {}) {
+  const current = normalizeAiSettings(currentSettings);
+  const patch = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const encryptSecrets = options.encryptSecrets === true;
 
-  return normalizeAiSettings(user?.aiSettings || {});
+  return {
+    providerPreference: normalizeProviderPreference(patch.providerPreference, current.providerPreference),
+    agentAliases: normalizeAgentAliases(
+      {
+        ...current.agentAliases,
+        ...(patch.agentAliases || {}),
+      },
+      DEFAULT_AI_SETTINGS.agentAliases
+    ),
+    ollama: normalizeProviderSettings(
+      {
+        ...current.ollama,
+        ...(patch.ollama || {}),
+      },
+      DEFAULT_AI_SETTINGS.ollama
+    ),
+    gemini: mergeRemoteProvider(current.gemini, patch.gemini, DEFAULT_AI_SETTINGS.gemini, { encryptSecrets }),
+    openai: mergeRemoteProvider(current.openai, patch.openai, DEFAULT_AI_SETTINGS.openai, { encryptSecrets }),
+    deepseek: mergeRemoteProvider(current.deepseek, patch.deepseek, DEFAULT_AI_SETTINGS.deepseek, { encryptSecrets }),
+    nvidia: mergeRemoteProvider(current.nvidia, patch.nvidia, DEFAULT_AI_SETTINGS.nvidia, { encryptSecrets }),
+    anthropic: mergeRemoteProvider(current.anthropic, patch.anthropic, DEFAULT_AI_SETTINGS.anthropic, { encryptSecrets }),
+    groq: mergeRemoteProvider(current.groq, patch.groq, DEFAULT_AI_SETTINGS.groq, { encryptSecrets }),
+    openrouter: {
+      ...mergeRemoteProvider(current.openrouter, patch.openrouter, DEFAULT_AI_SETTINGS.openrouter, { encryptSecrets }),
+      fallbackModels: normalizeModelList(patch.openrouter?.fallbackModels ?? current.openrouter?.fallbackModels),
+    },
+  };
+}
+
+export async function getAiSettingsForUser(userUuid, options = {}) {
+  const storedSettings = await migrateLegacySecretsIfNeeded(userUuid, await readStoredAiSettingsForUser(userUuid));
+  return exposeAiSettings(storedSettings, { includeSecrets: options.includeSecrets === true });
 }
 
 export async function updateAiSettingsForUser(userUuid, input = {}) {
-  const current = await getAiSettingsForUser(userUuid);
-  const nextSettings = normalizeAiSettings({
-    ...current,
-    ...input,
-    agentAliases: { ...current.agentAliases, ...(input.agentAliases || {}) },
-    ollama: { ...current.ollama, ...(input.ollama || {}) },
-    gemini: { ...current.gemini, ...(input.gemini || {}) },
-    openai: { ...current.openai, ...(input.openai || {}) },
-    deepseek: { ...current.deepseek, ...(input.deepseek || {}) },
-    nvidia: { ...current.nvidia, ...(input.nvidia || {}) },
-    anthropic: { ...current.anthropic, ...(input.anthropic || {}) },
-    groq: { ...current.groq, ...(input.groq || {}) },
-    openrouter: { ...current.openrouter, ...(input.openrouter || {}) },
-  });
+  const currentStoredSettings = await migrateLegacySecretsIfNeeded(userUuid, await readStoredAiSettingsForUser(userUuid));
+  const nextStoredSettings = mergeAiSettings(currentStoredSettings, input, { encryptSecrets: true });
+  validateAiSettingsPayload(nextStoredSettings);
 
   await prisma.user.update({
     where: { uuid: userUuid },
-    data: { aiSettings: nextSettings },
+    data: { aiSettings: nextStoredSettings },
   });
 
-  return nextSettings;
+  return exposeAiSettings(nextStoredSettings);
 }
 
 export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
-  const settings = await getAiSettingsForUser(userUuid);
+  const settings = await getAiSettingsForUser(userUuid, { includeSecrets: true });
   const includeLocalFallback = options.includeLocalFallback !== false;
   const agentName = String(options.agentName || '').trim().toLowerCase();
   const remoteProviders = REMOTE_PROVIDER_KEYS.filter(

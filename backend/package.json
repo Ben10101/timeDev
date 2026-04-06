@@ -7,6 +7,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "test:auth-user-flow:smoke": "node scripts/authenticated-user-flow-smoke.mjs",
+    "test:auth-governance:smoke": "node scripts/auth-governance-smoke.mjs",
+    "test:security:baseline": "node scripts/validate-security-baseline.mjs",
+    "test:security:smoke": "node scripts/security-smoke.mjs",
     "test:e2e:platform": "node scripts/platform-e2e.mjs",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",

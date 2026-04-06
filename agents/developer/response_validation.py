@@ -235,6 +235,9 @@ def validate_backlog_output(result):
     required_sections = [
         "backlog do projeto",
         "visao geral",
+        "capacidades do produto",
+        "epicos recomendados",
+        "fatias de release",
         "historias de usuario",
     ]
 
@@ -293,6 +296,38 @@ def validate_backlog_output(result):
 
     if len(story_lines) >= 3 and generic_user_count > max(1, len(story_lines) // 3):
         return False, 'Historias ainda estao genericas demais ("Como um usuario").'
+
+    capabilities_section = re.search(r"##\s+capacidade[s]?\s+do\s+produto([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    epics_section = re.search(r"##\s+epicos\s+recomendados([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    release_section = re.search(r"##\s+fatias\s+de\s+release([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+
+    def _count_bullets(section_match):
+        if not section_match:
+            return 0
+        return len(re.findall(r"(?:^|\n)\s*[-*]\s+", section_match.group(1)))
+
+    if _count_bullets(capabilities_section) < 3:
+        return False, "Capacidades do produto insuficientes."
+
+    if _count_bullets(epics_section) < 3:
+        return False, "Epicos recomendados insuficientes."
+
+    release_text = release_section.group(1) if release_section else ""
+    if "mvp" not in release_text or "fase 2" not in release_text:
+        return False, "Fatias de release sem MVP e Fase 2 explicitos."
+
+    foundation_signals = [
+        r"\bcriar\b",
+        r"\bcadastrar\b",
+        r"\bregistrar\b",
+        r"\bconfigurar\b",
+        r"\bvisualizar\b",
+        r"\bacompanhar\b",
+        r"\baprovar\b",
+    ]
+    covered_signals = sum(1 for pattern in foundation_signals if any(re.search(pattern, line, re.IGNORECASE) for line in normalized_story_lines))
+    if covered_signals < 4:
+        return False, "Backlog sem cobertura suficiente da espinha dorsal do produto."
 
     # O marcador final continua sendo desejavel, mas nao deve derrubar um backlog
     # estruturalmente completo quando o modelo apenas esquece a linha final.

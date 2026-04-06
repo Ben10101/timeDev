@@ -23,6 +23,7 @@ def main():
         payload = input_data.get("payload", {})
         project_id = payload.get("project_id")
         idea = payload.get("idea")
+        runtime_mode = input_data.get("runtime_mode") or os.getenv("ALIGNA_AGENT_RUNTIME_MODE") or "modern-single-agent"
 
         if not agent_name or not project_id or not idea:
             raise ValueError("Faltando 'agent', 'project_id', ou 'idea' no payload.")
@@ -98,7 +99,14 @@ def main():
         else:
             raise ValueError(f"Agente desconhecido: {agent_name}")
 
-        print(json.dumps({"success": True, "data": result}, ensure_ascii=False))
+        print(json.dumps({
+            "success": True,
+            "data": result,
+            "meta": {
+                "runtime_mode": runtime_mode,
+                "runner": "orchestrator/run_single_agent.py",
+            },
+        }, ensure_ascii=False))
 
     except Exception as e:
         print(json.dumps({"success": False, "error": str(e)}), file=sys.stdout)

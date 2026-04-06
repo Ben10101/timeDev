@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { estimateTokenCount } from '../utils/aiRunMetrics.js';
 import { DEFAULT_AI_SETTINGS, getAiSettingsForUser } from './aiSettingsService.js';
+import { inferProjectTemplateKey, resolveProjectTemplate } from '../templates/projects/index.js';
 
 const taskListInclude = {
   assigneeUser: { select: { uuid: true, name: true, email: true } },
@@ -243,10 +244,19 @@ function enrichProjectAccess(project, userUuid = null) {
   if (!project) return project;
 
   const currentUserRole = resolveCurrentUserProjectRole(project, userUuid);
+  const resolvedProjectTemplate = resolveProjectTemplate(
+    project.templateKey || project.intakeConfig?.projectTemplateKey || null,
+    {
+      projectName: project.name,
+      summary: project.description || project.vision || '',
+      label: project.name,
+    }
+  );
   return {
     ...project,
     currentUserRole,
     permissions: buildProjectPermissions(currentUserRole),
+    resolvedProjectTemplate,
   };
 }
 
@@ -741,23 +751,45 @@ export async function getProjectByUuid(projectUuid, userUuid = null) {
 export async function updateProjectBrief(projectUuid, input = {}) {
   const existingProject = await prisma.project.findUnique({
     where: { uuid: projectUuid },
-    select: { id: true, intakeConfig: true },
+    select: { id: true, name: true, description: true, vision: true, templateKey: true, intakeConfig: true },
   });
 
   if (!existingProject) {
     throw new Error('Projeto nÃ£o encontrado.');
   }
 
+  const mergedIntakeConfig =
+    input.intakeConfig !== undefined
+      ? {
+          ...(existingProject.intakeConfig || {}),
+          ...input.intakeConfig,
+        }
+      : existingProject.intakeConfig || {};
+
+  const resolvedTemplateKey =
+    input.templateKey !== undefined
+      ? input.templateKey?.trim() || null
+      : existingProject.templateKey ||
+        mergedIntakeConfig.projectTemplateKey ||
+        inferProjectTemplateKey({
+          projectName: existingProject.name,
+          description: input.description !== undefined ? input.description : existingProject.description,
+          vision: input.vision !== undefined ? input.vision : existingProject.vision,
+          idea: mergedIntakeConfig.idea,
+          summary: mergedIntakeConfig.objective,
+        });
+
   return prisma.project.update({
     where: { uuid: projectUuid },
     data: {
       description: input.description !== undefined ? input.description?.trim() || null : undefined,
       vision: input.vision !== undefined ? input.vision?.trim() || null : undefined,
+      templateKey: resolvedTemplateKey,
       intakeConfig:
         input.intakeConfig !== undefined
           ? {
-              ...(existingProject.intakeConfig || {}),
-              ...input.intakeConfig,
+              ...mergedIntakeConfig,
+              projectTemplateKey: resolvedTemplateKey || mergedIntakeConfig.projectTemplateKey || null,
             }
           : undefined,
     },
@@ -944,6 +976,24 @@ export async function createProject({
     slug = `${slugBase}-${suffix}`;
   }
 
+  const resolvedTemplateKey =
+    templateKey?.trim() ||
+    inferProjectTemplateKey({
+      projectName: name,
+      description,
+      vision,
+      idea: intakeConfig?.idea,
+      summary: intakeConfig?.objective,
+    });
+
+  const normalizedIntakeConfig =
+    intakeConfig !== undefined
+      ? {
+          ...(intakeConfig || {}),
+          projectTemplateKey: resolvedTemplateKey || intakeConfig?.projectTemplateKey || null,
+        }
+      : undefined;
+
   return prisma.project.create({
     data: {
       uuid: forcedUuid || randomUUID(),
@@ -953,8 +1003,8 @@ export async function createProject({
       description: description?.trim() || null,
       vision: vision?.trim() || null,
       startMode: startMode?.trim() || null,
-      templateKey: templateKey?.trim() || null,
-      intakeConfig: intakeConfig ?? undefined,
+      templateKey: resolvedTemplateKey || null,
+      intakeConfig: normalizedIntakeConfig,
       boardConfig: boardConfig ?? undefined,
       agentsConfig: agentsConfig ?? undefined,
       automationConfig: automationConfig ?? undefined,

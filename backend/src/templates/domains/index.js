@@ -1,10 +1,16 @@
 import { DOMAIN_TEMPLATE_CATALOG } from './catalog.js';
+import { resolveInterfaceExamples } from './interfaceExamples.js';
 
 export function resolveDomainTemplate(domainKey, fallback = {}) {
   const template = DOMAIN_TEMPLATE_CATALOG[domainKey];
+  const exampleData = resolveInterfaceExamples(
+    domainKey,
+    template?.productMode || fallback.frontend?.productMode || 'structured-workspace',
+    template?.screenTemplate || fallback.frontend?.screenTemplate || 'crud'
+  );
 
   if (template) {
-    return { ...template };
+    return { ...template, ...exampleData };
   }
 
   return {
@@ -28,6 +34,7 @@ export function resolveDomainTemplate(domainKey, fallback = {}) {
     ],
     profileSummaryTitle: 'Resumo da feature',
     profileSummaryDescription: fallback.summary,
+    ...exampleData,
   };
 }
 

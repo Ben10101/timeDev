@@ -188,8 +188,10 @@ function TaskCard({
   const processingError = task.processingError;
   const isStory = task.taskType === 'story';
   const isEpic = task.taskType === 'epic';
-  const requirementsRunning = isTaskAgentRunning(task, 'requirements_analyst');
-  const qaRunning = isTaskAgentRunning(task, 'qa_engineer');
+  const requirementsRunning = task.status === 'in_progress' && isTaskAgentRunning(task, 'requirements_analyst');
+  const qaRunning =
+    (task.status === 'qa' || task.status === 'in_progress' || task.status === 'in_review') &&
+    isTaskAgentRunning(task, 'qa_engineer');
   const canRunRequirements = isStory && !isBlocked && !hasRequirements && !requirementsRunning;
   const canRunQa = isStory && !isBlocked && hasRequirements && !hasTestPlan && !qaRunning;
   const canRunImplementation = Boolean(implementationUnlocked);
@@ -443,6 +445,10 @@ export default function ProjectsPage() {
       return searchable.includes(query);
     });
   }, [projectSearch, projects]);
+  const hasActiveAgentRun = useMemo(
+    () => tasks.some((task) => (task.agentRuns || []).some((run) => run.status === 'running')),
+    [tasks]
+  );
 
   useEffect(() => {
     const preferredProjectUuid = searchParams.get('project');
@@ -476,6 +482,12 @@ export default function ProjectsPage() {
       setArchitectureStatus(null);
     }
   }, [activeProjectUuid]);
+
+  useEffect(() => {
+    if (saving && !hasActiveAgentRun) {
+      setSaving(false);
+    }
+  }, [saving, hasActiveAgentRun]);
 
   async function loadProjects(preferredProjectUuid, options = {}) {
     if (!options.silent) setLoading(true);
@@ -1307,4 +1319,3 @@ export default function ProjectsPage() {
     </AppShell>
   );
 }
-

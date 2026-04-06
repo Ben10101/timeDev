@@ -23,6 +23,38 @@ from agents.developer.response_validation import validate_backlog_output
 
 class ProjectManager:
     STORY_RANGE = (15, 25)
+    FOUNDATION_SIGNAL_PROMPTS = [
+        {
+            "key": "criar",
+            "pattern": r"\b(criar|cadastrar|registrar|abrir)\b",
+            "label": "criacao e cadastro inicial",
+            "instruction": "Cubra a criacao da entidade principal, o cadastro inicial e o primeiro registro necessario para colocar o produto em uso.",
+        },
+        {
+            "key": "configurar",
+            "pattern": r"\b(configurar|definir|planejar|organizar)\b",
+            "label": "configuracao e planejamento",
+            "instruction": "Cubra configuracao inicial, definicao de parametros operacionais e planejamento basico do fluxo principal.",
+        },
+        {
+            "key": "visualizar",
+            "pattern": r"\b(visualizar|consultar|listar|buscar)\b",
+            "label": "consulta e visibilidade",
+            "instruction": "Cubra consulta, listagem, busca e visibilidade do estado atual do produto para o papel principal.",
+        },
+        {
+            "key": "acompanhar",
+            "pattern": r"\b(acompanhar|monitorar|atualizar|gerenciar)\b",
+            "label": "operacao e acompanhamento",
+            "instruction": "Cubra acompanhamento operacional, atualizacao do trabalho em andamento e monitoramento do fluxo do dia a dia.",
+        },
+        {
+            "key": "aprovar",
+            "pattern": r"\b(aprovar|validar|autorizar|revisar)\b",
+            "label": "decisao e governanca",
+            "instruction": "Cubra decisao, aprovacao, validacao ou governanca minima para que o fluxo principal fique controlado.",
+        },
+    ]
     PERSONA_NORMALIZATION = {
         "colaborador do setor administrativo": "colaborador",
         "colaborador da operacao": "colaborador",
@@ -245,7 +277,19 @@ class ProjectManager:
         return normalized_blocks
 
     def _build_full_backlog(self, overview, story_blocks):
+        return self._build_full_backlog_with_structure(
+            overview=overview,
+            capabilities=[],
+            epics=[],
+            release_slices=[],
+            story_blocks=story_blocks,
+        )
+
+    def _build_full_backlog_with_structure(self, overview, capabilities, epics, release_slices, story_blocks):
         cleaned_overview = (overview or "").strip()
+        capabilities_body = "\n".join(f"- {item}" for item in (capabilities or []) if item).strip()
+        epics_body = "\n".join(f"- {item}" for item in (epics or []) if item).strip()
+        release_body = "\n".join(f"- {item}" for item in (release_slices or []) if item).strip()
         stories = self._renumber_stories(story_blocks)
         stories_body = "\n\n".join(stories).strip()
 
@@ -253,6 +297,12 @@ class ProjectManager:
             "# BACKLOG DO PROJETO",
             "## Visao Geral",
             cleaned_overview or "Backlog inicial gerado a partir do briefing informado.",
+            "## Capacidades do Produto",
+            capabilities_body or "- Capacidade principal ainda nao consolidada.",
+            "## Epicos Recomendados",
+            epics_body or "- Epic 1: Fundacao operacional do produto.",
+            "## Fatias de Release",
+            release_body or "- MVP: fluxo principal e governanca minima.",
             "## Historias de Usuario",
             stories_body or "- US-01 | Como colaborador, eu quero registrar uma demanda, para iniciar o backlog.",
             "FIM_DO_BACKLOG",
@@ -264,9 +314,53 @@ class ProjectManager:
         stories = self._renumber_stories(story_blocks)
         return "## Historias de Usuario\n\n" + "\n\n".join(stories).strip()
 
+    def _get_foundation_signal_matches(self, story_blocks):
+        normalized_titles = [self._story_seed_title(block) for block in story_blocks if block]
+        matches = {}
+        for signal in self.FOUNDATION_SIGNAL_PROMPTS:
+            matches[signal["key"]] = any(
+                re.search(signal["pattern"], title, re.IGNORECASE) for title in normalized_titles
+            )
+        return matches
+
+    def _get_missing_foundation_signals(self, story_blocks):
+        matches = self._get_foundation_signal_matches(story_blocks)
+        return [signal for signal in self.FOUNDATION_SIGNAL_PROMPTS if not matches.get(signal["key"])]
+
+    def _extract_bullet_lines(self, content):
+        return [
+            re.sub(r"^\s*[-*]\s*", "", line).strip()
+            for line in (content or "").splitlines()
+            if re.match(r"^\s*[-*]\s+.+", line.strip())
+        ]
+
+    def _generate_simple_bullet_section(self, base_context, *, section_title, task_label, rules, num_predict):
+        prompt = f"""
+{base_context}
+
+TAREFA
+Gere APENAS esta secao em Markdown:
+
+## {section_title}
+
+REGRAS
+{rules}
+"""
+        result = self._generate_block(prompt, num_predict=num_predict)
+        section = self._extract_section(result, section_title)
+        if not section:
+            raise RuntimeError(f"Secao {section_title} vazia.")
+        bullets = self._extract_bullet_lines(section)
+        if not bullets:
+            raise RuntimeError(f"Secao {section_title} sem itens.")
+        return bullets
+
     def _repair_backlog_output(self, base_context, full_backlog, overview, story_blocks, reason, *, min_stories, max_stories):
         repaired_overview = (overview or "").strip()
         extracted_overview = self._extract_section(full_backlog, "Visao Geral")
+        extracted_capabilities = self._extract_bullet_lines(self._extract_section(full_backlog, "Capacidades do Produto"))
+        extracted_epics = self._extract_bullet_lines(self._extract_section(full_backlog, "Epicos Recomendados"))
+        extracted_releases = self._extract_bullet_lines(self._extract_section(full_backlog, "Fatias de Release"))
         if not repaired_overview and extracted_overview:
             repaired_overview = extracted_overview.strip()
 
@@ -290,6 +384,36 @@ Gere APENAS esta secao em Markdown:
             )
             repaired_overview = self._extract_section(overview_result, "Visao Geral") or repaired_overview
 
+        capabilities = extracted_capabilities
+        if len(capabilities) < 3:
+            capabilities = self._generate_simple_bullet_section(
+                base_context,
+                section_title="Capacidades do Produto",
+                task_label="capacidades",
+                rules="- Liste entre 4 e 6 capacidades do produto.\n- Foque em capacidades de negocio e operacao.\n- Nao escreva user stories.\n- Cada item deve ser um bullet curto.",
+                num_predict=os.getenv("PROJECT_MANAGER_BLOCK_CAPABILITIES_NUM_PREDICT", "320"),
+            )
+
+        epics = extracted_epics
+        if len(epics) < 3:
+            epics = self._generate_simple_bullet_section(
+                base_context,
+                section_title="Epicos Recomendados",
+                task_label="epicos",
+                rules="- Liste entre 4 e 6 epicos recomendados.\n- Cada item deve agrupar um conjunto coerente de historias.\n- Nomeie o epic e descreva o foco em uma linha.\n- Nao escreva user stories.",
+                num_predict=os.getenv("PROJECT_MANAGER_BLOCK_EPICS_NUM_PREDICT", "360"),
+            )
+
+        release_slices = extracted_releases
+        if len(release_slices) < 2:
+            release_slices = self._generate_simple_bullet_section(
+                base_context,
+                section_title="Fatias de Release",
+                task_label="releases",
+                rules="- Liste 3 fatias de release: MVP, Fase 2 e Fase 3.\n- Em cada item, diga o foco da fatia e o que fica de fora.\n- Nao escreva user stories completas.",
+                num_predict=os.getenv("PROJECT_MANAGER_BLOCK_RELEASES_NUM_PREDICT", "320"),
+            )
+
         if len(consolidated_blocks) < min_stories or "trunc" in (reason or "").lower():
             consolidated_blocks = self._ensure_minimum_story_count(
                 base_context,
@@ -297,6 +421,13 @@ Gere APENAS esta secao em Markdown:
                 min_stories=min_stories,
                 max_stories=max_stories,
             )
+
+        consolidated_blocks = self._ensure_foundation_story_coverage(
+            base_context,
+            consolidated_blocks,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )
 
         if len(consolidated_blocks) < min_stories:
             fallback_blocks = self._generate_missing_stories_fallback(
@@ -322,9 +453,21 @@ Gere APENAS esta secao em Markdown:
             min_stories=min_stories,
             max_stories=max_stories,
         )[:max_stories]
+        consolidated_blocks = self._ensure_foundation_story_coverage(
+            base_context,
+            consolidated_blocks,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )[:max_stories]
 
         self._validate_story_batch_quality(consolidated_blocks, min_stories=min_stories)
-        return self._build_full_backlog(repaired_overview, consolidated_blocks)
+        return self._build_full_backlog_with_structure(
+            overview=repaired_overview,
+            capabilities=capabilities,
+            epics=epics,
+            release_slices=release_slices,
+            story_blocks=consolidated_blocks,
+        )
 
     def _generate_block(self, prompt, *, num_predict):
         result = generate_text_from_llm(
@@ -416,6 +559,50 @@ REGRAS
         if not complement_section:
             return []
         return self._extract_story_lines(complement_section)
+
+    def _generate_foundation_stories(self, base_context, existing_story_blocks, missing_signals):
+        if not missing_signals:
+            return []
+
+        existing_titles = [
+            self._story_seed_title(block)
+            for block in existing_story_blocks
+            if block and self._story_seed_title(block)
+        ]
+        existing_titles_text = "\n".join(f"- {title}" for title in existing_titles[:30]) or "- Nenhuma historia consolidada ainda."
+        focus_text = "\n".join(
+            f"- {signal['label']}: {signal['instruction']}" for signal in missing_signals
+        )
+
+        prompt = f"""
+{base_context}
+
+HISTORIAS JA CONSOLIDADAS
+{existing_titles_text}
+
+EIXOS FUNDADORES QUE AINDA FALTAM
+{focus_text}
+
+TAREFA
+Gere APENAS a secao abaixo em Markdown:
+
+## Historias de Usuario
+
+REGRAS
+- Gere entre {len(missing_signals)} e {len(missing_signals) + 2} historias.
+- Cubra SOMENTE os eixos fundadores que ainda faltam.
+- Nao repita nem reformule historias ja consolidadas.
+- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Nao invente escopo fora do briefing.
+"""
+        result = self._generate_block(
+            prompt,
+            num_predict=os.getenv("PROJECT_MANAGER_BLOCK_FOUNDATION_NUM_PREDICT", "800"),
+        )
+        foundation_section = self._extract_section(result, "Historias de Usuario")
+        if not foundation_section:
+            return []
+        return self._extract_story_lines(foundation_section)
 
     def _generate_thematic_stories(self, base_context, theme_label, instructions, *, target_range):
         prompt = f"""
@@ -577,26 +764,56 @@ REGRAS
 
         return consolidated[:max_stories]
 
+    def _ensure_foundation_story_coverage(self, base_context, story_blocks, *, min_stories, max_stories):
+        consolidated = list(story_blocks)
+
+        for _round in range(3):
+            missing_signals = self._get_missing_foundation_signals(consolidated)
+            if len(self.FOUNDATION_SIGNAL_PROMPTS) - len(missing_signals) >= 4:
+                break
+
+            complement_blocks = self._generate_foundation_stories(
+                base_context,
+                consolidated,
+                missing_signals,
+            )
+            if not complement_blocks:
+                break
+
+            updated = self._dedupe_and_polish_stories(consolidated + complement_blocks)
+            if len(updated) <= len(consolidated):
+                break
+
+            consolidated = updated[:max_stories]
+            consolidated = self._ensure_minimum_story_count(
+                base_context,
+                consolidated,
+                min_stories=min_stories,
+                max_stories=max_stories,
+            )
+
+        return consolidated[:max_stories]
+
     def _collect_story_blocks_incrementally(self, base_context, *, min_stories, max_stories):
         themes = [
             (
-                "Jornada principal e agendamento",
-                "Cubra descoberta de horarios, agendamento inicial, cadastro basico e confirmacao de consulta.",
+                "Fluxo fundador do produto",
+                "Cubra cadastro inicial, criacao da entidade principal, planejamento basico, consulta inicial e confirmacao do fluxo principal.",
                 (4, 6),
             ),
             (
-                "Recepcao e operacao diaria",
-                "Cubra recepcao, remarcacao, cancelamento, encaixe, fila e acompanhamento operacional.",
+                "Operacao e acompanhamento",
+                "Cubra acompanhamento operacional, atualizacao de status, execucao do trabalho, alertas, fila e excecoes principais do dia a dia.",
                 (4, 6),
             ),
             (
-                "Profissional e agenda clinica",
-                "Cubra visao do medico, disponibilidade, bloqueio de agenda e organizacao dos atendimentos.",
+                "Gestao e colaboracao",
+                "Cubra visao gerencial, colaboracao entre papeis, configuracao operacional, relatorios principais e tomada de decisao.",
                 (3, 5),
             ),
             (
-                "Gestao, relatorios e governanca",
-                "Cubra relatorios, administracao, permissao, notificacoes, auditoria e controles de operacao.",
+                "Governanca e evolucao",
+                "Cubra permissoes, auditoria, automacoes, integracoes, relatorios avancados e cenarios de administracao do produto.",
                 (3, 5),
             ),
         ]
@@ -628,6 +845,12 @@ REGRAS
             min_stories=min_stories,
             max_stories=max_stories,
         )
+        consolidated = self._ensure_foundation_story_coverage(
+            base_context,
+            consolidated,
+            min_stories=min_stories,
+            max_stories=max_stories,
+        )
 
         if len(consolidated) < min_stories and seed_titles:
             existing_keys = {self._story_similarity_key(block) for block in consolidated}
@@ -649,6 +872,12 @@ REGRAS
                     consolidated = self._dedupe_and_polish_stories(consolidated + expanded)
 
             consolidated = self._ensure_minimum_story_count(
+                base_context,
+                consolidated,
+                min_stories=min_stories,
+                max_stories=max_stories,
+            )
+            consolidated = self._ensure_foundation_story_coverage(
                 base_context,
                 consolidated,
                 min_stories=min_stories,
@@ -679,6 +908,12 @@ REGRAS
                         consolidated = self._dedupe_and_polish_stories(consolidated + expanded)
 
                 consolidated = self._ensure_minimum_story_count(
+                    base_context,
+                    consolidated,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
+                consolidated = self._ensure_foundation_story_coverage(
                     base_context,
                     consolidated,
                     min_stories=min_stories,
@@ -730,6 +965,30 @@ Gere APENAS esta secao em Markdown:
                 if not overview:
                     raise RuntimeError("Bloco de visao geral sem conteudo.")
 
+                capabilities = self._generate_simple_bullet_section(
+                    base_context,
+                    section_title="Capacidades do Produto",
+                    task_label="capacidades",
+                    rules="- Liste entre 4 e 6 capacidades do produto.\n- Foque no que o produto precisa permitir, nao em tarefas tecnicas.\n- Cada item deve ser um bullet curto e claro.\n- Nao escreva user stories.",
+                    num_predict=os.getenv("PROJECT_MANAGER_BLOCK_CAPABILITIES_NUM_PREDICT", "320"),
+                )
+
+                epics = self._generate_simple_bullet_section(
+                    base_context,
+                    section_title="Epicos Recomendados",
+                    task_label="epicos",
+                    rules="- Liste entre 4 e 6 epicos recomendados.\n- Cada bullet deve trazer o nome do epic e o foco funcional em uma linha.\n- Os epicos devem cobrir fundacao, operacao, governanca e relatorios.\n- Nao escreva user stories.",
+                    num_predict=os.getenv("PROJECT_MANAGER_BLOCK_EPICS_NUM_PREDICT", "360"),
+                )
+
+                release_slices = self._generate_simple_bullet_section(
+                    base_context,
+                    section_title="Fatias de Release",
+                    task_label="releases",
+                    rules="- Liste exatamente 3 fatias: MVP, Fase 2 e Fase 3.\n- Cada bullet deve dizer o foco da fatia e o que fica para depois.\n- O MVP deve priorizar a espinha dorsal do produto.",
+                    num_predict=os.getenv("PROJECT_MANAGER_BLOCK_RELEASES_NUM_PREDICT", "320"),
+                )
+
                 combined_story_blocks = self._collect_story_blocks_incrementally(
                     base_context,
                     min_stories=min_stories,
@@ -753,6 +1012,12 @@ Gere APENAS esta secao em Markdown:
                     min_stories=min_stories,
                     max_stories=max_stories,
                 )
+                combined_story_blocks = self._ensure_foundation_story_coverage(
+                    base_context,
+                    combined_story_blocks,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
 
                 if len(combined_story_blocks) < min_stories:
                     fallback_blocks = self._generate_missing_stories_fallback(
@@ -771,10 +1036,22 @@ Gere APENAS esta secao em Markdown:
                     min_stories=min_stories,
                     max_stories=max_stories,
                 )
+                combined_story_blocks = self._ensure_foundation_story_coverage(
+                    base_context,
+                    combined_story_blocks,
+                    min_stories=min_stories,
+                    max_stories=max_stories,
+                )
 
                 combined_story_blocks = combined_story_blocks[:max_stories]
                 self._validate_story_batch_quality(combined_story_blocks, min_stories=min_stories)
-                full_backlog = self._build_full_backlog(overview, combined_story_blocks)
+                full_backlog = self._build_full_backlog_with_structure(
+                    overview=overview,
+                    capabilities=capabilities,
+                    epics=epics,
+                    release_slices=release_slices,
+                    story_blocks=combined_story_blocks,
+                )
 
                 story_count = self._extract_story_count(full_backlog)
                 if story_count < min_stories:

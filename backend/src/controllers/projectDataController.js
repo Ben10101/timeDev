@@ -33,6 +33,7 @@ import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
 import { bootstrapGeneratedApp } from '../services/implementationService.js';
 import { serializeBigInts } from '../utils/serialize.js';
 import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
+import { inferProjectTemplateKey } from '../templates/projects/index.js';
 
 function compactWhitespace(value = '') {
   return String(value || '')
@@ -168,6 +169,16 @@ export async function createProjectController(req, res, next) {
       });
     }
 
+    const resolvedTemplateKey =
+      templateKey?.trim() ||
+      inferProjectTemplateKey({
+        projectName: name,
+        description,
+        vision,
+        idea: intakeConfig?.idea,
+        summary: intakeConfig?.objective,
+      });
+
     const project = await createProject({
       workspaceUuid: workspace.uuid,
       createdByUuid: req.authUser.uuid,
@@ -175,8 +186,11 @@ export async function createProjectController(req, res, next) {
       description,
       vision,
       startMode,
-      templateKey,
-      intakeConfig,
+      templateKey: resolvedTemplateKey,
+      intakeConfig: {
+        ...(intakeConfig || {}),
+        projectTemplateKey: resolvedTemplateKey || intakeConfig?.projectTemplateKey || null,
+      },
       boardConfig,
       agentsConfig,
       automationConfig,
@@ -194,9 +208,16 @@ export async function updateProjectBriefController(req, res, next) {
     await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
 
     const { description, vision, intakeConfig } = req.body || {};
+    const resolvedTemplateKey = inferProjectTemplateKey({
+      description,
+      vision,
+      idea: intakeConfig?.idea,
+      summary: intakeConfig?.objective,
+    });
     const project = await updateProjectBrief(req.params.projectUuid, {
       description,
       vision,
+      templateKey: intakeConfig?.projectTemplateKey || resolvedTemplateKey || undefined,
       intakeConfig,
     });
 
@@ -359,6 +380,12 @@ export async function generateProjectBacklogController(req, res, next) {
     await updateProjectBrief(projectUuid, {
       description,
       vision,
+      templateKey: inferProjectTemplateKey({
+        idea: idea.trim(),
+        description,
+        vision,
+        summary: answers?.objective || '',
+      }),
       intakeConfig: {
         idea: idea.trim(),
         objective: answers?.objective || '',

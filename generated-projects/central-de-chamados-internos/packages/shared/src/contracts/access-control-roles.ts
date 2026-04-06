@@ -10,7 +10,23 @@ export interface AccessControlRoleResponse {
   accessScope: string;
   status: 'draft' | 'active';
   createdAt: string;
+  updatedAt?: string;
 }
 export interface AccessControlRoleListResponse {
   items: AccessControlRoleResponse[];
+  meta?: {
+    mode: 'settings';
+    total: number;
+  };
+}
+
+export interface AccessControlRoleActivityItem {
+  id: string;
+  status: 'draft' | 'active';
+  summary: string;
+  createdAt: string;
+}
+
+export interface AccessControlRoleActivityResponse {
+  items: AccessControlRoleActivityItem[];
 }

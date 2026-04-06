@@ -1,3 +1,3 @@
-# Como colaborador do setor financeiro, eu quero anexar documentos fiscais e comprobatórios ao abrir um chamado de suporte, para agilizar o processo de atendimento
+# Como colaborador, eu quero anexar evidências como imagens ou documentos ao abrir um chamado, para facilitar o entendimento do problema
 Feature frontend incremental criada a partir da task refinada.
 Template aplicado: support/ticket-attachments

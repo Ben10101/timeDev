@@ -15,6 +15,7 @@ function getPythonEnv(envOverrides = {}) {
   return {
     ...process.env,
     ...envOverrides,
+    ALIGNA_AGENT_RUNTIME_MODE: envOverrides.ALIGNA_AGENT_RUNTIME_MODE || process.env.ALIGNA_AGENT_RUNTIME_MODE || 'modern-single-agent',
     PYTHONUTF8: process.env.PYTHONUTF8 || '1',
     PYTHONIOENCODING: process.env.PYTHONIOENCODING || 'utf-8',
   };
@@ -166,7 +167,7 @@ export function runSingleAgent(agent, payload, options = {}) {
     });
 
     // Envia o payload para o script Python via stdin
-    pythonProcess.stdin.write(JSON.stringify({ agent, payload }));
+    pythonProcess.stdin.write(JSON.stringify({ agent, payload, runtime_mode: 'modern-single-agent' }));
     pythonProcess.stdin.end();
   });
 }

@@ -1,33 +1,52 @@
-import { randomUUID } from 'crypto';
-import type { AccessControlRoleListResponse, AccessControlRoleRequest, AccessControlRoleResponse } from '../../../../../packages/shared/src/contracts/access-control-roles.ts';
-const records: AccessControlRoleResponse[] = [];
-/**
- * - O aluno precisa estar autenticado e com conta ativa para atualizar o perfil.
- * - O sistema nao deve permitir registros com e-mail duplicado.
- */
+import pino from 'pino';
+import type {
+  AccessControlRoleListResponse,
+  AccessControlRoleRequest,
+  AccessControlRoleResponse,
+} from '../../../../../packages/shared/src/contracts/access-control-roles.ts';
+import { accessControlRoleSchema } from './schema';
+import { accessControlRolesRepository } from './repository';
+
+const logger = pino({ name: 'access-control-roles-service' });
+
 export class AccessControlRolesService {
   list(): AccessControlRoleListResponse {
-    return { items: records };
+    return { items: accessControlRolesRepository.list() };
   }
+
   create(input: AccessControlRoleRequest): AccessControlRoleResponse {
-    const item: AccessControlRoleResponse = {
-      id: randomUUID(),
-      roleName: input.roleName,
-      permissionMatrix: input.permissionMatrix,
-      accessScope: input.accessScope,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-    };
-    records.push(item);
-    return item;
+    const parsedInput = accessControlRoleSchema.parse(input);
+    const duplicatedRole = accessControlRolesRepository.findByRoleName(parsedInput.roleName);
+
+    if (duplicatedRole) {
+      throw new Error('Ja existe um perfil configurado para esta funcao.');
+    }
+
+    const created = accessControlRolesRepository.create(parsedInput);
+    logger.info({ roleName: created.roleName, accessScope: created.accessScope }, 'Perfil de acesso criado');
+    return created;
   }
-  buildSeedFromTask(): AccessControlRoleRequest {
-    return {
-      roleName: 'gestor',
-      permissionMatrix: 'acompanhar chamados; aprovar atendimento; administrar usuarios',
-      accessScope: 'global',
-    };
+
+  buildSeedRecordsFromTask(): AccessControlRoleRequest[] {
+    return [
+      {
+        roleName: 'solicitante',
+        permissionMatrix: 'Abrir chamados; acompanhar status; anexar comprovantes',
+        accessScope: 'self_service',
+      },
+      {
+        roleName: 'analista',
+        permissionMatrix: 'Atender chamados; comentar; reclassificar prioridade',
+        accessScope: 'team',
+      },
+      {
+        roleName: 'gestor',
+        permissionMatrix: 'Acompanhar indicadores; revisar carga da equipe; reatribuir chamados',
+        accessScope: 'global',
+      },
+    ];
   }
 }
+
 export const AccessControlRoleServiceInstance = new AccessControlRolesService();
-records.push(AccessControlRoleServiceInstance.create(AccessControlRoleServiceInstance.buildSeedFromTask()));
+accessControlRolesRepository.seed(AccessControlRoleServiceInstance.buildSeedRecordsFromTask());

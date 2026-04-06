@@ -12,6 +12,34 @@ import {
 } from '../services/api'
 
 const AuthContext = createContext(null)
+const ACCESS_TOKEN_REFRESH_LEEWAY_MS = 2 * 60 * 1000
+const ACTIVITY_WINDOW_MS = 10 * 60 * 1000
+const KEEPALIVE_CHECK_INTERVAL_MS = 60 * 1000
+
+function parseJwtPayload(token) {
+  if (!token) return null
+
+  try {
+    const [, encodedPayload] = String(token).split('.')
+    if (!encodedPayload) return null
+
+    const normalized = encodedPayload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+    const json =
+      typeof window !== 'undefined' && typeof window.atob === 'function'
+        ? window.atob(padded)
+        : Buffer.from(padded, 'base64').toString('utf8')
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}
+
+function getAccessTokenExpiry(token) {
+  const payload = parseJwtPayload(token)
+  const exp = Number(payload?.exp || 0)
+  return Number.isFinite(exp) && exp > 0 ? exp * 1000 : 0
+}
 
 function persistBootstrapContext(session) {
   if (!session?.user || !session?.workspace) {
@@ -31,6 +59,7 @@ function persistBootstrapContext(session) {
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [lastActivityAt, setLastActivityAt] = useState(() => Date.now())
   const apiOrigin = useMemo(() => {
     try {
       return new URL(API_URL).origin
@@ -130,6 +159,66 @@ export function AuthProvider({ children }) {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!session?.accessToken) return undefined
+
+    const markActivity = () => setLastActivityAt(Date.now())
+    const events = ['pointerdown', 'keydown', 'mousemove', 'scroll', 'focus', 'visibilitychange']
+
+    for (const eventName of events) {
+      window.addEventListener(eventName, markActivity, { passive: true })
+    }
+
+    return () => {
+      for (const eventName of events) {
+        window.removeEventListener(eventName, markActivity)
+      }
+    }
+  }, [session?.accessToken])
+
+  useEffect(() => {
+    if (!session?.accessToken) return undefined
+
+    let cancelled = false
+
+    const refreshIfNeeded = async () => {
+      if (cancelled) return
+      if (document.visibilityState === 'hidden') return
+
+      const now = Date.now()
+      if (now - lastActivityAt > ACTIVITY_WINDOW_MS) return
+
+      const expiresAt = getAccessTokenExpiry(session.accessToken)
+      if (!expiresAt || expiresAt - now > ACCESS_TOKEN_REFRESH_LEEWAY_MS) return
+
+      try {
+        const restored = await refreshSession()
+        if (cancelled) return
+
+        setApiAccessToken(restored.accessToken)
+        setSession({
+          user: restored.user,
+          workspace: restored.workspace,
+          accessToken: restored.accessToken,
+        })
+        persistBootstrapContext(restored)
+      } catch (_error) {
+        if (cancelled) return
+        clearApiAccessToken()
+        setSession(null)
+        persistBootstrapContext(null)
+      }
+    }
+
+    refreshIfNeeded()
+    const intervalId = window.setInterval(refreshIfNeeded, KEEPALIVE_CHECK_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [lastActivityAt, session?.accessToken])
 
   const value = useMemo(
     () => ({

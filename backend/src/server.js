@@ -29,6 +29,28 @@ const PORT = process.env.PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL || '';
 let recoveryIntervalHandle = null;
 
+function getRequiredAuthSecret() {
+  const secret = process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET;
+  if (!secret?.trim()) {
+    throw new Error('AUTH_ACCESS_SECRET ou JWT_SECRET precisa estar configurado antes de iniciar o backend.');
+  }
+  return secret;
+}
+
+function resolveTrustProxySetting() {
+  const raw = String(process.env.TRUST_PROXY || '').trim().toLowerCase();
+  if (!raw) return false;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+
+  const asNumber = Number(raw);
+  if (Number.isInteger(asNumber) && asNumber >= 0) {
+    return asNumber;
+  }
+
+  return process.env.TRUST_PROXY;
+}
+
 function getSafeDatabaseLabel() {
   if (!DATABASE_URL) return 'DATABASE_URL ausente';
 
@@ -52,6 +74,8 @@ function buildAllowedOrigins() {
 const allowedOrigins = buildAllowedOrigins();
 const isProduction = process.env.NODE_ENV === 'production';
 
+getRequiredAuthSecret();
+app.set('trust proxy', resolveTrustProxySetting());
 app.use(applySecurityHeaders);
 app.use(attachRequestContext);
 app.use(

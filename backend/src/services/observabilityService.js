@@ -433,6 +433,7 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
   const readinessChecks = [
     { code: 'database', label: 'Banco operacional', status: health.database === 'ok' ? 'ok' : 'failed' },
     { code: 'auth_secret', label: 'Segredo de autenticação configurado', status: process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET ? 'ok' : 'warning' },
+    { code: 'ai_settings_secret', label: 'Segredo de criptografia das credenciais de IA configurado', status: process.env.AI_SETTINGS_SECRET || process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET ? 'ok' : 'warning' },
     { code: 'cors', label: 'Origem de frontend definida', status: process.env.FRONTEND_ORIGIN || process.env.VITE_FRONTEND_URL ? 'ok' : 'warning' },
     { code: 'provider_api', label: 'Pelo menos uma API remota configurada', status: Object.values(providersConfigured).some(Boolean) ? 'ok' : 'warning' },
     { code: 'audit_log', label: 'Auditoria operacional ativa', status: recentAudit.length ? 'ok' : 'warning' },
@@ -477,6 +478,8 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
       strictSameSite: refreshCookie.sameSite === 'strict',
       corsRestricted: Boolean(process.env.NODE_ENV === 'production' && (process.env.FRONTEND_ORIGIN || process.env.VITE_FRONTEND_URL)),
       authSecretConfigured: Boolean(process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET),
+      aiSettingsSecretConfigured: Boolean(process.env.AI_SETTINGS_SECRET || process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET),
+      csrfProtectionEnabled: true,
       accessTokenTtlMinutes: 15,
       refreshTokenTtlDays: 7,
       rateLimitDefault: defaultRateLimit,

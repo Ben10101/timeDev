@@ -1,15 +1,19 @@
 import { randomUUID, createHash } from 'crypto';
 import { exec } from 'child_process';
-import { access, mkdir, readFile, rm, writeFile } from 'fs/promises';
+import { access, mkdir, readFile, readdir, rm, writeFile } from 'fs/promises';
 import path from 'path';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { prisma } from '../lib/prisma.js';
 import { resolveDomainTemplate } from '../templates/domains/index.js';
+import { resolveProjectTemplate } from '../templates/projects/index.js';
 import { materializeFullstackTemplate, materializeFullstackTemplateSubset } from './generatedAppTemplateService.js';
 import { generateImplementationUi } from './implementationAiService.js';
+import { buildModernFrontendFeatureFiles } from './implementationFrontendGenerator.js';
 import { buildRuntimeAiEnvForUser } from './aiSettingsService.js';
+import { createGenerationIR, validateGenerationIR } from './generationSpecService.js';
 import { getProjectArchitectureStatus } from './projectDataService.js';
+import { buildPatternHints, resolveUiArchetype } from './uiArchetypeService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
@@ -76,6 +80,81 @@ function humanizeSelectOptionLabel(value) {
 
   if (directMap[normalized]) return directMap[normalized];
   return humanizeFieldName(value);
+}
+
+function humanizeGeneratedStatusLabel(value, fallback = 'Ativo') {
+  const normalized = String(value || '').trim().toLowerCase();
+  const directMap = {
+    active: 'Ativo',
+    enabled: 'Ativado',
+    disabled: 'Desativado',
+    draft: 'Em preparacao',
+    pending: 'Pendente',
+    archived: 'Arquivado',
+  };
+
+  if (directMap[normalized]) return directMap[normalized];
+  return value ? humanizeFieldName(value) : fallback;
+}
+
+function buildFieldSeedSeries(field) {
+  const name = String(field?.name || '').toLowerCase();
+  const sample = field?.sampleValue;
+  const fallback = field?.defaultValue ?? '';
+  const options = Array.isArray(field?.options) ? field.options.filter(Boolean) : [];
+
+  if (options.length >= 3) return options.slice(0, 3);
+  if (options.length === 2) return [options[0], options[1], options[0]];
+  if (options.length === 1) return [options[0], options[0], options[0]];
+
+  if (name.includes('email')) return ['contato@empresa.com', 'operacoes@empresa.com', 'gestor@empresa.com'];
+  if (name.includes('fullname') || name === 'name') return ['Marina Souza', 'Carlos Lima', 'Renata Alves'];
+  if (name.includes('role')) return ['solicitante', 'analista', 'gestor'];
+  if (name.includes('scope')) return ['self_service', 'team', 'global'];
+  if (name.includes('status')) return ['active', 'pending', 'draft'];
+  if (name.includes('priority')) return ['alta', 'media', 'baixa'];
+  if (name.includes('category')) return ['financeiro', 'acesso', 'suporte'];
+  if (name.includes('type')) return ['principal', 'secundario', 'complementar'];
+  if (name.includes('documenttype')) return ['nota_fiscal', 'comprovante', 'contrato'];
+  if (name.includes('description') || name.includes('details') || name.includes('summary')) {
+    return [
+      'Informacao principal pronta para orientar a tela.',
+      'Contexto adicional que ajuda na leitura do caso.',
+      'Exemplo complementar para testar densidade de conteudo.',
+    ];
+  }
+  if (name.includes('matrix') || name.includes('permissions')) {
+    return [
+      'Abrir chamados; anexar comprovantes; acompanhar andamento',
+      'Atender chamados; comentar; reclassificar prioridade',
+      'Acompanhar indicadores; revisar equipe; reatribuir atendimentos',
+    ];
+  }
+  if (name.includes('url') || name.includes('link')) {
+    return [
+      'https://arquivos.empresa.com/base/documento-1.pdf',
+      'https://arquivos.empresa.com/base/documento-2.pdf',
+      'https://arquivos.empresa.com/base/documento-3.pdf',
+    ];
+  }
+  if (field?.tsType === 'boolean') return [true, false, true];
+  if (sample != null && sample !== '') return [sample, sample, sample];
+  if (typeof fallback === 'number') return [fallback || 1, (fallback || 1) + 1, (fallback || 1) + 2];
+  return [fallback, fallback, fallback];
+}
+
+function buildSeedRequestExamples(technicalSpec, domainTemplate) {
+  const explicitSeeds = Array.isArray(domainTemplate?.seedRequests) ? domainTemplate.seedRequests : [];
+  if (explicitSeeds.length) {
+    return explicitSeeds.map((seed) => ({
+      ...seed,
+    }));
+  }
+
+  const fields = technicalSpec.domain.fields || [];
+  return [0, 1, 2].map((variantIndex) =>
+    Object.fromEntries(fields.map((field) => [field.name, buildFieldSeedSeries(field)[variantIndex]]))
+  );
 }
 
 function camelCase(value, fallback = 'generatedField') {
@@ -296,6 +375,69 @@ function compactUiFieldsForGeneration(fields = []) {
   }));
 }
 
+function getUiIntentDirection(intent = 'custom', screenTemplate = 'crud') {
+  const map = {
+    configure: {
+      userJob: 'ajustar preferencias e definir regras de uso',
+      primaryActionStyle: 'confirmar ajuste com seguranca',
+      supportingSurface: 'resumo do estado atual',
+      visualPriority: 'form-first',
+    },
+    attach: {
+      userJob: 'reunir contexto e anexos sem interromper o fluxo',
+      primaryActionStyle: 'capturar evidencia com clareza',
+      supportingSurface: 'acervo vivo do caso',
+      visualPriority: 'records-first',
+    },
+    review: {
+      userJob: 'avaliar itens e decidir rapidamente o proximo passo',
+      primaryActionStyle: 'revisar e decidir',
+      supportingSurface: 'fila de pendencias',
+      visualPriority: 'records-first',
+    },
+    list: {
+      userJob: 'consultar registros e localizar o que precisa de atencao',
+      primaryActionStyle: 'explorar e filtrar',
+      supportingSurface: 'lista viva',
+      visualPriority: 'records-first',
+    },
+    update: {
+      userJob: 'ajustar dados existentes sem perder contexto',
+      primaryActionStyle: 'editar e confirmar',
+      supportingSurface: 'estado atual da informacao',
+      visualPriority: 'form-first',
+    },
+    create: {
+      userJob: 'registrar um novo item com contexto suficiente',
+      primaryActionStyle: 'criar com clareza',
+      supportingSurface: 'registros recentes',
+      visualPriority: 'form-first',
+    },
+    monitor: {
+      userJob: 'acompanhar sinais e entender o estado da operacao',
+      primaryActionStyle: 'ler e comparar',
+      supportingSurface: 'indicadores e alertas',
+      visualPriority: 'records-first',
+    },
+    compare: {
+      userJob: 'comparar cenarios e tomar uma decisao mais segura',
+      primaryActionStyle: 'analisar e decidir',
+      supportingSurface: 'recortes comparativos',
+      visualPriority: 'records-first',
+    },
+  };
+
+  const fallbackIntent = screenTemplate === 'settings'
+    ? 'configure'
+    : screenTemplate === 'dashboard'
+      ? 'monitor'
+      : screenTemplate === 'workspace'
+        ? 'review'
+        : 'create';
+
+  return map[intent] || map[fallbackIntent];
+}
+
 function getProductModeDesignProfile(productMode = 'structured-workspace', screenTemplate = 'crud') {
   const profiles = {
     'governance-console': {
@@ -310,7 +452,7 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       panelRelationship: 'controle primeiro, historico depois',
       metricLabels: ['Cobertura', 'Risco', 'Governanca'],
       metricValues: ["isLoading ? 'Mapeando' : String(items.length || 0)", "isLoading ? 'Analisando' : 'Controlado'", "'Ativa'"],
-      collectionMeta: "isLoading ? 'Sincronizando' : items.length ? `${items.length} perfil(is) monitorado(s)` : 'Governanca inicial'",
+      collectionMeta: "isLoading ? 'Carregando perfis' : items.length ? `${items.length} perfil(is) ativos` : 'Nenhum perfil configurado'",
       emptyStateTone: 'Nenhuma politica aplicada ainda. Defina a primeira base de controle desta area.',
     },
     'self-service-settings': {
@@ -324,8 +466,8 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       heroStyle: 'calm-settings',
       panelRelationship: 'ajuste principal com feedback lateral',
       metricLabels: ['Ajuste', 'Estado', 'Atualizacao'],
-      metricValues: [`'${screenTemplate === 'settings' ? 'Preferencia' : 'Configuracao'}'`, "isLoading ? 'Sincronizando' : items.length ? 'Configurado' : 'Inicial'", "'Agora'"],
-      collectionMeta: "isLoading ? 'Sincronizando' : items.length ? 'Configurado' : 'Ajuste inicial'",
+      metricValues: [`'${screenTemplate === 'settings' ? 'Preferencia' : 'Configuracao'}'`, "isLoading ? 'Verificando' : items.length ? 'Ativo' : 'Pendente'", "'Agora'"],
+      collectionMeta: "isLoading ? 'Carregando preferencias' : items.length ? 'Preferencias ativas' : 'Defina seu primeiro ajuste'",
       emptyStateTone: 'Nenhuma preferencia registrada ainda. Ative o primeiro ajuste desta experiencia.',
     },
     'evidence-workbench': {
@@ -338,9 +480,9 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       spatialModel: 'mesa de caso com evidencias em destaque e envio guiado',
       heroStyle: 'evidence-desk',
       panelRelationship: 'evidencias primeiro, captura depois',
-      metricLabels: ['Triagem', 'Evidencias', 'Prioridade'],
-      metricValues: ["isLoading ? 'Sincronizando' : 'Ativa'", "isLoading ? '...' : String(items.length || 0)", "'Alta'"],
-      collectionMeta: "isLoading ? 'Sincronizando' : items.length ? `${items.length} evidencia(s) vinculada(s)` : 'Sem evidencias'",
+      metricLabels: ['Fluxo', 'Anexos', 'Janela'],
+      metricValues: ["isLoading ? 'Preparando envio' : 'Em andamento'", "isLoading ? '...' : String(items.length || 0)", "'Hoje'"],
+      collectionMeta: "isLoading ? 'Atualizando anexos' : items.length ? `${items.length} anexo(s) enviados` : 'Nenhum anexo enviado'",
       emptyStateTone: 'Nenhum documento foi anexado ainda. Centralize aqui os comprovantes que destravam o atendimento.',
     },
     'manager-cockpit': {
@@ -354,8 +496,8 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       heroStyle: 'executive-cockpit',
       panelRelationship: 'insights primeiro, acao secundaria depois',
       metricLabels: ['Indicadores', 'Leitura', 'Atualizacao'],
-      metricValues: ["isLoading ? 'Sincronizando' : String(items.length || 0)", "isLoading ? 'Atualizando' : 'Consolidada'", "'Agora'"],
-      collectionMeta: "isLoading ? 'Atualizando' : `${items.length} insight(s)`",
+      metricValues: ["isLoading ? 'Atualizando painel' : String(items.length || 0)", "isLoading ? 'Preparando leitura' : 'Leitura pronta'", "'Agora'"],
+      collectionMeta: "isLoading ? 'Atualizando painel' : `${items.length} insight(s)`",
       emptyStateTone: 'Sem recortes consolidados por enquanto. Os sinais desta area aparecem aqui conforme a operacao amadurece.',
     },
     'review-workbench': {
@@ -369,8 +511,8 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       heroStyle: 'review-desk',
       panelRelationship: 'fila primeiro, decisao depois',
       metricLabels: ['Fila', 'Pendencias', 'Decisao'],
-      metricValues: ["isLoading ? '...' : String(items.length || 0)", "isLoading ? 'Sincronizando' : 'Em analise'", "'Rapida'"],
-      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} item(ns) aguardando revisao`",
+      metricValues: ["isLoading ? '...' : String(items.length || 0)", "isLoading ? 'Preparando fila' : 'Em analise'", "'Rapida'"],
+      collectionMeta: "isLoading ? 'Atualizando fila' : `${items.length} item(ns) aguardando revisao`",
       emptyStateTone: 'Nenhum item aguardando revisao agora. A fila aparece aqui quando houver algo para decidir.',
     },
     'onboarding-flow': {
@@ -399,8 +541,8 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       heroStyle: 'operational-workspace',
       panelRelationship: 'acao e acompanhamento equilibrados',
       metricLabels: ['Area', 'Situacao', 'Registros'],
-      metricValues: [`'${screenTemplate === 'workspace' ? 'Operacao' : 'Area'}'`, "isLoading ? 'Sincronizando' : 'Pronta'", "isLoading ? '...' : String(items.length || 0)"],
-      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} registro(s)`",
+      metricValues: [`'${screenTemplate === 'workspace' ? 'Operacao' : 'Area'}'`, "isLoading ? 'Atualizando' : 'Pronta'", "isLoading ? '...' : String(items.length || 0)"],
+      collectionMeta: "isLoading ? 'Atualizando dados' : `${items.length} registro(s)`",
       emptyStateTone: 'Nenhum registro ativo ainda. Esta area fica pronta para acompanhar a operacao conforme os dados chegarem.',
     },
     'catalog-builder': {
@@ -415,7 +557,7 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       panelRelationship: 'montagem primeiro, preview depois',
       metricLabels: ['Oferta', 'Status', 'Publicacoes'],
       metricValues: ["'Estruturada'", "isLoading ? 'Preparando' : 'Pronta'", "isLoading ? '...' : String(items.length || 0)"],
-      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} item(ns) prontos`",
+      collectionMeta: "isLoading ? 'Atualizando catalogo' : `${items.length} item(ns) prontos`",
       emptyStateTone: 'Nenhum item publicado ainda. Monte a primeira oferta com titulo, posicionamento e valor claros.',
     },
     'curriculum-designer': {
@@ -445,7 +587,7 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       panelRelationship: 'acervo primeiro, cadastro complementar',
       metricLabels: ['Acervo', 'Disponiveis', 'Acesso'],
       metricValues: ["'Organizado'", "isLoading ? '...' : String(items.length || 0)", "'Rapido'"],
-      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} ativo(s) catalogado(s)`",
+      collectionMeta: "isLoading ? 'Atualizando acervo' : `${items.length} ativo(s) catalogado(s)`",
       emptyStateTone: 'Nenhum ativo registrado ainda. A biblioteca ganha valor quando os primeiros recursos entram com contexto.',
     },
     'commercial-settings': {
@@ -459,8 +601,8 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       heroStyle: 'commercial-control',
       panelRelationship: 'regra principal com contexto de negocio',
       metricLabels: ['Impacto', 'Estado', 'Atualizacao'],
-      metricValues: ["'Comercial'", "isLoading ? 'Sincronizando' : 'Configurado'", "'Agora'"],
-      collectionMeta: "isLoading ? 'Sincronizando' : items.length ? 'Configurado' : 'Ajuste inicial'",
+      metricValues: ["'Comercial'", "isLoading ? 'Verificando' : 'Configurado'", "'Agora'"],
+      collectionMeta: "isLoading ? 'Carregando parametros' : items.length ? 'Configurado' : 'Defina o primeiro ajuste'",
       emptyStateTone: 'Nenhum parametro comercial configurado ainda. Defina a primeira regra que influencia o valor percebido.',
     },
     'access-gateway': {
@@ -489,14 +631,42 @@ function getProductModeDesignProfile(productMode = 'structured-workspace', scree
       heroStyle: 'immersive-flow',
       panelRelationship: 'execucao primeiro, apoio minimo',
       metricLabels: ['Foco', 'Progresso', 'Continuidade'],
-      metricValues: ["'Ativo'", "isLoading ? 'Sincronizando' : 'Em curso'", "'Mantida'"],
-      collectionMeta: "isLoading ? 'Sincronizando' : `${items.length} ponto(s) acompanhados`",
+      metricValues: ["'Ativo'", "isLoading ? 'Atualizando' : 'Em curso'", "'Mantida'"],
+      collectionMeta: "isLoading ? 'Atualizando acompanhamento' : `${items.length} ponto(s) acompanhados`",
       emptyStateTone: 'Nenhum ponto de continuidade por enquanto. Esta area ganha vida conforme o fluxo principal evolui.',
     },
   };
 
   const fallback = profiles['structured-workspace'];
   return profiles[productMode] || fallback;
+}
+
+function inferDefaultLayoutVariant(productMode = 'structured-workspace', screenTemplate = 'crud', uiIntent = 'custom') {
+  if (productMode === 'manager-cockpit' || screenTemplate === 'dashboard') return 'hero-metrics';
+  if (productMode === 'evidence-workbench') return 'evidence-split';
+  if (productMode === 'review-workbench') return 'queue-first';
+  if (productMode === 'governance-console') return 'checklist-settings';
+  if (productMode === 'self-service-settings' && uiIntent === 'configure') return 'summary-first';
+  if (productMode === 'self-service-settings' || screenTemplate === 'settings') return 'calm-settings';
+  if (screenTemplate === 'wizard') return 'guided-stack';
+  return 'balanced-split';
+}
+
+function normalizeLayoutVariant(layoutVariant, productMode = 'structured-workspace', screenTemplate = 'crud', uiIntent = 'custom') {
+  const allowed = new Set([
+    'balanced-split',
+    'hero-metrics',
+    'queue-first',
+    'evidence-split',
+    'calm-settings',
+    'summary-first',
+    'checklist-settings',
+    'guided-stack',
+  ]);
+
+  const normalized = String(layoutVariant || '').trim().toLowerCase();
+  if (allowed.has(normalized)) return normalized;
+  return inferDefaultLayoutVariant(productMode, screenTemplate, uiIntent);
 }
 
 function sanitizeUiStatesForGeneration(uiStates = {}) {
@@ -518,8 +688,34 @@ function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
     technicalSpec.structured?.classification?.productMode ||
     domainTemplate.productMode ||
     'structured-workspace';
+  const uiIntent =
+    technicalSpec.structured?.classification?.intent ||
+    inferIntent({ domainKey: technicalSpec.featureKey }, `${task.title}\n${task.description || ''}`);
+  const archetype = resolveUiArchetype({ technicalSpec, task, screenTemplate, productMode, uiIntent });
   const productDirection = getProductModeDesignProfile(productMode, screenTemplate);
+  const intentDirection = getUiIntentDirection(uiIntent, screenTemplate);
   const reuseHints = buildProjectMemoryReuseHints(technicalSpec.projectMemory, technicalSpec, task.title);
+  const generationIR = createGenerationIR({
+    technicalSpec: {
+      ...technicalSpec,
+      frontend: {
+        ...technicalSpec.frontend,
+        productMode,
+      },
+      structured: {
+        ...technicalSpec.structured,
+        classification: {
+          ...(technicalSpec.structured?.classification || {}),
+          screenTemplate,
+          productMode,
+          intent: uiIntent,
+        },
+      },
+    },
+    domainTemplate,
+    task,
+  });
+  const generationIRValidation = validateGenerationIR(generationIR);
 
   return {
     taskTitle: task.title,
@@ -527,16 +723,29 @@ function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
     frontendRoute: technicalSpec.frontend?.suggestedRoute,
     screenTemplate,
     productMode,
-      productDirection: {
-        tone: productDirection.tone,
-        density: productDirection.density,
-        primarySurface: productDirection.primarySurface,
-        secondarySurface: productDirection.secondarySurface,
-        listArchetype: productDirection.listArchetype,
-        spatialModel: productDirection.spatialModel,
-        heroStyle: productDirection.heroStyle,
-        panelRelationship: productDirection.panelRelationship,
-      },
+    uiIntent,
+    pageArchetype: archetype.pageArchetype,
+    fallbackPattern: archetype.fallbackPattern,
+    archetypeConfidence: archetype.confidenceScore,
+    alternativeArchetypes: archetype.alternativeArchetypes,
+    domainSignals: archetype.domainSignals,
+    intentDirection,
+    productDirection: {
+      tone: productDirection.tone,
+      density: productDirection.density,
+      primarySurface: productDirection.primarySurface,
+      secondarySurface: productDirection.secondarySurface,
+      listArchetype: productDirection.listArchetype,
+      spatialModel: productDirection.spatialModel,
+      heroStyle: productDirection.heroStyle,
+      panelRelationship: productDirection.panelRelationship,
+    },
+    layoutVariant: normalizeLayoutVariant(
+      technicalSpec.frontend?.layoutVariant,
+      productMode,
+      screenTemplate,
+      uiIntent
+    ),
     submitLabel: technicalSpec.domain?.submitLabel,
     navigationLabel: technicalSpec.frontend?.navigationLabel,
     pageTitle: technicalSpec.frontend?.pageTitle,
@@ -558,7 +767,21 @@ function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
     designReference: {
       templateKey: technicalSpec.structured?.classification?.templateKey || domainTemplate.templateKey,
       preferredAccent: productDirection.accent,
+      interfaceExamples: {
+        summaryItems: (domainTemplate.settingsSummaryItems || []).slice(0, 3),
+        promptExamples: (domainTemplate.promptExamples || []).slice(0, 3),
+        sectionLabels: (domainTemplate.sectionLabels || []).slice(0, 3),
+        ctaLabels: (domainTemplate.ctaLabels || []).slice(0, 3),
+        emptyStates: (domainTemplate.emptyStates || []).slice(0, 2),
+        reviewSignals: (domainTemplate.reviewSignals || []).slice(0, 3),
+        summaryStateTitle: domainTemplate.summaryStateTitle || null,
+      },
       preferredScreenTemplate: reuseHints.preferredScreenTemplate || null,
+      pageArchetype: archetype.pageArchetype,
+      fallbackPattern: archetype.fallbackPattern,
+      archetypeConfidence: archetype.confidenceScore,
+      alternativeArchetypes: archetype.alternativeArchetypes,
+      patternHints: buildPatternHints(archetype),
       domainReferences: reuseHints.domainReferences.slice(0, 2).map((item) => ({
         featureKey: item.featureKey,
         route: item.route,
@@ -578,6 +801,8 @@ function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
             .map((item) => item.scriptName),
         }
       : null,
+    generationIR,
+    generationIRValidation,
   };
 }
 
@@ -1675,7 +1900,7 @@ function buildImplementationImpactAnalysis(task, generatedApp, technicalSpec, pr
 async function getProjectOrThrow(projectUuid) {
   const project = await prisma.project.findUnique({
     where: { uuid: projectUuid },
-    select: { id: true, uuid: true, name: true, slug: true, description: true, vision: true },
+    select: { id: true, uuid: true, name: true, slug: true, description: true, vision: true, templateKey: true, intakeConfig: true },
   });
 
   if (!project) {
@@ -1683,6 +1908,170 @@ async function getProjectOrThrow(projectUuid) {
   }
 
   return project;
+}
+
+function resolveProjectTemplateForProject(project) {
+  return resolveProjectTemplate(project?.templateKey || project?.intakeConfig?.projectTemplateKey || null, {
+    projectName: project?.name,
+    summary: project?.description || project?.vision || '',
+    label: project?.name,
+  });
+}
+
+function buildBlueprintSeedBrief(featureKey) {
+  const briefs = {
+    'support-performance-dashboard': {
+      title: 'Painel gerencial do gestor com performance do suporte, fila e SLA',
+      description:
+        'Painel gerencial para acompanhar chamados, gargalos de atendimento, status, categorias e prioridades da operacao.',
+    },
+    'support-ticket-attachments': {
+      title: 'Anexos e evidencias para chamados de suporte',
+      description:
+        'Fluxo para registrar comprovantes, documentos, imagens e arquivos associados ao ticket para acelerar a triagem.',
+    },
+    'ticket-notification-preferences': {
+      title: 'Preferencias de notificacao por e-mail para chamados',
+      description:
+        'Tela para configurar e-mail principal e alertas de atualizacao do chamado sem depender do portal.',
+    },
+    'access-control-roles': {
+      title: 'Perfis de acesso e permissoes da operacao',
+      description:
+        'Governanca de acesso por perfil, funcao e escopo para controlar quem pode atender, revisar e administrar a operacao.',
+    },
+    'course-catalog': {
+      title: 'Criar curso com nome, descricao, categoria e preco',
+      description:
+        'Fluxo comercial e editorial para cadastrar cursos e preparar a oferta para a vitrine.',
+    },
+    'course-modules': {
+      title: 'Organizar modulos do curso',
+      description:
+        'Estruturar o curso em modulos com sequencia logica e contexto pedagogico claro.',
+    },
+    'course-lessons': {
+      title: 'Cadastrar aulas do curso',
+      description:
+        'Associar aulas aos modulos e escolher tipo de midia para o conteudo.',
+    },
+    'lesson-materials': {
+      title: 'Materiais complementares para aulas',
+      description:
+        'Biblioteca de materiais, anexos e arquivos de apoio vinculados as aulas.',
+    },
+    'course-pricing': {
+      title: 'Preco e configuracao comercial do curso',
+      description:
+        'Definir valor, condicoes comerciais e posicionamento para venda do curso.',
+    },
+    'course-search': {
+      title: 'Busca e descoberta de cursos por categoria',
+      description:
+        'Experiencia de pesquisa por palavra-chave, filtros e catalogo para facilitar descoberta.',
+    },
+    'course-enrollment': {
+      title: 'Matricular aluno em curso',
+      description:
+        'Fluxo de inscricao e liberacao de acesso do aluno aos cursos corretos.',
+    },
+    'course-player': {
+      title: 'Player de curso com video, audio e progresso',
+      description:
+        'Tela para consumir aulas, acompanhar progresso e retomar conteudo.',
+    },
+  };
+
+  return briefs[featureKey] || {
+    title: humanizeFieldName(featureKey),
+    description: `Fluxo inicial do blueprint para ${humanizeFieldName(featureKey).toLowerCase()}.`,
+  };
+}
+
+function buildProjectTemplateTechnicalSpecs(project, projectTemplate) {
+  return (projectTemplate?.featureKeys || [])
+    .map((featureKey) => {
+      const brief = buildBlueprintSeedBrief(featureKey);
+      const syntheticTask = {
+        uuid: `bootstrap-${featureKey}`,
+        title: brief.title,
+        description: brief.description,
+        artifacts: [],
+        project: {
+          uuid: project.uuid,
+          name: project.name,
+        },
+      };
+
+      return buildTechnicalSpec(
+        syntheticTask,
+        [
+          project.description,
+          project.vision,
+          projectTemplate?.summary,
+          projectTemplate?.positioning,
+          brief.description,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      );
+    })
+    .filter(Boolean);
+}
+
+function sortRouteSpecsByProjectTemplate(routeSpecs, projectTemplate) {
+  const preferredOrder = new Map((projectTemplate?.featureKeys || []).map((key, index) => [key, index]));
+
+  return [...routeSpecs].sort((left, right) => {
+    const leftIndex = preferredOrder.has(left.featureKey) ? preferredOrder.get(left.featureKey) : Number.MAX_SAFE_INTEGER;
+    const rightIndex = preferredOrder.has(right.featureKey) ? preferredOrder.get(right.featureKey) : Number.MAX_SAFE_INTEGER;
+
+    if (leftIndex !== rightIndex) {
+      return leftIndex - rightIndex;
+    }
+
+    return String(left.frontend?.navigationLabel || left.entityName || '').localeCompare(
+      String(right.frontend?.navigationLabel || right.entityName || '')
+    );
+  });
+}
+
+function buildProjectTemplateBlueprintDoc(projectName, projectTemplate, routeSpecs) {
+  const capabilities = (projectTemplate?.coreCapabilities || []).map((item) => `- ${item}`).join('\n') || '- Sem capacidades registradas.';
+  const featureLines =
+    routeSpecs
+      .map((spec) => `- ${spec.frontend.navigationLabel || spec.entityName}: ${spec.frontend.suggestedRoute} (${spec.featureKey})`)
+      .join('\n') || '- Nenhuma feature inicial materializada.';
+
+  const content = `# Blueprint Inicial - ${projectName}
+
+## Template
+
+- Chave: ${projectTemplate?.templateKey || 'project/generic-saas'}
+- Label: ${projectTemplate?.label || projectName}
+- Dominio: ${projectTemplate?.domain || 'generic'}
+- Home: ${projectTemplate?.frontend?.homeLabel || 'Workspace do produto'}
+- Navegacao: ${projectTemplate?.frontend?.navigationStyle || 'generic-suite'}
+- Tom visual: ${projectTemplate?.frontend?.visualTone || 'profissional'}
+
+## Posicionamento
+
+${projectTemplate?.positioning || projectTemplate?.summary || 'Blueprint generico do produto.'}
+
+## Capacidades nucleares
+
+${capabilities}
+
+## Features materializadas no bootstrap
+
+${featureLines}
+`;
+
+  return {
+    relativePath: 'docs/project-blueprint.md',
+    content,
+    fileType: 'md',
+  };
 }
 
 async function getTaskWithArtifactsOrThrow(taskUuid) {
@@ -1808,6 +2197,56 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
         defaultValue: '',
         sampleValue: 'https://arquivos.empresa.com/documentos/comprovante.pdf',
         validations: ['required', 'url'],
+      },
+    ];
+  }
+
+  if (actionSpec?.domainKey === 'support-performance-dashboard') {
+    return [
+      {
+        name: 'categoryFilter',
+        label: 'Categoria',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Escolha a categoria principal para analisar o volume de chamados.',
+        placeholder: 'financeiro | acesso | geral',
+        defaultValue: 'geral',
+        sampleValue: 'financeiro',
+        selectOptions: ['geral', 'financeiro', 'acesso', 'infraestrutura', 'comercial'],
+        validations: ['required'],
+      },
+      {
+        name: 'statusFilter',
+        label: 'Status',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Defina qual status deve ganhar protagonismo na leitura do painel.',
+        placeholder: 'aberto | em_atendimento | resolvido',
+        defaultValue: 'aberto',
+        sampleValue: 'em_atendimento',
+        selectOptions: ['aberto', 'em_atendimento', 'aguardando', 'resolvido'],
+        validations: ['required'],
+      },
+      {
+        name: 'timeRange',
+        label: 'Periodo',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Selecione o periodo usado para consolidar os indicadores.',
+        placeholder: 'ultimos_7_dias | mes_atual | ultimos_30_dias',
+        defaultValue: 'ultimos_7_dias',
+        sampleValue: 'ultimos_30_dias',
+        selectOptions: ['ultimos_7_dias', 'mes_atual', 'ultimos_30_dias', 'trimestre'],
+        validations: ['required'],
       },
     ];
   }
@@ -2205,12 +2644,20 @@ function inferActionSpec(task, sourceText) {
     (/\bpermiss/.test(titleNormalized) || /\brole\b|\broles\b|\bfunca/.test(titleNormalized)) &&
     (/\bacesso\b/.test(titleNormalized) || /\bperfil\b|\bperfis\b/.test(titleNormalized) || /\bseguranc/.test(titleNormalized));
   const looksLikeSupportAttachment =
-    (/\banexo\b|\banexar\b|\barquivo\b|\bdocumento\b|\bcomprov/.test(titleNormalized) || /\banexo\b|\banexar\b|\bdocumento\b|\bcomprov/.test(normalized)) &&
+    (/\banexo\b|\banexar\b|\barquivo\b|\bdocumento\b|\bcomprov|\bevidenc|\bimagem/.test(titleNormalized) || /\banexo\b|\banexar\b|\bdocumento\b|\bcomprov|\bevidenc|\bimagem/.test(normalized)) &&
     (/\bchamado\b|\bsuporte\b|\bticket\b/.test(titleNormalized) || /\bchamado\b|\bsuporte\b|\bticket\b/.test(normalized));
   const looksLikeNotificationPreference =
     /\bnotifica/.test(titleNormalized) &&
     /\be-?mail\b/.test(normalized) &&
     (/\batualizad/.test(normalized) || /\bchamado\b/.test(normalized) || /\balerta\b/.test(normalized));
+  const looksLikeManagerAudience =
+    /\bgestor\b|\bgestora\b|\bgerente\b|\bsupervisor\b|\bcoordenador\b|\bexecutiv/.test(titleNormalized) ||
+    /\bgestor\b|\bgestora\b|\bgerente\b|\bsupervisor\b|\bcoordenador\b|\bexecutiv/.test(normalized);
+  const looksLikeSupportPerformanceDashboard =
+    (/\bpainel\b|\bdashboard\b|\brelatorio\b/.test(titleNormalized) || /\bpainel\b|\bdashboard\b|\brelatorio\b/.test(normalized)) &&
+    (/\bvolume\b|\bindicador\b|\bmetric/.test(normalized) || /\bcategoria\b/.test(normalized) || /\bstatus\b/.test(normalized)) &&
+    (/\bchamado\b|\bsuporte\b|\batendimento\b|\bperformance\b/.test(normalized)) &&
+    looksLikeManagerAudience;
   const looksLikeMaterial = /\bmaterial\b|\bmateriais\b|\banexo\b|\banexar\b|\bupload\b/.test(titleNormalized);
   const looksLikeCategory = /\bcategoria\b/.test(titleNormalized);
   const looksLikePricing = /\bpreco\b|\bvalor\b|\breceita\b/.test(titleNormalized);
@@ -2269,6 +2716,23 @@ function inferActionSpec(task, sourceText) {
     };
   }
 
+  if (looksLikeSupportPerformanceDashboard && !looksLikeSupportAttachment) {
+    return {
+      domainKey: 'support-performance-dashboard',
+      entityName: 'SupportPerformanceDashboard',
+      routeBase: '/api/support-performance/dashboard',
+      frontendRoute: '/analytics/support-performance',
+      pageComponentName: 'SupportPerformanceDashboardPage',
+      serviceName: 'SupportPerformanceDashboardService',
+      submitLabel: 'Atualizar Painel',
+      navigationLabel: 'Painel de Atendimento',
+      pageTitle: 'Acompanhe a performance do atendimento',
+      pageDescription: 'Visualize volume de chamados por categoria e status para identificar gargalos e prioridades da operacao.',
+      successMessage: 'Painel atualizado com sucesso.',
+      summary: 'Permite ao gestor acompanhar o volume de chamados por categoria e status para decidir onde agir primeiro.',
+    };
+  }
+
   if (looksLikeSupportAttachment) {
     return {
       domainKey: 'support-ticket-attachments',
@@ -2277,12 +2741,12 @@ function inferActionSpec(task, sourceText) {
       frontendRoute: '/tickets/attachments',
       pageComponentName: 'SupportTicketAttachmentsPage',
       serviceName: 'SupportTicketAttachmentsService',
-      submitLabel: 'Anexar Documento',
+      submitLabel: 'Anexar Evidencia',
       navigationLabel: 'Anexos do Chamado',
-      pageTitle: 'Envie documentos que destravam o atendimento',
-      pageDescription: 'Associe comprovantes, notas e documentos fiscais ao chamado para acelerar a analise do suporte.',
-      successMessage: 'Documento anexado com sucesso.',
-      summary: 'Permite anexar documentos fiscais e comprobatórios ao abrir chamados de suporte para agilizar a triagem e o atendimento.',
+      pageTitle: 'Anexe evidencias ao chamado',
+      pageDescription: 'Associe imagens, arquivos e documentos ao chamado para facilitar o entendimento do problema pelo suporte.',
+      successMessage: 'Evidencia anexada com sucesso.',
+      summary: 'Permite anexar evidencias como imagens e documentos ao abrir chamados para dar mais contexto ao atendimento.',
     };
   }
 
@@ -2620,6 +3084,170 @@ function getDomainTemplate(technicalSpec) {
   return resolveDomainTemplate(domainKey, technicalSpec);
 }
 
+function polishUiDraftText(text, context = {}) {
+  const screenTemplate = context.screenTemplate || 'crud';
+  const productMode = context.productMode || 'structured-workspace';
+  const uiIntent = context.uiIntent || 'custom';
+
+  return String(text || '')
+    .replace(/\bRBAC\b/gi, 'acessos por perfil')
+    .replace(/\bauditavel\b/gi, 'claro')
+    .replace(/\bself_service\b/gi, 'somente o proprio acesso')
+    .replace(/\bteam\b/gi, 'equipe')
+    .replace(/\bglobal\b/gi, 'toda a empresa')
+    .replace(/\benabled\b/gi, 'Ativado')
+    .replace(/\bdisabled\b/gi, 'Desativado')
+    .replace(/\bvalidacao fiscal imediata\b/gi, 'analise fiscal mais agil')
+    .replace(/\bprioridade alta\b/gi, uiIntent === 'review' ? 'fila prioritaria' : 'mais contexto')
+    .replace(/\btempo real\b/gi, screenTemplate === 'dashboard' ? 'leitura atual' : 'acompanhamento continuo')
+    .replace(/\bacompanhamento operacional\b/gi, 'consulta rapida')
+    .replace(/\bsincronizando o estado atual\b/gi, 'carregando informacoes')
+    .replace(/\bpreferencia registrada e pronta para acompanhamento\b/gi, 'configuracao salva com sucesso')
+    .replace(/\bcanal principal\b/gi, screenTemplate === 'settings' ? 'Resumo atual' : productMode === 'evidence-workbench' ? 'Contexto do caso' : 'Visao geral')
+    .replace(/\brotina de acompanhamento\b/gi, screenTemplate === 'settings' ? 'Como funciona' : 'Acompanhamento')
+    .replace(/\bgovernanca minima\b/gi, 'Resumo dos acessos')
+    .replace(/\bajuste inicial\b/gi, screenTemplate === 'settings' ? 'Pronto para ajustar' : 'Aguardando primeira movimentacao')
+    .replace(/\bconfigurado\b/gi, screenTemplate === 'settings' ? 'Ativo' : 'Configurado')
+    .replace(/\bsincronizando\b/gi, 'Atualizando')
+    .replace(/\bnovo anexo\b/gi, 'Adicionar documento')
+    .replace(/\bnova? anexo\b/gi, 'Adicionar documento')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function pickPreferredLabel(candidates = [], fallback = '') {
+  const preferred = (candidates || []).find((item) => typeof item === 'string' && item.trim());
+  return preferred || fallback;
+}
+
+function normalizeHighlightList(highlights = [], fallback = []) {
+  const seen = new Set();
+  const output = [];
+  for (const item of [...highlights, ...fallback]) {
+    if (typeof item !== 'string') continue;
+    const normalized = item.trim();
+    if (!normalized) continue;
+    const key = stripAccents(normalized).toLowerCase();
+    if (seen.has(key)) continue;
+    if (/feedback imediato|validacao basica|operacao concluida com sucesso|sem friccao/.test(key)) continue;
+    seen.add(key);
+    output.push(normalized);
+    if (output.length >= 3) break;
+  }
+  return output;
+}
+
+function runUiProductPolishPass(draft = {}, context = {}) {
+  const polished = { ...draft };
+  const examples = context.interfaceExamples || {};
+  const screenTemplate = context.screenTemplate || 'crud';
+  const productMode = context.productMode || 'structured-workspace';
+  const uiIntent = context.uiIntent || 'custom';
+
+  polished.highlights = normalizeHighlightList(
+    Array.isArray(polished.highlights) ? polished.highlights : [],
+    Array.isArray(examples.summaryItems) ? examples.summaryItems : []
+  );
+
+  if (!polished.navigationLabel || /operacao|workflow|experiencia/i.test(polished.navigationLabel)) {
+    polished.navigationLabel = context.navigationLabel || polished.navigationLabel;
+  }
+
+  if (!polished.recordsTitle || /ultimos registros|registros ativos|atividade recente|rotina de acompanhamento/i.test(polished.recordsTitle)) {
+    polished.recordsTitle = pickPreferredLabel(examples.sectionLabels, polished.recordsTitle || 'Resumo atual');
+  }
+
+  if (!polished.submitLabel || /salvar|enviar|concluir operacao/i.test(stripAccents(polished.submitLabel).toLowerCase())) {
+    polished.submitLabel = pickPreferredLabel(examples.ctaLabels, polished.submitLabel || context.submitLabel || 'Salvar');
+  }
+
+  if (!polished.recordsEmptyState || /nenhum registro|nenhum dado exibido|movimentacao registrada/i.test(stripAccents(polished.recordsEmptyState).toLowerCase())) {
+    polished.recordsEmptyState = pickPreferredLabel(examples.emptyStates, polished.recordsEmptyState || 'Nenhum dado disponivel ainda.');
+  }
+
+  if (screenTemplate === 'settings') {
+    polished.recordsTitle = pickPreferredLabel(examples.sectionLabels, 'Resumo atual');
+    if (/historico|fila|registros/i.test(stripAccents(polished.recordsTitle).toLowerCase())) {
+      polished.recordsTitle = 'Resumo atual';
+    }
+    if (!polished.formCardTitle || /concluir operacao|preencha os dados/i.test(stripAccents(polished.formCardTitle).toLowerCase())) {
+      polished.formCardTitle = context.pageTitle || polished.formCardTitle || 'Ajustes principais';
+    }
+  }
+
+  if (productMode === 'manager-cockpit') {
+    polished.recordsTitle = pickPreferredLabel(examples.sectionLabels, 'Recortes principais');
+    if (!polished.formCardTitle || /configuracao|dados/i.test(stripAccents(polished.formCardTitle).toLowerCase())) {
+      polished.formCardTitle = 'Filtro da leitura';
+    }
+  }
+
+  if (productMode === 'evidence-workbench') {
+    polished.recordsTitle = pickPreferredLabel(examples.sectionLabels, 'Acervo do caso');
+    if (/indexar/i.test(polished.submitLabel || '')) {
+      polished.submitLabel = 'Anexar documento';
+    }
+  }
+
+  if (uiIntent === 'review' && /salvar/i.test(stripAccents(polished.submitLabel || '').toLowerCase())) {
+    polished.submitLabel = pickPreferredLabel(examples.ctaLabels, 'Revisar item');
+  }
+
+  polished.layoutVariant = normalizeLayoutVariant(
+    polished.layoutVariant,
+    productMode,
+    screenTemplate,
+    uiIntent
+  );
+
+  return polished;
+}
+
+function polishGeneratedUiDraft(rawDraft = {}, context = {}) {
+  const draft = normalizeUiCopy(normalizeGeneratedCopy(rawDraft || {}));
+  const polishedText = Object.fromEntries(
+    Object.entries(draft).map(([key, value]) => {
+      if (Array.isArray(value)) {
+        return [key, value.map((item) => (typeof item === 'string' ? polishUiDraftText(item, context) : item))];
+      }
+      if (typeof value === 'string') {
+        return [key, polishUiDraftText(value, context)];
+      }
+      return [key, value];
+    })
+  );
+  const polished = runUiProductPolishPass(polishedText, context);
+
+  if (context.screenTemplate === 'settings') {
+    if (!polished.recordsTitle || /rotina|registro|acompanhamento/i.test(polished.recordsTitle)) {
+      polished.recordsTitle = 'Resumo atual';
+    }
+    if (!polished.profileSummaryTitle || /rotina|registro|acompanhamento|visao atual/i.test(polished.profileSummaryTitle)) {
+      polished.profileSummaryTitle = 'Resumo atual';
+    }
+  }
+
+  if (context.productMode === 'evidence-workbench') {
+    if (!polished.recordsTitle || /registro|acompanhamento/i.test(polished.recordsTitle)) {
+      polished.recordsTitle = 'Documentos do chamado';
+    }
+    if (!polished.profileSummaryTitle || /registro|acompanhamento|visao atual/i.test(polished.profileSummaryTitle)) {
+      polished.profileSummaryTitle = 'Contexto do envio';
+    }
+  }
+
+  if (context.productMode === 'manager-cockpit') {
+    if (!polished.recordsTitle || /registro|ultimos/i.test(polished.recordsTitle)) {
+      polished.recordsTitle = 'Recortes principais';
+    }
+    if (!polished.profileSummaryTitle || /registro|acompanhamento|visao atual/i.test(polished.profileSummaryTitle)) {
+      polished.profileSummaryTitle = 'Leitura principal';
+    }
+  }
+
+  return polished;
+}
+
 async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repairContext = null, options = {}) {
   const domainTemplate = getDomainTemplate(technicalSpec);
   const fallback = normalizeUiCopy(normalizeGeneratedCopy({
@@ -2632,12 +3260,19 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
     formCardTitle: domainTemplate.formCardTitle,
     formCardDescription: domainTemplate.formCardDescription,
     submitLabel: technicalSpec.domain.submitLabel,
+    layoutVariant: inferDefaultLayoutVariant(
+      technicalSpec.frontend?.productMode || technicalSpec.structured?.classification?.productMode || domainTemplate.productMode || 'structured-workspace',
+      technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud',
+      technicalSpec.structured?.classification?.intent || 'custom'
+    ),
     highlights: domainTemplate.highlights,
     recordsTitle: domainTemplate.recordsTitle,
     recordsEmptyState: domainTemplate.recordsEmptyState,
     profileSummaryTitle: domainTemplate.profileSummaryTitle,
     profileSummaryDescription: domainTemplate.profileSummaryDescription,
     domainTemplateKey: domainTemplate.templateKey,
+    screenSpec: createGenerationIR({ technicalSpec, domainTemplate, task }).frontend.screenSpec,
+    dataSpec: createGenerationIR({ technicalSpec, domainTemplate, task }).frontend.dataSpec,
   }));
   const uiGenerationContext = buildUiGenerationContext(task, technicalSpec, repairContext);
 
@@ -2645,12 +3280,16 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
       const envOverrides = userUuid
         ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'implementation_architect' })
         : { AI_DISABLE_OLLAMA_FALLBACK: '0' };
-      const aiResult = normalizeUiCopy(normalizeGeneratedCopy(await generateImplementationUi({
+      const aiDraft = await generateImplementationUi({
         ...uiGenerationContext,
       }, {
         envOverrides,
         bypassCache: Boolean(options.forceRefresh),
-      })));
+      });
+      const aiResult = polishGeneratedUiDraft(aiDraft, {
+        ...uiGenerationContext,
+        interfaceExamples: uiGenerationContext.designReference?.interfaceExamples || {},
+      });
 
     return {
       ...technicalSpec,
@@ -2658,6 +3297,16 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
         ...technicalSpec.frontend,
         ...fallback,
         ...normalizeUiCopy(normalizeGeneratedCopy(aiResult)),
+        screenSpec: normalizeUiCopy(normalizeGeneratedCopy(aiResult?.screenSpec || uiGenerationContext.generationIR?.frontend?.screenSpec || fallback.screenSpec)),
+        dataSpec: normalizeUiCopy(normalizeGeneratedCopy(aiResult?.dataSpec || uiGenerationContext.generationIR?.frontend?.dataSpec || fallback.dataSpec)),
+        componentMap: normalizeUiCopy(normalizeGeneratedCopy(aiResult?.componentMap || aiResult?.screenSpec?.componentMap || uiGenerationContext.generationIR?.frontend?.screenSpec?.componentMap || fallback.componentMap || fallback.screenSpec?.componentMap || {})),
+        generationIR: uiGenerationContext.generationIR,
+        layoutVariant: normalizeLayoutVariant(
+          aiResult?.layoutVariant,
+          uiGenerationContext.productMode,
+          uiGenerationContext.screenTemplate,
+          uiGenerationContext.uiIntent
+        ),
       },
       domain: {
         ...technicalSpec.domain,
@@ -2670,6 +3319,9 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
       frontend: {
         ...technicalSpec.frontend,
         ...fallback,
+        componentMap: normalizeUiCopy(normalizeGeneratedCopy(fallback.componentMap || fallback.screenSpec?.componentMap || {})),
+        generationIR: uiGenerationContext.generationIR,
+        layoutVariant: fallback.layoutVariant,
       },
     };
   }
@@ -2690,6 +3342,19 @@ function inferBusinessRules(sourceText, actionSpec = null) {
       rules.push('O anexo precisa registrar uma referencia acessivel para que o suporte consulte o documento sem retrabalho.');
     }
     return rules.length ? rules : ['O documento anexado deve permanecer vinculado ao chamado correto para consulta durante o atendimento.'];
+  }
+
+  if (actionSpec?.domainKey === 'support-performance-dashboard') {
+    if (/\bcategoria\b/.test(normalized)) {
+      rules.push('O painel deve permitir comparar o volume de chamados por categoria sem perder clareza na leitura gerencial.');
+    }
+    if (/\bstatus\b/.test(normalized)) {
+      rules.push('Os indicadores precisam destacar a distribuicao por status para revelar gargalos do atendimento.');
+    }
+    if (/\bgestor\b|\bperformance\b|\bindicador\b/.test(normalized)) {
+      rules.push('A leitura do painel deve priorizar decisao gerencial, com recortes simples e acionaveis.');
+    }
+    return rules.length ? rules : ['O painel deve consolidar volume por categoria e status para apoiar decisao gerencial.'];
   }
 
   if (/\bperfil\b/.test(normalized) && /\bconta ativa\b|\blogado\b/.test(normalized)) {
@@ -2740,6 +3405,13 @@ function inferQaScenarios(sourceText, actionSpec = null) {
     return scenarios;
   }
 
+  if (actionSpec?.domainKey === 'support-performance-dashboard') {
+    scenarios.push({ code: 'missing_category_filter', message: 'Selecione ao menos uma categoria para consolidar o painel.' });
+    scenarios.push({ code: 'missing_status_filter', message: 'Defina o status principal para comparar o volume do atendimento.' });
+    scenarios.push({ code: 'missing_time_range', message: 'Escolha o periodo do recorte antes de atualizar os indicadores.' });
+    return scenarios;
+  }
+
   if (/\bperfil\b/.test(normalized) && /\bnome\b/.test(normalized) && /\bobrigatorio\b|\bnao pode ser deixado em branco\b/.test(normalized)) {
     scenarios.push({ code: 'required_full_name', message: 'Nome obrigatorio.' });
   }
@@ -2775,22 +3447,163 @@ function inferQaScenarios(sourceText, actionSpec = null) {
   return scenarios;
 }
 
-function buildPrismaFieldLine(field) {
+function toPrismaEnumName(modelName, fieldName) {
+  return `${String(modelName || 'Generated').replace(/[^A-Za-z0-9]/g, '')}${pascalCase(fieldName, 'Field')}Enum`;
+}
+
+function resolvePrismaFieldConfig(field, modelName = 'GeneratedModel') {
   if (field.name === 'email') {
-    return `  email     String   @unique @db.VarChar(190)`;
+    return { fieldName: 'email', type: 'String', attributes: ['@unique', '@db.VarChar(190)'] };
   }
 
   if (field.name === 'password') {
-    return `  passwordHash String @db.VarChar(255)`;
+    return { fieldName: 'passwordHash', type: 'String', attributes: ['@db.VarChar(255)'] };
   }
 
-  return `  ${field.name.padEnd(9, ' ')} ${field.prismaType} @db.VarChar(190)`;
+  if (Array.isArray(field.selectOptions) && field.selectOptions.length) {
+    const enumName = toPrismaEnumName(modelName, field.name);
+    const attributes = [];
+    if (field.defaultValue && field.selectOptions.includes(field.defaultValue)) {
+      attributes.push(`@default(${field.defaultValue})`);
+    }
+    return { fieldName: field.name, type: enumName, attributes, enumName, enumValues: field.selectOptions };
+  }
+
+  if (field.inputType === 'textarea') {
+    return { fieldName: field.name, type: 'String', attributes: ['@db.Text'] };
+  }
+
+  if (field.inputType === 'number') {
+    const normalizedName = stripAccents(field.name).toLowerCase();
+    if (/\bprice\b|\bvalor\b|\bpreco\b|\bamount\b/.test(normalizedName)) {
+      return { fieldName: field.name, type: 'Decimal', attributes: ['@db.Decimal(10,2)'] };
+    }
+    return { fieldName: field.name, type: 'Int', attributes: [] };
+  }
+
+  if (field.inputType === 'date' || /date|data/.test(stripAccents(field.name).toLowerCase())) {
+    return { fieldName: field.name, type: 'DateTime', attributes: ['@db.DateTime(0)'] };
+  }
+
+  if (field.inputType === 'url') {
+    return { fieldName: field.name, type: 'String', attributes: ['@db.VarChar(500)'] };
+  }
+
+  return { fieldName: field.name, type: field.prismaType || 'String', attributes: ['@db.VarChar(190)'] };
+}
+
+function buildPrismaFieldLine(field, modelName = 'GeneratedModel') {
+  const config = resolvePrismaFieldConfig(field, modelName);
+  const attributes = config.attributes?.length ? ` ${config.attributes.join(' ')}` : '';
+  return `  ${config.fieldName.padEnd(18, ' ')} ${config.type}${attributes}`;
+}
+
+function buildPrismaEnumBlocks(fields, modelName) {
+  const blocks = [];
+  const seen = new Set();
+
+  for (const field of fields || []) {
+    const config = resolvePrismaFieldConfig(field, modelName);
+    if (!config.enumName || !Array.isArray(config.enumValues) || seen.has(config.enumName)) continue;
+    seen.add(config.enumName);
+    const enumValues = config.enumValues.map((value) => `  ${value}`).join('\n');
+    blocks.push(`enum ${config.enumName} {\n${enumValues}\n}`);
+  }
+
+  return blocks;
 }
 
 function buildFieldInitializer(field) {
   if (field.name === 'email') return `email: input.email.trim().toLowerCase()`;
   if (field.name === 'password') return `passwordHash: \`hashed:\${input.password}\``;
   return `${field.name}: input.${field.name}`;
+}
+
+function buildRouterFieldAssignment(field) {
+  if (field.name === 'password') {
+    return `  password: String(payload.password || ''),`;
+  }
+
+  if (field.name === 'email') {
+    return `  email: String(payload.email || '').trim().toLowerCase(),`;
+  }
+
+  if (field.inputType === 'number') {
+    return `  ${field.name}: payload.${field.name} === undefined || payload.${field.name} === null || payload.${field.name} === '' ? Number.NaN : Number(payload.${field.name}),`;
+  }
+
+  if (field.inputType === 'date' || /date|data/.test(stripAccents(field.name).toLowerCase())) {
+    return `  ${field.name}: payload.${field.name} ? new Date(String(payload.${field.name})).toISOString() : '',`;
+  }
+
+  return `  ${field.name}: String(payload.${field.name} || ''),`;
+}
+
+function buildServiceFieldValidation(field) {
+  const label = field.label || humanizeFieldName(field.name);
+  const lines = [];
+
+  if (field.required) {
+    if (field.inputType === 'number') {
+      lines.push(`  if (!Number.isFinite(input.${field.name})) throw new Error('${label} invalido.');`);
+    } else {
+      lines.push(`  if (!String(input.${field.name} || '').trim()) throw new Error('${label} obrigatorio.');`);
+    }
+  }
+
+  if (Array.isArray(field.selectOptions) && field.selectOptions.length) {
+    const optionsLiteral = JSON.stringify(field.selectOptions);
+    lines.push(`  if (!${optionsLiteral}.includes(String(input.${field.name}))) throw new Error('${label} invalido.');`);
+  }
+
+  if (field.inputType === 'email') {
+    lines.push(`  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(input.${field.name} || ''))) throw new Error('${label} invalido.');`);
+  }
+
+  if (field.inputType === 'url') {
+    lines.push(`  if (!/^https?:\\/\\//.test(String(input.${field.name} || ''))) throw new Error('${label} invalido.');`);
+  }
+
+  if (field.inputType === 'number') {
+    lines.push(`  if (!Number.isFinite(input.${field.name})) throw new Error('${label} invalido.');`);
+    if (/price|valor|preco|amount/.test(stripAccents(field.name).toLowerCase())) {
+      lines.push(`  if (input.${field.name} < 0) throw new Error('${label} nao pode ser negativo.');`);
+    }
+  }
+
+  const minValidation = (field.validations || []).find((validation) => /^min:\d+/.test(validation));
+  if (minValidation) {
+    const minLength = Number(minValidation.split(':')[1] || '0');
+    lines.push(`  if (String(input.${field.name} || '').trim().length < ${minLength}) throw new Error('${label} deve ter ao menos ${minLength} caracteres.');`);
+  }
+
+  return lines;
+}
+
+function buildDomainSpecificValidation(actionSpec, fields) {
+  if (actionSpec.domainKey === 'access-control-roles') {
+    return [
+      `  const duplicatedRole = records.find((record) => record.roleName === input.roleName);`,
+      `  if (duplicatedRole) throw new Error('Ja existe um perfil configurado para esta funcao.');`,
+    ];
+  }
+
+  if (actionSpec.domainKey === 'support-ticket-attachments') {
+    return [
+      `  if (String(input.documentDescription || '').trim().length < 10) throw new Error('Descreva melhor o contexto do anexo.');`,
+      `  if (!/^https?:\\/\\//.test(String(input.fileUrl || ''))) throw new Error('Informe um arquivo ou link valido para o documento.');`,
+    ];
+  }
+
+  if (actionSpec.domainKey === 'support-performance-dashboard') {
+    return [
+      `  if (String(input.categoryFilter || '') === String(input.statusFilter || '')) {`,
+      `    throw new Error('Categoria e status precisam representar recortes diferentes do painel.');`,
+      `  }`,
+    ];
+  }
+
+  return [];
 }
 
 function hasEncodingArtifacts(content) {
@@ -2834,6 +3647,7 @@ function inferDomainName(actionSpec, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
 
   if (actionSpec.domainKey.startsWith('auth-')) return 'auth';
+  if (actionSpec.domainKey === 'support-performance-dashboard' || /\bpainel\b|\bdashboard\b|\brelatorio\b/.test(normalized) && /\bchamado\b|\batendimento\b|\bperformance\b/.test(normalized)) return 'support';
   if (actionSpec.domainKey === 'support-ticket-attachments' || /\bchamado\b|\bsuporte\b|\bticket\b/.test(normalized) && /\banexo\b|\barquivo\b|\bdocumento\b/.test(normalized)) return 'support';
   if (actionSpec.domainKey === 'access-control-roles' || /\bpermiss/.test(normalized) || /\brole\b|\broles\b/.test(normalized)) return 'access-control';
   if (actionSpec.domainKey === 'ticket-notification-preferences' || /\bnotifica/.test(normalized) || /\balerta\b/.test(normalized)) return 'notification';
@@ -2852,6 +3666,7 @@ function inferIntent(actionSpec, sourceText) {
 
   if (actionSpec.domainKey === 'auth-login' || /\blogin\b|\bentrar\b|\bautentic/.test(normalized)) return 'login';
   if (actionSpec.domainKey === 'auth-register' || /\bregistr/.test(normalized) || /\bcadastr/.test(normalized)) return 'register';
+  if (actionSpec.domainKey === 'support-performance-dashboard') return 'monitor';
   if (actionSpec.domainKey === 'support-ticket-attachments') return 'attach';
   if (actionSpec.domainKey === 'access-control-roles' || /\bconfigurar\b/.test(normalized) && /\bpermiss/.test(normalized)) return 'configure';
   if (actionSpec.domainKey === 'ticket-notification-preferences') return 'configure';
@@ -2871,6 +3686,7 @@ function inferScreenTemplate(actionSpec, fields, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const hasFewFields = (fields || []).length <= 3;
 
+  if (actionSpec.domainKey === 'support-performance-dashboard') return 'dashboard';
   if (actionSpec.domainKey === 'support-ticket-attachments') return 'workspace';
   if (actionSpec.domainKey === 'access-control-roles') return 'settings';
   if (actionSpec.domainKey === 'ticket-notification-preferences') return 'settings';
@@ -3005,12 +3821,14 @@ function buildStructuredSpec(task, actionSpec, fields, businessRules, qaScenario
   });
   const screenTemplate = inferScreenTemplate(actionSpec, fields, `${task.title}\n${task.description || ''}`);
   const productMode = domainTemplate.productMode || 'structured-workspace';
+  const layoutVariant = inferDefaultLayoutVariant(productMode, screenTemplate, inferIntent(actionSpec, `${task.title}\n${task.description || ''}`));
   return {
     classification: {
       domain: inferDomainName(actionSpec, `${task.title}\n${task.description || ''}`),
       intent: inferIntent(actionSpec, `${task.title}\n${task.description || ''}`),
       screenTemplate,
       productMode,
+      layoutVariant,
       changeType: 'feature',
       implementationMode: 'post_refinement',
       templateKey: domainTemplate.templateKey,
@@ -3032,6 +3850,7 @@ function buildStructuredSpec(task, actionSpec, fields, businessRules, qaScenario
       route: frontendSpec.suggestedRoute,
       navigationLabel: frontendSpec.navigationLabel,
       sections: buildUiSections(actionSpec, fields, { ...frontendSpec, screenTemplate, productMode }),
+      layoutVariant,
       states: inferUiStates(
         {
           ...actionSpec,
@@ -3118,6 +3937,11 @@ function buildTechnicalSpec(task, projectArchitectureSource = '') {
     pageTitle: actionSpec.pageTitle,
     pageDescription: actionSpec.pageDescription,
     productMode: getDomainTemplate({ featureKey: actionSpec.domainKey, frontend: { navigationLabel: actionSpec.navigationLabel }, entityName, summary: actionSpec.summary }).productMode || 'structured-workspace',
+    layoutVariant: inferDefaultLayoutVariant(
+      getDomainTemplate({ featureKey: actionSpec.domainKey, frontend: { navigationLabel: actionSpec.navigationLabel }, entityName, summary: actionSpec.summary }).productMode || 'structured-workspace',
+      screenTemplate,
+      inferIntent(actionSpec, sourceText)
+    ),
   };
   const backendSpec = {
     modulePath: `apps/api/src/modules/${featureKey}`,
@@ -3244,6 +4068,15 @@ function normalizeTechnicalSpec(rawSpec, task) {
       summary: rawSpec?.summary || actionSpec.summary,
     }).productMode ||
     'structured-workspace';
+  const inferredUiIntent =
+    rawSpec?.structured?.classification?.intent ||
+    inferIntent(actionSpec, sourceText);
+  const inferredLayoutVariant = normalizeLayoutVariant(
+    rawSpec?.frontend?.layoutVariant || rawSpec?.structured?.classification?.layoutVariant,
+    inferredProductMode,
+    screenTemplate,
+    inferredUiIntent
+  );
 
   return {
     ...rawSpec,
@@ -3270,6 +4103,7 @@ function normalizeTechnicalSpec(rawSpec, task) {
       pageTitle: rawSpec?.frontend?.pageTitle || actionSpec.pageTitle,
       pageDescription: rawSpec?.frontend?.pageDescription || actionSpec.pageDescription,
       productMode: inferredProductMode,
+      layoutVariant: inferredLayoutVariant,
     },
     backend: {
       modulePath: rawSpec?.backend?.modulePath || `apps/api/src/modules/${featureKey}`,
@@ -3322,6 +4156,7 @@ function normalizeTechnicalSpec(rawSpec, task) {
           pageTitle: rawSpec?.frontend?.pageTitle || actionSpec.pageTitle,
           pageDescription: rawSpec?.frontend?.pageDescription || actionSpec.pageDescription,
           productMode: inferredProductMode,
+          layoutVariant: inferredLayoutVariant,
           formCardTitle: rawSpec?.frontend?.formCardTitle,
           formCardDescription: rawSpec?.frontend?.formCardDescription,
           recordsTitle: rawSpec?.frontend?.recordsTitle,
@@ -3534,6 +4369,13 @@ async function createCurrentArtifact(taskId, title, content, createdByAgentName,
 
 function backendModuleFiles(task, technicalSpec) {
   const { entityName, featureKey } = technicalSpec;
+  const domainTemplate = getDomainTemplate(technicalSpec);
+  const moduleSpec = technicalSpec.generationIR?.backend?.moduleSpec || {};
+  const operationMap = moduleSpec.operationMap || {};
+  const hasDecisionAction = operationMap.review === 'decisionAction';
+  const hasEvidenceIngest = operationMap.attach === 'evidenceIngest';
+  const hasTimelineRead = operationMap.audit === 'timelineRead';
+  const isQueueList = operationMap.list === 'paginatedQueue';
   const sharedImportPath = toImportPath(
     `${technicalSpec.backend.modulePath}/service.ts`,
     technicalSpec.shared.contractPath
@@ -3548,19 +4390,12 @@ function backendModuleFiles(task, technicalSpec) {
     .map((field) => `  ${field.name}${field.required ? '' : '?'}: ${field.tsType};`)
     .join('\n');
   const routerRequestAssignments = technicalSpec.domain.fields
-    .map((field) => {
-      if (field.name === 'password') {
-        return `  password: String(payload.password || ''),`;
-      }
-      if (field.name === 'email') {
-        return `  email: String(payload.email || ''),`;
-      }
-      return `  ${field.name}: String(payload.${field.name} || ''),`;
-    })
+    .map((field) => buildRouterFieldAssignment(field))
     .join('\n');
-  const seedRequestAssignments = technicalSpec.domain.fields
-    .map((field) => `      ${field.name}: '${escapeTemplate(field.sampleValue || field.defaultValue || '')}',`)
-    .join('\n');
+  const seedRequestExamples = buildSeedRequestExamples(technicalSpec, domainTemplate);
+  const seedRequestLiteral = JSON.stringify(seedRequestExamples, null, 2)
+    .replace(/"([^"]+)":/g, '$1:')
+    .replace(/"/g, '\'');
   const responseFieldAssignments = technicalSpec.domain.fields
     .map((field) => {
       if (field.name === 'password') return `      passwordHint: 'Senha protegida',`;
@@ -3572,18 +4407,65 @@ function backendModuleFiles(task, technicalSpec) {
     })
     .join('\n');
   const modelAssignments = technicalSpec.domain.fields.map((field) => `      ${buildFieldInitializer(field)},`).join('\n');
+  const fieldValidationRules = technicalSpec.domain.fields.flatMap((field) => buildServiceFieldValidation(field));
+  const domainSpecificValidationRules = buildDomainSpecificValidation(
+    { domainKey: technicalSpec.featureKey || technicalSpec.domainKey || '' },
+    technicalSpec.domain.fields
+  );
   const uniqueEmailRule = technicalSpec.domain.fields.some((field) => field.name === 'email')
-    ? `\n    const normalizedEmail = input.email.trim().toLowerCase();\n    const duplicated = records.find((record) => record.email === normalizedEmail);\n    if (duplicated) {\n      throw new Error('E-mail ja cadastrado.');\n    }\n`
-    : '';
-  const emailValidationRule = technicalSpec.domain.fields.some((field) => field.name === 'email')
-    ? `\n    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(input.email)) {\n      throw new Error('E-mail invalido.');\n    }\n`
+    ? [
+        `  const normalizedEmail = String(input.email || '').trim().toLowerCase();`,
+        `  const duplicated = existingRecords.find((record) => record.email === normalizedEmail);`,
+        `  if (duplicated) throw new Error('E-mail ja cadastrado.');`,
+      ]
     : '';
   const passwordValidationRule = technicalSpec.domain.fields.some((field) => field.name === 'password')
-    ? `\n    const password = input.password || '';\n    const hasStrongPassword = password.length >= 8 && /[A-Z]/.test(password) && /\\d/.test(password);\n    if (!hasStrongPassword) {\n      throw new Error('Senha invalida.');\n    }\n`
-    : '';
+    ? [
+        `  const password = input.password || '';`,
+        `  const hasStrongPassword = password.length >= 8 && /[A-Z]/.test(password) && /\\d/.test(password);`,
+        `  if (!hasStrongPassword) throw new Error('Senha invalida.');`,
+      ]
+    : [];
+  const validateInputRules = [
+    ...fieldValidationRules,
+    ...passwordValidationRule,
+    ...(Array.isArray(uniqueEmailRule) ? uniqueEmailRule : []),
+    ...domainSpecificValidationRules,
+  ]
+    .filter(Boolean)
+    .join('\n');
   const businessRulesComment = technicalSpec.businessRules.length
     ? technicalSpec.businessRules.map((rule) => ` * - ${rule}`).join('\n')
     : ' * - Regras de negocio basicas aplicadas no fluxo incremental.';
+  const validateInputFunction = validateInputRules
+    ? `function validateInput(input: ${technicalSpec.shared.requestContractName}, existingRecords: ${technicalSpec.shared.responseContractName}[]): void {\n${validateInputRules}\n}\n\n`
+    : '';
+  const listImplementation = isQueueList
+    ? `  list() {\n    const items = [...records].sort((left, right) => {\n      const leftPriority = String(left.priority || left.status || '').toLowerCase();\n      const rightPriority = String(right.priority || right.status || '').toLowerCase();\n      return leftPriority.localeCompare(rightPriority);\n    });\n\n    return {\n      items,\n      meta: {\n        mode: 'queue',\n        total: items.length,\n        sort: '${escapeTemplate(operationMap.prioritize || 'prioritySort')}',\n      },\n    };\n  }\n\n`
+    : `  list() {\n    return { items: records };\n  }\n\n`;
+  const reviewMethod = hasDecisionAction
+    ? `  review(id: string, decision: 'approved' | 'rejected', reviewerNote = '') {\n    const record = records.find((item) => item.id === id);\n    if (!record) {\n      throw new Error('Registro nao encontrado para revisao.');\n    }\n\n    const nextStatus = decision === 'approved' ? 'active' : 'draft';\n    Object.assign(record, {\n      status: nextStatus,\n      reviewDecision: decision,\n      reviewNote: reviewerNote || undefined,\n      updatedAt: new Date().toISOString(),\n    });\n\n    return record;\n  }\n\n`
+    : '';
+  const attachMethod = hasEvidenceIngest
+    ? `  attach(id: string, attachmentName: string) {\n    const record = records.find((item) => item.id === id);\n    if (!record) {\n      throw new Error('Registro nao encontrado para anexar evidencia.');\n    }\n\n    const currentCount = Number(record.attachmentCount || 0);\n    Object.assign(record, {\n      attachmentCount: currentCount + 1,\n      latestAttachment: attachmentName || 'Arquivo enviado',\n      updatedAt: new Date().toISOString(),\n    });\n\n    return record;\n  }\n\n`
+    : '';
+  const activityMethod = hasTimelineRead
+    ? `  activity() {\n    return {\n      items: records.slice(0, 10).map((record) => ({\n        id: record.id,\n        status: record.status,\n        summary: String(record.title || record.name || record.subject || record.id),\n        createdAt: record.updatedAt || record.createdAt,\n      })),\n    };\n  }\n\n`
+    : '';
+  const createStatusValue = hasDecisionAction ? `'draft'` : `'active'`;
+  const createUpdatedAtField = hasTimelineRead || hasEvidenceIngest ? `\n      updatedAt: new Date().toISOString(),` : '';
+  const routerActivityBody = hasTimelineRead
+    ? `\n${technicalSpec.backend.routerName}.get('/activity', (_req, res) => {\n  res.json(${technicalSpec.backend.serviceInstanceName}.activity());\n});\n`
+    : '';
+  const routerDecisionBody = hasDecisionAction
+    ? `\n${technicalSpec.backend.routerName}.post('/:id/review', (req, res) => {\n  try {\n    const decision = String(req.body?.decision || 'approved') === 'rejected' ? 'rejected' : 'approved';\n    const reviewed = ${technicalSpec.backend.serviceInstanceName}.review(req.params.id, decision, String(req.body?.reviewerNote || ''));\n    res.json(reviewed);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao revisar registro.' });\n  }\n});\n`
+    : '';
+  const routerAttachmentBody = hasEvidenceIngest
+    ? `\n${technicalSpec.backend.routerName}.post('/:id/attachments', (req, res) => {\n  try {\n    const attached = ${technicalSpec.backend.serviceInstanceName}.attach(req.params.id, String(req.body?.attachmentName || 'Arquivo enviado'));\n    res.status(201).json(attached);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao anexar evidencia.' });\n  }\n});\n`
+    : '';
+  const readmeOperationSummary = Object.entries(operationMap)
+    .map(([name, mode]) => `- \`${name}\`: ${mode}`)
+    .join('\n');
 
   return [
     {
@@ -3593,12 +4475,12 @@ function backendModuleFiles(task, technicalSpec) {
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/service.ts`,
-      content: `import { randomUUID } from 'crypto';\nimport type { ${technicalSpec.shared.listContractName}, ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nconst records: ${technicalSpec.shared.responseContractName}[] = [];\n\n/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n  list(): ${technicalSpec.shared.listContractName} {\n    return { items: records };\n  }\n\n  create(input: ${technicalSpec.shared.requestContractName}): ${technicalSpec.shared.responseContractName} {${emailValidationRule}${passwordValidationRule}${uniqueEmailRule}\n    const item: ${technicalSpec.shared.responseContractName} = {\n      id: randomUUID(),\n${responseFieldAssignments}\n      status: 'active',\n      createdAt: new Date().toISOString(),\n    };\n\n    records.push(item);\n    return item;\n  }\n\n  buildSeedFromTask(): ${technicalSpec.shared.requestContractName} {\n    return {\n${seedRequestAssignments}\n    };\n  }\n}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\nrecords.push(${technicalSpec.backend.serviceInstanceName}.create(${technicalSpec.backend.serviceInstanceName}.buildSeedFromTask()));\n`,
+      content: `import { randomUUID } from 'crypto';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\ntype InternalRecord = ${technicalSpec.shared.responseContractName} & {\n  updatedAt?: string;\n  reviewDecision?: 'approved' | 'rejected';\n  reviewNote?: string;\n  attachmentCount?: number;\n  latestAttachment?: string;\n  priority?: string;\n  title?: string;\n  name?: string;\n  subject?: string;\n};\n\nconst records: InternalRecord[] = [];\n\n${validateInputFunction}/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n${listImplementation}  create(input: ${technicalSpec.shared.requestContractName}): ${technicalSpec.shared.responseContractName} {\n${validateInputRules ? `    validateInput(input, records);\n` : ''}    const item: InternalRecord = {\n      id: randomUUID(),\n${responseFieldAssignments}\n      status: ${createStatusValue},\n      createdAt: new Date().toISOString(),${createUpdatedAtField}\n    };\n\n    records.push(item);\n    return item;\n  }\n\n${reviewMethod}${attachMethod}${activityMethod}  buildSeedRecordsFromTask(): ${technicalSpec.shared.requestContractName}[] {\n    return ${seedRequestLiteral};\n  }\n}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\nfor (const seedInput of ${technicalSpec.backend.serviceInstanceName}.buildSeedRecordsFromTask()) {\n  records.push(${technicalSpec.backend.serviceInstanceName}.create(seedInput));\n}\n`,
       fileType: 'ts',
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/router.ts`,
-      content: `import { Router } from 'express';\nimport type { ${technicalSpec.shared.requestContractName} } from '${sharedImportPath}';\nimport { ${technicalSpec.backend.serviceInstanceName} } from './service';\n\nexport const ${technicalSpec.backend.routerName} = Router();\n\n${technicalSpec.backend.routerName}.get('/', (_req, res) => {\n  res.json(${technicalSpec.backend.serviceInstanceName}.list());\n});\n\n${technicalSpec.backend.routerName}.post('/', (req, res) => {\n  try {\n    const payload = req.body || {};\n    const input: ${technicalSpec.shared.requestContractName} = {\n${routerRequestAssignments}\n    };\n    const created = ${technicalSpec.backend.serviceInstanceName}.create(input);\n    res.status(201).json(created);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao processar a requisicao.' });\n  }\n});\n`,
+      content: `import { Router } from 'express';\nimport type { ${technicalSpec.shared.requestContractName} } from '${sharedImportPath}';\nimport { ${technicalSpec.backend.serviceInstanceName} } from './service';\n\nexport const ${technicalSpec.backend.routerName} = Router();\n\n${technicalSpec.backend.routerName}.get('/', (_req, res) => {\n  res.json(${technicalSpec.backend.serviceInstanceName}.list());\n});\n${routerActivityBody}\n${technicalSpec.backend.routerName}.post('/', (req, res) => {\n  try {\n    const payload = req.body || {};\n    const input: ${technicalSpec.shared.requestContractName} = {\n${routerRequestAssignments}\n    };\n    const created = ${technicalSpec.backend.serviceInstanceName}.create(input);\n    res.status(201).json(created);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao processar a requisicao.' });\n  }\n});\n${routerDecisionBody}${routerAttachmentBody}`,
       fileType: 'ts',
     },
     {
@@ -3616,6 +4498,7 @@ function backendModuleFiles(task, technicalSpec) {
 
 function frontendFeatureFiles(task, technicalSpec) {
   const { entityName } = technicalSpec;
+  const domainTemplate = getDomainTemplate(technicalSpec);
   const sharedImportPath = toImportPath(
     `${technicalSpec.frontend.featurePath}/page.tsx`,
     technicalSpec.shared.contractPath
@@ -3654,6 +4537,8 @@ function frontendFeatureFiles(task, technicalSpec) {
   const highlights = (technicalSpec.frontend.highlights || []).slice(0, 3);
   const layout = technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'split';
   const productMode = technicalSpec.frontend?.productMode || technicalSpec.structured?.classification?.productMode || 'structured-workspace';
+  const uiIntent = technicalSpec.structured?.classification?.intent || 'custom';
+  const layoutVariant = normalizeLayoutVariant(technicalSpec.frontend?.layoutVariant, productMode, layout, uiIntent);
   const productDirection = getProductModeDesignProfile(productMode, layout);
   const accent = productDirection.accent || 'teal';
   const isCrudLayout = layout === 'crud';
@@ -3661,7 +4546,21 @@ function frontendFeatureFiles(task, technicalSpec) {
   const isWorkspaceLayout = layout === 'workspace';
   const isWizardLayout = layout === 'wizard';
   const isSettingsLayout = layout === 'settings';
+  const shellComponentName = isSettingsLayout ? 'SettingsWorkbench' : 'FeatureWorkbench';
   const shouldRenderCollectionPanel = isCrudLayout || isDashboardLayout || isWorkspaceLayout;
+  const uiImports = isSettingsLayout ? 'SettingsWorkbench, FieldGroup, PrimaryButton, inputStyle' : 'FeatureWorkbench, FieldGroup, PrimaryButton, inputStyle';
+  const collectionHelpers = shouldRenderCollectionPanel
+    ? `function humanizeStatus(value?: string) {\n  const normalized = String(value || '').trim().toLowerCase();\n  const directMap: Record<string, string> = {\n    active: 'Ativo',\n    enabled: 'Ativado',\n    disabled: 'Desativado',\n    draft: 'Em preparacao',\n    pending: 'Pendente',\n  };\n\n  return directMap[normalized] || (value ? String(value) : 'Ativo');\n}\n\nfunction formatCreatedAt(value?: string) {\n  if (!value) return 'Agora';\n  const parsed = new Date(value);\n  if (Number.isNaN(parsed.getTime())) return 'Agora';\n  return parsed.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });\n}\n\n`
+    : '';
+  const settingsSummaryItems = JSON.stringify(
+    (domainTemplate.settingsSummaryItems || highlights || ['Estado atual claro para o usuario.']).slice(0, 3)
+  );
+  const summaryStateTitle = escapeTemplate(domainTemplate.summaryStateTitle || 'Resumo principal');
+  const summaryStateEmpty = escapeTemplate(
+    domainTemplate.summaryStateEmpty ||
+      technicalSpec.frontend.recordsEmptyState ||
+      'Nenhum dado configurado ainda.'
+  );
   const metricsExpression = isSettingsLayout || isWizardLayout
     ? 'undefined'
     : isDashboardLayout
@@ -3685,11 +4584,11 @@ function frontendFeatureFiles(task, technicalSpec) {
     ? (productDirection.collectionMeta || (isDashboardLayout
       ? "isLoading ? 'Atualizando' : `${items.length} insight(s)`"
       : isWorkspaceLayout
-        ? "isLoading ? 'Sincronizando' : `${items.length} item(ns) na fila`"
+        ? "isLoading ? 'Atualizando fila' : `${items.length} item(ns) na fila`"
         : "`${items.length} registro(s)`"))
     : isWizardLayout
       ? "isLoading ? 'Preparando' : 'Proximo passo'"
-      : "isLoading ? 'Sincronizando' : items.length ? 'Configurado' : 'Ajuste inicial'";
+      : `isLoading ? 'Atualizando' : items.length ? '${escapeTemplate(domainTemplate.summaryMetaReady || 'Ativo')}' : '${escapeTemplate(domainTemplate.summaryMetaIdle || 'Pronto para ajustar')}'`;
   const secondaryPanelTitle = shouldRenderCollectionPanel
     ? escapeTemplate(
         technicalSpec.frontend.recordsTitle ||
@@ -3712,6 +4611,20 @@ function frontendFeatureFiles(task, technicalSpec) {
             ? 'Avance com seguranca mantendo clareza sobre a proxima etapa.'
             : 'Entenda rapidamente como esta configuracao apoia a rotina do usuario.')
       );
+  const secondaryLeadTitle = escapeTemplate(
+    technicalSpec.frontend.profileSummaryLeadTitle ||
+      (uiIntent === 'configure'
+        ? 'Resumo da configuracao'
+        : uiIntent === 'attach'
+          ? 'Orientacao do envio'
+          : uiIntent === 'review'
+            ? 'Pontos de atencao'
+            : uiIntent === 'monitor'
+              ? 'Leitura principal'
+              : isWizardLayout
+                ? 'Contexto atual'
+                : 'Resumo da experiencia')
+  );
   const secondaryPanelBlock = shouldRenderCollectionPanel
     ? `      listTitle="${secondaryPanelTitle}"
       listDescription="${secondaryPanelDescription}"
@@ -3752,16 +4665,16 @@ function frontendFeatureFiles(task, technicalSpec) {
                 <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>{String(item.${previewField.name === 'password' ? 'passwordHint' : previewField.name} || item.id)}</strong>
                 <span style={{ display: 'block', color: '#64748b', fontSize: 13 }}>{String(item.${secondaryField.name === 'password' ? 'passwordHint' : secondaryField.name} || '${escapeTemplate(
                   isWorkspaceLayout
-                    ? 'Item pronto para consulta'
+                    ? 'Contexto pronto para consulta'
                     : isDashboardLayout
-                      ? 'Indicador disponivel para consulta'
-                      : 'Registro disponivel'
+                      ? 'Status em foco para decisao'
+                      : 'Configuracao registrada'
                 )}')}</span>
               </div>
               <span style={{ width: 'fit-content', padding: '6px 10px', borderRadius: 999, background: '#ecfeff', color: '#115e59', fontSize: 12, fontWeight: 700 }}>
-                {String(item.status || 'active')}
+                {humanizeStatus(String(item.status || 'active'))}
               </span>
-              <span style={{ color: '#64748b', fontSize: 13 }}>{String(item.createdAt || 'Agora')}</span>
+              <span style={{ color: '#64748b', fontSize: 13 }}>{formatCreatedAt(String(item.createdAt || ''))}</span>
             </article>
           ))}
         </div>
@@ -3777,7 +4690,7 @@ function frontendFeatureFiles(task, technicalSpec) {
     >
       <div style={{ display: 'grid', gap: 14 }}>
         <div style={{ padding: '16px 18px', borderRadius: 16, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
-          <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>Canal principal</strong>
+          <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>${secondaryLeadTitle}</strong>
           <p style={{ margin: '8px 0 0', color: '#64748b', lineHeight: 1.7 }}>${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.summary)}</p>
         </div>
         <div style={{ display: 'grid', gap: 10 }}>
@@ -3793,6 +4706,23 @@ function frontendFeatureFiles(task, technicalSpec) {
           )}' : '${escapeTemplate(technicalSpec.frontend.recordsEmptyState || (isWizardLayout ? 'Nenhum passo confirmado ainda.' : 'Nenhuma configuracao registrada ainda.'))}' }
         </div>
       </div>`;
+  const settingsSummaryBlock = `      summaryTitle="${secondaryPanelTitle}"
+      summaryDescription="${secondaryPanelDescription}"
+      summaryMeta={${supportMetaExpression}}
+      summaryHighlights={${settingsSummaryItems}}
+    >
+      <div style={{ display: 'grid', gap: 12 }}>
+        <div style={{ padding: '14px 16px', borderRadius: 16, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+          <strong style={{ display: 'block', color: '#1f2a44', fontSize: 15 }}>${summaryStateTitle}</strong>
+          <p style={{ margin: '8px 0 0', color: '#64748b', lineHeight: 1.7 }}>
+            {isLoading
+              ? 'Carregando o resumo da configuracao...'
+              : items.length
+                ? 'Configuracao salva e pronta para consulta.'
+                : '${summaryStateEmpty}'}
+          </p>
+        </div>
+      </div>`;
 
   return [
     {
@@ -3802,7 +4732,7 @@ function frontendFeatureFiles(task, technicalSpec) {
     },
     {
       relativePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
-      content: `import { useEffect, useState } from 'react';\nimport type { FormEvent } from 'react';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\nimport { FeatureWorkbench, FieldGroup, PrimaryButton, inputStyle } from '${uiImportPath}';\nimport { create${entityName}, fetch${entityName}Items } from './service';\n\nconst initialForm: ${technicalSpec.shared.requestContractName} = {\n${initialStateEntries}\n};\n\nexport function ${technicalSpec.frontend.pageComponentName}() {\n  const [items, setItems] = useState<${technicalSpec.shared.responseContractName}[]>([]);\n  const [form, setForm] = useState<${technicalSpec.shared.requestContractName}>(initialForm);\n  const [feedback, setFeedback] = useState('');\n  const [errorMessage, setErrorMessage] = useState('');\n  const [isLoading, setIsLoading] = useState(true);\n  const [isSubmitting, setIsSubmitting] = useState(false);\n\n  useEffect(() => {\n    fetch${entityName}Items()\n      .then(setItems)\n      .catch(() => setItems([]))\n      .finally(() => setIsLoading(false));\n  }, []);\n\n  async function handleSubmit(event: FormEvent<HTMLFormElement>) {\n    event.preventDefault();\n    setFeedback('');\n    setErrorMessage('');\n    setIsSubmitting(true);\n\n    try {\n      const created = await create${entityName}({\n${payloadObject}\n      });\n      setItems((current) => [created, ...current]);\n      setForm(initialForm);\n      setFeedback('${escapeTemplate(technicalSpec.domain.successMessage)}');\n    } catch (error) {\n      setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');\n    } finally {\n      setIsSubmitting(false);\n    }\n  }\n\n  return (\n    <FeatureWorkbench\n      accent="${accent}"\n      productMode="${productMode}"\n      eyebrow="${escapeTemplate(technicalSpec.frontend.heroEyebrow || technicalSpec.frontend.navigationLabel || technicalSpec.entityName)}"\n      title="${escapeTemplate(technicalSpec.frontend.heroTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      description="${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      metrics={${metricsExpression}}\n      highlights={${JSON.stringify(highlights.length ? highlights : ['Experiencia preparada para uma operacao mais clara e confiavel.'])}}\n      formTitle="${escapeTemplate(technicalSpec.frontend.formCardTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      formDescription="${escapeTemplate(technicalSpec.frontend.formCardDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      form={\n        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>\n${inputBlocks}\n          <PrimaryButton type="submit" accent="${accent}">\n            {isSubmitting ? 'Processando...' : '${escapeTemplate(technicalSpec.domain.submitLabel)}'}\n          </PrimaryButton>\n\n          {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}\n          {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}\n        </form>\n      }\n${secondaryPanelBlock}\n    </FeatureWorkbench>\n  );\n}\n`,
+      content: `import { useEffect, useState } from 'react';\nimport type { FormEvent } from 'react';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\nimport { ${uiImports} } from '${uiImportPath}';\nimport { create${entityName}, fetch${entityName}Items } from './service';\n\nconst initialForm: ${technicalSpec.shared.requestContractName} = {\n${initialStateEntries}\n};\n\n${collectionHelpers}export function ${technicalSpec.frontend.pageComponentName}() {\n  const [items, setItems] = useState<${technicalSpec.shared.responseContractName}[]>([]);\n  const [form, setForm] = useState<${technicalSpec.shared.requestContractName}>(initialForm);\n  const [feedback, setFeedback] = useState('');\n  const [errorMessage, setErrorMessage] = useState('');\n  const [isLoading, setIsLoading] = useState(true);\n  const [isSubmitting, setIsSubmitting] = useState(false);\n\n  useEffect(() => {\n    fetch${entityName}Items()\n      .then(setItems)\n      .catch(() => setItems([]))\n      .finally(() => setIsLoading(false));\n  }, []);\n\n  async function handleSubmit(event: FormEvent<HTMLFormElement>) {\n    event.preventDefault();\n    setFeedback('');\n    setErrorMessage('');\n    setIsSubmitting(true);\n\n    try {\n      const created = await create${entityName}({\n${payloadObject}\n      });\n      setItems((current) => [created, ...current]);\n      setForm(initialForm);\n      setFeedback('${escapeTemplate(technicalSpec.domain.successMessage)}');\n    } catch (error) {\n      setErrorMessage(error instanceof Error ? error.message : 'Falha ao enviar formulario.');\n    } finally {\n      setIsSubmitting(false);\n    }\n  }\n\n  return (\n    <${shellComponentName}\n      accent="${accent}"\n      productMode="${productMode}"\n      uiIntent="${uiIntent}"\n      layoutVariant="${layoutVariant}"\n      eyebrow="${escapeTemplate(technicalSpec.frontend.heroEyebrow || technicalSpec.frontend.navigationLabel || technicalSpec.entityName)}"\n      title="${escapeTemplate(technicalSpec.frontend.heroTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      description="${escapeTemplate(technicalSpec.frontend.heroDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      ${isSettingsLayout ? '' : `metrics={${metricsExpression}}\n      `}highlights={${JSON.stringify(highlights.length ? highlights : ['Experiencia preparada para uma operacao mais clara e confiavel.'])}}\n      formTitle="${escapeTemplate(technicalSpec.frontend.formCardTitle || technicalSpec.frontend.pageTitle || technicalSpec.entityName)}"\n      formDescription="${escapeTemplate(technicalSpec.frontend.formCardDescription || technicalSpec.frontend.pageDescription || technicalSpec.summary)}"\n      form={\n        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>\n${inputBlocks}\n          <PrimaryButton type="submit" accent="${accent}">\n            {isSubmitting ? 'Processando...' : '${escapeTemplate(technicalSpec.domain.submitLabel)}'}\n          </PrimaryButton>\n\n          {feedback ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>{feedback}</p> : null}\n          {errorMessage ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{errorMessage}</p> : null}\n        </form>\n      }\n${isSettingsLayout ? settingsSummaryBlock : secondaryPanelBlock}\n    </${shellComponentName}>\n  );\n}\n`,
         fileType: 'tsx',
       },
     {
@@ -3865,7 +4795,17 @@ function buildBackendModuleFilesFromTemplate(task, technicalSpec) {
 
 function buildFrontendFeatureFilesFromTemplate(task, technicalSpec) {
   const domainTemplate = getDomainTemplate(technicalSpec);
-  const files = frontendFeatureFiles(task, technicalSpec);
+  const files = buildModernFrontendFeatureFiles(task, technicalSpec, {
+    sharedImportPath: toImportPath(
+      `${technicalSpec.frontend.featurePath}/page.tsx`,
+      technicalSpec.shared.contractPath
+    ),
+    uiImportPath: toImportPath(
+      `${technicalSpec.frontend.featurePath}/page.tsx`,
+      'packages/ui/src/index.tsx'
+    ),
+    domainTemplate,
+  });
 
   return files.map((file) => {
     if (file.relativePath.endsWith('/page.tsx')) {
@@ -4001,7 +4941,7 @@ async function updateApiServer(generatedAppRoot, routeSpecs, appSlug = 'generate
     .map((spec) => `app.use('${spec.backend.routeBase}', ${spec.backend.routerName})`)
     .join('\n');
 
-  const content = `import express from 'express'\nimport cors from 'cors'\n${importLines ? `${importLines}\n` : ''}\nconst app = express()\napp.use(cors())\napp.use(express.json())\n\napp.get('/health', (_req, res) => {\n  res.json({ status: 'ok', app: '${appSlug}' })\n})\n\n${useLines}\n\napp.listen(3001, () => {\n  console.log('API running on 3001')\n})\n`;
+  const content = `import express from 'express'\nimport cors from 'cors'\nimport pino from 'pino'\n${importLines ? `${importLines}\n` : ''}\nconst app = express()\nconst logger = pino({ name: '${appSlug}-api' })\nconst port = Number(process.env.PORT || 3001)\nconst allowedOrigins = (process.env.FRONTEND_ORIGIN || '')\n  .split(',')\n  .map((item) => item.trim())\n  .filter(Boolean)\n\napp.use(\n  cors({\n    origin(origin, callback) {\n      if (!origin || !allowedOrigins.length || allowedOrigins.includes(origin)) {\n        return callback(null, true)\n      }\n\n      return callback(new Error(\`Origin not allowed: \${origin}\`))\n    },\n    credentials: true,\n  })\n)\napp.use(express.json({ limit: '1mb' }))\n\napp.get('/health', (_req, res) => {\n  res.json({ status: 'ok', app: '${appSlug}' })\n})\n\n${useLines}\n\napp.listen(port, () => {\n  logger.info({ port }, 'API running')\n})\n`;
 
   await writeText(serverPath, content);
 
@@ -4028,17 +4968,22 @@ async function updateApiPackageJson(generatedAppRoot) {
   parsed.scripts = {
     dev: 'tsx watch src/server.ts',
     build: 'tsc -p tsconfig.json',
+    test: 'vitest run',
     ...(parsed.scripts || {}),
   };
   parsed.dependencies = parsed.dependencies || {};
   parsed.dependencies.cors = parsed.dependencies.cors || '^2.8.5';
   parsed.dependencies.express = parsed.dependencies.express || '^4.18.2';
+  parsed.dependencies.pino = parsed.dependencies.pino || '^9.5.0';
+  parsed.dependencies.zod = parsed.dependencies.zod || '^3.24.1';
   parsed.devDependencies = parsed.devDependencies || {};
   parsed.devDependencies['@types/cors'] = parsed.devDependencies['@types/cors'] || '^2.8.17';
   parsed.devDependencies['@types/express'] = parsed.devDependencies['@types/express'] || '^5.0.1';
   parsed.devDependencies['@types/node'] = parsed.devDependencies['@types/node'] || '^22.10.2';
+  parsed.devDependencies.supertest = parsed.devDependencies.supertest || '^7.0.0';
   parsed.devDependencies.tsx = parsed.devDependencies.tsx || '^4.19.0';
   parsed.devDependencies.typescript = parsed.devDependencies.typescript || '^5.6.0';
+  parsed.devDependencies.vitest = parsed.devDependencies.vitest || '^2.1.8';
 
   const content = `${JSON.stringify(parsed, null, 2)}\n`;
   await writeText(packagePath, content);
@@ -4089,20 +5034,26 @@ async function updateWebPackageJson(generatedAppRoot) {
   parsed.scripts = {
     dev: 'vite',
     build: 'vite build',
+    test: 'vitest run',
     ...(parsed.scripts || {}),
   };
   parsed.dependencies = parsed.dependencies || {};
+  parsed.dependencies['@hookform/resolvers'] = parsed.dependencies['@hookform/resolvers'] || '^3.10.0';
+  parsed.dependencies['@tanstack/react-query'] = parsed.dependencies['@tanstack/react-query'] || '^5.64.1';
   parsed.dependencies.react = parsed.dependencies.react || '^18.2.0';
   parsed.dependencies['react-dom'] = parsed.dependencies['react-dom'] || '^18.2.0';
+  parsed.dependencies['react-hook-form'] = parsed.dependencies['react-hook-form'] || '^7.54.2';
   if (!parsed.dependencies['react-router-dom']) {
     parsed.dependencies['react-router-dom'] = '^6.28.0';
   }
+  parsed.dependencies.zod = parsed.dependencies.zod || '^3.24.1';
   parsed.devDependencies = parsed.devDependencies || {};
   parsed.devDependencies['@types/react'] = parsed.devDependencies['@types/react'] || '^18.3.12';
   parsed.devDependencies['@types/react-dom'] = parsed.devDependencies['@types/react-dom'] || '^18.3.1';
   parsed.devDependencies['@vitejs/plugin-react'] = parsed.devDependencies['@vitejs/plugin-react'] || '^4.2.0';
   parsed.devDependencies.typescript = parsed.devDependencies.typescript || '^5.6.0';
   parsed.devDependencies.vite = parsed.devDependencies.vite || '^5.4.0';
+  parsed.devDependencies.vitest = parsed.devDependencies.vitest || '^2.1.8';
 
   const content = `${JSON.stringify(parsed, null, 2)}\n`;
   await writeText(packagePath, content);
@@ -4143,11 +5094,16 @@ async function updateWebMainEntry(generatedAppRoot) {
   const mainPath = path.join(generatedAppRoot, 'apps/web/src/main.tsx');
   const content = `import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
+
+const queryClient = new QueryClient();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
   </React.StrictMode>
 );
 `;
@@ -4157,6 +5113,35 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     relativePath: 'apps/web/src/main.tsx',
     content,
     fileType: 'tsx',
+  };
+}
+
+async function updateWebViteConfig(generatedAppRoot) {
+  const viteConfigPath = path.join(generatedAppRoot, 'apps/web/vite.config.ts');
+  const content = `import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('react-router-dom')) return 'router';
+          if (id.includes('react') || id.includes('scheduler')) return 'react-vendor';
+        },
+      },
+    },
+  },
+});
+`;
+  await writeText(viteConfigPath, content);
+
+  return {
+    relativePath: 'apps/web/vite.config.ts',
+    content,
+    fileType: 'ts',
   };
 }
 
@@ -4246,6 +5231,7 @@ async function ensureWorkspaceFoundationFiles(generatedAppRoot, projectName) {
     await updateWebPackageJson(generatedAppRoot),
     await updateWebIndexHtml(generatedAppRoot, projectName),
     await updateWebMainEntry(generatedAppRoot),
+    await updateWebViteConfig(generatedAppRoot),
     await updateWebTsconfig(generatedAppRoot),
   ];
 }
@@ -4259,7 +5245,7 @@ function buildSyntheticTaskFromSpec(technicalSpec) {
 
 async function ensureValidationScripts(generatedAppRoot) {
   const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\nconst hasPremiumShellSignals =\n  appContent.includes('AppFrame') &&\n  appContent.includes('AppHeader') &&\n  appContent.includes('StudioHome') &&\n  appContent.includes('MetricRow') &&\n  appContent.includes('SurfaceCard') &&\n  appContent.includes('function HomePage()') &&\n  appContent.includes('Resumo do workspace');\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !hasPremiumShellSignals) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem textos genericos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluido sem problemas.');\n`;
-  const testContent = `import { access, readFile } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigat?rio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nconsole.log('Smoke tests do projeto gerado conclu?dos com sucesso.');\n`;
+  const testContent = `import { access, readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatorio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nasync function listDirectories(relativePath) {\n  try {\n    const entries = await readdir(path.join(root, relativePath), { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nfor (const file of ['apps/api/src/server.ts', 'apps/web/src/App.tsx', 'prisma/schema.prisma']) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\nconst webFeatures = await listDirectories('apps/web/src/features');\nconst apiModules = await listDirectories('apps/api/src/modules');\nconst contractFiles = await readdir(path.join(root, 'packages', 'shared', 'src', 'contracts')).catch(() => []);\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nfor (const featureDir of webFeatures) {\n  await assertFile(\`apps/web/src/features/\${featureDir}/page.tsx\`);\n  await assertFile(\`apps/web/src/features/\${featureDir}/service.ts\`);\n  await assertFile(\`apps/api/src/modules/\${featureDir}/router.ts\`);\n  await assertFile(\`apps/api/src/modules/\${featureDir}/service.ts\`);\n  await assertFile(\`packages/shared/src/contracts/\${featureDir}.ts\`);\n\n  const pageContent = await readSafe(\`apps/web/src/features/\${featureDir}/page.tsx\`);\n  const routerContent = await readSafe(\`apps/api/src/modules/\${featureDir}/router.ts\`);\n  const serviceContent = await readSafe(\`apps/api/src/modules/\${featureDir}/service.ts\`);\n  const contractContent = await readSafe(\`packages/shared/src/contracts/\${featureDir}.ts\`);\n\n  if (!pageContent.includes('packages/ui/src/index.tsx')) {\n    throw new Error(\`Feature \${featureDir} nao usa o kit visual compartilhado.\`);\n  }\n\n  if (!routerContent.includes(\".get('/',\") || !routerContent.includes(\".post('/',\")) {\n    throw new Error(\`Modulo \${featureDir} sem rotas GET/POST basicas.\`);\n  }\n\n  if (!serviceContent.includes('buildSeedRecordsFromTask')) {\n    throw new Error(\`Modulo \${featureDir} sem seeds basicos para validacao incremental.\`);\n  }\n\n  if (!/Request\\s*\\{/.test(contractContent) || !/Response\\s*\\{/.test(contractContent) || !/ListResponse\\s*\\{/.test(contractContent)) {\n    throw new Error(\`Contrato \${featureDir} sem Request/Response/ListResponse completos.\`);\n  }\n\n  const expectedModelName = contractContent.match(/export interface ([A-Za-z0-9]+)Request/)?.[1]?.replace(/Request$/, '');\n  if (expectedModelName && !schemaContent.includes(\`model \${expectedModelName} {\`)) {\n    throw new Error(\`Schema Prisma sem model esperado para \${featureDir}: \${expectedModelName}.\`);\n  }\n}\n\nif (webFeatures.length !== apiModules.length) {\n  throw new Error('Quantidade de features web difere da quantidade de modulos da API.');\n}\n\nif (webFeatures.length !== contractFiles.filter((file) => String(file).endsWith('.ts')).length) {\n  throw new Error('Quantidade de contratos compartilhados difere das features geradas.');\n}\n\nif (!/createdAt\\s+DateTime/.test(schemaContent) || !/updatedAt\\s+DateTime/.test(schemaContent)) {\n  throw new Error('Schema Prisma sem trilha minima de datas nas models geradas.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluidos com sucesso.');\n`;
 
   return [
     {
@@ -4275,13 +5261,23 @@ async function ensureValidationScripts(generatedAppRoot) {
   ];
 }
 
-async function updateWebApp(generatedAppRoot, routeSpecs, projectName) {
-  const uniqueRouteSpecs = Array.from(
-    new Map(routeSpecs.map((spec) => [`${spec.featureKey}:${spec.frontend.suggestedRoute}`, spec])).values()
+async function updateWebApp(generatedAppRoot, routeSpecs, projectName, options = {}) {
+  const projectTemplate =
+    options.projectTemplate ||
+    resolveProjectTemplate(null, {
+      projectName,
+      label: projectName,
+    });
+  const uniqueRouteSpecs = sortRouteSpecsByProjectTemplate(
+    Array.from(new Map(routeSpecs.map((spec) => [`${spec.featureKey}:${spec.frontend.suggestedRoute}`, spec])).values()),
+    projectTemplate
   );
   const appPath = path.join(generatedAppRoot, 'apps/web/src/App.tsx');
   const importLines = uniqueRouteSpecs
-    .map((spec) => `import { ${spec.frontend.pageComponentName} } from './features/${spec.featureKey}/index'`)
+    .map(
+      (spec) =>
+        `const ${spec.frontend.pageComponentName} = lazy(() => import('./features/${spec.featureKey}/index').then((module) => ({ default: module.${spec.frontend.pageComponentName} })))`
+    )
     .join('\n');
   const shellImport = `import { AppFrame, AppHeader, MetricRow, SidebarNav, StudioHome, SurfaceCard } from '../../../packages/ui/src/index.tsx'`;
   const routeLines = uniqueRouteSpecs
@@ -4290,8 +5286,20 @@ async function updateWebApp(generatedAppRoot, routeSpecs, projectName) {
         `  { path: '${spec.frontend.suggestedRoute}', label: '${escapeTemplate(spec.frontend.navigationLabel || spec.entityName)}', render: () => <${spec.frontend.pageComponentName} /> },`
     )
     .join('\n');
+  const homeDescription = escapeTemplate(
+    projectTemplate.positioning ||
+      projectTemplate.summary ||
+      'Acompanhe a base gerada, as areas prontas para evolucao e a proxima frente operacional do produto.'
+  );
+  const evolutionDescription = escapeTemplate(
+    projectTemplate.coreCapabilities?.length
+      ? `Blueprint inicial prioriza ${projectTemplate.coreCapabilities.slice(0, 3).join(', ')}.`
+      : 'Escolha um modulo para continuar a implementacao incremental com contratos, backend e experiencia conectados.'
+  );
+  const visualTone = escapeTemplate(projectTemplate.frontend?.visualTone || 'profissional');
+  const navigationStyle = escapeTemplate(projectTemplate.frontend?.navigationStyle || 'generic-suite');
 
-  const content = `${shellImport}\n${importLines ? `\n${importLines}\n` : '\n'}const routes = [\n  { path: '/', label: 'Inicio', render: () => <HomePage /> },\n${routeLines}\n]\n\nfunction HomePage() {\n  const productAreas = routes.filter((route) => route.path !== '/')\n\n  return (\n    <div style={{ display: 'grid', gap: 20 }}>\n      <StudioHome title="${escapeTemplate(projectName)}" routes={productAreas} />\n      <div style={{ display: 'grid', gap: 18, gridTemplateColumns: 'minmax(0, 1.12fr) minmax(320px, 0.88fr)' }}>\n        <SurfaceCard\n          title="Resumo do workspace"\n          description="Acompanhe a base gerada, as areas prontas para evolucao e a proxima frente operacional do produto."\n          meta={\`\${productAreas.length} modulo(s)\`}\n        >\n          <MetricRow\n            items={[\n              { label: 'Modulos ativos', value: String(productAreas.length) },\n              { label: 'Interface', value: 'Profissional' },\n              { label: 'Base', value: 'Web + API' },\n            ]}\n          />\n        </SurfaceCard>\n        <SurfaceCard\n          title="Fila de evolucao"\n          description="Escolha um modulo para continuar a implementacao incremental com contratos, backend e experiencia conectados."\n          meta="Fluxo guiado"\n        >\n          <div style={{ display: 'grid', gap: 12 }}>\n            {productAreas.map((route) => (\n              <a\n                key={route.path}\n                href={route.path}\n                style={{\n                  padding: '16px 18px',\n                  borderRadius: 18,\n                  border: '1px solid #dbe4ee',\n                  background: '#f8fafc',\n                  textDecoration: 'none',\n                  color: '#0f172a',\n                  fontWeight: 700,\n                }}\n              >\n                {route.label}\n              </a>\n            ))}\n          </div>\n        </SurfaceCard>\n      </div>\n    </div>\n  )\n}\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const activeRoute = routes.find((route) => route.path === currentPath) || routes[0]\n\n  return (\n    <AppFrame>\n      <AppHeader title={activeRoute.label} routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n      <div style={{ display: 'grid', gridTemplateColumns: '234px minmax(0, 1fr)' }}>\n        <SidebarNav routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n        <div style={{ padding: 18 }}>\n          {activeRoute.render()}\n        </div>\n      </div>\n    </AppFrame>\n  )\n}\n`;
+  const content = `import { Suspense, lazy } from 'react'\n${shellImport}\n${importLines ? `\n${importLines}\n` : '\n'}const routes = [\n  { path: '/', label: 'Inicio', render: () => <HomePage /> },\n${routeLines}\n]\n\nfunction HomePage() {\n  const productAreas = routes.filter((route) => route.path !== '/')\n\n  return (\n    <div style={{ display: 'grid', gap: 20 }}>\n      <StudioHome title="${escapeTemplate(projectName)}" routes={productAreas} />\n      <div style={{ display: 'grid', gap: 18, gridTemplateColumns: 'minmax(0, 1.12fr) minmax(320px, 0.88fr)' }}>\n        <SurfaceCard\n          title="Resumo do workspace"\n          description="${homeDescription}"\n          meta={\`\${productAreas.length} modulo(s)\`}\n        >\n          <MetricRow\n            items={[\n              { label: 'Modulos ativos', value: String(productAreas.length) },\n              { label: 'Tom visual', value: '${visualTone}' },\n              { label: 'Navegacao', value: '${navigationStyle}' },\n            ]}\n          />\n        </SurfaceCard>\n        <SurfaceCard\n          title="Fila de evolucao"\n          description="${evolutionDescription}"\n          meta="Blueprint guiado"\n        >\n          <div style={{ display: 'grid', gap: 12 }}>\n            {productAreas.map((route) => (\n              <a\n                key={route.path}\n                href={route.path}\n                style={{\n                  padding: '16px 18px',\n                  borderRadius: 18,\n                  border: '1px solid #dbe4ee',\n                  background: '#f8fafc',\n                  textDecoration: 'none',\n                  color: '#0f172a',\n                  fontWeight: 700,\n                }}\n              >\n                {route.label}\n              </a>\n            ))}\n          </div>\n        </SurfaceCard>\n      </div>\n    </div>\n  )\n}\n\nfunction RouteLoadingFallback() {\n  return (\n    <SurfaceCard\n      title="Preparando modulo"\n      description="Carregando a experiencia dessa area com navegacao progressiva para manter o shell mais leve."\n      meta="Lazy loading ativo"\n    >\n      <div style={{ display: 'grid', gap: 10 }}>\n        <div style={{ height: 12, borderRadius: 999, background: '#dbe4ee' }} />\n        <div style={{ height: 12, width: '72%', borderRadius: 999, background: '#e7edf5' }} />\n      </div>\n    </SurfaceCard>\n  )\n}\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const activeRoute = routes.find((route) => route.path === currentPath) || routes[0]\n\n  return (\n    <AppFrame>\n      <AppHeader title={activeRoute.label} routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n      <div style={{ display: 'grid', gridTemplateColumns: '234px minmax(0, 1fr)' }}>\n        <SidebarNav routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n        <div style={{ padding: 18 }}>\n          <Suspense fallback={<RouteLoadingFallback />}>\n            {activeRoute.render()}\n          </Suspense>\n        </div>\n      </div>\n    </AppFrame>\n  )\n}\n`;
 
   await writeText(appPath, content);
 
@@ -4302,16 +5310,141 @@ async function updateWebApp(generatedAppRoot, routeSpecs, projectName) {
   };
 }
 
+function ensurePrismaSchemaFoundation(content) {
+  let normalized = String(content || '').trim();
+
+  if (!/generator\s+client\s*\{/.test(normalized)) {
+    normalized = `generator client {\n  provider = "prisma-client-js"\n}\n\n${normalized}`.trim();
+  }
+
+  if (!/datasource\s+db\s*\{/.test(normalized)) {
+    normalized = `${normalized}\n\ndatasource db {\n  provider = "mysql"\n  url      = env("DATABASE_URL")\n}`.trim();
+  }
+
+  return `${normalized}\n`;
+}
+
+function buildPrismaFieldLineFromContractField(fieldName, tsType) {
+  const normalizedName = String(fieldName || '').trim();
+  const normalizedType = String(tsType || '').trim().toLowerCase();
+  const compactName = stripAccents(normalizedName).toLowerCase();
+
+  if (!normalizedName || ['id', 'status', 'createdAt', 'updatedAt'].includes(normalizedName)) {
+    return null;
+  }
+
+  if (normalizedType.includes('boolean')) {
+    return `  ${normalizedName} Boolean @default(false)`;
+  }
+
+  if (normalizedType.includes('number')) {
+    if (/price|valor|preco|amount|total|sla|tempo/.test(compactName)) {
+      return `  ${normalizedName} Decimal @db.Decimal(10,2)`;
+    }
+    return `  ${normalizedName} Int`;
+  }
+
+  if (normalizedType.includes('date')) {
+    return `  ${normalizedName} DateTime @db.DateTime(0)`;
+  }
+
+  if (normalizedType.includes('string')) {
+    if (compactName === 'email') return `  ${normalizedName} String @unique @db.VarChar(190)`;
+    if (compactName.includes('url') || compactName.includes('link')) return `  ${normalizedName} String @db.VarChar(500)`;
+    if (compactName.includes('description') || compactName.includes('details') || compactName.includes('summary')) {
+      return `  ${normalizedName} String @db.Text`;
+    }
+    return `  ${normalizedName} String @db.VarChar(191)`;
+  }
+
+  return `  ${normalizedName} String @db.VarChar(191)`;
+}
+
+function buildPrismaModelFromContract(contractName, contractContent) {
+  const requestMatch = String(contractContent || '').match(
+    /export interface\s+([A-Za-z0-9]+)Request\s*\{([\s\S]*?)\n\}/m
+  );
+  const modelName = requestMatch?.[1] || pascalCase(contractName, 'GeneratedContractModel');
+  const body = requestMatch?.[2] || '';
+  const fields = body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.match(/^([A-Za-z0-9_]+)\??:\s*([^;]+);?$/))
+    .filter(Boolean)
+    .map((match) => buildPrismaFieldLineFromContractField(match[1], match[2]))
+    .filter(Boolean);
+
+  return `model ${modelName} {\n  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt\n${fields.join('\n')}${fields.length ? '\n' : ''}  status    String   @default("draft") @db.VarChar(40)\n  createdAt DateTime @default(now()) @db.DateTime(0)\n  updatedAt DateTime @updatedAt @db.DateTime(0)\n}`;
+}
+
+async function syncPrismaModelsFromContracts(generatedAppRoot, content, preferredModelBlock = null) {
+  const contractsRoot = path.join(generatedAppRoot, 'packages', 'shared', 'src', 'contracts');
+  let nextContent = ensurePrismaSchemaFoundation(content);
+  let contractFiles = [];
+
+  try {
+    contractFiles = await readdir(contractsRoot);
+  } catch {
+    return nextContent;
+  }
+
+  for (const fileName of contractFiles.filter((item) => item.endsWith('.ts'))) {
+    const contractPath = path.join(contractsRoot, fileName);
+    const contractContent = await readText(contractPath, '');
+    const contractBaseName = fileName.replace(/\.ts$/, '');
+    const modelBlock = buildPrismaModelFromContract(contractBaseName, contractContent);
+    const modelName = modelBlock.match(/^model\s+([A-Za-z0-9_]+)/m)?.[1];
+    if (!modelName) continue;
+
+    if (
+      preferredModelBlock &&
+      preferredModelBlock.match(/^model\s+([A-Za-z0-9_]+)/m)?.[1] === modelName
+    ) {
+      continue;
+    }
+
+    const modelPattern = new RegExp(`model\\s+${modelName}\\s*\\{[\\s\\S]*?\\n\\}`, 'm');
+    if (modelPattern.test(nextContent)) {
+      nextContent = nextContent.replace(modelPattern, modelBlock);
+    } else {
+      nextContent = `${nextContent.trim()}\n\n${modelBlock}`;
+    }
+  }
+
+  return `${nextContent.trim()}\n`;
+}
+
 async function updatePrismaSchema(generatedAppRoot, technicalSpec) {
   const schemaPath = path.join(generatedAppRoot, technicalSpec.database.schemaPath);
-  let content = await readText(schemaPath);
-  const fieldLines = technicalSpec.database.fields.map((field) => buildPrismaFieldLine(field)).join('\n');
+  let content = ensurePrismaSchemaFoundation(await readText(schemaPath));
+  const enumBlocks = buildPrismaEnumBlocks(technicalSpec.database.fields, technicalSpec.database.modelName);
+  const fieldLines = technicalSpec.database.fields
+    .map((field) => buildPrismaFieldLine(field, technicalSpec.database.modelName))
+    .join('\n');
   const modelBlock = `model ${technicalSpec.database.modelName} {\n  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt\n${fieldLines}\n  status    String   @default("draft") @db.VarChar(40)\n  createdAt DateTime @default(now()) @db.DateTime(0)\n  updatedAt DateTime @updatedAt @db.DateTime(0)\n}\n`;
 
-  if (!content.includes(`model ${technicalSpec.database.modelName} {`)) {
+  if (enumBlocks.length) {
+    for (const enumBlock of enumBlocks) {
+      const enumName = enumBlock.match(/^enum\s+([A-Za-z0-9_]+)/m)?.[1];
+      if (!enumName) continue;
+      const enumPattern = new RegExp(`enum\\s+${enumName}\\s*\\{[\\s\\S]*?\\n\\}`, 'm');
+      if (enumPattern.test(content)) {
+        content = content.replace(enumPattern, enumBlock);
+      } else {
+        content = `${content.trim()}\n\n${enumBlock}`;
+      }
+    }
+  }
+
+  const modelPattern = new RegExp(`model\\s+${technicalSpec.database.modelName}\\s*\\{[\\s\\S]*?\\n\\}`, 'm');
+  if (modelPattern.test(content)) {
+    content = content.replace(modelPattern, modelBlock.trim());
+  } else if (!content.includes(`model ${technicalSpec.database.modelName} {`)) {
     content = `${content.trim()}\n\n${modelBlock}`;
   }
 
+  content = await syncPrismaModelsFromContracts(generatedAppRoot, content, modelBlock.trim());
   content = `${content.trim()}\n`;
   await writeText(schemaPath, content);
 
@@ -4320,6 +5453,18 @@ async function updatePrismaSchema(generatedAppRoot, technicalSpec) {
     content,
     fileType: 'prisma',
   };
+}
+
+async function ensureGeneratedProjectPrismaSchemaConsistency(generatedAppRoot) {
+  const schemaPath = path.join(generatedAppRoot, 'prisma', 'schema.prisma');
+  const existingContent = ensurePrismaSchemaFoundation(await readText(schemaPath));
+  const syncedContent = await syncPrismaModelsFromContracts(generatedAppRoot, existingContent);
+
+  if (syncedContent.trim() !== existingContent.trim()) {
+    await writeText(schemaPath, syncedContent);
+  }
+
+  return syncedContent;
 }
 
 async function runGeneratedProjectCommand(generatedAppRoot, scriptName) {
@@ -4364,6 +5509,8 @@ async function runGeneratedProjectValidationSuite({ task, implementation, genera
   } else {
     reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, 'install'));
   }
+
+  await ensureGeneratedProjectPrismaSchemaConsistency(generatedApp.rootPath);
 
   for (const scriptName of ['lint', 'test', 'build:api', 'build:web']) {
     reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, scriptName));
@@ -4578,6 +5725,22 @@ function buildFixPlan(findings, technicalSpec) {
       };
     }
 
+    if (
+      finding.code === 'generic_visual_sections' ||
+      finding.code === 'weak_primary_cta' ||
+      finding.code === 'template_like_status_copy' ||
+      finding.code === 'settings_using_generic_shell' ||
+      finding.code === 'product_mode_visual_drift'
+    ) {
+      return {
+        category: 'quality',
+        priority: finding.severity === 'high' ? 'high' : 'medium',
+        filePath: finding.filePath,
+        action: 'Refinar a composicao da tela, fortalecer labels de produto e reaplicar o shell mais adequado ao product mode.',
+        suggestedTemplate: technicalSpec.structured?.classification?.templateKey || 'generic/form',
+      };
+    }
+
     if (finding.code === 'broken_text_encoding') {
       return {
         category: 'quality',
@@ -4623,6 +5786,14 @@ async function runImplementationReviewInternal({ task, implementation, technical
   const contractContent = loadedFiles[contractPath] || '';
   const genericUxCopyPattern =
     /Nenhum dado exibido ainda\.|Validacao automatica dos campos antes do envio\.|Feedback imediato em caso de sucesso ou erro\.|Conclua esta etapa/;
+  const genericVisualSectionPattern =
+    /listTitle="Rotina de acompanhamento"|listTitle="Ultimos registros"|listTitle="Registros ativos"/;
+  const internalModelLanguagePattern =
+    /\bRBAC\b|>\s*(?:Enabled|Disabled|self_service|team|global)\s*</;
+  const weakPrimaryCtaPattern =
+    />\s*(?:Salvar|Enviar|Concluir operacao|Executar|Processar)\s*</;
+  const templateLikeStatusCopyPattern =
+    /Ajuste inicial|Configurado|Item pronto para consulta|Indicador pronto para leitura|Registro claro e organizado por tipo/;
   const basicWebShellPattern =
     /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\.<\/p>|fontFamily: 'sans-serif', padding: 24/;
   const hasPremiumShellSignals =
@@ -4652,6 +5823,84 @@ async function runImplementationReviewInternal({ task, implementation, technical
       category: 'quality',
       filePath: pagePath,
       message: 'A tela ainda apresenta copy generica ou placeholder de baixo valor percebido.',
+    });
+  }
+
+  const usesFeatureWorkbenchShell = /<FeatureWorkbench\b/.test(pageContent);
+  const usesSettingsWorkbenchShell = /<SettingsWorkbench\b/.test(pageContent);
+  const usesWorkbenchShell = usesFeatureWorkbenchShell || usesSettingsWorkbenchShell;
+
+  if (usesWorkbenchShell && !pageContent.includes('uiIntent=')) {
+    findings.push({
+      severity: 'medium',
+      code: 'missing_ui_intent_signal',
+      category: 'quality',
+      filePath: pagePath,
+      message: 'A tela nao declarou explicitamente a intencao principal da experiencia no shell compartilhado.',
+    });
+  }
+
+  if (genericVisualSectionPattern.test(pageContent)) {
+    findings.push({
+      severity: 'medium',
+      code: 'generic_visual_sections',
+      category: 'quality',
+      filePath: pagePath,
+      message: 'A tela ainda usa nomes de secao genericos e pouco orientados a produto.',
+    });
+  }
+
+  if (technicalSpec.architecture?.screenTemplate === 'settings' && usesFeatureWorkbenchShell) {
+    findings.push({
+      severity: 'medium',
+      code: 'settings_using_generic_shell',
+      category: 'quality',
+      filePath: pagePath,
+      message: 'A tela de configuracao ainda usa um shell generico e perdeu a chance de parecer um workspace de ajustes mais autoral.',
+    });
+  }
+
+  if (internalModelLanguagePattern.test(pageContent)) {
+    findings.push({
+      severity: 'medium',
+      code: 'internal_model_language_visible',
+      category: 'quality',
+      filePath: pagePath,
+      message: 'A interface ainda expoe termos de modelo interno em vez de linguagem final de produto.',
+    });
+  }
+
+  if (weakPrimaryCtaPattern.test(pageContent)) {
+    findings.push({
+      severity: 'medium',
+      code: 'weak_primary_cta',
+      category: 'quality',
+      filePath: pagePath,
+      message: 'A acao principal ainda parece genrica e pouco orientada a tarefa principal do usuario.',
+    });
+  }
+
+  if (templateLikeStatusCopyPattern.test(pageContent)) {
+    findings.push({
+      severity: 'medium',
+      code: 'template_like_status_copy',
+      category: 'quality',
+      filePath: pagePath,
+      message: 'A tela ainda carrega estados ou labels com cara de template, em vez de linguagem de produto final.',
+    });
+  }
+
+  if (
+    technicalSpec.frontend?.productMode === 'manager-cockpit' &&
+    pageContent.includes('formTitle=') &&
+    /formTitle="(?:Configuracao|Novo cadastro|Dados|Concluir operacao)"/.test(pageContent)
+  ) {
+    findings.push({
+      severity: 'medium',
+      code: 'product_mode_visual_drift',
+      category: 'quality',
+      filePath: pagePath,
+      message: 'A tela de cockpit ainda esta com cara de formulario genérico e perdeu leitura executiva de produto.',
     });
   }
 
@@ -4839,12 +6088,13 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
     technicalSpec.structured?.classification?.productMode ||
     '';
   const usesFeatureWorkbench = pageContent.includes('FeatureWorkbench');
+  const usesSettingsWorkbench = pageContent.includes('SettingsWorkbench');
   const usesFeaturePage = pageContent.includes('FeaturePage');
   const hasExplicitLayout = pageContent.includes(`layout="${screenTemplate}"`);
   const hasExplicitProductMode = productMode ? pageContent.includes(`productMode="${productMode}"`) : false;
-  const usesSharedFeatureShell = usesFeatureWorkbench || usesFeaturePage;
+  const usesSharedFeatureShell = usesFeatureWorkbench || usesSettingsWorkbench || usesFeaturePage;
 
-  if (!hasExplicitLayout && !(usesFeatureWorkbench && hasExplicitProductMode)) {
+  if (!hasExplicitLayout && !((usesFeatureWorkbench || usesSettingsWorkbench) && hasExplicitProductMode)) {
     findings.push({
       severity: 'high',
       code: 'specialist_screen_template_mismatch',
@@ -5118,11 +6368,15 @@ async function materializeImplementationFiles({ task, implementation, technicalS
         .flatMap((spec) => {
           const syntheticTask = buildSyntheticTaskFromSpec(spec);
           return [
-            ...buildBackendModuleFilesFromTemplate(syntheticTask, spec).map((file) => ({
-              ...file,
-              lane: 'backend',
-              workstreamId: 'backend_module',
-            })),
+            ...buildBackendModuleFilesFromTemplate(syntheticTask, spec).map((file) => {
+              const normalizedPath = file.relativePath.replace(/\\/g, '/');
+              const isSharedContract = normalizedPath.startsWith('packages/shared/');
+              return {
+                ...file,
+                lane: isSharedContract ? 'shared' : 'backend',
+                workstreamId: isSharedContract ? 'shared_contracts' : 'backend_module',
+              };
+            }),
             ...buildFrontendFeatureFilesFromTemplate(syntheticTask, spec).map((file) => ({
               ...file,
               lane: 'frontend',
@@ -5163,31 +6417,47 @@ async function materializeImplementationFiles({ task, implementation, technicalS
       lane: 'frontend',
       workstreamId: 'frontend_feature',
     },
-    {
-      ...(await updatePrismaSchema(generatedApp.rootPath, technicalSpec)),
-      lane: 'shared',
-      workstreamId: 'persistence_and_docs',
-    },
   ];
 
   const selectedFiles = workstreamIds?.length
     ? generatedFiles.filter((file) => workstreamIds.includes(file.workstreamId))
     : generatedFiles;
+  const shouldWritePrisma =
+    !workstreamIds?.length || workstreamIds.includes('persistence_and_docs');
 
   if (selectedFiles.length) {
+    const prismaRelativePath = technicalSpec.database.schemaPath.replace(/\\/g, '/');
+    const nonPrismaFiles = selectedFiles.filter((file) => file.relativePath.replace(/\\/g, '/') !== prismaRelativePath);
+
     await prisma.generatedFile.deleteMany({
       where: {
         taskImplementationId: implementation.id,
-        filePath: { in: selectedFiles.map((file) => file.relativePath.replace(/\\/g, '/')) },
+        filePath: {
+          in: [
+            ...selectedFiles.map((file) => file.relativePath.replace(/\\/g, '/')),
+            ...(shouldWritePrisma ? [prismaRelativePath] : []),
+          ],
+        },
       },
     });
 
-    for (const file of selectedFiles) {
+    for (const file of nonPrismaFiles) {
       await writeText(path.join(generatedApp.rootPath, file.relativePath), file.content);
     }
 
+    let prismaFile = null;
+    if (shouldWritePrisma) {
+      prismaFile = {
+        ...(await updatePrismaSchema(generatedApp.rootPath, technicalSpec)),
+        lane: 'shared',
+        workstreamId: 'persistence_and_docs',
+      };
+    }
+
+    const persistedFiles = [...nonPrismaFiles, ...(prismaFile ? [prismaFile] : [])];
+
     await prisma.generatedFile.createMany({
-      data: selectedFiles.map((file) => ({
+      data: persistedFiles.map((file) => ({
         generatedAppId: generatedApp.id,
         taskImplementationId: implementation.id,
         filePath: file.relativePath.replace(/\\/g, '/'),
@@ -5196,6 +6466,8 @@ async function materializeImplementationFiles({ task, implementation, technicalS
         checksum: sha(file.content),
       })),
     });
+
+    return persistedFiles;
   }
 
   return selectedFiles;
@@ -5300,6 +6572,7 @@ export async function listGeneratedAppFiles(projectUuid) {
 
 export async function bootstrapGeneratedApp(projectUuid, options = {}) {
   const project = await getProjectOrThrow(projectUuid);
+  const projectTemplate = resolveProjectTemplateForProject(project);
   const existing = await prisma.generatedApp.findFirst({
     where: { projectId: project.id },
     include: { modules: true, files: true },
@@ -5355,6 +6628,51 @@ export async function bootstrapGeneratedApp(projectUuid, options = {}) {
       projectName: project.name,
       projectSlug: slug,
     });
+    const blueprintSpecs = buildProjectTemplateTechnicalSpecs(project, projectTemplate);
+    const blueprintFeatureFiles = Array.from(
+      new Map(
+        blueprintSpecs
+          .flatMap((spec) => {
+            const syntheticTask = buildSyntheticTaskFromSpec(spec);
+            return [
+              ...buildBackendModuleFilesFromTemplate(syntheticTask, spec),
+              ...buildFrontendFeatureFilesFromTemplate(syntheticTask, spec),
+            ];
+          })
+          .map((file) => [file.relativePath.replace(/\\/g, '/'), file])
+      ).values()
+    );
+    const blueprintShellFiles = [
+      ...(await ensureValidationScripts(destinationRoot)),
+      ...(await ensureWorkspaceFoundationFiles(destinationRoot, project.name)),
+      await updateApiServer(destinationRoot, blueprintSpecs, slug),
+      await updateWebApp(destinationRoot, blueprintSpecs, project.name, { projectTemplate }),
+      buildProjectTemplateBlueprintDoc(project.name, projectTemplate, blueprintSpecs),
+    ];
+    const blueprintFiles = [...blueprintFeatureFiles, ...blueprintShellFiles];
+
+    for (const file of blueprintFiles) {
+      // Regrava o shell base com o blueprint para o projeto nascer com jornadas iniciais coerentes.
+      // eslint-disable-next-line no-await-in-loop
+      await writeText(path.join(destinationRoot, file.relativePath), file.content);
+    }
+    const syncedSchemaContent = await ensureGeneratedProjectPrismaSchemaConsistency(destinationRoot);
+    blueprintFiles.push({
+      relativePath: 'prisma/schema.prisma',
+      content: syncedSchemaContent,
+      fileType: 'prisma',
+    });
+    const persistedFiles = Array.from(
+      new Map(
+        [...writtenFiles, ...blueprintFiles].map((file) => [
+          file.relativePath.replace(/\\/g, '/'),
+          {
+            ...file,
+            checksum: file.checksum || sha(file.content || ''),
+          },
+        ])
+      ).values()
+    );
 
     if (existing) {
       await prisma.generatedFile.deleteMany({ where: { generatedAppId: app.id, taskImplementationId: null } });
@@ -5362,7 +6680,7 @@ export async function bootstrapGeneratedApp(projectUuid, options = {}) {
     }
 
     await prisma.generatedFile.createMany({
-      data: writtenFiles.map((file) => ({
+      data: persistedFiles.map((file) => ({
         generatedAppId: app.id,
         filePath: file.relativePath,
         fileType: file.fileType,
@@ -5385,13 +6703,25 @@ export async function bootstrapGeneratedApp(projectUuid, options = {}) {
       where: { id: app.id },
       data: { status: 'ready' },
     });
+    await prisma.project.update({
+      where: { id: project.id },
+      data: {
+        intakeConfig: {
+          ...(project.intakeConfig || {}),
+          projectTemplateKey: project.templateKey || project.intakeConfig?.projectTemplateKey || null,
+          bootstrapTemplateKey: projectTemplate.templateKey,
+          bootstrapFeatureKeys: blueprintSpecs.map((spec) => spec.featureKey),
+          bootstrapGeneratedAt: new Date().toISOString(),
+        },
+      },
+    });
 
     await prisma.generatedAppRun.update({
       where: { id: run.id },
       data: {
         status: 'completed',
         finishedAt: new Date(),
-        logSummary: `Template base criado em ${destinationRoot}`,
+        logSummary: `Template base criado em ${destinationRoot} com ${blueprintSpecs.length} feature(s) do blueprint inicial.`,
       },
     });
   } catch (error) {

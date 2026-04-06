@@ -195,9 +195,52 @@ export default function AiSettingsPage() {
       ...current,
       [key]: {
         ...current[key],
+        ...(field === 'apiKey' ? { clearApiKey: false } : {}),
         [field]: value,
       },
     }));
+  }
+
+  function clearProviderApiKey(key) {
+    setSettings((current) => ({
+      ...current,
+      [key]: {
+        ...current[key],
+        apiKey: '',
+        clearApiKey: true,
+        apiKeyConfigured: false,
+        apiKeyPreview: null,
+      },
+    }));
+    setSuccess('');
+    setError('');
+  }
+
+  function renderStoredKeyState(key) {
+    const provider = settings[key] || {};
+    if (!provider.apiKeyConfigured) {
+      return (
+        <p className="text-xs text-slate-500">
+          Nenhuma chave protegida salva ainda. Ao salvar, a credencial fica mascarada na interface.
+        </p>
+      );
+    }
+
+    return (
+      <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:flex-row md:items-center md:justify-between">
+        <p>
+          Chave protegida salva {provider.apiKeyPreview ? `(${provider.apiKeyPreview})` : ''}. Deixe o campo em branco
+          para manter a atual ou remova abaixo.
+        </p>
+        <button
+          type="button"
+          onClick={() => clearProviderApiKey(key)}
+          className="rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 transition hover:bg-amber-100"
+        >
+          Remover chave salva
+        </button>
+      </div>
+    );
   }
 
   function applyOpenRouterFreePreset() {
@@ -435,6 +478,7 @@ export default function AiSettingsPage() {
               onChange={(value) => patchProvider('gemini', 'enabled', value)}
               label={settings.gemini?.enabled ?'Ativo' : 'Inativo'}
             />
+            {renderStoredKeyState('gemini')}
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput
@@ -467,6 +511,7 @@ export default function AiSettingsPage() {
 
           <ProviderCard title="OpenAI" description="Area pronta para cadastrar chave e modelo da OpenAI.">
             <Toggle checked={Boolean(settings.openai?.enabled)} onChange={(value) => patchProvider('openai', 'enabled', value)} label={settings.openai?.enabled ?'Ativo' : 'Inativo'} />
+            {renderStoredKeyState('openai')}
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.openai?.apiKey || ''} onChange={(event) => patchProvider('openai', 'apiKey', event.target.value)} placeholder="sk-..." />
@@ -490,6 +535,7 @@ export default function AiSettingsPage() {
 
           <ProviderCard title="DeepSeek" description="Use a API oficial da DeepSeek em modo compativel com chat completions.">
             <Toggle checked={Boolean(settings.deepseek?.enabled)} onChange={(value) => patchProvider('deepseek', 'enabled', value)} label={settings.deepseek?.enabled ?'Ativo' : 'Inativo'} />
+            {renderStoredKeyState('deepseek')}
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.deepseek?.apiKey || ''} onChange={(event) => patchProvider('deepseek', 'apiKey', event.target.value)} placeholder="sk-..." />
@@ -513,6 +559,7 @@ export default function AiSettingsPage() {
 
           <ProviderCard title="NVIDIA NIM" description="Use a API da NVIDIA com modelos servidos pelo endpoint integrate chat completions.">
             <Toggle checked={Boolean(settings.nvidia?.enabled)} onChange={(value) => patchProvider('nvidia', 'enabled', value)} label={settings.nvidia?.enabled ?'Ativo' : 'Inativo'} />
+            {renderStoredKeyState('nvidia')}
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.nvidia?.apiKey || ''} onChange={(event) => patchProvider('nvidia', 'apiKey', event.target.value)} placeholder="nvapi-..." />
@@ -536,6 +583,7 @@ export default function AiSettingsPage() {
 
           <ProviderCard title="Anthropic" description="Area pronta para cadastrar chave e modelo da Anthropic.">
             <Toggle checked={Boolean(settings.anthropic?.enabled)} onChange={(value) => patchProvider('anthropic', 'enabled', value)} label={settings.anthropic?.enabled ?'Ativo' : 'Inativo'} />
+            {renderStoredKeyState('anthropic')}
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.anthropic?.apiKey || ''} onChange={(event) => patchProvider('anthropic', 'apiKey', event.target.value)} placeholder="sk-ant-..." />
@@ -559,6 +607,7 @@ export default function AiSettingsPage() {
 
           <ProviderCard title="Groq" description="Area pronta para cadastrar chave e modelo do Groq.">
             <Toggle checked={Boolean(settings.groq?.enabled)} onChange={(value) => patchProvider('groq', 'enabled', value)} label={settings.groq?.enabled ?'Ativo' : 'Inativo'} />
+            {renderStoredKeyState('groq')}
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.groq?.apiKey || ''} onChange={(event) => patchProvider('groq', 'apiKey', event.target.value)} placeholder="gsk_..." />
@@ -595,6 +644,7 @@ export default function AiSettingsPage() {
                 Aplicar preset free
               </button>
             </div>
+            {renderStoredKeyState('openrouter')}
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="API Key">
                 <TextInput type="password" value={settings.openrouter?.apiKey || ''} onChange={(event) => patchProvider('openrouter', 'apiKey', event.target.value)} placeholder="sk-or-..." />

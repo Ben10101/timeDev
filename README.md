@@ -114,6 +114,11 @@ More detail:
 - canonical architecture: [docs/ALIGNA_ARCHITECTURE.md](docs/ALIGNA_ARCHITECTURE.md)
 - repository audit: [docs/REPOSITORY_AUDIT.md](docs/REPOSITORY_AUDIT.md)
 - product vision and roadmap: [docs/PRODUCT_VISION_ROADMAP.md](docs/PRODUCT_VISION_ROADMAP.md)
+- roadmap to 10 maturity: [docs/ROADMAP_TO_10_PRODUCT_MATURITY.md](docs/ROADMAP_TO_10_PRODUCT_MATURITY.md)
+- roadmap execution status: [docs/ROADMAP_EXECUTION_STATUS.md](docs/ROADMAP_EXECUTION_STATUS.md)
+- production readiness checklist: [docs/PRODUCTION_READINESS_CHECKLIST.md](docs/PRODUCTION_READINESS_CHECKLIST.md)
+- incident runbook: [docs/RUNBOOK_INCIDENT_RESPONSE.md](docs/RUNBOOK_INCIDENT_RESPONSE.md)
+- release and rollback runbook: [docs/RUNBOOK_RELEASE_ROLLBACK.md](docs/RUNBOOK_RELEASE_ROLLBACK.md)
 
 ## Run locally
 
@@ -147,6 +152,12 @@ Create and adjust your local `.env` at the repository root with at least:
 - auth secrets
 - optional AI provider keys
 
+You can start from:
+
+```bash
+cp .env.example .env
+```
+
 ### 3. Start the backend
 
 ```bash
@@ -174,6 +185,42 @@ Backend API:
 Health:
 
 - `http://localhost:3001/health`
+
+## Quality gates
+
+Backend security baseline:
+
+```bash
+cd backend
+npm run test:security:baseline
+```
+
+Backend security smoke:
+
+```bash
+cd backend
+npm run test:security:smoke
+```
+
+Backend auth and governance smoke:
+
+```bash
+cd backend
+npm run test:auth-governance:smoke
+```
+
+Backend authenticated user flow smoke:
+
+```bash
+cd backend
+npm run test:auth-user-flow:smoke
+```
+
+Generated project security audit:
+
+```bash
+node scripts/maintenance/audit_generated_projects_security.mjs
+```
 
 ## Main API endpoint for the new MVP
 
