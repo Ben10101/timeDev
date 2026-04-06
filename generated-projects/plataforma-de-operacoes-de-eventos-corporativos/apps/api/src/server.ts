@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import pino from 'pino'
+import { EventSupplierRouter } from './modules/event-suppliers/index'
 import { EventScheduleRouter } from './modules/event-schedules/index'
 const app = express()
 const logger = pino({ name: 'plataforma-de-operacoes-de-eventos-corporativos-api' })
@@ -24,6 +25,7 @@ app.use(express.json({ limit: '1mb' }))
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', app: 'plataforma-de-operacoes-de-eventos-corporativos' })
 })
+app.use('/api/event-suppliers', EventSupplierRouter)
 app.use('/api/event-schedules', EventScheduleRouter)
 app.listen(port, () => {
   logger.info({ port }, 'API running')

@@ -53,14 +53,14 @@ export class EventSchedulesService {
     executionNotes: 'Confirmar briefing final e checklist de liberacao antes de acionar o fornecedor.'
   },
   {
-    stageName: 'Confirmacao de fornecedores',
-    plannedDeadline: '2026-04-20',
-    executionNotes: 'Confirmar briefing final e checklist de liberacao antes de acionar o fornecedor.'
+    stageName: 'Validacao de convidados',
+    plannedDeadline: '2026-04-23',
+    executionNotes: 'Revisar lista de convidados e confirmar pendencias de credenciamento antes do disparo final.'
   },
   {
-    stageName: 'Confirmacao de fornecedores',
-    plannedDeadline: '2026-04-20',
-    executionNotes: 'Confirmar briefing final e checklist de liberacao antes de acionar o fornecedor.'
+    stageName: 'Montagem operacional',
+    plannedDeadline: '2026-04-28',
+    executionNotes: 'Alinhar equipes de montagem, acessos e checklists de abertura para o dia do evento.'
   }
 ];
   }

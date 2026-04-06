@@ -956,6 +956,12 @@ function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '')
   const title = normalizeSemanticText(taskTitle);
   const feature = normalizeSemanticText(featureKey);
   const route = normalizeSemanticText(routeBase);
+  const containsAlias = (source, alias) => {
+    const normalizedAlias = normalizeSemanticText(alias);
+    if (!normalizedAlias) return false;
+    const escapedAlias = normalizedAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|\\b)${escapedAlias}(\\b|$)`).test(source);
+  };
 
   const signals = [
     { group: 'support', aliases: ['suporte', 'support', 'chamado', 'ticket', 'atendimento'] },
@@ -970,14 +976,14 @@ function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '')
     { group: 'pricing', aliases: ['preco', 'valor', 'pricing', 'pagamento'] },
     { group: 'enrollment', aliases: ['inscricao', 'matricula', 'enrollment'] },
     { group: 'profile', aliases: ['perfil', 'profile'] },
-    { group: 'auth', aliases: ['conta', 'login', 'autenticacao', 'cadastro'] },
+    { group: 'auth', aliases: ['conta', 'login', 'autenticacao', 'signin', 'signup'] },
   ];
 
   return signals
-    .filter((signal) => signal.aliases.some((alias) => title.includes(alias)))
+    .filter((signal) => signal.aliases.some((alias) => containsAlias(title, alias)))
     .map((signal) => ({
       group: signal.group,
-      matchedInFeature: signal.aliases.some((alias) => feature.includes(alias) || route.includes(alias)),
+      matchedInFeature: signal.aliases.some((alias) => containsAlias(feature, alias) || containsAlias(route, alias)),
     }));
 }
 
@@ -5070,8 +5076,12 @@ async function getIntegratedTechnicalSpecs(generatedAppId, fallbackSpec) {
   const implementations = await prisma.taskImplementation.findMany({
     where: {
       generatedAppId,
-      status: { in: ['planned', 'in_progress', 'integrated'] },
       technicalSpecArtifactId: { not: null },
+      OR: [
+        { status: { in: ['planned', 'in_progress', 'integrated'] } },
+        { buildStatus: 'completed' },
+        { testStatus: 'completed' },
+      ],
     },
     include: {
       task: {

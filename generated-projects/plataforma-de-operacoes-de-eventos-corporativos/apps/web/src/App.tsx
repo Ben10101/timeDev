@@ -1,9 +1,11 @@
 import { Suspense, lazy } from 'react'
 import { AppFrame, AppHeader, MetricRow, SidebarNav, StudioHome, SurfaceCard } from '../../../packages/ui/src/index.tsx'
 const EventSchedulesPage = lazy(() => import('./features/event-schedules/index').then((module) => ({ default: module.EventSchedulesPage })))
+const EventSuppliersPage = lazy(() => import('./features/event-suppliers/index').then((module) => ({ default: module.EventSuppliersPage })))
 const routes = [
  { path: '/', label: 'Inicio', render: () => <HomePage /> },
  { path: '/operations/schedules', label: 'Cronograma', render: () => <EventSchedulesPage /> },
+ { path: '/operations/suppliers', label: 'Fornecedores', render: () => <EventSuppliersPage /> },
 ]
 function HomePage() {
  const productAreas = routes.filter((route) => route.path !== '/')

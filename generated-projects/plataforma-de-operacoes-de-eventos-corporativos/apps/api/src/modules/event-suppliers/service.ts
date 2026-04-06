@@ -49,18 +49,18 @@ export class EventSuppliersService {
     return [
   {
     supplierName: 'Buffet Sabor & Arte',
-    serviceCategory: 'financeiro',
+    serviceCategory: 'buffet',
     primaryContacts: 'Marina Costa | Comercial | (11) 99999-1111 | marina@fornecedor.com'
   },
   {
-    supplierName: 'Buffet Sabor & Arte',
-    serviceCategory: 'acesso',
-    primaryContacts: 'Marina Costa | Comercial | (11) 99999-1111 | marina@fornecedor.com'
+    supplierName: 'Luz de Cena Producao',
+    serviceCategory: 'cenografia',
+    primaryContacts: 'Rafael Lima | Operacoes | (11) 98888-2222 | rafael@luzdecena.com'
   },
   {
-    supplierName: 'Buffet Sabor & Arte',
-    serviceCategory: 'suporte',
-    primaryContacts: 'Marina Costa | Comercial | (11) 99999-1111 | marina@fornecedor.com'
+    supplierName: 'Som em Movimento',
+    serviceCategory: 'audiovisual',
+    primaryContacts: 'Patricia Nogueira | Atendimento | (11) 97777-3333 | patricia@somemmovimento.com'
   }
 ];
   }
