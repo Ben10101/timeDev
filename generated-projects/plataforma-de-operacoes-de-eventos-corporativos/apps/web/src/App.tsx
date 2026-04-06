@@ -1,9 +1,9 @@
 import { Suspense, lazy } from 'react'
 import { AppFrame, AppHeader, MetricRow, SidebarNav, StudioHome, SurfaceCard } from '../../../packages/ui/src/index.tsx'
-const SupportTicketAttachmentsPage = lazy(() => import('./features/support-ticket-attachments/index').then((module) => ({ default: module.SupportTicketAttachmentsPage })))
+const EventSuppliersPage = lazy(() => import('./features/event-suppliers/index').then((module) => ({ default: module.EventSuppliersPage })))
 const routes = [
  { path: '/', label: 'Inicio', render: () => <HomePage /> },
- { path: '/tickets/attachments', label: 'Anexos do Chamado', render: () => <SupportTicketAttachmentsPage /> },
+ { path: '/operations/suppliers', label: 'Fornecedores', render: () => <EventSuppliersPage /> },
 ]
 function HomePage() {
  const productAreas = routes.filter((route) => route.path !== '/')

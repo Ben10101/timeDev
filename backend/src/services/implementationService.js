@@ -965,6 +965,7 @@ function extractSemanticSignals(taskTitle = '', featureKey = '', routeBase = '')
 
 function getExpectedDomainKeywords(domainKey = '') {
   const catalog = {
+    'event-suppliers': ['evento', 'eventos', 'fornecedor', 'fornecedores', 'prestador', 'parceiro', 'categoria', 'servico', 'contato'],
     'support-ticket-attachments': ['support', 'suporte', 'ticket', 'chamado', 'attachment', 'attachments', 'anexo', 'arquivo', 'documento', 'comprovante', 'fiscal'],
     'access-control': ['access', 'acesso', 'permission', 'permissao', 'role', 'funcao', 'perfil'],
     'ticket-notification-preferences': ['notification', 'notificacao', 'email', 'alerta', 'ticket', 'chamado'],
@@ -1014,6 +1015,7 @@ function inferImplementedDomain(featureKey = '', routeBase = '') {
   const normalizedRouteBase = normalizeSemanticText(routeBase);
   const source = `${normalizedFeatureKey} ${normalizedRouteBase}`;
   const candidates = [
+    'event-suppliers',
     'support-ticket-attachments',
     'ticket-notification-preferences',
     'access-control',
@@ -2153,6 +2155,54 @@ function resolveImplementationUserUuid(task, explicitUserUuid = null) {
 function inferFieldDefinitions(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
 
+  if (actionSpec?.domainKey === 'event-suppliers') {
+    return [
+      {
+        name: 'supplierName',
+        label: 'Nome do fornecedor',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: true,
+        helperText: 'Use o nome comercial do parceiro para facilitar busca e reutilizacao em novos eventos.',
+        placeholder: 'Ex.: Buffet Sabor & Arte',
+        defaultValue: '',
+        sampleValue: 'Buffet Sabor & Arte',
+        validations: ['required', 'min:3'],
+      },
+      {
+        name: 'serviceCategory',
+        label: 'Categoria de servico',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Classifique o tipo principal de servico que este fornecedor entrega.',
+        placeholder: 'buffet | audiovisual | brindes | recepcao',
+        defaultValue: 'buffet',
+        sampleValue: 'audiovisual',
+        selectOptions: ['buffet', 'audiovisual', 'brindes', 'recepcao', 'cenografia', 'transporte', 'outro'],
+        validations: ['required'],
+      },
+      {
+        name: 'primaryContacts',
+        label: 'Contatos principais',
+        inputType: 'textarea',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Registre pelo menos um contato com nome, canal e referencia para acionamento rapido.',
+        placeholder: 'Nome | cargo | telefone | e-mail',
+        defaultValue: '',
+        sampleValue: 'Marina Costa | Comercial | (11) 99999-1111 | marina@fornecedor.com',
+        validations: ['required', 'min:10'],
+      },
+    ];
+  }
+
   if (actionSpec?.domainKey === 'support-ticket-attachments') {
     return [
       {
@@ -2640,6 +2690,12 @@ function inferActionSpec(task, sourceText) {
   const looksLikeCourse = /\bcurso\b/.test(titleNormalized);
   const looksLikeModule = /\bmodulo\b|\bmodulos\b/.test(titleNormalized);
   const looksLikeLesson = /\baula\b|\baulas\b/.test(titleNormalized);
+  const looksLikeEventSupplier =
+    (/\bfornecedor\b|\bfornecedores\b|\bprestador\b|\bparceiro\b/.test(titleNormalized) ||
+      (/\bfornecedor\b|\bfornecedores\b|\bprestador\b|\bparceiro\b/.test(normalized) &&
+        /\bcategoria\b|\bservico\b|\bcontato\b|\bcontatos\b/.test(normalized))) &&
+    (/\bevento\b|\beventos\b/.test(titleNormalized) ||
+      /\bevento\b|\beventos\b|\boperacao\b|\boperacional\b|\bcoordenador de eventos\b/.test(normalized));
   const looksLikeAccessControl =
     (/\bpermiss/.test(titleNormalized) || /\brole\b|\broles\b|\bfunca/.test(titleNormalized)) &&
     (/\bacesso\b/.test(titleNormalized) || /\bperfil\b|\bperfis\b/.test(titleNormalized) || /\bseguranc/.test(titleNormalized));
@@ -2696,6 +2752,23 @@ function inferActionSpec(task, sourceText) {
       pageDescription: 'Defina quais funcoes podem acessar cada parte da operacao com seguranca e rastreabilidade.',
       successMessage: 'Perfil de acesso atualizado com sucesso.',
       summary: 'Permite configurar perfis de acesso e permissoes por funcao para controlar a operacao com seguranca.',
+    };
+  }
+
+  if (looksLikeEventSupplier) {
+    return {
+      domainKey: 'event-suppliers',
+      entityName: 'EventSupplier',
+      routeBase: '/api/event-suppliers',
+      frontendRoute: '/operations/suppliers',
+      pageComponentName: 'EventSuppliersPage',
+      serviceName: 'EventSuppliersService',
+      submitLabel: 'Cadastrar Fornecedor',
+      navigationLabel: 'Fornecedores',
+      pageTitle: 'Cadastre fornecedores da operacao',
+      pageDescription: 'Centralize parceiros com categoria de servico e contatos principais para acionar a operacao com menos retrabalho.',
+      successMessage: 'Fornecedor cadastrado com sucesso.',
+      summary: 'Permite cadastrar fornecedores com categoria de servico e contatos principais para manter a operacao de eventos centralizada.',
     };
   }
 
@@ -3331,6 +3404,13 @@ function inferBusinessRules(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const rules = [];
 
+  if (actionSpec?.domainKey === 'event-suppliers') {
+    rules.push('O fornecedor precisa ter nome unico para evitar duplicidade na base operacional.');
+    rules.push('Cada fornecedor deve estar associado a pelo menos uma categoria de servico valida para facilitar triagem e acionamento.');
+    rules.push('O cadastro precisa registrar ao menos um contato principal com contexto suficiente para acao rapida durante a operacao.');
+    return rules;
+  }
+
   if (actionSpec?.domainKey === 'support-ticket-attachments') {
     if (/\bchamado\b|\bticket\b/.test(normalized)) {
       rules.push('O documento anexado deve permanecer vinculado ao chamado correto para consulta durante o atendimento.');
@@ -3395,6 +3475,14 @@ function inferBusinessRules(sourceText, actionSpec = null) {
 function inferQaScenarios(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const scenarios = [];
+
+  if (actionSpec?.domainKey === 'event-suppliers') {
+    scenarios.push({ code: 'missing_supplier_name', message: 'Informe o nome do fornecedor antes de concluir o cadastro.' });
+    scenarios.push({ code: 'missing_service_category', message: 'Selecione a categoria de servico principal do fornecedor.' });
+    scenarios.push({ code: 'missing_primary_contacts', message: 'Registre pelo menos um contato principal para acionar este fornecedor.' });
+    scenarios.push({ code: 'duplicated_supplier_name', message: 'Ja existe um fornecedor cadastrado com este nome.' });
+    return scenarios;
+  }
 
   if (actionSpec?.domainKey === 'support-ticket-attachments') {
     scenarios.push({ code: 'missing_document_type', message: 'Selecione o tipo de documento antes de anexar o arquivo.' });
@@ -3603,6 +3691,14 @@ function buildDomainSpecificValidation(actionSpec, fields) {
     ];
   }
 
+  if (actionSpec.domainKey === 'event-suppliers') {
+    return [
+      `  const duplicatedSupplier = records.find((record) => String(record.supplierName || '').toLowerCase() === String(input.supplierName || '').toLowerCase());`,
+      `  if (duplicatedSupplier) throw new Error('Ja existe um fornecedor cadastrado com este nome.');`,
+      `  if (String(input.primaryContacts || '').trim().length < 10) throw new Error('Informe contatos principais com contexto suficiente para acionamento.');`,
+    ];
+  }
+
   return [];
 }
 
@@ -3647,6 +3743,7 @@ function inferDomainName(actionSpec, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
 
   if (actionSpec.domainKey.startsWith('auth-')) return 'auth';
+  if (actionSpec.domainKey === 'event-suppliers') return 'events';
   if (actionSpec.domainKey === 'support-performance-dashboard' || /\bpainel\b|\bdashboard\b|\brelatorio\b/.test(normalized) && /\bchamado\b|\batendimento\b|\bperformance\b/.test(normalized)) return 'support';
   if (actionSpec.domainKey === 'support-ticket-attachments' || /\bchamado\b|\bsuporte\b|\bticket\b/.test(normalized) && /\banexo\b|\barquivo\b|\bdocumento\b/.test(normalized)) return 'support';
   if (actionSpec.domainKey === 'access-control-roles' || /\bpermiss/.test(normalized) || /\brole\b|\broles\b/.test(normalized)) return 'access-control';
@@ -3666,6 +3763,7 @@ function inferIntent(actionSpec, sourceText) {
 
   if (actionSpec.domainKey === 'auth-login' || /\blogin\b|\bentrar\b|\bautentic/.test(normalized)) return 'login';
   if (actionSpec.domainKey === 'auth-register' || /\bregistr/.test(normalized) || /\bcadastr/.test(normalized)) return 'register';
+  if (actionSpec.domainKey === 'event-suppliers') return 'register';
   if (actionSpec.domainKey === 'support-performance-dashboard') return 'monitor';
   if (actionSpec.domainKey === 'support-ticket-attachments') return 'attach';
   if (actionSpec.domainKey === 'access-control-roles' || /\bconfigurar\b/.test(normalized) && /\bpermiss/.test(normalized)) return 'configure';
@@ -3686,6 +3784,7 @@ function inferScreenTemplate(actionSpec, fields, sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
   const hasFewFields = (fields || []).length <= 3;
 
+  if (actionSpec.domainKey === 'event-suppliers') return 'workspace';
   if (actionSpec.domainKey === 'support-performance-dashboard') return 'dashboard';
   if (actionSpec.domainKey === 'support-ticket-attachments') return 'workspace';
   if (actionSpec.domainKey === 'access-control-roles') return 'settings';
@@ -3910,8 +4009,9 @@ function buildTechnicalSpec(task, projectArchitectureSource = '') {
   const requirementsSource = requirements?.content || '';
   const qaSource = testPlan?.content || '';
   const architectureSource = projectArchitectureSource || '';
-  const sourceText = `${task.title}\n${requirementsSource}\n${qaSource}\n${architectureSource}`;
-  const actionSpec = inferActionSpec(task, sourceText);
+  const classificationSource = `${task.title}\n${requirementsSource}\n${qaSource}`;
+  const sourceText = `${classificationSource}\n${architectureSource}`;
+  const actionSpec = inferActionSpec(task, classificationSource);
   const featureKey = slugify(actionSpec.domainKey, task.uuid);
   const entityName = actionSpec.entityName;
   const routerName = `${entityName}Router`;

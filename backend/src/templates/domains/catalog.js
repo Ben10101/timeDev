@@ -1,4 +1,23 @@
 export const DOMAIN_TEMPLATE_CATALOG = {
+  'event-suppliers': {
+    templateKey: 'events/suppliers',
+    screenTemplate: 'workspace',
+    productMode: 'vendor-registry',
+    heroEyebrow: 'Operacao',
+    heroTitle: 'Centralize fornecedores do evento',
+    heroDescription: 'Cadastre parceiros com categoria de servico e contatos principais para acionar a operacao com mais rapidez.',
+    formCardTitle: 'Novo fornecedor',
+    formCardDescription: 'Registre o parceiro com o minimo de contexto necessario para reutilizacao futura.',
+    recordsTitle: 'Fornecedores cadastrados',
+    recordsEmptyState: 'Nenhum fornecedor registrado ainda para esta operacao.',
+    highlights: [
+      'Categorias claras ajudam a localizar o parceiro certo sem retrabalho.',
+      'Contatos principais deixam o acionamento operacional mais rapido.',
+      'Base centralizada para reaproveitar fornecedores entre eventos.',
+    ],
+    profileSummaryTitle: 'Resumo operacional',
+    profileSummaryDescription: 'Veja rapidamente quais categorias ja estao cobertas e quais parceiros estao prontos para acionamento.',
+  },
   'access-control-roles': {
     templateKey: 'security/access-control',
     screenTemplate: 'settings',
