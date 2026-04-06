@@ -149,7 +149,7 @@ export default function GovernancePage() {
         setAuditTrail(Array.isArray(auditData) ?auditData : []);
       } catch (loadError) {
         if (!active) return;
-        setError(getApiErrorMessage(loadError, 'NÃ£o foi poss?vel carregar a governanÃ§a operacional.'));
+        setError(getApiErrorMessage(loadError, 'Não foi poss?vel carregar a governança operacional.'));
       } finally {
         if (!active) return;
         setLoading(false);
@@ -190,14 +190,14 @@ export default function GovernancePage() {
     if (summary.staleRunningRuns > 0) {
       items.push({
         title: `${summary.staleRunningRuns} run${summary.staleRunningRuns > 1 ?'s' : ''} travada${summary.staleRunningRuns > 1 ?'s' : ''}`,
-        subtitle: 'Revise timeout, watchdog e recupera?o automatica antes da prÃ³xima rodada.',
+        subtitle: 'Revise timeout, watchdog e recupera??o automatica antes da próxima rodada.',
         tone: 'rose',
       });
     }
 
     if (summary.overBudgetRuns > 0) {
       items.push({
-        title: `${summary.overBudgetRuns} execuÃ§Ã£o${summary.overBudgetRuns > 1 ?'es' : ''} acima do budget`,
+        title: `${summary.overBudgetRuns} execução${summary.overBudgetRuns > 1 ?'es' : ''} acima do budget`,
         subtitle: 'Corte contexto, troque provider ou refine budgets por agente.',
         tone: 'amber',
       });
@@ -222,8 +222,8 @@ export default function GovernancePage() {
 
     if (!items.length) {
       items.push({
-        title: 'Opera?o estavel neste momento',
-        subtitle: 'Sem alertas criticos ativos, sem runs travadas e com health consistente.',
+        title: 'Opera??o estavel neste momento',
+        subtitle: 'Sem alertas cr?ticos ativos, sem runs travadas e com health consistente.',
         tone: 'emerald',
       });
     }
@@ -235,7 +235,7 @@ export default function GovernancePage() {
     <AppShell
       eyebrow="Governanca"
       title="Governanca Operacional"
-      description="Acompanhe saude, alertas, custo, auditoria e estabilidade da operaÃ§Ã£o de IA em um unico lugar."
+      description="Acompanhe sa?de, alertas, custo, auditoria e estabilidade da operação de IA em um ?nico lugar."
     >
       <div className="space-y-8">
         {error ?(
@@ -245,12 +245,12 @@ export default function GovernancePage() {
         <motion.section {...fade(0.02)} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="grid gap-8 px-8 py-8 lg:grid-cols-[1.15fr_0.85fr]">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Opera?o da plataforma</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Opera??o da plataforma</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">
                 Veja o que precisa de atenÃ§Ã£o agora sem misturar isso com o fluxo de produto.
               </h2>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
-                Esta area concentra saude da API, estabilidade dos agentes, custos, trilha de auditoria e alertas ativos.
+                Esta area concentra sa?de da API, estabilidade dos agentes, custos, trilha de auditoria e alertas ativos.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
@@ -284,7 +284,7 @@ export default function GovernancePage() {
                       setAuditTrail(Array.isArray(auditData) ?auditData : []);
                       setError('');
                     } catch (loadError) {
-                      setError(getApiErrorMessage(loadError, 'NÃ£o foi poss?vel atualizar os dados de governanÃ§a.'));
+                      setError(getApiErrorMessage(loadError, 'Não foi poss?vel atualizar os dados de governança.'));
                     } finally {
                       setRefreshing(false);
                     }
@@ -301,7 +301,7 @@ export default function GovernancePage() {
               <InsightCard
                 label="Saude geral"
                 value={readiness?.status || 'n/a'}
-                hint={`${readinessFailures.length} criticos e ${readinessWarnings.length} avisos no readiness.`}
+                hint={`${readinessFailures.length} cr?ticos e ${readinessWarnings.length} avisos no readiness.`}
               />
               <InsightCard
                 label="Sucesso recente"
@@ -311,12 +311,12 @@ export default function GovernancePage() {
               <InsightCard
                 label="Alertas ativos"
                 value={alerts.length}
-                hint={alerts.length ? 'Existe pelo menos um ponto de atenÃ§Ã£o exigindo aÃ§Ã£o.' : 'Nenhum alerta ativo agora.'}
+                hint={alerts.length ? 'Existe pelo menos um ponto de atenção exigindo ação.' : 'Nenhum alerta ativo agora.'}
               />
               <InsightCard
                 label="P95 de execuÃ§Ã£o"
                 value={`${summary.p95RunDurationSeconds || 0}s`}
-                hint="Mostra a cauda lenta das execu?es recentes."
+                hint="Mostra a cauda lenta das execu??es recentes."
               />
             </div>
           </div>
@@ -356,7 +356,7 @@ export default function GovernancePage() {
         <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <motion.section {...fade(0.08)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Aten?o imediata</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Aten??o imediata</p>
               <h2 className="mt-2 text-2xl font-bold text-slate-900">O que destravar agora</h2>
             </div>
             <div className="space-y-3 p-6">
@@ -368,7 +368,7 @@ export default function GovernancePage() {
 
           <motion.section {...fade(0.12)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Opera?o IA</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Opera??o IA</p>
               <h2 className="mt-2 text-2xl font-bold text-slate-900">Resumo executivo da esteira</h2>
             </div>
             <div className="grid gap-4 p-6 md:grid-cols-2">
@@ -492,7 +492,7 @@ export default function GovernancePage() {
                   />
                 ))
               ) : (
-                <EmptyPanel title="Sem historico recente" subtitle="As tendencias dos ultimos dias aparecem aqui assim que a operaÃ§Ã£o gerar dados." />
+                <EmptyPanel title="Sem historico recente" subtitle="As tend?ncias dos ultimos dias aparecem aqui assim que a operação gerar dados." />
               )}
             </div>
           </motion.section>
@@ -513,7 +513,7 @@ export default function GovernancePage() {
                   />
                 ))
               ) : (
-                <EmptyPanel title="Sem agentes instaveis no recorte" subtitle="Quando houver concentra?o de falhas por agente, ela aparece aqui." />
+                <EmptyPanel title="Sem agentes inst?veis no recorte" subtitle="Quando houver concentra??o de falhas por agente, ela aparece aqui." />
               )}
             </div>
           </motion.section>
@@ -543,12 +543,12 @@ export default function GovernancePage() {
         <motion.section {...fade(0.36)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="grid gap-4 p-6 md:grid-cols-3">
             <EventCard
-              title={health?.status === 'ok' ?'API respondendo' : 'API com degradaÃ§Ã£o'}
+              title={health?.status === 'ok' ?'API respondendo' : 'API com degradação'}
               subtitle={`Status da API: ${health?.status || 'n/a'}`}
               tone={health?.status === 'ok' ?'emerald' : 'rose'}
             />
             <EventCard
-              title={health?.database === 'ok' ?'Banco operacional' : 'Banco exige atenÃ§Ã£o'}
+              title={health?.database === 'ok' ?'Banco operacional' : 'Banco exige atenção'}
               subtitle={`Banco: ${health?.database || 'n/a'}`}
               tone={health?.database === 'ok' ?'emerald' : 'rose'}
             />

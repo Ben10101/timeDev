@@ -1240,8 +1240,8 @@ export default function CodeStudioPage() {
                   <p><strong>Build:</strong> {selectedImplementation.buildStatus || 'n/a'}</p>
                   <p><strong>Testes:</strong> {selectedImplementation.testStatus || 'n/a'}</p>
                   <p><strong>Template:</strong> {selectedImplementation.qualitySummary?.screenTemplate || 'n/a'}</p>
-                  <p><strong>DomÃ­nio esperado:</strong> {selectedImplementation.qualitySummary?.expectedDomain || 'n/a'}</p>
-                  <p><strong>DomÃ­nio implementado:</strong> {selectedImplementation.qualitySummary?.implementedDomain || 'n/a'}</p>
+                  <p><strong>Domínio esperado:</strong> {selectedImplementation.qualitySummary?.expectedDomain || 'n/a'}</p>
+                  <p><strong>Domínio implementado:</strong> {selectedImplementation.qualitySummary?.implementedDomain || 'n/a'}</p>
                   <p><strong>Rastreabilidade:</strong> {selectedImplementation.qualitySummary?.traceability?.traceabilityScore ?? 'n/a'}</p>
                   <p><strong>Sucesso no projeto:</strong> {selectedImplementation.qualitySummary?.benchmark?.projectSuccessRatePercent ?? 'n/a'}%</p>
                   <p><strong>Sucesso no dominio:</strong> {selectedImplementation.qualitySummary?.benchmark?.domainSuccessRatePercent ?? 'n/a'}%</p>
@@ -1276,7 +1276,7 @@ export default function CodeStudioPage() {
                       <strong>Altas:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.high || 0}
                     </div>
                     <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>MÃ©dias:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.medium || 0}
+                      <strong>Médias:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.medium || 0}
                     </div>
                     <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
                       <strong>Baixas:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.low || 0}

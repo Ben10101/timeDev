@@ -189,7 +189,7 @@ function ProcessedCard({ story, stageName, processingMessage, onOpenModal, onAdv
             </span>
             <span className="dashboard-badge bg-emerald-50 text-emerald-700">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              {story.status === 'processing' ?'Em execuÃ§Ã£o' : 'Artefato pronto'}
+              {story.status === 'processing' ?'Em execução' : 'Artefato pronto'}
             </span>
           </div>
           <h4 className="mt-3 text-sm font-semibold text-slate-900">{story.title}</h4>
@@ -294,7 +294,7 @@ export default function BacklogKanban({
         await loadStoriesFromApi();
       } catch (error) {
         if (!active) return;
-        setSyncError(getApiErrorMessage(error, 'NÃ£o foi poss?vel carregar o kanban do banco.'));
+        setSyncError(getApiErrorMessage(error, 'Não foi poss?vel carregar o kanban do banco.'));
         setStories([]);
       }
     }

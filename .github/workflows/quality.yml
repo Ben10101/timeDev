@@ -70,6 +70,10 @@ jobs:
         working-directory: backend
         run: npm run test:architect-recovery:smoke
 
+      - name: Run runtime observability smoke test
+        working-directory: backend
+        run: npm run test:runtime-observability:smoke
+
       - name: Run requirements recovery smoke test
         working-directory: backend
         run: npm run test:requirements-recovery:smoke

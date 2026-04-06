@@ -4,6 +4,8 @@ import { recoverBlockingAgentRunsForStart } from './agentRunRecoveryService.js';
 import { estimateTokenCount } from '../utils/aiRunMetrics.js';
 import { DEFAULT_AI_SETTINGS, getAiSettingsForUser } from './aiSettingsService.js';
 import { inferProjectTemplateKey, resolveProjectTemplate } from '../templates/projects/index.js';
+import { logInfo, logWarn } from '../utils/logger.js';
+import { recordRuntimeEvent } from './runtimeTelemetryService.js';
 
 const taskListInclude = {
   assigneeUser: { select: { uuid: true, name: true, email: true } },
@@ -2131,12 +2133,27 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
   const blockingRunRecoveryWindowSeconds = Number(
     process.env.AGENT_RUN_BLOCKING_RECOVERY_WINDOW_SECONDS || 180
   );
-  await recoverBlockingAgentRunsForStart({
+  const recoveryResult = await recoverBlockingAgentRunsForStart({
     projectId: project.id,
     agentName,
     taskId,
     maxAgeSeconds: blockingRunRecoveryWindowSeconds,
   });
+
+  if (recoveryResult.recoveredCount > 0) {
+    recordRuntimeEvent('agent_run_retry_opened', {
+      agentName,
+      projectId: project.id,
+      taskId,
+      recoveredCount: recoveryResult.recoveredCount,
+    });
+    logWarn('agent_run_retry_opened', {
+      agentName,
+      projectId: project.id,
+      taskId,
+      recoveredCount: recoveryResult.recoveredCount,
+    });
+  }
 
   const existingRunningRun = await prisma.agentRun.findFirst({
     where: {
@@ -2157,7 +2174,7 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
     );
   }
 
-  return prisma.agentRun.create({
+  const createdRun = await prisma.agentRun.create({
     data: {
       uuid: randomUUID(),
       projectId: project.id,
@@ -2170,12 +2187,36 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
       startedAt: new Date(),
     },
   });
+
+  recordRuntimeEvent('agent_run_started', {
+    agentName,
+    runUuid: createdRun.uuid,
+    projectId: project.id,
+    taskId,
+    triggerType: 'manual',
+  });
+  logInfo('agent_run_started', {
+    agentName,
+    runUuid: createdRun.uuid,
+    projectId: project.id,
+    taskId,
+    triggerType: 'manual',
+  });
+
+  return createdRun;
 }
 
 export async function finishAgentRun(agentRunId, { status, result, errorMessage, usageMeta = null }) {
   const existingRun = await prisma.agentRun.findUnique({
     where: { id: agentRunId },
-    select: { inputPayload: true },
+    select: {
+      uuid: true,
+      inputPayload: true,
+      projectId: true,
+      taskId: true,
+      agentName: true,
+      startedAt: true,
+    },
   });
 
   const outputText = result
@@ -2184,7 +2225,7 @@ export async function finishAgentRun(agentRunId, { status, result, errorMessage,
       : JSON.stringify(result, null, 2)
     : null;
 
-  return prisma.agentRun.update({
+  const updatedRun = await prisma.agentRun.update({
     where: { id: agentRunId },
     data: {
       status,
@@ -2196,6 +2237,53 @@ export async function finishAgentRun(agentRunId, { status, result, errorMessage,
       finishedAt: new Date(),
     },
   });
+
+  const durationSeconds = existingRun?.startedAt
+    ? Math.max(0, Math.round((Date.now() - new Date(existingRun.startedAt).getTime()) / 1000))
+    : null;
+  const totalTokens =
+    usageMeta?.tokensInput !== undefined || usageMeta?.tokensOutput !== undefined
+      ? Number(usageMeta?.tokensInput || 0) + Number(usageMeta?.tokensOutput || 0)
+      : estimateTokenCount(outputText || '');
+
+  if (status === 'completed') {
+    recordRuntimeEvent('agent_run_completed', {
+      agentName: existingRun?.agentName || 'unknown',
+      runUuid: existingRun?.uuid || null,
+      projectId: existingRun?.projectId || null,
+      taskId: existingRun?.taskId || null,
+      durationSeconds,
+      totalTokens,
+    });
+    logInfo('agent_run_completed', {
+      agentName: existingRun?.agentName || 'unknown',
+      runUuid: existingRun?.uuid || null,
+      projectId: existingRun?.projectId || null,
+      taskId: existingRun?.taskId || null,
+      durationSeconds,
+      totalTokens,
+      costUsd: usageMeta?.costUsd ?? null,
+    });
+  } else if (status === 'failed') {
+    recordRuntimeEvent('agent_run_failed', {
+      agentName: existingRun?.agentName || 'unknown',
+      runUuid: existingRun?.uuid || null,
+      projectId: existingRun?.projectId || null,
+      taskId: existingRun?.taskId || null,
+      durationSeconds,
+      errorMessage: errorMessage || null,
+    });
+    logWarn('agent_run_failed', {
+      agentName: existingRun?.agentName || 'unknown',
+      runUuid: existingRun?.uuid || null,
+      projectId: existingRun?.projectId || null,
+      taskId: existingRun?.taskId || null,
+      durationSeconds,
+      errorMessage: errorMessage || null,
+    });
+  }
+
+  return updatedRun;
 }
 
 export async function restoreTaskAfterAgentFailure(taskUuid, previousState, { changedByUserUuid, failedAgentName, errorMessage }) {
@@ -2250,6 +2338,18 @@ export async function restoreTaskAfterAgentFailure(taskUuid, previousState, { ch
     },
   });
 
+  recordRuntimeEvent('task_restore_after_failure', {
+    agentName: failedAgentName,
+    taskUuid,
+    restoredStatus: previousState.status,
+  });
+  logWarn('task_restore_after_failure', {
+    agentName: failedAgentName,
+    taskUuid,
+    restoredStatus: previousState.status,
+    errorMessage: errorMessage || null,
+  });
+
   return enrichTask(updatedTask);
 }
 
@@ -2280,6 +2380,20 @@ export async function persistAgentResult(projectUuid, agentName, payload, result
   if (agentName === 'project_manager') {
     await importBacklogTasks(projectUuid, content);
   }
+
+  recordRuntimeEvent('stage_artifact_persisted', {
+    agentName,
+    projectId: stageTask.projectId || null,
+    taskUuid: stageTask.uuid,
+    artifactType: config.artifactType,
+  });
+  logInfo('stage_artifact_persisted', {
+    agentName,
+    projectId: stageTask.projectId || null,
+    taskUuid: stageTask.uuid,
+    artifactType: config.artifactType,
+    artifactTitle: config.title,
+  });
 
   return artifact;
 }

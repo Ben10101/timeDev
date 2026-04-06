@@ -204,7 +204,7 @@ export function StudioHome({
           </p>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>?ltima atualizaÃ§Ã£o</div>
+          <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>?ltima atualização</div>
           <strong style={{ display: 'block', marginTop: 6, color: tokens.color.shell }}>Agora</strong>
         </div>
       </div>

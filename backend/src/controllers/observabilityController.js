@@ -5,6 +5,7 @@ import {
   getGovernanceOverview,
   getOperationalHistory,
   getOperationalHealth,
+  getRuntimeOperationsStatus,
   getProductionReadiness,
 } from '../services/observabilityService.js';
 import { serializeBigInts } from '../utils/serialize.js';
@@ -22,6 +23,18 @@ export async function aiOperationsOverviewController(req, res, next) {
   try {
     const overview = await getAiOperationsOverview(req.authUser.uuid, req.query.projectUuid || null);
     res.json(serializeBigInts(overview));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function runtimeOperationsController(req, res, next) {
+  try {
+    const runtime = await getRuntimeOperationsStatus(req.authUser?.uuid || null, {
+      projectUuid: req.query.projectUuid || null,
+      lookbackHours: req.query.lookbackHours || 24,
+    });
+    res.json(serializeBigInts(runtime));
   } catch (error) {
     next(error);
   }

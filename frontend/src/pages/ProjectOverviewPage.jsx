@@ -27,7 +27,7 @@ const STORY_SHORTCUT_EXAMPLES = [
     objective: 'Diminuir volume de suporte e aumentar autonomia do cliente.',
     audience: 'Clientes finais e equipe de atendimento.',
     mainFlows: 'Consultar pedido, enviar documentos, responder pendencias e acompanhar timeline.',
-    constraints: 'Experi?ncia mobile, notifica?es e integra?o com sistema interno.',
+    constraints: 'Experi?ncia mobile, notifica??es e integra??o com sistema interno.',
   },
 ];
 

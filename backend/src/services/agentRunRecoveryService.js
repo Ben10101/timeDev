@@ -1,4 +1,6 @@
 import { prisma } from '../lib/prisma.js';
+import { logInfo, logWarn } from '../utils/logger.js';
+import { recordRuntimeEvent } from './runtimeTelemetryService.js';
 
 function resolveRunAgeCutoff(maxAgeSeconds) {
   return new Date(Date.now() - Math.max(30, Number(maxAgeSeconds || 720)) * 1000);
@@ -117,6 +119,29 @@ export async function recoverStaleAgentRuns({
         );
       }
     });
+
+    recordRuntimeEvent('agent_run_recovered', {
+      agentName: run.agentName,
+      runUuid: run.uuid,
+      projectId: run.projectId,
+      taskId: run.taskId,
+      recoveryMode: 'watchdog',
+    });
+    logWarn('agent_run_recovered', {
+      agentName: run.agentName,
+      runUuid: run.uuid,
+      projectId: run.projectId,
+      taskId: run.taskId,
+      recoveryMode: 'watchdog',
+      reason,
+    });
+  }
+
+  if (staleRuns.length > 0) {
+    logInfo('agent_run_recovery_batch_completed', {
+      recoveryMode: 'watchdog',
+      recoveredCount: staleRuns.length,
+    });
   }
 
   return {
@@ -180,6 +205,32 @@ export async function recoverBlockingAgentRunsForStart({
           `Execucao travada liberada automaticamente para nova tentativa. ${reason}`
         );
       }
+    });
+
+    recordRuntimeEvent('agent_run_recovered', {
+      agentName: run.agentName,
+      runUuid: run.uuid,
+      projectId,
+      taskId: run.taskId,
+      recoveryMode: 'preflight',
+    });
+    logWarn('agent_run_recovered', {
+      agentName: run.agentName,
+      runUuid: run.uuid,
+      projectId,
+      taskId: run.taskId,
+      recoveryMode: 'preflight',
+      reason,
+    });
+  }
+
+  if (staleRuns.length > 0) {
+    logInfo('agent_run_recovery_batch_completed', {
+      recoveryMode: 'preflight',
+      agentName,
+      projectId,
+      taskId,
+      recoveredCount: staleRuns.length,
     });
   }
 

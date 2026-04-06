@@ -15,6 +15,7 @@ import { recoverStaleAgentRuns } from './services/agentRunRecoveryService.js';
 import { attachAuthUser } from './middleware/authMiddleware.js';
 import { apiAuditLogger } from './middleware/auditMiddleware.js';
 import { apiRateLimiter, applySecurityHeaders, attachRequestContext } from './middleware/securityMiddleware.js';
+import { logError, logInfo, logWarn } from './utils/logger.js';
 
 
 BigInt.prototype.toJSON = function () {
@@ -103,18 +104,29 @@ app.use('/api', dataRoutes);
 app.use('/api', implementationRoutes);
 
 app.use((err, _req, res, _next) => {
-  console.error(err.stack);
+  logError('http_request_failed', {
+    requestId: _req?.requestId || null,
+    method: _req?.method || null,
+    path: _req?.originalUrl || _req?.url || null,
+    error: err,
+  });
   const statusCode = err.statusCode || (err.message?.includes('nao encontrado') ? 404 : 500);
 
   res.status(statusCode).json({ message: err.message || 'Erro interno do servidor' });
 });
 
 async function startServer() {
-  console.log(`Database target: ${getSafeDatabaseLabel()}`);
+  logInfo('backend_starting', {
+    port: PORT,
+    databaseTarget: getSafeDatabaseLabel(),
+    environment: process.env.NODE_ENV || 'development',
+  });
 
   try {
     await prisma.$connect();
-    console.log('Prisma conectado com sucesso');
+    logInfo('database_connected', {
+      databaseTarget: getSafeDatabaseLabel(),
+    });
     const timeoutMs = Number(process.env.AGENT_RUN_TIMEOUT_MS || 10 * 60 * 1000);
     const recoveryWindowSeconds = Math.max(120, Math.round(timeoutMs / 1000) + 30);
     const recoveryResult = await recoverStaleAgentRuns({
@@ -122,7 +134,10 @@ async function startServer() {
     });
 
     if (recoveryResult.recoveredCount > 0) {
-      console.log(`Recuperadas ${recoveryResult.recoveredCount} execucoes presas na inicializacao`);
+      logWarn('backend_startup_recovered_runs', {
+        recoveredCount: recoveryResult.recoveredCount,
+        recoveryWindowSeconds,
+      });
     }
 
     recoveryIntervalHandle = setInterval(async () => {
@@ -132,19 +147,30 @@ async function startServer() {
           reason: 'Execucao marcada como falha por watchdog de recuperacao do backend.',
         });
         if (result.recoveredCount > 0) {
-          console.log(`Watchdog recuperou ${result.recoveredCount} execucoes presas`);
+          logWarn('agent_run_watchdog_recovered_runs', {
+            recoveredCount: result.recoveredCount,
+            recoveryWindowSeconds,
+          });
         }
       } catch (error) {
-        console.error(`Falha no watchdog de recuperacao de agent runs: ${error.message}`);
+        logError('agent_run_watchdog_failed', {
+          recoveryWindowSeconds,
+          error,
+        });
       }
     }, 60 * 1000);
   } catch (error) {
-    console.error(`Falha ao conectar no banco: ${error.message}`);
+    logError('database_connection_failed', {
+      databaseTarget: getSafeDatabaseLabel(),
+      error,
+    });
   }
 
   app.listen(PORT, () => {
-    console.log(`Backend rodando em http://localhost:${PORT}`);
-    console.log(`API disponivel em http://localhost:${PORT}/api`);
+    logInfo('backend_started', {
+      baseUrl: `http://localhost:${PORT}`,
+      apiBaseUrl: `http://localhost:${PORT}/api`,
+    });
   });
 }
 

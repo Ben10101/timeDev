@@ -3,6 +3,25 @@ import { getAuditLogPath, readRecentAuditEntries } from './auditLogService.js';
 import { getRefreshCookieOptions } from './authService.js';
 import { getRateLimitConfig } from '../middleware/securityMiddleware.js';
 import { buildBudgetConfig, estimateTokenCount, extractRuntimeMetaFromPayload } from '../utils/aiRunMetrics.js';
+import { getRuntimeTelemetrySnapshot } from './runtimeTelemetryService.js';
+
+function buildProjectScope(userUuid = null, projectUuid = null) {
+  const projectWhere = {};
+
+  if (projectUuid) {
+    projectWhere.uuid = projectUuid;
+  }
+
+  if (userUuid) {
+    projectWhere.workspace = {
+      ownerUser: {
+        uuid: userUuid,
+      },
+    };
+  }
+
+  return Object.keys(projectWhere).length ? { project: projectWhere } : {};
+}
 
 function average(values = []) {
   if (!values.length) return 0;
@@ -44,12 +63,220 @@ export async function getOperationalHealth() {
     database = 'down';
   }
 
+  let runtimeSnapshot = {
+    summary: {
+      staleRunningRuns: 0,
+      recoveredRunsLast24h: 0,
+      failedRunsLast24h: 0,
+    },
+    inMemory: {
+      summary: getRuntimeTelemetrySnapshot().totals,
+    },
+  };
+  if (database === 'ok') {
+    try {
+      runtimeSnapshot = await getRuntimeOperationsStatus();
+    } catch {
+      runtimeSnapshot = {
+        ...runtimeSnapshot,
+        summary: {
+          ...runtimeSnapshot.summary,
+          staleRunningRuns: 0,
+        },
+      };
+    }
+  }
+
   return {
-    status: database === 'ok' ? 'ok' : 'degraded',
+    status: database === 'ok' && runtimeSnapshot.summary.staleRunningRuns === 0 ? 'ok' : 'degraded',
     checkedAt: new Date().toISOString(),
     uptimeSeconds: Math.round(process.uptime()),
     database,
     environment: process.env.NODE_ENV || 'development',
+    runtime: {
+      inMemory: runtimeSnapshot.inMemory.summary,
+      staleRunningRuns: runtimeSnapshot.summary.staleRunningRuns,
+      recoveredRunsLast24h: runtimeSnapshot.summary.recoveredRunsLast24h,
+      failureRunsLast24h: runtimeSnapshot.summary.failedRunsLast24h,
+    },
+  };
+}
+
+export async function getRuntimeOperationsStatus(userUuid = null, { projectUuid = null, lookbackHours = 24 } = {}) {
+  const lookbackStart = new Date(Date.now() - Math.max(1, Number(lookbackHours || 24)) * 60 * 60 * 1000);
+  const projectScope = buildProjectScope(userUuid, projectUuid);
+  const runningThreshold = new Date(Date.now() - 10 * 60 * 1000);
+  const inMemory = getRuntimeTelemetrySnapshot();
+
+  const [
+    runningRuns,
+    staleRunningRunsCount,
+    recoveredRunsLast24h,
+    failedRunsLast24h,
+    startedRunsLast24h,
+    backlogTasks,
+    inProgressTasks,
+    reviewTasks,
+    qaTasks,
+  ] = await Promise.all([
+    prisma.agentRun.findMany({
+      where: {
+        status: 'running',
+        ...projectScope,
+      },
+      orderBy: { startedAt: 'asc' },
+      take: 20,
+      select: {
+        uuid: true,
+        agentName: true,
+        startedAt: true,
+        project: { select: { uuid: true, name: true } },
+        task: { select: { uuid: true, title: true } },
+      },
+    }),
+    prisma.agentRun.count({
+      where: {
+        status: 'running',
+        startedAt: { lt: runningThreshold },
+        ...projectScope,
+      },
+    }),
+    prisma.agentRun.count({
+      where: {
+        status: 'failed',
+        finishedAt: { gte: lookbackStart },
+        errorMessage: { contains: 'recuper' },
+        ...projectScope,
+      },
+    }),
+    prisma.agentRun.count({
+      where: {
+        status: 'failed',
+        finishedAt: { gte: lookbackStart },
+        ...projectScope,
+      },
+    }),
+    prisma.agentRun.count({
+      where: {
+        createdAt: { gte: lookbackStart },
+        ...projectScope,
+      },
+    }),
+    prisma.task.count({
+      where: {
+        status: 'backlog',
+        taskType: { not: 'agent_job' },
+        ...projectScope,
+      },
+    }),
+    prisma.task.count({
+      where: {
+        status: 'in_progress',
+        taskType: { not: 'agent_job' },
+        ...projectScope,
+      },
+    }),
+    prisma.task.count({
+      where: {
+        status: 'in_review',
+        taskType: { not: 'agent_job' },
+        ...projectScope,
+      },
+    }),
+    prisma.task.count({
+      where: {
+        status: 'qa',
+        taskType: { not: 'agent_job' },
+        ...projectScope,
+      },
+    }),
+  ]);
+
+  const recentAgentHealth = await prisma.agentRun.findMany({
+    where: {
+      createdAt: { gte: lookbackStart },
+      ...projectScope,
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 160,
+    select: {
+      agentName: true,
+      status: true,
+      errorMessage: true,
+      startedAt: true,
+      finishedAt: true,
+    },
+  });
+
+  const byAgent = Object.values(
+    recentAgentHealth.reduce((acc, run) => {
+      const current = acc[run.agentName] || {
+        agentName: run.agentName,
+        started: 0,
+        failed: 0,
+        completed: 0,
+        recovered: 0,
+        durations: [],
+      };
+      current.started += 1;
+      current.failed += run.status === 'failed' ? 1 : 0;
+      current.completed += run.status === 'completed' ? 1 : 0;
+      current.recovered += run.status === 'failed' && String(run.errorMessage || '').includes('recuper') ? 1 : 0;
+      if (run.startedAt && run.finishedAt) {
+        current.durations.push(Math.max(0, Math.round((new Date(run.finishedAt) - new Date(run.startedAt)) / 1000)));
+      }
+      acc[run.agentName] = current;
+      return acc;
+    }, {})
+  ).map((agent) => ({
+    agentName: agent.agentName,
+    started: agent.started,
+    completed: agent.completed,
+    failed: agent.failed,
+    recovered: agent.recovered,
+    failureRatePercent: agent.started ? Math.round((agent.failed / agent.started) * 100) : 0,
+    averageDurationSeconds: average(agent.durations),
+  }));
+
+  const alerts = [
+    ...(staleRunningRunsCount > 0
+      ? [{ code: 'stale_running_runs', message: `Existem ${staleRunningRunsCount} execucoes acima da janela esperada.` }]
+      : []),
+    ...(failedRunsLast24h > 5
+      ? [{ code: 'failure_spike', message: `Foram detectadas ${failedRunsLast24h} falhas de agentes nas ultimas ${lookbackHours}h.` }]
+      : []),
+    ...(recoveredRunsLast24h > 3
+      ? [{ code: 'recovery_spike', message: `O watchdog recuperou ${recoveredRunsLast24h} execucoes nas ultimas ${lookbackHours}h.` }]
+      : []),
+  ];
+
+  return {
+    checkedAt: new Date().toISOString(),
+    windowHours: Math.max(1, Number(lookbackHours || 24)),
+    summary: {
+      startedRunsLast24h,
+      failedRunsLast24h,
+      recoveredRunsLast24h,
+      runningRuns: runningRuns.length,
+      staleRunningRuns: staleRunningRunsCount,
+      backlogTasks,
+      inProgressTasks,
+      reviewTasks,
+      qaTasks,
+    },
+    inMemory: {
+      summary: inMemory.totals,
+      byAgent: inMemory.byAgent,
+      recentEvents: inMemory.recentEvents.slice(0, 20),
+    },
+    runningRuns: runningRuns.map((run) => ({
+      ...run,
+      runningForSeconds: run.startedAt
+        ? Math.max(0, Math.round((Date.now() - new Date(run.startedAt).getTime()) / 1000))
+        : null,
+    })),
+    byAgent,
+    alerts,
   };
 }
 

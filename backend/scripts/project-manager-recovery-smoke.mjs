@@ -198,8 +198,12 @@ function installMocks() {
   prisma.agentRun.findUnique = async ({ where, select }) => {
     const run = state.runs.find((item) => item.id === where.id);
     if (!run) return null;
-    if (select?.inputPayload) {
-      return { inputPayload: run.inputPayload };
+    if (select) {
+      const selected = {};
+      for (const key of Object.keys(select)) {
+        selected[key] = run[key];
+      }
+      return selected;
     }
     return run;
   };
