@@ -55,6 +55,51 @@ const PRIORITY_STYLE = {
   },
 };
 
+const SORT_OPTIONS = {
+  suggested: 'Sequencia sugerida',
+  priority: 'Prioridade',
+  status: 'Status',
+};
+
+const PRIORITY_RANK = {
+  HIGH: 0,
+  MEDIUM: 1,
+  LOW: 2,
+};
+
+const STATUS_RANK = {
+  processing: 0,
+  todo: 1,
+  done: 2,
+};
+
+function getSuggestedOrder(story) {
+  const rawPosition = story?.task?.position ?? story?.order ?? story?.position ?? Number.MAX_SAFE_INTEGER;
+  const numeric = Number(rawPosition);
+  return Number.isFinite(numeric) ? numeric : Number.MAX_SAFE_INTEGER;
+}
+
+function compareStories(left, right, sortMode) {
+  if (sortMode === 'priority') {
+    const priorityDiff =
+      (PRIORITY_RANK[left.priority] ?? PRIORITY_RANK.MEDIUM) -
+      (PRIORITY_RANK[right.priority] ?? PRIORITY_RANK.MEDIUM);
+    if (priorityDiff !== 0) return priorityDiff;
+  }
+
+  if (sortMode === 'status') {
+    const statusDiff =
+      (STATUS_RANK[left.status] ?? STATUS_RANK.todo) -
+      (STATUS_RANK[right.status] ?? STATUS_RANK.todo);
+    if (statusDiff !== 0) return statusDiff;
+  }
+
+  const suggestedDiff = getSuggestedOrder(left) - getSuggestedOrder(right);
+  if (suggestedDiff !== 0) return suggestedDiff;
+
+  return (left.title || left.text || '').localeCompare(right.title || right.text || '', 'pt-BR');
+}
+
 function parseBacklogLines(backlogMarkdown) {
   const storyLines = backlogMarkdown
     ?backlogMarkdown.split('\n').filter((line) => line.trim().match(/^[-*]?\s*\d*\.?\s*(?:\*\*)?Como\b/i))
@@ -245,6 +290,7 @@ export default function BacklogKanban({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState({ title: '', content: '', priority: 'MEDIUM' });
   const [syncError, setSyncError] = useState(null);
+  const [sortMode, setSortMode] = useState('suggested');
 
   const isMockMode = projectId?.startsWith('mock-proj-');
   const isPersistentStage = !isMockMode && (stageName === 'requirements' || stageName === 'qa');
@@ -401,8 +447,9 @@ export default function BacklogKanban({
     }
   };
 
-  const todoStories = stories.filter((story) => story.status === 'todo');
-  const processedStories = stories.filter((story) => story.status === 'done' || story.status === 'processing');
+  const sortedStories = [...stories].sort((left, right) => compareStories(left, right, sortMode));
+  const todoStories = sortedStories.filter((story) => story.status === 'todo');
+  const processedStories = sortedStories.filter((story) => story.status === 'done' || story.status === 'processing');
   const allStoriesProcessed = stories.length > 0 && todoStories.length === 0;
   const priority = PRIORITY_STYLE[modalContent.priority] || PRIORITY_STYLE.MEDIUM;
 
@@ -417,6 +464,20 @@ export default function BacklogKanban({
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">{subtitle}</p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <label className="dashboard-badge bg-white text-slate-600">
+                <span>Ordenar por</span>
+                <select
+                  value={sortMode}
+                  onChange={(event) => setSortMode(event.target.value)}
+                  className="ml-2 bg-transparent text-xs font-semibold outline-none"
+                >
+                  {Object.entries(SORT_OPTIONS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <span className="dashboard-badge bg-slate-100 text-slate-600">
                 <ClipboardCheck className="h-3.5 w-3.5" />
                 {stories.length} itens

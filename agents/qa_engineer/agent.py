@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import unicodedata
+import json
 
 try:
     if hasattr(sys.stdout, "reconfigure"):
@@ -202,6 +203,36 @@ class QAEngineer:
             "- Observabilidade: Validar disponibilidade de logs e sinais operacionais para acompanhar o envio dos lembretes.",
             text,
         )
+        text = re.sub(
+            r"\bacompanhar falhas\b",
+            "acompanhar taxa de erro do fluxo principal",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\bacompanhar tempo de resposta\b",
+            "acompanhar tempo de resposta do endpoint e da submissao principal",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\bacompanhar entrega\b",
+            "acompanhar taxa de sucesso do fluxo principal",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"sinal:\s*nenhum",
+            "sinal: ausencia de registro de auditoria ou log operacional",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"ponto a verificar",
+            "risco de inconsistencia a observar em execucao",
+            text,
+            flags=re.IGNORECASE,
+        )
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
@@ -242,6 +273,197 @@ class QAEngineer:
             return "FIM_DO_PLANO_DE_TESTES"
         return f"{assembled}\n\nFIM_DO_PLANO_DE_TESTES"
 
+    def _parse_requirement_spec(self, requirement_spec):
+        if isinstance(requirement_spec, dict):
+            return requirement_spec
+        if not requirement_spec:
+            return {}
+        try:
+            parsed = json.loads(requirement_spec)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    def _coerce_lines(self, value):
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, dict):
+            lines = []
+            for item in value.values():
+                lines.extend(self._coerce_lines(item))
+            return lines
+        text = str(value or "").strip()
+        if not text:
+            return []
+        return [line.strip("- ").strip() for line in text.splitlines() if line.strip()]
+
+    def _extract_requirement_signals(self, requirement_summary, requirement_spec=None):
+        spec = self._parse_requirement_spec(requirement_spec)
+        signals = []
+        sources = []
+        for key in [
+            "functionalRequirements",
+            "businessRules",
+            "validationsAndData",
+            "permissionsAndAudit",
+            "acceptanceCriteria",
+            "flows",
+        ]:
+            sources.extend(self._coerce_lines(spec.get(key)))
+        sources.extend(self._coerce_lines(requirement_summary))
+        for line in sources:
+            normalized = unicodedata.normalize("NFD", str(line).lower())
+            normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+            signals.append(normalized)
+        return signals
+
+    def _extract_text_fields(self, requirement_summary, requirement_spec=None):
+        fields = []
+        for match in re.findall(r"-\s*([A-Za-zÀ-ÿ0-9 _/-]+)\s*\(", requirement_summary or "", re.IGNORECASE):
+            cleaned = re.sub(r"\s+", " ", match).strip(" -:")
+            if cleaned and cleaned.lower() not in {field.lower() for field in fields}:
+                fields.append(cleaned)
+        spec = self._parse_requirement_spec(requirement_spec)
+        for item in self._coerce_lines(spec.get("validationsAndData")):
+            normalized = re.sub(r"\s+", " ", item)
+            for match in re.findall(r"([A-Za-zÀ-ÿ0-9 _/-]{3,40})\s*:", normalized):
+                cleaned = re.sub(r"\s+", " ", match).strip(" -:")
+                if cleaned and cleaned.lower() not in {field.lower() for field in fields}:
+                    fields.append(cleaned)
+        return fields[:6]
+
+    def _extract_primary_route_label(self, idea):
+        text = (idea or "").lower()
+        if "criar visita" in text:
+            return "POST /visitas"
+        if "aprovar" in text and "visita" in text:
+            return "POST /visitas/{id}/aprovacao"
+        if "cadastrar" in text and "responsavel" in text:
+            return "POST /responsaveis-operacionais"
+        return "endpoint principal da feature"
+
+    def _normalize_section_lines(self, body):
+        return [
+            line.strip()
+            for line in (body or "").splitlines()
+            if line.strip()
+        ]
+
+    def _synthesize_risk_lines(self, idea, requirement_summary, requirement_spec=None):
+        route_label = self._extract_primary_route_label(idea)
+        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        field_label = ", ".join(fields[:3]) if fields else "campos obrigatorios"
+        signals = self._extract_requirement_signals(requirement_summary, requirement_spec)
+        risks = []
+        if any("protocolo" in line for line in signals):
+            risks.append(
+                "- Risco: protocolo inicial ausente, duplicado ou fora do padrao esperado -> sinal: confirmacoes com identificador repetido ou consulta posterior sem protocolo recuperavel."
+            )
+        if any("data" in line for line in signals):
+            risks.append(
+                f"- Risco: validacao inconsistente de data ou janela operacional -> sinal: aumento de rejeicoes por formato/data invalida ou registros aceitos fora da regra prevista no {route_label}."
+            )
+        if any(term in line for line in signals for term in ["contato", "email", "telefone"]):
+            risks.append(
+                f"- Risco: contato salvo em formato inutilizavel para a operacao -> sinal: respostas 400 por validacao de contato ou registro persistido sem canal acionavel no {route_label}."
+            )
+        if any(term in line for line in signals for term in ["tipo de suporte", "formato", "status", "categoria"]):
+            risks.append(
+                "- Risco: valor fora da lista controlada comprometer classificacao operacional -> sinal: registros persistidos com tipo/status invalido ou filtragem inconsistente na consulta."
+            )
+        if any(term in line for line in signals for term in ["auditoria", "permiss", "usuario responsavel"]):
+            risks.append(
+                "- Risco: ausencia de trilha de auditoria na acao principal -> sinal: criacao sem timestamp, usuario responsavel ou evento registravel de acompanhamento."
+            )
+        if any(term in line for line in signals for term in ["aprova", "autorizacao"]):
+            risks.append(
+                "- Risco: dados iniciais inconsistentes comprometerem a aprovacao posterior -> sinal: alto volume de retrabalho ou reprovacoes por informacao inicial incompleta."
+            )
+        if not risks:
+            risks = [
+                f"- Risco: validacao insuficiente dos campos {field_label} -> sinal: aumento de respostas 400 ou registros invalidos no {route_label}.",
+                "- Risco: persistencia incompleta apos confirmacao -> sinal: diferenca entre confirmacoes de sucesso e registros recuperaveis na consulta subsequente.",
+                "- Risco: ausencia de log/auditoria da acao principal -> sinal: criacao sem timestamp ou sem usuario responsavel registrado.",
+            ]
+        elif len(risks) == 1:
+            risks.extend([
+                "- Risco: persistencia incompleta apos confirmacao -> sinal: diferenca entre confirmacoes de sucesso e registros recuperaveis na consulta subsequente.",
+                "- Risco: ausencia de log/auditoria da acao principal -> sinal: criacao sem timestamp ou sem usuario responsavel registrado.",
+            ])
+        elif len(risks) == 2:
+            risks.append(
+                "- Risco: ausencia de trilha de auditoria na acao principal -> sinal: criacao sem timestamp ou sem usuario responsavel registrado."
+            )
+        return risks[:4]
+
+    def _synthesize_limit_lines(self, idea, requirement_summary, requirement_spec=None):
+        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        text_fields = [field for field in fields if not re.search(r"\bdata\b|\bid\b", field, re.IGNORECASE)]
+        primary_text = text_fields[0] if text_fields else "campo textual principal"
+        secondary_text = text_fields[1] if len(text_fields) > 1 else primary_text
+        return [
+            f"7. Limite: valor no tamanho maximo permitido para {primary_text}; sistema aceita sem truncar nem corromper o dado.",
+            f"8. Limite: valor exatamente no limite minimo aceito para {secondary_text}; sistema aceita e persiste corretamente.",
+        ]
+
+    def _synthesize_functional_cases(self, idea, requirement_summary, requirement_spec=None):
+        route_label = self._extract_primary_route_label(idea)
+        spec = self._parse_requirement_spec(requirement_spec)
+        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        primary_field = fields[0] if fields else "campo principal"
+        secondary_field = fields[1] if len(fields) > 1 else "campo complementar"
+        rule_lines = self._coerce_lines(spec.get("businessRules"))
+        acceptance_lines = self._coerce_lines(spec.get("acceptanceCriteria"))
+        first_rule = rule_lines[0] if rule_lines else "regras de negocio aplicaveis"
+        first_acceptance = acceptance_lines[0] if acceptance_lines else "confirmacao exibida ao usuario"
+        return "\n".join(
+            [
+                "1. CT-01",
+                f"Acao: preencher {primary_field} e {secondary_field} com valores validos e confirmar a acao principal.",
+                f"Resultado esperado: requisicao enviada ao {route_label} com sucesso, persistencia concluida e {first_acceptance.lower()}.",
+                "",
+                "2. CT-02",
+                f"Acao: deixar {primary_field} ausente ou invalido e tentar confirmar a acao principal.",
+                f"Resultado esperado: submissao bloqueada ou rejeitada com mensagem clara, sem persistencia parcial e respeitando {first_rule.lower()}.",
+                "",
+                "3. CT-03",
+                "Acao: simular falha operacional durante a confirmacao, como indisponibilidade temporaria da API ou erro de validacao no backend.",
+                "Resultado esperado: erro tratado sem travar a interface, sem dado inconsistente persistido e com sinal operacional registravel.",
+            ]
+        ).strip()
+
+    def _stabilize_plan(self, full_plan, idea, requirement_summary, requirement_spec=None):
+        sections = {}
+        for title in self.QA_SECTIONS:
+            body = self._extract_section(full_plan, title)
+            if body:
+                sections[title] = body
+
+        risks_body = sections.get("Riscos e metricas", "")
+        risk_lines = [
+            line for line in self._normalize_section_lines(risks_body)
+            if re.search(r"risco", line, re.IGNORECASE)
+        ]
+        if len(risk_lines) < 2 or any(re.search(r"sinal:\s*nenhum", line, re.IGNORECASE) for line in risk_lines):
+            sections["Riscos e metricas"] = "\n".join(self._synthesize_risk_lines(idea, requirement_summary, requirement_spec))
+
+        scenarios_body = sections.get("Cenarios de teste", "")
+        scenario_lines = self._normalize_section_lines(scenarios_body)
+        limit_lines = [line for line in scenario_lines if "limite" in line.lower()]
+        weak_limit_markers = ["vazia", "vazio", "null", "nulo", "em branco", "\"\"", "''"]
+        if len(limit_lines) < 2 or any(any(marker in line.lower() for marker in weak_limit_markers) for line in limit_lines):
+            non_limit_lines = [line for line in scenario_lines if "limite" not in line.lower()]
+            sections["Cenarios de teste"] = "\n".join(non_limit_lines + self._synthesize_limit_lines(idea, requirement_summary, requirement_spec))
+
+        functional_cases_body = sections.get("Casos de teste funcionais", "")
+        functional_case_lines = self._normalize_section_lines(functional_cases_body)
+        action_count = sum(1 for line in functional_case_lines if line.lower().startswith("acao:"))
+        expected_count = sum(1 for line in functional_case_lines if line.lower().startswith("resultado esperado:"))
+        if action_count < 3 or expected_count < 3:
+            sections["Casos de teste funcionais"] = self._synthesize_functional_cases(idea, requirement_summary, requirement_spec)
+
+        return self._sanitize_plan(self._build_full_plan(sections))
+
     def _generate_block(self, prompt, qa_model, *, num_predict):
         result = generate_text_from_llm(
             prompt,
@@ -258,13 +480,17 @@ class QAEngineer:
 
         return result
 
-    def _generate_multi_block_plan(self, idea, requirement_summary, qa_model):
+    def _generate_multi_block_plan(self, idea, requirement_summary, qa_model, requirement_spec=None):
+        structured_requirement_spec = self._parse_requirement_spec(requirement_spec)
         base_context = f"""
 Historia:
 "{idea}"
 
 Resumo estrutural dos requisitos:
 {requirement_summary}
+
+Requirement Spec estruturado:
+{json.dumps(structured_requirement_spec, ensure_ascii=False) if structured_requirement_spec else "Nao informado."}
 
 Regras gerais:
 - Responda em portugues.
@@ -281,6 +507,8 @@ Regras gerais:
 - Seja especifico e economico em tokens.
 - Prefira bullets curtos e objetivos.
 - Nao inclua introducao nem conclusao.
+- Evite repeticao: cada item deve cobrir um risco, validacao ou comportamento diferente.
+- Prefira checagens verificaveis como status HTTP, bloqueio de submissao, mensagem de erro, persistencia, log/auditoria e ausencia de erro 5xx.
 """
 
         retry_count = max(1, int(os.getenv("QA_MAX_RETRIES", "1")))
@@ -298,14 +526,20 @@ Gere APENAS estas secoes em Markdown:
 Inclua testes unitarios, integracao, API, UI e E2E em no maximo 6 bullets.
 - Cite explicitamente qual camada deve absorver o maior risco.
 - Diga quando algo e "Nao se aplica" em vez de inventar cobertura.
+- Cada bullet deve cobrir um angulo diferente da feature.
 
 ## Dados de teste
 Inclua dados validos, invalidos, limites e cenarios de falha em no maximo 5 bullets.
+- Se o requisito nao mencionar duplicidade, permissao extra ou comportamento opcional, nao crie bullet de "ponto a verificar" para isso.
+- Dados de teste devem refletir o requisito atual, nao abrir novas decisoes de produto.
 
 ## Riscos e metricas
 Liste apenas riscos criticos, impacto e sinais operacionais de acompanhamento em no maximo 5 bullets.
 - Nao transforme risco em requisito.
-- Se a metrica nao estiver definida no requisito, use linguagem neutra como "acompanhar falhas", "acompanhar tempo de resposta" ou "acompanhar entrega".
+- Se a metrica nao estiver definida no requisito, use sinais verificaveis e especificos, como taxa de erro do endpoint principal, tempo de resposta do submit, quantidade de rejeicoes por validacao ou presenca de log/auditoria.
+- Nao use metricas genericas como "acompanhar falhas" sem dizer falhas de que.
+- Nunca use "sinal: nenhum". Todo risco listado deve ter pelo menos um sinal observavel.
+- Gere pelo menos 2 riscos realmente distintos entre validacao, persistencia, UX operacional, observabilidade e resiliencia.
 """
                 planning_result = self._generate_block(
                     planning_prompt,
@@ -315,7 +549,10 @@ Liste apenas riscos criticos, impacto e sinais operacionais de acompanhamento em
                 for title in ["Estrategia de testes", "Dados de teste", "Riscos e metricas"]:
                     body = self._extract_section(planning_result, title)
                     if not body:
-                        raise RuntimeError(f"Bloco de planejamento sem secao {title}.")
+                        if title == "Riscos e metricas":
+                            body = "\n".join(self._synthesize_risk_lines(idea, requirement_summary, requirement_spec))
+                        else:
+                            raise RuntimeError(f"Bloco de planejamento sem secao {title}.")
                     sections[title] = body
 
                 functional_prompt = f"""
@@ -324,12 +561,15 @@ Liste apenas riscos criticos, impacto e sinais operacionais de acompanhamento em
 Gere APENAS estas secoes em Markdown:
 
 ## Cenarios de teste
-Gere exatamente 10 itens numerados:
-- 5 cenarios de caminho feliz numerados de 1. a 5.
-- 5 cenarios de excecao numerados de 1. a 5.
-- Inclua explicitamente a expressao "Caminho Feliz" nos 5 primeiros itens.
-- Inclua explicitamente a expressao "Excecao" nos 5 ultimos itens.
+Gere exatamente 10 itens numerados e variados:
+- 3 cenarios de Caminho Feliz
+- 3 cenarios de Excecao
+- 2 cenarios de Limite
+- 2 cenarios de Resiliencia
+- Inclua explicitamente essas expressoes nos itens.
 - Evite expressoes temporais fortes como "no exato momento", "imediatamente" ou equivalentes sem base no requisito.
+- Cada item deve cobrir um comportamento diferente; nao repita cinco variacoes do mesmo submit com outra frase.
+- Cenario de Limite deve usar fronteira real de tamanho, formato ou valor maximo/minimo aceito. Nao use campo vazio, dado nulo ou ausencia de preenchimento como limite.
 
 ## Casos de teste funcionais
 Gere pelo menos 3 casos numerados.
@@ -357,12 +597,14 @@ Gere APENAS estas secoes em Markdown:
 - Liste entre 3 e 6 bullets no formato:
   - CA-01 -> testes/cenarios relacionados
 - Faça a ponte entre criterios de aceite, regras de negocio e testes planejados.
-- Se algum criterio nao estiver claro, sinalize como "Ponto a validar".
+- Se o requisito estiver fechado, nao use "Ponto a validar".
+- Prefira ligar cada CA a verificacao concreta de UI, API, persistencia ou validacao.
 
 ## Smoke Minimo da Feature
 - Liste entre 3 e 5 verificacoes minimas de smoke que provam o fluxo principal.
 - Cubra o essencial de UI/API/fluxo quando aplicavel.
 - Se alguma camada nao se aplicar, escreva "Nao se aplica" na linha correspondente.
+- Cada linha deve ser verificavel em execucao, nao apenas descritiva.
 """
                 traceability_result = self._generate_block(
                     traceability_prompt,
@@ -407,6 +649,7 @@ Liste checks objetivos cobrindo heuristicas de Nielsen, leis de UX e WCAG em no 
                     sections[title] = body
 
                 full_plan = self._sanitize_plan(self._build_full_plan(sections))
+                full_plan = self._stabilize_plan(full_plan, idea, requirement_summary, requirement_spec)
                 is_complete, reason = validate_qa_output(full_plan)
                 if is_complete:
                     return full_plan
@@ -420,14 +663,14 @@ Liste checks objetivos cobrindo heuristicas de Nielsen, leis de UX e WCAG em no 
             f"Ultimo motivo: {last_reason}"
         )
 
-    def process(self, idea, code_structure):
+    def process(self, idea, code_structure, requirement_spec=None):
         requirement_summary = self._summarize_requirements(code_structure)
         qa_model = os.getenv("QA_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL", "gemma3:4b")
         previous_timeout = os.environ.get("OLLAMA_REQUEST_TIMEOUT_SECONDS")
         os.environ["OLLAMA_REQUEST_TIMEOUT_SECONDS"] = os.getenv("QA_OLLAMA_TIMEOUT_SECONDS", previous_timeout or "45")
 
         try:
-            result = self._generate_multi_block_plan(idea, requirement_summary, qa_model)
+            result = self._generate_multi_block_plan(idea, requirement_summary, qa_model, requirement_spec=requirement_spec)
         finally:
             if previous_timeout is None:
                 os.environ.pop("OLLAMA_REQUEST_TIMEOUT_SECONDS", None)

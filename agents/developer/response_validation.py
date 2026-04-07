@@ -164,6 +164,22 @@ def validate_requirements_output(result):
     if len(rf_matches) < 1:
         return False, "Requisitos funcionais sem RFs estruturados."
 
+    if re.search(r'\beu quero\s+(cadastrar|criar|registrar|aprovar|atualizar)\b', normalized):
+        has_secondary_rf = len(rf_matches) > 1
+        derived_expansion_terms = [
+            "vincular",
+            "associar",
+            "painel",
+            "dashboard",
+            "consultar",
+            "visualizar",
+            "listar",
+            "relatorio",
+            "exportar",
+        ]
+        if has_secondary_rf and any(term in normalized for term in derived_expansion_terms):
+            return False, "Escopo expandido com funcionalidade derivada."
+
     flow_section = re.search(r"##\s+fluxo principal([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
     if not flow_section or len(re.findall(r"(?:^|\n)\s*\d+[\.\)]", flow_section.group(1))) < 3:
         return False, "Fluxo principal sem passos suficientes."
@@ -200,6 +216,93 @@ def validate_requirements_output(result):
 
     if has_truncated_ending(text):
         return False, "Resposta aparenta ter sido cortada no final."
+
+    user_story_section = re.search(r"##\s+user story refinada([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    validations_section_body = validations_section.group(1) if validations_section else ""
+    assumptions_section = re.search(r"##\s+premissas e pontos a validar([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    assumptions_body = assumptions_section.group(1) if assumptions_section else ""
+
+    core_story_terms = [
+        "cadastrar",
+        "criar",
+        "registrar",
+        "responsavel operacional",
+        "visitante",
+        "visita",
+        "autorizacao",
+        "escopo",
+        "contato",
+        "tipo de suporte",
+    ]
+    has_core_story = any(term in normalized for term in core_story_terms)
+    central_field_markers = [
+        "contato",
+        "tipo de suporte",
+        "nome",
+        "data",
+        "objetivo",
+        "visitante",
+        "responsavel",
+        "autorizacao",
+    ]
+
+    if has_core_story:
+        unresolved_validations = [
+            line.strip()
+            for line in validations_section_body.splitlines()
+            if "ponto a validar" in line.lower()
+            and any(marker in line.lower() for marker in central_field_markers)
+        ]
+        unresolved_assumptions = [
+            line.strip()
+            for line in assumptions_body.splitlines()
+            if any(marker in line.lower() for marker in central_field_markers)
+        ]
+        if unresolved_validations or unresolved_assumptions:
+            return False, "Campos centrais da feature ainda estao como ponto a validar."
+
+        normalized_validations = validations_section_body.lower()
+        if "contato" in normalized and (
+            re.search(r"contato[\s\S]{0,120}texto livre", normalized_validations)
+            or re.search(r"contato[\s\S]{0,120}formato livre", normalized_validations)
+            or (
+                "contato" in normalized_validations
+                and "telefone" not in normalized_validations
+                and "e-mail" not in normalized_validations
+                and "email" not in normalized_validations
+            )
+        ):
+            return False, "Campo central de contato precisa de contrato mais fechado."
+
+        if "tipo de suporte" in normalized and (
+            re.search(r"tipo de suporte[\s\S]{0,120}texto livre", normalized_validations)
+            or re.search(r"tipo de suporte[\s\S]{0,120}formato livre", normalized_validations)
+            or (
+                "tipo de suporte" in normalized_validations
+                and "lista" not in normalized_validations
+                and "predefinid" not in normalized_validations
+                and "enum" not in normalized_validations
+            )
+        ):
+            return False, "Campo central de tipo precisa de contrato mais fechado."
+
+        if "visita" in normalized and (
+            "formato do evento" in normalized
+            or "evento corporativo" in normalized
+            or re.search(r"\bevento\b", normalized)
+        ):
+            return False, "Bleed de dominio: historia de visita trouxe linguagem de evento."
+
+        if "escopo" in normalized and (
+            "status inicial" in normalized
+            or "status \"escopo definido\"" in normalized
+            or "status escopo definido" in normalized
+            or "pendente de aprovacao" in normalized
+            or "numero sequencial" in normalized
+            or "identificador unico sequencial" in normalized
+            or "protocolo" in normalized
+        ):
+            return False, "Story de escopo expandiu para workflow ou identificacao indevida."
 
     return True, None
 
@@ -244,8 +347,10 @@ def validate_qa_output(result):
             )
         )
 
-    happy_match = re.search(r"caminho feliz(.+?)(?:excecao|$)", normalized, re.DOTALL)
-    exception_match = re.search(r"excecao(.+?)(?:casos de teste funcionais|$)", normalized, re.DOTALL)
+    happy_match = re.search(r"caminho feliz(.+?)(?:excecao|limite|resiliencia|$)", normalized, re.DOTALL)
+    exception_match = re.search(r"excecao(.+?)(?:limite|resiliencia|casos de teste funcionais|$)", normalized, re.DOTALL)
+    limit_match = re.search(r"limite(.+?)(?:resiliencia|casos de teste funcionais|$)", normalized, re.DOTALL)
+    resilience_match = re.search(r"resiliencia(.+?)(?:casos de teste funcionais|$)", normalized, re.DOTALL)
     functional_cases_section = extract_section_body(
         normalized,
         "casos de teste funcionais",
@@ -275,25 +380,37 @@ def validate_qa_output(result):
 
     happy_count = len(re.findall(r"(?:^|\n)\s*(?:[-*]\s+)?(?:[1-5]\.|\d+\.)", happy_match.group(1))) if happy_match else 0
     exception_count = len(re.findall(r"(?:^|\n)\s*(?:[-*]\s+)?(?:[1-5]\.|\d+\.)", exception_match.group(1))) if exception_match else 0
+    limit_count = len(re.findall(r"(?:^|\n)\s*(?:[-*]\s+)?(?:[1-5]\.|\d+\.)", limit_match.group(1))) if limit_match else 0
+    resilience_count = len(re.findall(r"(?:^|\n)\s*(?:[-*]\s+)?(?:[1-5]\.|\d+\.)", resilience_match.group(1))) if resilience_match else 0
     if happy_count == 0 and happy_match:
         happy_count = len(re.findall(r"caminho feliz", happy_match.group(1), re.IGNORECASE))
     if exception_count == 0 and exception_match:
         exception_count = len(re.findall(r"excecao", exception_match.group(1), re.IGNORECASE))
-    if happy_count < 5 and scenarios_section:
+    if happy_count < 3 and scenarios_section:
         happy_count = max(happy_count, len(re.findall(r"caminho feliz", scenarios_section, re.IGNORECASE)))
-    if exception_count < 5 and scenarios_section:
+    if exception_count < 3 and scenarios_section:
         exception_count = max(exception_count, len(re.findall(r"excecao", scenarios_section, re.IGNORECASE)))
+    if limit_count < 2 and scenarios_section:
+        limit_count = max(limit_count, len(re.findall(r"limite", scenarios_section, re.IGNORECASE)))
+    if resilience_count < 2 and scenarios_section:
+        resilience_count = max(resilience_count, len(re.findall(r"resiliencia", scenarios_section, re.IGNORECASE)))
     functional_cases_count = count_numbered_items(functional_cases_section)
     action_count = len(re.findall(r"\bacao\b", functional_cases_section))
     expected_result_count = len(re.findall(r"resultado esperado", functional_cases_section))
     if functional_cases_count == 0:
         functional_cases_count = min(action_count, expected_result_count)
 
-    if happy_count < 5:
-        return False, "Menos de 5 cenarios de caminho feliz."
+    if happy_count < 3:
+        return False, "Menos de 3 cenarios de caminho feliz."
 
-    if exception_count < 5:
-        return False, "Menos de 5 cenarios de excecao."
+    if exception_count < 3:
+        return False, "Menos de 3 cenarios de excecao."
+
+    if limit_count < 2:
+        return False, "Menos de 2 cenarios de limite."
+
+    if resilience_count < 2:
+        return False, "Menos de 2 cenarios de resiliencia."
 
     has_structured_functional_cases = (
         functional_cases_count >= 3 and action_count >= 3 and expected_result_count >= 3
@@ -309,13 +426,44 @@ def validate_qa_output(result):
     if covered_non_functional_topics < 3:
         return False, "Cobertura nao funcional insuficiente."
 
+    if re.search(r"acompanhar\s+falhas\b", non_functional_section) or re.search(r"acompanhar\s+falhas\b", normalized):
+        return False, "Metricas genericas demais."
+
+    risks_section = extract_section_body(
+        normalized,
+        "riscos e metricas",
+        ["qualidade nao funcional", "rastreabilidade dos criterios de aceite", "smoke minimo da feature"],
+    )
+    if re.search(r"sinal:\s*nenhum", risks_section):
+        return False, "Riscos sem sinal operacional verificavel."
+
+    risk_count = len(re.findall(r"(?:^|\n)\s*[-*]\s*\*?\*?risco", risks_section, re.IGNORECASE))
+    if risk_count < 2:
+        return False, "Menos de 2 riscos distintos."
+
     traceability_count = len(re.findall(r"(?:^|\n)\s*[-*]\s*ca-\d+", traceability_section, re.IGNORECASE))
     if traceability_count < 2 and "ponto a validar" not in traceability_section:
         return False, "Rastreabilidade dos criterios de aceite insuficiente."
 
+    if "ponto a validar" in traceability_section:
+        return False, "Rastreabilidade ainda depende de ponto a validar."
+
+    test_data_section = extract_section_body(
+        normalized,
+        "dados de teste",
+        ["riscos e metricas", "qualidade nao funcional", "rastreabilidade dos criterios de aceite"],
+    )
+    if re.search(r"ponto a verificar", test_data_section) or re.search(r"ponto a validar", test_data_section):
+        return False, "Dados de teste ainda abrem lacunas em vez de provar o requisito."
+
     smoke_items = len(re.findall(r"(?:^|\n)\s*[-*]\s+", smoke_section))
     if smoke_items < 3 and "nao se aplica" not in smoke_section:
         return False, "Smoke minimo da feature insuficiente."
+
+    limit_lines = [line.strip() for line in scenarios_section.splitlines() if "limite" in line.lower()]
+    weak_limit_markers = ["vazia", "vazio", "null", "nulo", "em branco", "\"\"", "''"]
+    if any(any(marker in line.lower() for marker in weak_limit_markers) for line in limit_lines):
+        return False, "Cenario de limite fraco ou confundido com excecao."
 
     if "fim_do_plano_de_testes" not in normalized:
         return False, "Marcador final do plano de testes nao foi encontrado."
@@ -376,6 +524,14 @@ def validate_backlog_output(result):
     duplicate_count = len(similarity_keys) - len(set(key for key in similarity_keys if key))
     if duplicate_count > 0:
         return False, "Foram detectadas historias muito parecidas ou duplicadas."
+
+    technical_story_titles = [
+        title
+        for title in normalized_story_lines
+        if re.search(r"\b(entidade|numero sequencial|identificador unico|chave primaria|tabela|api|endpoint|schema|modelo de dados|crud)\b", title, re.IGNORECASE)
+    ]
+    if technical_story_titles:
+        return False, "Foram detectadas historias tecnicas demais para um backlog de usuario."
 
     personas = set()
     generic_user_count = 0

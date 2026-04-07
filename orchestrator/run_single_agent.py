@@ -69,8 +69,9 @@ def main():
             developer_output = payload.get("developer_output")
             if not developer_output or 'code' not in developer_output:
                 raise ValueError("Faltando 'developer_output' com 'code' para o qa_engineer.")
+            requirement_spec = payload.get("requirement_spec")
             agent = QAEngineer(project_id)
-            result = agent.process(idea, developer_output['code'])
+            result = agent.process(idea, developer_output['code'], requirement_spec=requirement_spec)
 
         elif agent_name == "project_builder":
             # Coleta todos os artefatos necessários do payload

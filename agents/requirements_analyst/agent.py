@@ -50,9 +50,36 @@ class RequirementsAnalyst:
     def __init__(self, project_id):
         self.project_id = project_id
 
+    def _normalize_text(self, value):
+        return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+    def _classify_story_type(self, idea):
+        normalized = self._normalize_text(idea)
+        if "definir escopo" in normalized:
+            return "scope-definition"
+        if "cadastrar" in normalized:
+            return "register"
+        if "criar" in normalized:
+            return "create"
+        if "registrar" in normalized:
+            return "record"
+        if "aprovar" in normalized or "reprovar" in normalized:
+            return "approval"
+        if "visualizar" in normalized or "consultar" in normalized:
+            return "view"
+        if "atualizar status" in normalized or "alterar status" in normalized:
+            return "status-update"
+        return "generic"
+
+    def _extract_domain_vocabulary(self, backlog):
+        match = re.search(r"Linguagem do dominio:\s*(.+)", str(backlog or ""), re.IGNORECASE)
+        if not match:
+            return []
+        return [item.strip() for item in match.group(1).split(",") if item.strip()]
+
     def process(self, idea, backlog):
         prompt = self._build_main_prompt(idea, backlog)
-        max_retries = max(1, int(os.getenv("REQUIREMENTS_MAX_RETRIES", "1")))
+        max_retries = max(1, int(os.getenv("REQUIREMENTS_MAX_RETRIES", "2")))
         base_num_predict = int(os.getenv("REQUIREMENTS_LLM_NUM_PREDICT", "1800"))
         last_reason = "sem detalhes"
 
@@ -98,6 +125,9 @@ class RequirementsAnalyst:
         )
 
     def _build_main_prompt(self, idea, backlog):
+        story_type = self._classify_story_type(idea)
+        domain_vocabulary = self._extract_domain_vocabulary(backlog)
+        domain_vocabulary_text = ", ".join(domain_vocabulary) if domain_vocabulary else "nao informado"
         return f"""
 Voce e um Analista de Requisitos Senior especializado em transformar User Stories em requisitos funcionais claros, completos e sem ambiguidades.
 
@@ -126,6 +156,12 @@ User Story:
 Contexto curto do backlog/projeto (apenas referencia, NAO expandir escopo):
 {backlog}
 
+Tipo estrutural da story:
+{story_type}
+
+Vocabulário central do dominio:
+{domain_vocabulary_text}
+
 ---
 
 TAREFA
@@ -146,6 +182,28 @@ COMO LIDAR COM INFORMACAO FALTANTE:
 - Evite frases como "deve enviar 24h antes", "deve conter link", "deve ocorrer uma vez por dia" sem evidencia explicita
 - Evite frases como "paciente escolhe o canal", "recepcionista e notificado", "sistema atualiza preferencia" ou "novo lembrete e gerado" sem evidencia explicita
 - Se a historia disser apenas "por SMS ou e-mail", escreva "via SMS ou e-mail" ou "pelos canais previstos", sem introduzir configuracao, selecao ou preferencia.
+- Para campos centrais da feature (por exemplo nome, contato, tipo, data, identificador, responsavel, visitante, autorizacao), NAO deixe a definicao principal como "Ponto a validar".
+- Se um campo central existir na historia, voce deve especificar pelo menos formato base, obrigatoriedade e regra conservadora minima implementavel.
+- Use "Ponto a validar" apenas para detalhes secundarios, nunca para o significado do campo principal da feature.
+- Para campos de contato, prefira contrato fechado e conservador, por exemplo: "e-mail ou telefone", com formato e obrigatoriedade explicitos.
+- Para campos de tipo, categoria ou suporte, prefira lista predefinida, enum ou conjunto controlado de valores. Evite "texto livre" para o campo principal.
+- So use "texto livre" para campo central quando a propria historia exigir claramente descricao aberta.
+- A clausula de beneficio da historia ("para ...") explica objetivo de negocio e contexto, mas NAO cria um segundo fluxo principal por si so.
+- Nao crie RF separado para efeito posterior, vinculo, painel, consulta ou operacao derivada quando a acao principal da historia for cadastro, criacao, registro, aprovacao ou atualizacao.
+- Quando a historia tiver uma unica acao central, mantenha um unico RF principal; efeitos posteriores devem aparecer em processamento, saidas, regras ou criterios de aceite, nao como nova funcionalidade.
+- Para historias de cadastro/criacao/registro com uma unica acao central, gere EXATAMENTE 1 RF principal, a menos que a historia traga explicitamente uma segunda acao de usuario independente.
+- Preserve rigorosamente o vocabulario do dominio informado. Nao troque "visita" por "evento", "chamado", "solicitacao" ou outra entidade de outro contexto.
+- Se a story for do tipo "scope-definition", foque apenas em parametros de escopo. Nao introduza ID sequencial, numero da entidade, status de workflow, aprovacao, protocolo ou ciclo de vida completo, salvo se isso estiver explicitamente na historia.
+- Se a story for do tipo "create" ou "record", um status inicial ou identificador pode aparecer apenas como consequencia direta da criacao, sem expandir para etapas posteriores.
+- Se a story for do tipo "view", nao invente comandos de cadastro, aprovacao, alteracao ou processamento.
+- Se a story for do tipo "approval", nao invente campos de criacao pertencentes a etapas anteriores.
+
+DECISOES PADRAO CONSERVADORAS:
+- Se a historia citar "contato" sem detalhar, feche como "e-mail ou telefone".
+- Se a historia citar "tipo", "categoria" ou "suporte" sem detalhar, feche como lista predefinida curta e controlada.
+- Se a historia citar identificador, considere identificador unico gerado pelo sistema.
+- Se a historia for de cadastro, o efeito posterior da historia deve aparecer em saidas, regras ou criterios de aceite, nao como novo RF.
+- Se estiver em duvida entre omitir secao e usar uma regra conservadora simples, prefira a regra conservadora simples.
 
 SECAO OPCIONAL:
 - Quando houver lacunas reais, inclua ao final uma secao "## Premissas e Pontos a Validar"
@@ -278,14 +336,48 @@ DIRETRIZES FINAIS:
     def _repair_requirements(self, current_text, idea, backlog, reason):
         sections = self._extract_sections(current_text)
         missing_sections = self._extract_missing_sections(reason)
+        normalized_reason = (reason or "").lower()
+        rebuild_full_document = len(missing_sections) >= 3
 
-        if "criterios de aceite" in (reason or "").lower() and "Criterios de Aceite (BDD)" not in missing_sections:
+        if "criterios de aceite" in normalized_reason and "Criterios de Aceite (BDD)" not in missing_sections:
             missing_sections.append("Criterios de Aceite (BDD)")
+        if "campos centrais da feature" in normalized_reason:
+            for section in [
+                "Requisitos Funcionais",
+                "Regras de Negocio",
+                "Validacoes e Dados",
+                "Permissoes e Auditoria",
+            ]:
+                if section not in missing_sections:
+                    missing_sections.append(section)
+        if "campo central de contato precisa de contrato mais fechado" in normalized_reason:
+            for section in ["Requisitos Funcionais", "Validacoes e Dados", "Regras de Negocio"]:
+                if section not in missing_sections:
+                    missing_sections.append(section)
+        if "campo central de tipo precisa de contrato mais fechado" in normalized_reason:
+            for section in ["Requisitos Funcionais", "Validacoes e Dados", "Regras de Negocio"]:
+                if section not in missing_sections:
+                    missing_sections.append(section)
+        if "escopo expandido com funcionalidade derivada" in normalized_reason:
+            for section in ["Requisitos Funcionais", "Fluxo Principal", "Regras de Negocio", "Criterios de Aceite (BDD)"]:
+                if section not in missing_sections:
+                    missing_sections.append(section)
+        if "bleed de dominio" in normalized_reason:
+            for section in ["User Story Refinada", "Requisitos Funcionais", "Fluxo Principal", "Regras de Negocio"]:
+                if section not in missing_sections:
+                    missing_sections.append(section)
+        if "story de escopo expandiu para workflow" in normalized_reason:
+            for section in ["Requisitos Funcionais", "Fluxo Principal", "Regras de Negocio", "Validacoes e Dados"]:
+                if section not in missing_sections:
+                    missing_sections.append(section)
+        if "regras de negocio insuficientes" in normalized_reason and "Regras de Negocio" not in missing_sections:
+            missing_sections.append("Regras de Negocio")
 
         if not missing_sections:
             return current_text
 
         current_document = self._build_document(sections)
+        repair_scope = "Reescreva o documento inteiro, preservando apenas o escopo da historia." if rebuild_full_document else "Gere APENAS as secoes faltantes ou incompletas listadas abaixo."
         repair_prompt = f"""
 Voce vai reparar um refinamento de requisitos incompleto.
 
@@ -302,10 +394,18 @@ Motivo do reparo:
 {reason or "Documento incompleto."}
 
 Tarefa:
-- Gere APENAS as secoes faltantes ou incompletas listadas abaixo.
-- Nao repita secoes que ja estao corretas.
+- {repair_scope}
+- Se reescrever o documento inteiro, mantenha EXATAMENTE a estrutura obrigatoria do refinamento.
+- Se nao reescrever o documento inteiro, nao repita secoes que ja estao corretas.
 - Nao invente funcionalidades, SLA, links, janelas de tempo, preferencia de canal ou comportamento extra sem base textual.
 - Se faltar informacao, use linguagem neutra ou registre como ponto a validar.
+- Campos centrais da feature NAO podem permanecer como "Ponto a validar". Defina formato base, obrigatoriedade e regra minima implementavel para esses campos.
+- Para contato central, feche o contrato com formato conservador como e-mail, telefone ou ambos. Nao deixe como texto livre.
+- Para tipo, categoria ou suporte central, feche o contrato com lista controlada, enum ou conjunto predefinido. Nao deixe como texto livre.
+- Nao transforme a clausula "para ..." em novo RF. Se a historia descreve uma unica acao central, mantenha um unico RF principal e mova efeitos derivados para processamento, saidas, regras ou BDD.
+- Se a historia for de cadastro/criacao/registro com uma unica acao central, gere EXATAMENTE 1 RF principal.
+- Preserve o vocabulario do dominio do backlog. Se a historia for de visitas, nao use "evento" ou linguagem de outro dominio.
+- Se a historia for de escopo/configuracao, remova qualquer expansao para workflow, status, aprovacao, protocolo ou ID, salvo se a propria historia disser isso explicitamente.
 - Em "Criterios de Aceite (BDD)", use obrigatoriamente DADO, QUANDO e ENTAO.
 
 Secoes para reparar:
@@ -316,7 +416,7 @@ Secoes para reparar:
             repair_prompt,
             options_override={
                 "temperature": 0.1,
-                "num_predict": int(os.getenv("REQUIREMENTS_REPAIR_NUM_PREDICT", "900")),
+                "num_predict": int(os.getenv("REQUIREMENTS_REPAIR_NUM_PREDICT", "1200")),
             },
             use_cache=False,
         )

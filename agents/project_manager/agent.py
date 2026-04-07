@@ -91,6 +91,18 @@ class ProjectManager:
         r"\bpredit",
         r"\bbenchmark",
     ]
+    TECHNICAL_STORY_PATTERNS = [
+        r"\bentidade\b",
+        r"\bnumero sequencial\b",
+        r"\bidentificador unico\b",
+        r"\bchave primaria\b",
+        r"\btabela\b",
+        r"\bapi\b",
+        r"\bendpoint\b",
+        r"\bschema\b",
+        r"\bmodelo de dados\b",
+        r"\bcrud\b",
+    ]
     FOUNDATION_FRONTLOAD_RULES = [
         ("criar", r"\b(criar|cadastrar|registrar|abrir)\b"),
         ("configurar", r"\b(configurar|definir|planejar|organizar|montar)\b"),
@@ -254,6 +266,46 @@ class ProjectManager:
     def _article_for_summary(self, summary_label):
         return "o"
 
+    def _infer_domain_guardrails(self, base_context):
+        inferred = self._infer_core_pack_terms(base_context)
+        _, normalized = self._normalize_text(base_context)
+        entity_label = inferred["entity_label"]
+        finance_explicit = bool(re.search(r"\b(orcamento|custo|verba|despesa|financeir|refeic|estacionamento)\b", normalized))
+        forbidden = []
+
+        if entity_label == "visita":
+            forbidden.extend(
+                [
+                    r"\bevento\b",
+                    r"\bbuffet\b",
+                    r"\bauditorio\b",
+                    r"\bpalestr",
+                    r"\bconvidad",
+                    r"\bcredenciamento\b",
+                ]
+            )
+            if not finance_explicit:
+                forbidden.extend(
+                    [
+                        r"\borcamento\b",
+                        r"\bcusto\b",
+                        r"\bverba\b",
+                        r"\bdespesa\b",
+                        r"\brefeic",
+                        r"\bestacionamento\b",
+                    ]
+                )
+        elif entity_label == "chamado":
+            forbidden.extend([r"\bevento\b", r"\bvisit", r"\bfornecedor de buffet\b"])
+        elif entity_label == "evento":
+            forbidden.extend([r"\bvisitante corporativo\b", r"\bportaria\b"])
+
+        return {
+            "entity_label": entity_label,
+            "finance_explicit": finance_explicit,
+            "forbidden_patterns": forbidden,
+        }
+
     def _is_unusable_llm_response(self, result):
         if not result or is_error_text_response(result):
             return True
@@ -402,6 +454,49 @@ class ProjectManager:
         _, normalized = self._normalize_text(title)
         return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in self.ADVANCED_STORY_PATTERNS)
 
+    def _is_technical_story(self, story_block):
+        title = self._story_seed_title(story_block)
+        _, normalized = self._normalize_text(title)
+        return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in self.TECHNICAL_STORY_PATTERNS)
+
+    def _is_domain_drift_story(self, base_context, story_block):
+        title = self._story_seed_title(story_block)
+        _, normalized = self._normalize_text(title)
+        guardrails = self._infer_domain_guardrails(base_context)
+        return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in guardrails["forbidden_patterns"])
+
+    def _story_intent_bucket(self, base_context, story_block):
+        title = self._story_seed_title(story_block)
+        _, normalized = self._normalize_text(title)
+        entity_label = self._infer_core_pack_terms(base_context)["entity_label"]
+        entity_pattern = re.escape(entity_label)
+
+        if re.search(r"\b(cadastrar|registrar|listar|consultar)\b", normalized) and re.search(r"\b(visitante|convidad|participante|lista inicial)\b", normalized):
+            return "core:participant"
+        if re.search(r"\b(cadastrar|registrar|vincular|definir)\b", normalized) and re.search(r"\b(responsavel|fornecedor|recurso|anfitri|unidade)\b", normalized):
+            return "core:resource"
+        if re.search(r"\b(registrar|definir|informar|classificar)\b", normalized) and re.search(r"\b(autoriz|classific|orcamento|dados iniciais|base operacional)\b", normalized):
+            return "core:baseline"
+        if re.search(r"\b(definir|configurar|planejar|montar|organizar)\b", normalized) and re.search(r"\b(escopo|parametr|planejamento|contexto|volume|unidade)\b", normalized):
+            return "core:define_scope"
+        if re.search(r"\b(aprovar|reprovar|recusar|validar|autorizar|revisar)\b", normalized):
+            return "core:approval"
+        if re.search(r"\b(visualizar|consultar|listar)\b", normalized) and re.search(r"\b(resumo|painel|status|dia)\b", normalized):
+            return "core:summary"
+        if re.search(r"\b(atualizar|alterar|acompanhar|monitorar|marcar)\b", normalized) and re.search(r"\b(status|andamento|rascunho|aprovacao|finalizada|atendimento)\b", normalized):
+            return "core:status"
+        if (
+            re.search(r"\b(criar|abrir)\b", normalized)
+            and re.search(rf"\b{entity_pattern}\b", normalized)
+            and not re.search(r"\b(visitante|convidad|participante|responsavel|fornecedor|recurso|anfitri|autoriz|classific|status|resumo)\b", normalized)
+        ):
+            return "core:create_entity"
+        if re.search(r"\b(check-?in|entrada)\b", normalized):
+            return "ops:checkin"
+        if re.search(r"\b(check-?out|saida)\b", normalized):
+            return "ops:checkout"
+        return ""
+
     def _story_priority_score(self, story_block):
         title = self._story_seed_title(story_block)
         _, normalized = self._normalize_text(title)
@@ -427,21 +522,21 @@ class ProjectManager:
         title = self._story_seed_title(story_block)
         _, normalized = self._normalize_text(title)
 
-        if re.search(r"\b(criar|cadastrar|registrar|abrir)\b", normalized) and re.search(r"\bevento\b", normalized):
+        if re.search(r"\b(criar|cadastrar|registrar|abrir)\b", normalized) and re.search(r"\b(evento|visita|chamado|curso|contrato|reembolso)\b", normalized):
             return 1
-        if re.search(r"\b(definir|configurar|planejar|montar|organizar)\b", normalized) and re.search(r"\b(escopo|evento|workspace|conta|categoria|cronograma)\b", normalized):
+        if re.search(r"\b(definir|configurar|planejar|montar|organizar)\b", normalized) and re.search(r"\b(escopo|evento|visita|chamado|workspace|conta|categoria|cronograma|unidade)\b", normalized):
             return 2
-        if re.search(r"\b(cadastrar|registrar|definir|inserir)\b", normalized) and re.search(r"\b(orcamento|custo|verba|despesa)\b", normalized):
+        if re.search(r"\b(cadastrar|registrar|definir|inserir)\b", normalized) and re.search(r"\b(orcamento|custo|verba|despesa|autorizacao|classificacao)\b", normalized):
             return 3
-        if re.search(r"\b(cadastrar|registrar|vincular|gerenciar)\b", normalized) and re.search(r"\bfornecedor|parceiro|prestador\b", normalized):
+        if re.search(r"\b(cadastrar|registrar|vincular|gerenciar|definir)\b", normalized) and re.search(r"\b(fornecedor|parceiro|prestador|responsavel|anfitri|unidade)\b", normalized):
             return 4
-        if re.search(r"\b(cadastrar|registrar|confirmar|gerar)\b", normalized) and re.search(r"\b(convidad|participante|credencial|check-?in)\b", normalized):
+        if re.search(r"\b(cadastrar|registrar|confirmar|gerar)\b", normalized) and re.search(r"\b(convidad|participante|credencial|check-?in|visitante)\b", normalized):
             return 5
         if re.search(r"\b(aprovar|validar|autorizar|revisar)\b", normalized):
             return 6
-        if re.search(r"\b(visualizar|consultar|listar)\b", normalized) and re.search(r"\b(resumo|painel|evento|status|orcamento)\b", normalized):
+        if re.search(r"\b(visualizar|consultar|listar)\b", normalized) and re.search(r"\b(resumo|painel|evento|visita|status|orcamento)\b", normalized):
             return 7
-        if re.search(r"\b(acompanhar|monitorar|atualizar|gerenciar|alterar)\b", normalized) and re.search(r"\b(status|andamento|evento|tarefa|execucao)\b", normalized):
+        if re.search(r"\b(acompanhar|monitorar|atualizar|gerenciar|alterar|marcar)\b", normalized) and re.search(r"\b(status|andamento|evento|visita|tarefa|execucao|atendimento)\b", normalized):
             return 8
         if self._is_advanced_story(story_block):
             return 20
@@ -516,20 +611,31 @@ class ProjectManager:
 
         return coverage
 
-    def _dedupe_and_polish_stories(self, story_blocks):
+    def _dedupe_and_polish_stories(self, story_blocks, base_context=None):
         cleaned = []
         seen = set()
+        seen_buckets = set()
 
         for block in story_blocks:
             normalized_block = self._normalize_persona_in_story(block)
             if self._looks_truncated_story(normalized_block):
+                continue
+            if self._is_technical_story(normalized_block):
+                continue
+            if base_context and self._is_domain_drift_story(base_context, normalized_block):
                 continue
 
             similarity_key = self._story_similarity_key(normalized_block)
             if not similarity_key or similarity_key in seen:
                 continue
 
+            bucket = self._story_intent_bucket(base_context, normalized_block) if base_context else ""
+            if bucket and bucket.startswith("core:") and bucket in seen_buckets:
+                continue
+
             seen.add(similarity_key)
+            if bucket:
+                seen_buckets.add(bucket)
             cleaned.append(normalized_block.strip())
 
         return cleaned
@@ -543,6 +649,10 @@ class ProjectManager:
         invalid_blocks = [block for block in story_blocks if not self._story_has_strong_structure(block)]
         if invalid_blocks:
             raise RuntimeError("Curadoria final deixou historia com estrutura incompleta.")
+
+        technical_blocks = [block for block in story_blocks if self._is_technical_story(block)]
+        if technical_blocks:
+            raise RuntimeError("Curadoria final ainda deixou historia tecnica demais para backlog de usuario.")
 
         keys = [self._story_similarity_key(block) for block in story_blocks]
         if len(keys) != len(set(keys)):
@@ -813,7 +923,7 @@ REGRAS
         extra_section = self._extract_section(result, "Historias de Usuario")
         extra_blocks = self._extract_story_lines(extra_section)
         if extra_blocks:
-            consolidated = self._dedupe_and_polish_stories(consolidated + extra_blocks)
+            consolidated = self._dedupe_and_polish_stories(consolidated + extra_blocks, base_context)
             consolidated = self._ensure_minimum_story_count(
                 base_context,
                 consolidated,
@@ -938,12 +1048,12 @@ REGRAS
         return stories
 
     def _ensure_core_pack_frontload(self, base_context, story_blocks, *, min_stories, max_stories):
-        consolidated = self._dedupe_and_polish_stories(story_blocks)
+        consolidated = self._dedupe_and_polish_stories(story_blocks, base_context)
         consolidated = self._prioritize_story_blocks(consolidated)
 
         fixed_core_pack = self._generate_fixed_core_pack_stories(base_context)
         if fixed_core_pack and len(fixed_core_pack) >= 6:
-            head_blocks = self._dedupe_and_polish_stories(fixed_core_pack)[:8]
+            head_blocks = self._dedupe_and_polish_stories(fixed_core_pack, base_context)[:8]
             tail_candidates = []
             core_keys = {self._story_similarity_key(block) for block in head_blocks}
             for block in consolidated:
@@ -953,7 +1063,7 @@ REGRAS
                 tail_candidates.append(block)
             tail_non_advanced = [block for block in tail_candidates if not self._is_advanced_story(block)]
             tail_advanced = [block for block in tail_candidates if self._is_advanced_story(block)]
-            consolidated = self._dedupe_and_polish_stories(head_blocks + tail_non_advanced + tail_advanced)
+            consolidated = self._dedupe_and_polish_stories(head_blocks + tail_non_advanced + tail_advanced, base_context)
             consolidated = self._ensure_minimum_story_count(
                 base_context,
                 consolidated,
@@ -968,6 +1078,15 @@ REGRAS
                 if key in head_keys:
                     continue
                 remaining.append(block)
+            remaining = sorted(
+                remaining,
+                key=lambda block: (
+                    self._is_advanced_story(block),
+                    self._story_stage_rank(block),
+                    -self._story_priority_score(block),
+                    self._story_seed_title(block),
+                ),
+            )
             consolidated = (head_blocks + remaining)[:max_stories]
             return consolidated[:max_stories]
         else:
@@ -976,7 +1095,7 @@ REGRAS
             if missing_requirements:
                 core_pack_blocks = self._generate_core_pack_stories(base_context, consolidated, missing_requirements)
                 if core_pack_blocks:
-                    consolidated = self._dedupe_and_polish_stories(core_pack_blocks + consolidated)
+                    consolidated = self._dedupe_and_polish_stories(core_pack_blocks + consolidated, base_context)
                     consolidated = self._prioritize_story_blocks(consolidated)
 
         front = [block for block in consolidated if not self._is_advanced_story(block)]
@@ -992,14 +1111,14 @@ REGRAS
         return consolidated[:max_stories]
 
     def _rebalance_story_batch_for_mvp(self, base_context, story_blocks, *, min_stories, max_stories):
-        consolidated = self._dedupe_and_polish_stories(story_blocks)
+        consolidated = self._dedupe_and_polish_stories(story_blocks, base_context)
         consolidated = self._prioritize_story_blocks(consolidated)
 
         frontload_coverage = self._frontload_foundation_coverage(consolidated)
         if len(frontload_coverage) < 5:
             frontload_blocks = self._generate_mvp_frontload_stories(base_context, consolidated)
             if frontload_blocks:
-                consolidated = self._dedupe_and_polish_stories(frontload_blocks + consolidated)
+                consolidated = self._dedupe_and_polish_stories(frontload_blocks + consolidated, base_context)
                 consolidated = self._prioritize_story_blocks(consolidated)
 
         # If the top of the backlog is still too advanced, push advanced items down.
@@ -1055,7 +1174,7 @@ REGRAS
 
         consolidated_blocks = self._dedupe_and_polish_stories(
             list(story_blocks) + self._extract_story_lines(self._extract_section(full_backlog, "Historias de Usuario"))
-        )
+        , base_context)
 
         if not repaired_overview:
             overview_prompt = f"""
@@ -1131,7 +1250,7 @@ Gere APENAS esta secao em Markdown:
                 needed_count=min_stories - len(consolidated_blocks),
             )
             if fallback_blocks:
-                consolidated_blocks = self._dedupe_and_polish_stories(consolidated_blocks + fallback_blocks)
+                consolidated_blocks = self._dedupe_and_polish_stories(consolidated_blocks + fallback_blocks, base_context)
 
         if len(consolidated_blocks) >= min_stories:
             curated_section = self._curate_story_batch(
@@ -1140,7 +1259,7 @@ Gere APENAS esta secao em Markdown:
                 min_stories=min_stories,
                 max_stories=max_stories,
             )
-            consolidated_blocks = self._dedupe_and_polish_stories(self._extract_story_lines(curated_section))
+            consolidated_blocks = self._dedupe_and_polish_stories(self._extract_story_lines(curated_section), base_context)
 
         consolidated_blocks = self._ensure_minimum_story_count(
             base_context,
@@ -1200,12 +1319,14 @@ REGRAS DE CURADORIA
 - Mantenha entre {min_stories} e {max_stories} historias.
 - Remova historias duplicadas ou muito parecidas.
 - Prefira a versao mais forte e mais especifica quando houver sobreposicao.
+- Remova historias tecnicas ou internas demais, como modelagem de entidade, numero sequencial, tabela, API ou schema.
 - Padronize personas em torno de: colaborador, atendente, gestor e administrador.
 - Nao deixe historias truncadas.
 - Nao deixe nenhuma historia terminar com frase cortada ou titulo generico.
 - Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
 - Garanta que as primeiras 8 historias representem o MVP e cubram majoritariamente criacao, configuracao, consulta, aprovacao e acompanhamento do fluxo principal.
 - Empurre para o fim ou remova historias de integracoes, exportacoes, analytics avancado, IA, ESG, marketplace, webhooks e automacoes sofisticadas quando ainda faltarem historias basicas.
+- Nao introduza financeiro, orcamento ou custos quando o briefing nao citar essa dimensao explicitamente.
 - Nao invente escopo fora do briefing.
 - Responda APENAS com:
   - ## Historias de Usuario
@@ -1459,7 +1580,7 @@ REGRAS
             if not complement_blocks:
                 break
 
-            updated = self._dedupe_and_polish_stories(consolidated + complement_blocks)
+            updated = self._dedupe_and_polish_stories(consolidated + complement_blocks, base_context)
             if len(updated) <= len(consolidated):
                 break
 
@@ -1483,7 +1604,7 @@ REGRAS
             if not complement_blocks:
                 break
 
-            updated = self._dedupe_and_polish_stories(consolidated + complement_blocks)
+            updated = self._dedupe_and_polish_stories(consolidated + complement_blocks, base_context)
             if len(updated) <= len(consolidated):
                 break
 
@@ -1538,7 +1659,7 @@ REGRAS
                 ):
                     seed_titles.append(title)
             if batch:
-                consolidated = self._dedupe_and_polish_stories(consolidated + batch)
+                consolidated = self._dedupe_and_polish_stories(consolidated + batch, base_context)
             if len(consolidated) >= min_stories:
                 break
 
@@ -1572,7 +1693,7 @@ REGRAS
                 batch_titles = remaining_titles[start:start + 4]
                 expanded = self._expand_story_seeds(base_context, batch_titles)
                 if expanded:
-                    consolidated = self._dedupe_and_polish_stories(consolidated + expanded)
+                    consolidated = self._dedupe_and_polish_stories(consolidated + expanded, base_context)
 
             consolidated = self._ensure_minimum_story_count(
                 base_context,
@@ -1614,7 +1735,7 @@ REGRAS
                     batch_titles = new_seed_titles[start:start + 4]
                     expanded = self._expand_story_seeds(base_context, batch_titles)
                     if expanded:
-                        consolidated = self._dedupe_and_polish_stories(consolidated + expanded)
+                        consolidated = self._dedupe_and_polish_stories(consolidated + expanded, base_context)
 
                 consolidated = self._ensure_minimum_story_count(
                     base_context,
@@ -1698,7 +1819,8 @@ REGRAS GERAIS
                         max_stories=max_stories,
                     )
                     combined_story_blocks = self._dedupe_and_polish_stories(
-                        self._extract_story_lines(curated_section)
+                        self._extract_story_lines(curated_section),
+                        execution_context,
                     )
 
                 combined_story_blocks = self._ensure_minimum_story_count(
@@ -1734,7 +1856,8 @@ REGRAS GERAIS
                     )
                     if fallback_blocks:
                         combined_story_blocks = self._dedupe_and_polish_stories(
-                            combined_story_blocks + fallback_blocks
+                            combined_story_blocks + fallback_blocks,
+                            execution_context,
                         )
 
                 combined_story_blocks = self._ensure_minimum_story_count(

@@ -1684,11 +1684,39 @@ function extractStructuredStoriesFromBacklog(sectionContent) {
 function extractMarkdownSection(content, sectionTitle) {
   const text = String(content || '');
   if (!text.trim()) return '';
+  const normalizeHeading = (value) =>
+    String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[ \t]+/g, ' ')
+      .trim();
 
-  const escaped = sectionTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`##+\\s+${escaped}\\s*([\\s\\S]*?)(?=\\n##+\\s+|$)`, 'i');
-  const match = text.match(regex);
-  return match ? String(match[1] || '').trim() : '';
+  const targetHeading = normalizeHeading(sectionTitle);
+  const lines = text.split('\n');
+  let capture = false;
+  const captured = [];
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').replace(/\r/g, '');
+    const headingMatch = line.match(/^\s*##\s+(.+?)\s*$/);
+    if (headingMatch) {
+      const currentHeading = normalizeHeading(headingMatch[1]);
+      if (capture) {
+        break;
+      }
+      if (currentHeading === targetHeading) {
+        capture = true;
+      }
+      continue;
+    }
+
+    if (capture) {
+      captured.push(line);
+    }
+  }
+
+  return captured.join('\n').trim();
 }
 
 function extractBulletLines(sectionContent, { onlyStories = false } = {}) {
@@ -1725,7 +1753,162 @@ function extractBacklogItems(backlogMarkdown) {
 function normalizeBacklogContractList(items = []) {
   return items
     .map((item) => String(item || '').replace(/^[-*]\s+/, '').trim())
+    .filter(Boolean)
+    .filter((item) => !/^[-–—]{2,}$/.test(item))
+    .filter((item) => !/^fim_do_/i.test(item));
+}
+
+function cleanMarkdownListLine(line) {
+  return String(line || '')
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^[-*]\s+/, '')
+    .replace(/^\d+[a-z]?\.\s+/, '')
+    .replace(/^\*\*([^*]+)\*\*:\s*/, '$1: ')
+    .replace(/^\*\*([^*]+)\*\*$/, '$1')
+    .replace(/\*\*/g, '')
+    .trim();
+}
+
+function extractSectionLines(sectionContent, options = {}) {
+  if (!sectionContent) return [];
+
+  const {
+    stripNumbering = false,
+    keepScenarioLabels = true,
+  } = options;
+
+  return normalizeBacklogContractList(
+    String(sectionContent)
+      .split('\n')
+      .map((line) => {
+        let cleaned = cleanMarkdownListLine(line);
+        if (!keepScenarioLabels) {
+          cleaned = cleaned.replace(/^(cenario\s+\d+:\s*)/i, '');
+        }
+        if (stripNumbering) {
+          cleaned = cleaned.replace(/^\d+[a-z]?\.\s*/, '');
+          cleaned = cleaned.replace(/^\d+[a-z]?\)\s*/, '');
+        }
+        return cleaned.trim();
+      })
+      .filter(Boolean)
+  );
+}
+
+function extractRequirementFlowLines(sectionContent) {
+  return extractSectionLines(sectionContent, { stripNumbering: true }).filter(
+    (line) => !/^fluxo[s]?\s+/i.test(line)
+  );
+}
+
+function normalizeSectionComparableText(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function extractPlainSectionText(sectionContent) {
+  return normalizeBacklogContractList(
+    String(sectionContent || '')
+      .replace(/\r/g, '')
+      .split('\n')
+      .map((line) => cleanMarkdownListLine(line).trim())
+      .filter(Boolean)
+  ).join(' ');
+}
+
+function extractAcceptanceCriteria(sectionContent) {
+  const normalizedSection = String(sectionContent || '')
+    .replace(/\r/g, '')
+    .replace(/\b(Cen[aá]rio\s+\d+:)/gi, '\n$1')
+    .replace(/\b(DADO|QUANDO|ENTAO|ENTÃO|E)\b/g, '\n$1');
+
+  const lines = extractSectionLines(normalizedSection, { stripNumbering: false });
+  const scenarios = [];
+  let current = [];
+
+  const flushCurrent = () => {
+    if (!current.length) return;
+    scenarios.push(current.join(' '));
+    current = [];
+  };
+
+  for (const line of lines) {
+    if (/^cenario\s+\d+/i.test(line)) {
+      flushCurrent();
+      current = [line];
+      continue;
+    }
+    if (/^(dado|quando|entao|e)\b/i.test(line)) {
+      if (!current.length) {
+        current = [line];
+      } else {
+        current.push(line);
+      }
+      continue;
+    }
+    if (!current.length) {
+      current = [line];
+    } else {
+      current.push(line);
+    }
+  }
+
+  flushCurrent();
+  return normalizeBacklogContractList(scenarios);
+}
+
+function extractAcceptanceCriteriaRobust(sectionContent) {
+  const lines = String(sectionContent || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => cleanMarkdownListLine(line).trim())
     .filter(Boolean);
+  const scenarios = [];
+  let current = [];
+
+  const flushCurrent = () => {
+    if (!current.length) return;
+    const cleanedScenario = current
+      .join(' ')
+      .replace(/\s+(?:---+|___+)\s*$/g, '')
+      .replace(/\s+FIM_DO_[A-Z_]+\s*$/i, '')
+      .trim();
+    if (cleanedScenario) {
+      scenarios.push(cleanedScenario);
+    }
+    current = [];
+  };
+
+  for (const line of lines) {
+    const normalizedLine = normalizeSectionComparableText(line);
+
+    if (/^cenario\s+\d+/.test(normalizedLine)) {
+      flushCurrent();
+      current = [line];
+      continue;
+    }
+
+    if (/^(dado|quando|entao|e)\b/.test(normalizedLine)) {
+      if (!current.length) {
+        current = [line];
+      } else {
+        current.push(line);
+      }
+      continue;
+    }
+
+    if (!current.length) {
+      current = [line];
+    } else {
+      current.push(line);
+    }
+  }
+
+  flushCurrent();
+  return normalizeBacklogContractList(scenarios);
 }
 
 function parseReleaseSlices(sectionContent) {
@@ -1826,34 +2009,17 @@ async function persistBacklogContractArtifact(projectUuid, projectRecord, backlo
 function buildRequirementSpec(requirementsMarkdown, context = {}) {
   const getSection = (title) => extractMarkdownSection(requirementsMarkdown, title);
 
-  const userStory = getSection('User Story Refinada');
-  const functionalRequirements = normalizeBacklogContractList(
-    String(getSection('Requisitos Funcionais') || '')
-      .split('\n')
-      .map((line) => line.replace(/^###\s+RF-\d+\s*$/i, '').trim())
-  );
-  const mainFlow = normalizeBacklogContractList(
-    String(getSection('Fluxo Principal') || '')
-      .split('\n')
-      .map((line) => line.replace(/^\d+\.\s*/, '').trim())
-  );
-  const alternativeFlows = normalizeBacklogContractList(extractBulletLines(getSection('Fluxos Alternativos')));
-  const exceptionFlows = normalizeBacklogContractList(extractBulletLines(getSection('Fluxos de Excecao')));
-  const businessRules = normalizeBacklogContractList(
-    String(getSection('Regras de Negocio') || '')
-      .split('\n')
-      .map((line) => line.replace(/^\d+\.\s*/, '').trim())
-  );
-  const uiStates = normalizeBacklogContractList(extractBulletLines(getSection('Estados da Interface e Feedback')));
-  const validationsAndData = normalizeBacklogContractList(extractBulletLines(getSection('Validacoes e Dados')));
-  const permissionsAndAudit = normalizeBacklogContractList(extractBulletLines(getSection('Permissoes e Auditoria')));
-  const acceptanceCriteria = normalizeBacklogContractList(
-    String(getSection('Criterios de Aceite (BDD)') || '')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-  );
-  const assumptions = normalizeBacklogContractList(extractBulletLines(getSection('Premissas e Pontos a Validar')));
+  const userStory = extractPlainSectionText(getSection('User Story Refinada'));
+  const functionalRequirements = extractSectionLines(getSection('Requisitos Funcionais'));
+  const mainFlow = extractRequirementFlowLines(getSection('Fluxo Principal'));
+  const alternativeFlows = extractRequirementFlowLines(getSection('Fluxos Alternativos'));
+  const exceptionFlows = extractRequirementFlowLines(getSection('Fluxos de Excecao'));
+  const businessRules = extractSectionLines(getSection('Regras de Negocio'), { stripNumbering: true });
+  const uiStates = extractSectionLines(getSection('Estados da Interface e Feedback'));
+  const validationsAndData = extractSectionLines(getSection('Validacoes e Dados'));
+  const permissionsAndAudit = extractSectionLines(getSection('Permissoes e Auditoria'));
+  const acceptanceCriteria = extractAcceptanceCriteriaRobust(getSection('Criterios de Aceite (BDD)'));
+  const assumptions = extractSectionLines(getSection('Premissas e Pontos a Validar'));
 
   return {
     version: 1,
