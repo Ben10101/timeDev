@@ -79,7 +79,7 @@ class RequirementsAnalyst:
 
     def process(self, idea, backlog):
         prompt = self._build_main_prompt(idea, backlog)
-        max_retries = max(1, int(os.getenv("REQUIREMENTS_MAX_RETRIES", "2")))
+        max_retries = max(2, int(os.getenv("REQUIREMENTS_MAX_RETRIES", "2")))
         base_num_predict = int(os.getenv("REQUIREMENTS_LLM_NUM_PREDICT", "1800"))
         last_reason = "sem detalhes"
 
