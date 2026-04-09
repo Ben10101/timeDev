@@ -19,7 +19,6 @@ import {
 import AppShell from '../components/AppShell';
 import {
   bootstrapGeneratedApp,
-  bootstrapWorkspace,
   createProject,
   createTask,
   approveProjectArchitecture,
@@ -34,6 +33,7 @@ import {
 } from '../services/api';
 import { exportProjectDocumentationPdf } from '../utils/projectDocumentationExport';
 import { getAgentLabel } from '../utils/agentLabels';
+import { useAuth } from '../contexts/AuthContext';
 
 const BOARD_COLUMNS = [
   { key: 'backlog', label: 'Backlog', icon: Layout },
@@ -45,7 +45,6 @@ const BOARD_COLUMNS = [
   { key: 'done', label: 'Concluído', icon: CheckCircle2 },
 ];
 
-const EMPTY_BOOTSTRAP = { userName: '', email: '', workspaceName: '' };
 const EMPTY_PROJECT = { name: '', description: '', vision: '' };
 const EMPTY_TASK = {
   title: '',
@@ -56,11 +55,6 @@ const EMPTY_TASK = {
   assigneeType: 'agent',
   assigneeAgentName: 'requirements_analyst',
 };
-
-function getStoredBootstrap() {
-  const raw = localStorage.getItem('factory_bootstrap_context');
-  return raw ?JSON.parse(raw) : null;
-}
 
 function formatElapsed(seconds) {
   if (!seconds) return '0m';
@@ -74,10 +68,6 @@ function formatShortDate(value) {
   return new Date(value).toLocaleDateString('pt-BR');
 }
 
-function getRoadmapPhases(project) {
-  return project?.intakeConfig?.roadmap?.phases || [];
-}
-
 function getRiskRegister(project) {
   return project?.intakeConfig?.riskRegister || null;
 }
@@ -86,16 +76,72 @@ function getProjectTimeline(project) {
   return project?.intakeConfig?.timeline || null;
 }
 
-function getRoadmapPhaseProgress(index, totalDone, totalTasks) {
-  if (!totalTasks) return index === 0 ?15 : 0;
-
-  if (totalDone === 0) {
-    return index === 0 ?10 : 0;
+function getProjectBoardNextStep({
+  activeProject,
+  hasAgentGeneratedStories,
+  architectureStatus,
+  implementationUnlocked,
+  doneCount,
+}) {
+  if (!activeProject) {
+    return {
+      title: 'Escolha um projeto para operar',
+      message: 'Selecione um projeto no catálogo para abrir o board, acompanhar o backlog e destravar a próxima etapa.',
+      primaryAction: 'select',
+      primaryLabel: 'Selecionar projeto',
+      tone: 'slate',
+    };
   }
 
-  const base = Math.round((totalDone / totalTasks) * 100);
-  const offsets = [0, -20, -40];
-  return Math.max(0, Math.min(100, base + (offsets[index] || 0)));
+  if (!hasAgentGeneratedStories) {
+    return {
+      title: 'O briefing ainda precisa virar stories',
+      message: 'O projeto já tem contexto, mas ainda não entrou no fluxo operacional. Gere as user stories para iniciar o board.',
+      primaryAction: 'stories',
+      primaryLabel: 'Criar user stories',
+      tone: 'blue',
+    };
+  }
+
+  if (architectureStatus?.canGenerateArchitecture && (!architectureStatus?.hasArchitecture || architectureStatus?.architectureNeedsRefresh)) {
+    return {
+      title: architectureStatus?.architectureNeedsRefresh ? 'A arquitetura precisa ser atualizada' : 'A arquitetura já pode ser gerada',
+      message: architectureStatus?.architectureNeedsRefresh
+        ? 'Novos refinamentos alteraram o contexto técnico. Regenere a arquitetura antes de seguir para implementação.'
+        : 'As stories refinadas já destravam o desenho técnico do projeto. Gere a arquitetura para liberar o próximo passo.',
+      primaryAction: 'architecture',
+      primaryLabel: 'Gerar arquitetura',
+      tone: 'amber',
+    };
+  }
+
+  if (architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved) {
+    return {
+      title: 'Falta a aprovação da arquitetura',
+      message: 'O desenho técnico já existe, mas ainda precisa de aprovação humana para liberar a implementação com segurança.',
+      primaryAction: 'approve-architecture',
+      primaryLabel: 'Aprovar arquitetura',
+      tone: 'amber',
+    };
+  }
+
+  if (implementationUnlocked && doneCount > 0) {
+    return {
+      title: 'Já existem stories prontas para código',
+      message: 'O board já tem histórias concluídas e o gate técnico está aberto. Agora o foco é integrar as entregas no projeto gerado.',
+      primaryAction: 'studio',
+      primaryLabel: 'Abrir Code Studio',
+      tone: 'emerald',
+    };
+  }
+
+  return {
+    title: 'Continue movendo o fluxo do board',
+    message: 'Refine, valide e conclua as stories mais importantes para aumentar a prontidão técnica do projeto.',
+    primaryAction: 'overview',
+    primaryLabel: 'Abrir visão do projeto',
+    tone: 'slate',
+  };
 }
 
 function hasCurrentArtifact(task, artifactType) {
@@ -204,7 +250,7 @@ function TaskCard({
   const typeLabels = {
     epic: 'Epic',
     story: 'Story',
-    task: 'T?cnica',
+    task: 'Técnica',
   };
   const typeGuidance = {
     epic: 'Épico de planejamento. Abra os detalhes para ver o desdobramento em stories.',
@@ -213,6 +259,13 @@ function TaskCard({
   };
   const blockReason = getLatestStatusHistoryNote(task, 'blocked');
   const taskDescription = task.description || typeGuidance[task.taskType] || 'Sem contexto adicional registrado para esta task.';
+  const primaryTag = isBlocked
+    ?'Bloqueada'
+    : hasTestPlan
+      ?'QA pronto'
+      : hasRequirements
+        ?'Refinada'
+        : 'Briefing';
 
   return (
     <motion.div
@@ -220,23 +273,26 @@ function TaskCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.98 }}
-      className="flex flex-col rounded-xl border border-slate-200 bg-white shadow-sm transition-all hover:border-slate-300 hover:shadow-md"
+      className="flex flex-col rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:border-slate-300 hover:shadow-md"
     >
-      <div className="space-y-4 p-5">
+      <div className="space-y-4 p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className={`dashboard-badge ${priorityColors[task.priority] || priorityColors.medium}`}>
                 {task.priority}
               </span>
-              <span className="dashboard-badge bg-slate-100 text-slate-600">
-                {typeLabels[task.taskType] || task.taskType || 'Task'}
+              <span className={`dashboard-badge ${
+                isBlocked
+                  ?'bg-rose-50 text-rose-700'
+                  : hasTestPlan
+                    ?'bg-emerald-50 text-emerald-700'
+                    : hasRequirements
+                      ?'bg-blue-50 text-[#102a72]'
+                      : 'bg-slate-100 text-slate-600'
+              }`}>
+                {primaryTag}
               </span>
-              {isBlocked && (
-                <span className="dashboard-badge bg-rose-50 text-rose-700">
-                  Bloqueada
-                </span>
-              )}
               <span className="text-[11px] font-semibold text-slate-400">#{task.uuid?.split('-')[0]}</span>
             </div>
             <h3 className="mt-3 text-sm font-semibold leading-6 text-slate-900">{task.title}</h3>
@@ -249,11 +305,11 @@ function TaskCard({
           </button>
         </div>
 
-        <p className="text-sm leading-6 text-slate-500">
+        <p className="line-clamp-3 text-sm leading-6 text-slate-500">
           {taskDescription}
         </p>
 
-        <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600 sm:grid-cols-2">
+        <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
           <p>
             <span className="font-semibold text-slate-500">Responsável:</span> {task.assigneeUser?.name || task.assigneeAgentLabel || getAgentLabel(task.assigneeAgentName, 'Sem responsável')}
           </p>
@@ -271,7 +327,7 @@ function TaskCard({
 
         {processingError && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Falha na ?ltima execu??o</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Falha na última execução</p>
             <p className="mt-1 text-sm font-medium text-rose-700">{processingError.message}</p>
           </div>
         )}
@@ -287,8 +343,8 @@ function TaskCard({
 
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Agente</p>
-            <p className="mt-1 text-sm font-semibold text-slate-800">{task.assigneeAgentLabel || getAgentLabel(task.assigneeAgentName)}</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Tipo</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">{typeLabels[task.taskType] || task.taskType || 'Task'}</p>
           </div>
           <div className="rounded-lg bg-slate-50 px-3 py-2 text-right">
             <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Tempo de ciclo</p>
@@ -297,7 +353,7 @@ function TaskCard({
         </div>
       </div>
 
-      <div className="mt-auto flex items-center gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
+      <div className="mt-auto flex items-center gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4">
         {!isDone ?(
           <>
             {isStory ?(
@@ -308,9 +364,9 @@ function TaskCard({
                   className="dashboard-button-primary flex-1"
                   title={
                     requirementsRunning
-                      ? 'J? existe uma execu??o de requisitos em andamento para esta task.'
+                      ? 'Já existe uma execução de requisitos em andamento para esta task.'
                       : !canRunRequirements
-                        ? 'A etapa de requisitos j? foi conclu?da.'
+                        ? 'A etapa de requisitos já foi concluída.'
                         : undefined
                   }
                 >
@@ -323,9 +379,9 @@ function TaskCard({
                   className="dashboard-button-secondary flex-1"
                   title={
                     qaRunning
-                      ? 'J? existe uma execu??o de QA em andamento para esta task.'
+                      ? 'Já existe uma execução de QA em andamento para esta task.'
                       : !canRunQa && hasTestPlan
-                        ? 'A etapa de QA j? foi conclu?da.'
+                        ? 'A etapa de QA já foi concluída.'
                         : undefined
                   }
                 >
@@ -376,7 +432,7 @@ function TaskCard({
 export default function ProjectsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [bootstrapContext, setBootstrapContext] = useState(getStoredBootstrap());
+  const { user, workspace } = useAuth();
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [architectureStatus, setArchitectureStatus] = useState(null);
@@ -388,55 +444,14 @@ export default function ProjectsPage() {
   const [error, setError] = useState(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [projectSearch, setProjectSearch] = useState('');
-  const [bootstrapForm, setBootstrapForm] = useState(EMPTY_BOOTSTRAP);
   const [projectForm, setProjectForm] = useState(EMPTY_PROJECT);
   const [taskForm, setTaskForm] = useState(EMPTY_TASK);
 
   const activeProject = projects.find((project) => project.uuid === activeProjectUuid) || null;
   const roadmap = activeProject?.intakeConfig?.roadmap || null;
-  const roadmapPhases = getRoadmapPhases(activeProject);
   const riskRegister = getRiskRegister(activeProject);
   const projectTimeline = getProjectTimeline(activeProject);
   const storyTasks = tasks.filter((task) => (task.taskType || 'story') === 'story');
-  const taskLoadByAssignee = useMemo(() => {
-    const loadMap = new Map();
-
-    storyTasks.forEach((task) => {
-      const assignee = task.assigneeUser?.name || task.assigneeAgentName || 'Sem responsável';
-      const current = loadMap.get(assignee) || { assignee, total: 0, overdue: 0, dueSoon: 0 };
-      const dueDate = task.dueDate ?new Date(task.dueDate) : null;
-      const isDone = task.status === 'done';
-      const today = new Date();
-      const sevenDays = new Date();
-      sevenDays.setDate(today.getDate() + 7);
-
-      current.total += 1;
-      if (!isDone && dueDate && dueDate < today) {
-        current.overdue += 1;
-      }
-      if (!isDone && dueDate && dueDate >= today && dueDate <= sevenDays) {
-        current.dueSoon += 1;
-      }
-      loadMap.set(assignee, current);
-    });
-
-    return Array.from(loadMap.values()).sort((a, b) => b.total - a.total);
-  }, [storyTasks]);
-  const overdueTasks = useMemo(
-    () =>
-      tasks
-        .filter((task) => task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date())
-        .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)),
-    [tasks]
-  );
-  const upcomingTasks = useMemo(
-    () =>
-      tasks
-        .filter((task) => task.dueDate && task.status !== 'done')
-        .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
-        .slice(0, 4),
-    [tasks]
-  );
   const filteredProjects = useMemo(() => {
     const query = projectSearch.trim().toLowerCase();
     if (!query) return projects;
@@ -544,24 +559,8 @@ export default function ProjectsPage() {
     [storyTasks]
   );
 
-  const canCreateProject = Boolean(bootstrapContext?.workspace?.uuid && bootstrapContext?.user?.uuid);
-  const canCreateTask = Boolean(activeProjectUuid && bootstrapContext?.user?.uuid);
-
-  async function handleBootstrapSubmit(e) {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    try {
-      const result = await bootstrapWorkspace(bootstrapForm);
-      localStorage.setItem('factory_bootstrap_context', JSON.stringify(result));
-      setBootstrapContext(result);
-      setBootstrapForm(EMPTY_BOOTSTRAP);
-    } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Não foi possível preparar o workspace.'));
-    } finally {
-      setSaving(false);
-    }
-  }
+  const canCreateProject = Boolean(workspace?.uuid && user?.uuid);
+  const canCreateTask = Boolean(activeProjectUuid && user?.uuid);
 
   async function handleCreateProject(e) {
     e.preventDefault();
@@ -572,8 +571,8 @@ export default function ProjectsPage() {
     try {
       const project = await createProject({
         ...projectForm,
-        workspaceUuid: bootstrapContext.workspace.uuid,
-        createdByUuid: bootstrapContext.user.uuid,
+        workspaceUuid: workspace.uuid,
+        createdByUuid: user.uuid,
         status: 'active',
       });
       setProjectForm(EMPTY_PROJECT);
@@ -596,7 +595,7 @@ export default function ProjectsPage() {
     try {
       await createTask(activeProjectUuid, {
         ...taskForm,
-        createdByUuid: bootstrapContext.user.uuid,
+        createdByUuid: user.uuid,
       });
       setTaskForm(EMPTY_TASK);
       await loadTasks(activeProjectUuid);
@@ -614,7 +613,7 @@ export default function ProjectsPage() {
     setError(null);
     try {
       await runTaskRequirements(taskUuid, {
-        changedByUserUuid: bootstrapContext?.user?.uuid,
+        changedByUserUuid: user?.uuid,
       });
       await loadTasks(activeProjectUuid);
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
@@ -630,7 +629,7 @@ export default function ProjectsPage() {
     setError(null);
     try {
       await runTaskQa(taskUuid, {
-        changedByUserUuid: bootstrapContext?.user?.uuid,
+        changedByUserUuid: user?.uuid,
       });
       await loadTasks(activeProjectUuid);
       await loadArchitectureStatus(activeProjectUuid, { silent: true });
@@ -715,6 +714,59 @@ export default function ProjectsPage() {
   const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
   const implementationBlockReason = architectureStatus?.blockers?.[0] || null;
   const hasAgentGeneratedStories = storyTasks.some((task) => task.assigneeAgentName === 'requirements_analyst' || task.taskType === 'story');
+  const projectRiskCount = riskRegister?.risks?.length || 0;
+  const projectImpedimentCount = riskRegister?.impediments?.length || 0;
+  const architectureStateLabel = !activeProjectUuid
+    ?'Selecione um projeto'
+    : !architectureStatus?.hasArchitecture
+      ?'Pendente'
+      : architectureStatus?.architectureNeedsRefresh
+        ?'Desatualizada'
+        : architectureStatus?.architectureApproved
+          ?'Aprovada'
+          : 'Pendente de aprovação';
+  const boardNextStep = getProjectBoardNextStep({
+    activeProject,
+    hasAgentGeneratedStories,
+    architectureStatus,
+    implementationUnlocked,
+    doneCount,
+  });
+  const boardToneClasses = {
+    blue: 'border-blue-200 bg-blue-50',
+    amber: 'border-amber-200 bg-amber-50',
+    emerald: 'border-emerald-200 bg-emerald-50',
+    slate: 'border-slate-200 bg-slate-50',
+  };
+
+  function handlePrimaryBoardAction() {
+    if (!activeProjectUuid) {
+      setShowProjectForm(true);
+      return;
+    }
+
+    if (boardNextStep.primaryAction === 'stories' || boardNextStep.primaryAction === 'overview') {
+      navigate(`/projects/${activeProjectUuid}`);
+      return;
+    }
+
+    if (boardNextStep.primaryAction === 'architecture') {
+      handleGenerateArchitecture();
+      return;
+    }
+
+    if (boardNextStep.primaryAction === 'approve-architecture') {
+      handleApproveArchitecture();
+      return;
+    }
+
+    if (boardNextStep.primaryAction === 'studio') {
+      navigate(`/code-studio?project=${activeProjectUuid}`);
+      return;
+    }
+
+    setShowProjectForm(true);
+  }
 
   return (
     <AppShell
@@ -744,7 +796,7 @@ export default function ProjectsPage() {
           )}
         </AnimatePresence>
 
-        <div className="grid min-w-0 items-start gap-8 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="grid min-w-0 items-start gap-8 xl:grid-cols-[280px_minmax(0,1fr)]">
           <div className="min-w-0 space-y-6">
             <section className="dashboard-panel">
               <div className="dashboard-panel-header">
@@ -856,64 +908,22 @@ export default function ProjectsPage() {
                     </motion.form>
                   )}
                 </AnimatePresence>
-              </div>
-            </section>
-
-            <section className="dashboard-panel">
-              <div className="dashboard-panel-header">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white">
-                    <Users className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">Conta ativa</h3>
-                    <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400">
-                      Autenticação
-                    </p>
-                  </div>
+                <div className="border-t border-slate-200 pt-4">
+                  {user && workspace ?(
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Conta ativa</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{user.name}</p>
+                      <p className="mt-1 text-xs text-slate-500">{workspace.name}</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-700">Sessão indisponível</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">
+                        Entre novamente para carregar usuário e workspace antes de criar projetos e tasks.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              </div>
-
-              <div className="p-4">
-                {bootstrapContext ?(
-                  <div className="space-y-3">
-                    <div className="rounded-xl border border-slate-200 bg-white p-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Usuário</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">{bootstrapContext.user.name}</p>
-                      <p className="mt-1 text-xs text-slate-500">{bootstrapContext.user.email}</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Workspace</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">{bootstrapContext.workspace.name}</p>
-                    </div>
-                  </div>
-                ) : (
-                  <form onSubmit={handleBootstrapSubmit} className="space-y-4">
-                    <TextInput
-                      label="Identidade do diretor"
-                      value={bootstrapForm.userName}
-                      onChange={(e) => setBootstrapForm((prev) => ({ ...prev, userName: e.target.value }))}
-                        placeholder="Seu nome"
-                      icon={Users}
-                    />
-                    <TextInput
-                        label="E-mail"
-                      value={bootstrapForm.email}
-                      onChange={(e) => setBootstrapForm((prev) => ({ ...prev, email: e.target.value }))}
-                        placeholder="voce@exemplo.com"
-                    />
-                    <TextInput
-                      label="Nome do workspace"
-                      value={bootstrapForm.workspaceName}
-                      onChange={(e) => setBootstrapForm((prev) => ({ ...prev, workspaceName: e.target.value }))}
-                      placeholder="Aligna Workspace"
-                      icon={Layout}
-                    />
-                    <button disabled={saving} className="dashboard-button-primary mt-2 w-full">
-                      Criar workspace base
-                    </button>
-                  </form>
-                )}
               </div>
             </section>
           </div>
@@ -928,7 +938,7 @@ export default function ProjectsPage() {
                         <LayoutDashboard className="h-8 w-8" />
                       </div>
                       <div className="min-w-0">
-                        <h2 className="truncate text-4xl font-bold tracking-tight text-slate-900">
+                        <h2 className="truncate text-3xl font-bold tracking-tight text-slate-900">
                           {activeProject?.name || 'Selecione um projeto'}
                         </h2>
                         <div className="mt-2">
@@ -944,77 +954,54 @@ export default function ProjectsPage() {
                       {activeProject?.vision ||
                         'Selecione um projeto no catálogo para operar backlog, requisitos, QA e liberação técnica no mesmo board.'}
                     </p>
-                    {roadmap?.milestone && (
-                      <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Objetivo principal</p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900">{roadmap.milestone}</p>
-                        <p className="mt-2 text-xs leading-6 text-slate-500">
-                          Este é o objetivo principal que guia a evolução do projeto nesta fase.
-                        </p>
+                    <div className={`mt-5 rounded-2xl border p-4 shadow-sm ${boardToneClasses[boardNextStep.tone] || boardToneClasses.slate}`}>
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Próximo passo do board</p>
+                          <p className="mt-2 text-base font-semibold text-slate-900">{boardNextStep.title}</p>
+                          <p className="mt-2 text-sm leading-6 text-slate-600">{boardNextStep.message}</p>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-3">
+                          <button
+                            type="button"
+                            onClick={handlePrimaryBoardAction}
+                            disabled={saving || generatingArchitecture || exportingPdf}
+                            className="dashboard-button-primary"
+                          >
+                            {boardNextStep.primaryLabel}
+                          </button>
+                          {activeProjectUuid && (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/projects/${activeProjectUuid}`)}
+                              className="dashboard-button-secondary"
+                            >
+                              <FileText className="h-4 w-4" />
+                              Abrir visão do projeto
+                            </button>
+                          )}
+                          {activeProjectUuid && (
+                            <button
+                              type="button"
+                              onClick={handleExportPdf}
+                              disabled={exportingPdf}
+                              className="dashboard-button-secondary"
+                            >
+                              <Download className="h-4 w-4" />
+                              {exportingPdf ?'Preparando PDF...' : 'Exportar documentação'}
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    )}
-                      {activeProjectUuid && !hasAgentGeneratedStories && (
-                        <div className="mt-5 flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/projects/${activeProjectUuid}`)}
-                          className="dashboard-button-primary"
-                        >
-                          <Sparkles className="h-4 w-4" />
-                          Criar user stories
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/projects/${activeProjectUuid}`)}
-                          className="dashboard-button-secondary"
-                        >
-                          <FileText className="h-4 w-4" />
-                          Abrir briefing do projeto
-                        </button>
-                      </div>
-                    )}
-                    {activeProjectUuid && (
-                      <div className="mt-5 flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          onClick={handleApproveArchitecture}
-                          disabled={
-                            saving ||
-                            !architectureStatus?.hasArchitecture ||
-                            architectureStatus?.architectureNeedsRefresh ||
-                            architectureStatus?.architectureApproved
-                          }
-                          className="dashboard-button-primary"
-                          title={
-                            !architectureStatus?.hasArchitecture
-                              ?'Gere a arquitetura antes de aprovar.'
-                              : architectureStatus?.architectureNeedsRefresh
-                                ?'Regere a arquitetura antes de aprovar.'
-                                : architectureStatus?.architectureApproved
-                                  ?'A arquitetura atual já foi aprovada.'
-                                  : undefined
-                          }
-                        >
-                          {architectureStatus?.architectureApproved ?'Arquitetura aprovada' : 'Aprovar arquitetura'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleExportPdf}
-                          disabled={exportingPdf}
-                          className="dashboard-button-secondary"
-                        >
-                          <Download className="h-4 w-4" />
-                          {exportingPdf ?'Preparando PDF...' : 'Exportar documentação'}
-                        </button>
-                      </div>
-                    )}
+                    </div>
                   </div>
 
-                    <div className="grid w-full gap-4 sm:grid-cols-3 xl:w-auto">
+                    <div className="grid w-full gap-4 sm:grid-cols-2 xl:w-[360px]">
                       {[
                         { label: 'Stories', value: storyTasks.length, icon: LayoutDashboard, tone: 'bg-slate-50 text-slate-900' },
                         { label: 'Em QA', value: qaCount, icon: Sparkles, tone: 'bg-blue-50 text-[#102a72]' },
                         { label: 'Concluídas', value: doneCount, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
+                        { label: 'Progresso', value: `${overallProgress}%`, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
                     ].map((stat) => (
                       <div key={stat.label} className="min-w-[160px] rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                         <div className="flex items-center justify-between">
@@ -1029,140 +1016,30 @@ export default function ProjectsPage() {
                   </div>
                 </div>
 
-                {roadmapPhases.length > 0 && (
-                  <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    {roadmapPhases.map((phase, index) => {
-                      const phaseLabel = `Fase ${index + 1}`;
-                      const phaseStatus = index === 0 ?'Prioridade atual' : index === 1 ?'Próxima etapa' : 'Planejada';
-                      const phaseProgress = getRoadmapPhaseProgress(index, doneCount, storyTasks.length);
-                      return (
-                        <div key={`${phase.order || index}-${phase.title}`} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">{phaseLabel}</p>
-                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                              {phaseStatus}
-                            </span>
-                          </div>
-                          <p className="mt-3 text-sm font-semibold text-slate-900">{phase.title}</p>
-                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-                            <div
-                              className={`h-full rounded-full ${index === 0 ?'bg-[#102a72]' : index === 1 ?'bg-amber-500' : 'bg-emerald-500'}`}
-                              style={{ width: `${phaseProgress}%` }}
-                            />
-                          </div>
-                          <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                            <span>Progresso estimado</span>
-                            <span className="font-semibold text-slate-700">{phaseProgress}%</span>
-                          </div>
-                          <p className="mt-2 text-xs leading-6 text-slate-500">
-                            {index === 0
-                              ?'Base operacional, rastreabilidade e controle do fluxo.'
-                              : index === 1
-                                ?'Colaboração, relatórios e acompanhamento gerencial.'
-                                : 'Escala, integrações e governança avançada.'}
-                          </p>
-                        </div>
-                      );
-                    })}
+                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Objetivo</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">
+                      {roadmap?.milestone || 'Ainda sem objetivo principal consolidado'}
+                    </p>
                   </div>
-                )}
-                <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Progresso geral</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">
-                         {doneCount} de {storyTasks.length || 0} stories concluídas
-                      </p>
-                    </div>
-                    <span className="text-3xl font-bold tracking-tight text-slate-900">{overallProgress}%</span>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Arquitetura</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">{architectureStateLabel}</p>
                   </div>
-                  <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
-                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${overallProgress}%` }} />
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Riscos</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">
+                      {projectRiskCount} riscos · {projectImpedimentCount} impedimentos
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Meta</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">
+                      {projectTimeline?.targetDate || 'Sem data definida'}
+                    </p>
                   </div>
                 </div>
-
-                {riskRegister && (
-                  <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Riscos do projeto</p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900">
-                          {riskRegister.impediments?.[0] || riskRegister.risks?.[0] || 'Ainda sem riscos registrados'}
-                        </p>
-                      </div>
-                      <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-rose-600">
-                        {riskRegister.risks?.length || 0} riscos · {riskRegister.impediments?.length || 0} impedimentos
-                      </span>
-                    </div>
-                    {riskRegister.risks?.length > 1 && (
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        {riskRegister.risks.slice(0, 3).map((risk, index) => (
-                          <div key={`risk-${index}`} className="rounded-xl border border-rose-200 bg-white p-4">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-rose-500">Risco {index + 1}</p>
-                            <p className="mt-2 text-sm leading-6 text-slate-700">{risk}</p>
-                          </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-                {projectTimeline && (
-                  <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Linha do tempo</p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900">
-                          {projectTimeline.startDate || 'Início não definido'} → {projectTimeline.targetDate || 'meta não definida'}
-                        </p>
-                      </div>
-                      <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#102a72]">
-                        {projectTimeline.weeklyCapacity ?`${projectTimeline.weeklyCapacity} tasks/semana` : 'Capacidade não definida'}
-                      </span>
-                    </div>
-
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      <div className="rounded-xl border border-blue-200 bg-white p-4">
-                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Atrasadas</p>
-                        <p className="mt-2 text-2xl font-bold text-slate-900">{overdueTasks.length}</p>
-                      </div>
-                      <div className="rounded-xl border border-blue-200 bg-white p-4">
-                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Próximos prazos</p>
-                        <p className="mt-2 text-2xl font-bold text-slate-900">{upcomingTasks.length}</p>
-                      </div>
-                      <div className="rounded-xl border border-blue-200 bg-white p-4 xl:col-span-2">
-                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Meta do plano</p>
-                        <p className="mt-2 text-sm leading-6 text-slate-700">
-                          {projectTimeline.targetDate
-                            ?'Essa data serve como referência para acompanhamento do ritmo do projeto e negociação de prazo.'
-                            : 'Defina uma meta de entrega para deixar o plano mais previsível.'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {taskLoadByAssignee.length > 0 && (
-                  <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Capacidade</p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900">Carga por responsável</p>
-                      </div>
-                      <span className="text-xs text-slate-500">{taskLoadByAssignee.length} pessoas/atores</span>
-                    </div>
-                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                      {taskLoadByAssignee.slice(0, 6).map((item) => (
-                        <div key={item.assignee} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                          <p className="text-sm font-semibold text-slate-900">{item.assignee}</p>
-                          <p className="mt-2 text-xs text-slate-500">
-                            {item.total} tasks · {item.overdue} atrasadas · {item.dueSoon} vencendo
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
               <div className="border-t border-slate-200 p-6">
@@ -1236,38 +1113,38 @@ export default function ProjectsPage() {
             </section>
 
             <section className="min-w-0 space-y-4">
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
                 {groupedColumns.map((column) => (
                   <div key={column.key} className="min-w-0 flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
                       <column.icon className="h-4.5 w-4.5" />
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">{column.label}</p>
-                      <p className="mt-1 text-2xl font-bold text-slate-900">{column.tasks.length}</p>
+                      <p className="mt-1 text-xl font-bold text-slate-900">{column.tasks.length}</p>
                     </div>
                   </div>
                 ))}
               </div>
 
               <div className="-mx-2 overflow-x-auto px-2 pb-4">
-                <div className="flex min-w-max gap-6">
+                <div className="flex min-w-max gap-5">
                   {groupedColumns.map((column) => (
-                    <div key={column.key} className="w-[340px] flex-none space-y-4 xl:w-[360px]">
+                    <div key={column.key} className="w-[320px] flex-none space-y-4 xl:w-[340px]">
                       <div className="dashboard-panel">
                         <div className="dashboard-panel-header">
                           <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
                               <column.icon className="h-4.5 w-4.5" />
                             </div>
                             <div>
                               <h4 className="text-sm font-bold text-slate-900">{column.label}</h4>
-                              <p className="mt-1 text-xs text-slate-500">{column.tasks.length} stories</p>
+                              <p className="mt-1 text-xs text-slate-500">{column.tasks.length} itens</p>
                             </div>
                           </div>
                         </div>
 
-                        <div className="h-[min(68vh,760px)] p-4">
+                        <div className="h-[min(68vh,760px)] p-3">
                           <div className="flex h-full flex-col gap-4 overflow-y-auto pr-1">
                             <AnimatePresence mode="popLayout">
                               {column.tasks.map((task) => (

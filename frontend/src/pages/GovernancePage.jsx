@@ -115,46 +115,47 @@ export default function GovernancePage() {
   const [alerts, setAlerts] = useState([]);
   const [auditTrail, setAuditTrail] = useState([]);
 
+  async function refreshGovernanceDashboard({ silent = false } = {}) {
+    try {
+      if (!silent) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
+      setError('');
+
+      const [healthData, operationsData, readinessData, historyData, governanceData, alertsData, auditData] =
+        await Promise.all([
+          getOperationalHealth(),
+          getAiOperationsOverview(),
+          getProductionReadiness(),
+          getOperationalHistory({ days: 7 }),
+          getGovernanceOverview(),
+          getActiveAlerts(),
+          getAuditTrail({ limit: 12 }),
+        ]);
+
+      setHealth(healthData);
+      setOperations(operationsData);
+      setReadiness(readinessData);
+      setHistory(historyData);
+      setGovernance(governanceData);
+      setAlerts(Array.isArray(alertsData) ?alertsData : []);
+      setAuditTrail(Array.isArray(auditData) ?auditData : []);
+    } catch (loadError) {
+      setError(getApiErrorMessage(loadError, silent ?'Não foi possível atualizar os dados de governança.' : 'Não foi possível carregar a governança operacional.'));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
   useEffect(() => {
     let active = true;
 
     async function load({ silent = false } = {}) {
-      try {
-        if (!silent) {
-          setLoading(true);
-        } else {
-          setRefreshing(true);
-        }
-        setError('');
-
-        const [healthData, operationsData, readinessData, historyData, governanceData, alertsData, auditData] =
-          await Promise.all([
-            getOperationalHealth(),
-            getAiOperationsOverview(),
-            getProductionReadiness(),
-            getOperationalHistory({ days: 7 }),
-            getGovernanceOverview(),
-            getActiveAlerts(),
-            getAuditTrail({ limit: 12 }),
-          ]);
-
-        if (!active) return;
-
-        setHealth(healthData);
-        setOperations(operationsData);
-        setReadiness(readinessData);
-        setHistory(historyData);
-        setGovernance(governanceData);
-        setAlerts(Array.isArray(alertsData) ?alertsData : []);
-        setAuditTrail(Array.isArray(auditData) ?auditData : []);
-      } catch (loadError) {
-        if (!active) return;
-        setError(getApiErrorMessage(loadError, 'Não foi poss?vel carregar a governança operacional.'));
-      } finally {
-        if (!active) return;
-        setLoading(false);
-        setRefreshing(false);
-      }
+      await refreshGovernanceDashboard({ silent });
+      if (!active) return;
     }
 
     load();
@@ -190,7 +191,7 @@ export default function GovernancePage() {
     if (summary.staleRunningRuns > 0) {
       items.push({
         title: `${summary.staleRunningRuns} run${summary.staleRunningRuns > 1 ?'s' : ''} travada${summary.staleRunningRuns > 1 ?'s' : ''}`,
-        subtitle: 'Revise timeout, watchdog e recupera??o autom?tica antes da próxima rodada.',
+        subtitle: 'Revise timeout, watchdog e recuperação automática antes da próxima rodada.',
         tone: 'rose',
       });
     }
@@ -214,7 +215,7 @@ export default function GovernancePage() {
 
     if (readinessFailures.length) {
       items.push({
-        title: `${readinessFailures.length} check${readinessFailures.length > 1 ?'s' : ''} critico${readinessFailures.length > 1 ?'s' : ''}`,
+        title: `${readinessFailures.length} check${readinessFailures.length > 1 ?'s' : ''} crítico${readinessFailures.length > 1 ?'s' : ''}`,
         subtitle: 'Corrija os itens de readiness marcados como failed antes de ampliar a operação.',
         tone: 'rose',
       });
@@ -222,20 +223,21 @@ export default function GovernancePage() {
 
     if (!items.length) {
       items.push({
-        title: 'Opera??o est?vel neste momento',
-        subtitle: 'Sem alertas cr?ticos ativos, sem runs travadas e com health consistente.',
+        title: 'Operação estável neste momento',
+        subtitle: 'Sem alertas críticos ativos, sem runs travadas e com health consistente.',
         tone: 'emerald',
       });
     }
 
     return items.slice(0, 4);
   }, [alerts, summary.staleRunningRuns, summary.overBudgetRuns, topFailingAgents, readinessFailures.length]);
+  const primaryActionItem = actionItems[0];
 
   return (
     <AppShell
-      eyebrow="Governanca"
-      title="Governanca Operacional"
-      description="Acompanhe sa?de, alertas, custo, auditoria e estabilidade da operação de IA em um ?nico lugar."
+      eyebrow="Governança"
+      title="Governança Operacional"
+      description="Acompanhe saúde, alertas, custo, auditoria e estabilidade da operação de IA em um único lugar."
     >
       <div className="space-y-8">
         {error ?(
@@ -245,12 +247,12 @@ export default function GovernancePage() {
         <motion.section {...fade(0.02)} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="grid gap-8 px-8 py-8 lg:grid-cols-[1.15fr_0.85fr]">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Opera??o da plataforma</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Operação da plataforma</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">
                 Veja o que precisa de atenção agora sem misturar isso com o fluxo de produto.
               </h2>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
-                Esta ?rea concentra sa?de da API, estabilidade dos agentes, custos, trilha de auditoria e alertas ativos.
+                Esta área concentra saúde da API, estabilidade dos agentes, custos, trilha de auditoria e alertas ativos.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
@@ -258,37 +260,11 @@ export default function GovernancePage() {
                   onClick={() => window.location.reload()}
                   className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                 >
-                  Recarregar p?gina
+                  Recarregar página
                 </button>
                 <button
                   type="button"
-                  onClick={async () => {
-                    setRefreshing(true);
-                    try {
-                      const [healthData, operationsData, readinessData, historyData, governanceData, alertsData, auditData] =
-                        await Promise.all([
-                          getOperationalHealth(),
-                          getAiOperationsOverview(),
-                          getProductionReadiness(),
-                          getOperationalHistory({ days: 7 }),
-                          getGovernanceOverview(),
-                          getActiveAlerts(),
-                          getAuditTrail({ limit: 12 }),
-                        ]);
-                      setHealth(healthData);
-                      setOperations(operationsData);
-                      setReadiness(readinessData);
-                      setHistory(historyData);
-                      setGovernance(governanceData);
-                      setAlerts(Array.isArray(alertsData) ?alertsData : []);
-                      setAuditTrail(Array.isArray(auditData) ?auditData : []);
-                      setError('');
-                    } catch (loadError) {
-                      setError(getApiErrorMessage(loadError, 'Não foi poss?vel atualizar os dados de governança.'));
-                    } finally {
-                      setRefreshing(false);
-                    }
-                  }}
+                  onClick={() => refreshGovernanceDashboard({ silent: true })}
                   disabled={refreshing || loading}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#102a72] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#0d235f] disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -297,27 +273,37 @@ export default function GovernancePage() {
                 </button>
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <InsightCard
-                label="Saude geral"
-                value={readiness?.status || 'n/a'}
-                hint={`${readinessFailures.length} cr?ticos e ${readinessWarnings.length} avisos no readiness.`}
-              />
-              <InsightCard
-                label="Sucesso recente"
-                value={`${summary.successRatePercent || 0}%`}
-                hint={`${summary.failedRuns || 0} falhas em ${summary.totalRuns || 0} runs recentes.`}
-              />
-              <InsightCard
-                label="Alertas ativos"
-                value={alerts.length}
-                hint={alerts.length ? 'Existe pelo menos um ponto de atenção exigindo ação.' : 'Nenhum alerta ativo agora.'}
-              />
-              <InsightCard
-                label="P95 de execução"
-                value={`${summary.p95RunDurationSeconds || 0}s`}
-                hint="Mostra a cauda lenta das execu?es recentes."
-              />
+            <div className="space-y-3">
+              <div className={`rounded-3xl border p-5 ${
+                primaryActionItem?.tone === 'rose'
+                  ?'border-rose-200 bg-rose-50 text-rose-900'
+                  : primaryActionItem?.tone === 'amber'
+                    ?'border-amber-200 bg-amber-50 text-amber-900'
+                    :'border-emerald-200 bg-emerald-50 text-emerald-900'
+              }`}>
+                <p className="text-[10px] font-bold uppercase tracking-[0.24em] opacity-70">Foco agora</p>
+                <p className="mt-3 text-lg font-semibold">{primaryActionItem?.title || 'Operação estável neste momento'}</p>
+                <p className="mt-2 text-sm leading-6 opacity-90">
+                  {primaryActionItem?.subtitle || 'Sem alertas críticos ativos e sem runs travadas.'}
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <InsightCard
+                  label="Saude geral"
+                  value={readiness?.status || 'n/a'}
+                  hint={`${readinessFailures.length} críticos`}
+                />
+                <InsightCard
+                  label="Alertas ativos"
+                  value={alerts.length}
+                  hint={alerts.length ? 'Atenção imediata' : 'Sem alertas'}
+                />
+                <InsightCard
+                  label="P95"
+                  value={`${summary.p95RunDurationSeconds || 0}s`}
+                  hint={`${summary.successRatePercent || 0}% de sucesso`}
+                />
+              </div>
             </div>
           </div>
         </motion.section>
@@ -356,7 +342,7 @@ export default function GovernancePage() {
         <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <motion.section {...fade(0.08)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Aten??o imediata</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Atenção imediata</p>
               <h2 className="mt-2 text-2xl font-bold text-slate-900">O que destravar agora</h2>
             </div>
             <div className="space-y-3 p-6">
@@ -368,13 +354,13 @@ export default function GovernancePage() {
 
           <motion.section {...fade(0.12)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Opera??o IA</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Operação IA</p>
               <h2 className="mt-2 text-2xl font-bold text-slate-900">Resumo executivo da esteira</h2>
             </div>
             <div className="grid gap-4 p-6 md:grid-cols-2">
               <EventCard
                 title={`${summary.successRatePercent || 0}% de sucesso`}
-                subtitle={`${summary.completedRuns || 0} runs conclu?das e ${summary.failedRuns || 0} falhas recentes.`}
+                subtitle={`${summary.completedRuns || 0} runs concluídas e ${summary.failedRuns || 0} falhas recentes.`}
                 tone={summary.successRatePercent >= 80 ?'emerald' : summary.successRatePercent >= 60 ?'amber' : 'rose'}
               />
               <EventCard
@@ -384,12 +370,12 @@ export default function GovernancePage() {
               />
               <EventCard
                 title={`${summary.p95RunDurationSeconds || 0}s de P95`}
-                subtitle={`${summary.averageRunDurationSeconds || 0}s de m?dia nas runs conclu?das.`}
+                subtitle={`${summary.averageRunDurationSeconds || 0}s de média nas runs concluídas.`}
                 tone="slate"
               />
               <EventCard
                 title={formatCurrency(summary.totalCostUsd || 0)}
-                subtitle={`${formatCompactNumber(summary.totalEstimatedTokens || 0)} tokens estimados no per?odo.`}
+                subtitle={`${formatCompactNumber(summary.totalEstimatedTokens || 0)} tokens estimados no período.`}
                 tone="slate"
               />
             </div>
@@ -400,7 +386,7 @@ export default function GovernancePage() {
           <motion.section {...fade(0.16)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Readiness</p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-900">Prontidao para operar</h2>
+              <h2 className="mt-2 text-2xl font-bold text-slate-900">Prontidão para operar</h2>
             </div>
             <div className="grid gap-4 p-6 md:grid-cols-2">
               <EventCard
@@ -409,7 +395,7 @@ export default function GovernancePage() {
               />
               <EventCard
                 title={readiness?.governance?.implementationRemoteOnly ?'Somente APIs remotas' : 'Fallback local permitido'}
-                subtitle="Policy de execução da IA"
+                subtitle="Política de execução da IA"
                 tone="amber"
               />
               <EventCard
@@ -418,7 +404,7 @@ export default function GovernancePage() {
                 tone={readiness?.security?.authSecretConfigured ?'emerald' : 'rose'}
               />
               <EventCard
-                title={`${Object.values(readiness?.providersConfigured || {}).filter(Boolean).length} providers com chave`}
+                title={`${Object.values(readiness?.providersConfigured || {}).filter(Boolean).length} provedores com chave`}
                 subtitle="Capacidade remota atual"
               />
             </div>
@@ -433,7 +419,7 @@ export default function GovernancePage() {
                   />
                 ))
               ) : (
-                <EmptyPanel title="Sem checks de readiness" subtitle="Quando os checks estiverem disponiveis, eles aparecem aqui com status e risco." />
+                <EmptyPanel title="Sem checks de readiness" subtitle="Quando os checks estiverem disponíveis, eles aparecem aqui com status e risco." />
               )}
             </div>
           </motion.section>
@@ -480,7 +466,7 @@ export default function GovernancePage() {
           <motion.section {...fade(0.24)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Histórico</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">?ltimos 7 dias</h2>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Últimos 7 dias</h2>
             </div>
             <div className="space-y-3 p-6">
               {historyTail.length ?(
@@ -492,7 +478,7 @@ export default function GovernancePage() {
                   />
                 ))
               ) : (
-                <EmptyPanel title="Sem hist?rico recente" subtitle="As tend?ncias dos ?ltimos dias aparecem aqui assim que a operação gerar dados." />
+                <EmptyPanel title="Sem histórico recente" subtitle="As tendências dos últimos dias aparecem aqui assim que a operação gerar dados." />
               )}
             </div>
           </motion.section>
@@ -508,12 +494,12 @@ export default function GovernancePage() {
                   <EventCard
                     key={agent.agentName}
                     title={`${agent.agentName} · ${agent.failed} falhas`}
-                    subtitle={`${agent.failureRate}% de falha · ${agent.averageDurationSeconds}s de m?dia · ${agent.averageTokens} tokens`}
+                    subtitle={`${agent.failureRate}% de falha · ${agent.averageDurationSeconds}s de média · ${agent.averageTokens} tokens`}
                     tone={agent.failureRate >= 40 ?'rose' : 'amber'}
                   />
                 ))
               ) : (
-                <EmptyPanel title="Sem agentes inst?veis no recorte" subtitle="Quando houver concentra??o de falhas por agente, ela aparece aqui." />
+                <EmptyPanel title="Sem agentes instáveis no recorte" subtitle="Quando houver concentração de falhas por agente, ela aparece aqui." />
               )}
             </div>
           </motion.section>
@@ -521,7 +507,7 @@ export default function GovernancePage() {
           <motion.section {...fade(0.32)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Auditoria</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Acoes recentes</h2>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Ações recentes</h2>
             </div>
             <div className="space-y-3 p-6">
               {auditTrail.length ?(
@@ -529,7 +515,7 @@ export default function GovernancePage() {
                   <EventCard
                     key={`${entry.timestamp}-${entry.actionType}`}
                     title={`${entry.method} ${entry.path}`}
-                    subtitle={`${entry.actionType} · ${entry.userEmail || 'Usu?rio desconhecido'} · ${entry.durationMs}ms`}
+                    subtitle={`${entry.actionType} · ${entry.userEmail || 'Usuário desconhecido'} · ${entry.durationMs}ms`}
                     tone={entry.success ?'slate' : 'rose'}
                   />
                 ))

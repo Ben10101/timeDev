@@ -535,7 +535,7 @@ export default function TaskDetailsPage() {
 
   return (
     <AppShell
-      eyebrow="Task Detail"
+      eyebrow="Detalhe da Task"
       title={task?.title || 'Detalhe da task'}
       description="Acompanhe contexto, refinamento, desenvolvimento, histórico e execuções da tarefa."
       actions={
@@ -686,7 +686,7 @@ export default function TaskDetailsPage() {
                 Ver todos os projetos
               </Link>
               <Link to={`/projects/${projectUuid}`} className="block rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 hover:bg-slate-50">
-                Voltar ao overview do projeto
+                Voltar à visão do projeto
               </Link>
             </div>
           </section>
@@ -700,7 +700,7 @@ export default function TaskDetailsPage() {
 
         {task?.processingError && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            <strong>?ltima execu??o com erro:</strong> {task.processingError.message}
+            <strong>Última execução com erro:</strong> {task.processingError.message}
           </div>
         )}
 
@@ -1031,59 +1031,6 @@ export default function TaskDetailsPage() {
                       )}
                     </div>
                   </section>
-                </div>
-              </section>
-            )}
-
-            {activeTab === 'refinement-legacy' && (
-              <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Artefatos</p>
-                    <p className="mt-2 text-sm text-slate-500">Aqui ficam apenas os artefatos de refinamento.</p>
-                  </div>
-                  <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
-                    {task.artifacts?.length || 0}
-                  </span>
-                </div>
-                <div className="mt-5 space-y-3">
-                  {task.artifacts?.map((artifact) => (
-                    <article key={artifact.id} className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <h3 className="text-sm font-semibold text-slate-900">{artifact.title}</h3>
-                          <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
-                            {artifact.artifactType} • v{artifact.version}
-                          </p>
-                        </div>
-                        <span className={`w-fit rounded-full px-3 py-1 text-[11px] font-semibold ${artifact.isApproved ?'bg-[#e5f3e8] text-[#2f6c58]' : 'bg-[#fff5d9] text-[#8a6a1f]'}`}>
-                          {artifact.isApproved ?'Aprovado' : 'Pendente'}
-                        </span>
-                      </div>
-                      <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap rounded-2xl bg-white p-4 text-xs leading-6 text-slate-600">
-                        {artifact.content}
-                      </pre>
-                      {artifact.isCurrent && (
-                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <p className="text-xs leading-5 text-slate-500">
-                            Abra em tela focada para revisar o conteúdo e salvar uma nova versão sem poluir a leitura da aba.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => handleStartArtifactEdit(artifact)}
-                            className="rounded-2xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                          >
-                            Editar artefato
-                          </button>
-                        </div>
-                      )}
-                    </article>
-                  ))}
-                  {!task.artifacts?.length && (
-                    <div className="rounded-[22px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
-                      Nenhum artefato de refinamento associado a esta task.
-                    </div>
-                  )}
                 </div>
               </section>
             )}

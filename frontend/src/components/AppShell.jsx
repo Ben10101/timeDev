@@ -1,17 +1,17 @@
-﻿import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Briefcase,
-  Braces,
-  LayoutGrid,
-  Search,
   Bell,
+  Braces,
+  Briefcase,
   ChevronRight,
-  LogOut,
-  Settings,
-  User,
   Compass,
+  LayoutGrid,
+  LogOut,
+  Search,
+  Settings,
   ShieldCheck,
+  User,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -38,6 +38,14 @@ const NAV_SECTIONS = [
     ],
   },
 ];
+
+const QUICK_NAV_ITEMS = NAV_SECTIONS.flatMap((section) =>
+  section.items.map((item) => ({
+    ...item,
+    section: section.label,
+    keywords: `${section.label} ${item.label} ${item.hint || ''}`.toLowerCase(),
+  }))
+);
 
 function NavItem({ item }) {
   const location = useLocation();
@@ -75,12 +83,58 @@ export default function AppShell({
   children,
 }) {
   const { user, logout } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef(null);
+
+  const filteredQuickNavItems = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return QUICK_NAV_ITEMS.slice(0, 6);
+    return QUICK_NAV_ITEMS.filter((item) => item.keywords.includes(query)).slice(0, 8);
+  }, [search]);
+
+  useEffect(() => {
+    function handleShortcut(event) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchOpen(true);
+        searchInputRef.current?.focus();
+      }
+    }
+
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, []);
+
+  useEffect(() => {
+    setSearch('');
+    setSearchOpen(false);
+  }, [location.pathname, location.search]);
 
   async function handleLogout() {
     await logout();
     navigate('/auth');
+  }
+
+  function handleSearchSelect(to) {
+    navigate(to);
+    setSearch('');
+    setSearchOpen(false);
+  }
+
+  function handleSearchKeyDown(event) {
+    if (event.key === 'Escape') {
+      setSearch('');
+      setSearchOpen(false);
+      return;
+    }
+
+    if (event.key === 'Enter' && filteredQuickNavItems.length) {
+      event.preventDefault();
+      handleSearchSelect(filteredQuickNavItems[0].to);
+    }
   }
 
   return (
@@ -91,7 +145,7 @@ export default function AppShell({
             <Compass className="h-4 w-4 text-blue-300" strokeWidth={2.5} />
           </div>
           <div>
-            <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.25em] text-blue-400/80 leading-none">
+            <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.25em] leading-none text-blue-400/80">
               Product Workspace
             </p>
             <span className="text-sm font-bold leading-none text-white">Aligna</span>
@@ -136,12 +190,68 @@ export default function AppShell({
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
+              ref={searchInputRef}
               type="text"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar projetos, análises e tarefas..."
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#102a72]/40 focus:bg-white focus:ring-2 focus:ring-[#102a72]/10"
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() => {
+                window.setTimeout(() => setSearchOpen(false), 120);
+              }}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="Ir para páginas e áreas..."
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-10 pr-16 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#102a72]/40 focus:bg-white focus:ring-2 focus:ring-[#102a72]/10"
             />
+            <span className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-400 sm:inline">
+              Ctrl K
+            </span>
+            {searchOpen && (
+              <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+                <div className="border-b border-slate-100 px-4 py-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">
+                    {search.trim() ? 'Resultados rápidos' : 'Atalhos do produto'}
+                  </p>
+                </div>
+                <div className="max-h-80 overflow-auto p-2">
+                  {filteredQuickNavItems.length ? (
+                    filteredQuickNavItems.map((item) => {
+                      const active = `${location.pathname}${location.search}`.startsWith(item.to);
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.to}
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => handleSearchSelect(item.to)}
+                          className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${
+                            active ? 'bg-[#102a72]/8 text-[#102a72]' : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                            <Icon className="h-4 w-4" strokeWidth={2} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold">{item.label}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {item.section} · {item.hint}
+                            </p>
+                          </div>
+                          {active ? (
+                            <span className="rounded-full bg-[#102a72] px-2 py-1 text-[10px] font-semibold text-white">
+                              Atual
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="px-3 py-6 text-sm text-slate-500">
+                      Nenhuma página encontrada para essa busca.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="ml-4 flex shrink-0 items-center gap-2">

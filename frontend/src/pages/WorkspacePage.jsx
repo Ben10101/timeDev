@@ -156,6 +156,24 @@ export default function WorkspacePage() {
     return { totalTasks, doneTasks, blockedTasks, activeProjects, planningProjects };
   }, [projects, tasks]);
 
+  const workspaceNextStep = useMemo(() => {
+    if (!projects.length) {
+      return {
+        title: 'Criar o primeiro projeto',
+        message: 'Abra o catálogo de projetos para iniciar briefing, backlog e execução no workspace.',
+        primaryLabel: 'Criar projeto',
+        primaryAction: () => navigate('/projects?openCreate=1'),
+      };
+    }
+
+    return {
+      title: 'Entrar no catálogo operacional',
+      message: 'O workspace já tem projetos ativos. Agora o melhor próximo passo é escolher um deles e seguir no board.',
+      primaryLabel: 'Abrir projetos',
+      primaryAction: () => navigate('/projects'),
+    };
+  }, [navigate, projects.length]);
+
   return (
     <AppShell
       eyebrow="Workspace"
@@ -166,11 +184,11 @@ export default function WorkspacePage() {
           <button onClick={() => navigate('/workspace/team')} className="dashboard-button-secondary w-full sm:w-auto">
             Equipe do workspace
           </button>
-          <button onClick={() => navigate('/projects?openCreate=1')} className="dashboard-button-primary w-full sm:w-auto">
-            Criar primeiro projeto
+          <button onClick={workspaceNextStep.primaryAction} className="dashboard-button-primary w-full sm:w-auto">
+            {workspaceNextStep.primaryLabel}
           </button>
           <button onClick={() => navigate('/projects')} className="dashboard-button-secondary w-full sm:w-auto">
-            Ver projetos
+            Catálogo de projetos
           </button>
         </div>
       }
@@ -200,12 +218,24 @@ export default function WorkspacePage() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Saúde do portfólio</p>
-            <div className="mt-4 space-y-3 text-sm text-slate-700">
-              <p>Projetos com backlog, planejamento e board no mesmo workspace.</p>
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Próximo passo</p>
+            <p className="mt-3 text-base font-semibold text-slate-900">{workspaceNextStep.title}</p>
+            <p className="mt-2 text-sm leading-7 text-slate-600">{workspaceNextStep.message}</p>
+            <div className="mt-4 space-y-2 text-sm text-slate-700">
               <p>{metrics.doneTasks} tasks concluídas no portfólio.</p>
               <p>{metrics.blockedTasks} tasks bloqueadas exigindo atenção.</p>
+            </div>
+            <button onClick={workspaceNextStep.primaryAction} className="dashboard-button-secondary mt-4 w-full">
+              {workspaceNextStep.primaryLabel}
+            </button>
+          </section>
+
+          <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Leitura do portfólio</p>
+            <div className="mt-4 space-y-3 text-sm text-slate-700">
+              <p>Projetos com briefing, planejamento e board no mesmo workspace.</p>
+              <p>{metrics.activeProjects} projetos ativos e {metrics.planningProjects} com planejamento.</p>
             </div>
           </section>
         </>

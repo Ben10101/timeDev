@@ -18,8 +18,8 @@ const STORY_SHORTCUT_EXAMPLES = [
     idea: 'Plataforma para times operacionais registrarem solicitacoes, acompanharem status, anexarem evidencias e aprovarem excecoes com trilha de auditoria.',
     objective: 'Reduzir retrabalho operacional e dar visibilidade do fluxo ponta a ponta.',
     audience: 'Analistas de operacoes, lideres de equipe e gestores.',
-    mainFlows: 'Abrir solicitacao, priorizar fila, aprovar excecao, acompanhar SLA e consultar hist?rico.',
-    constraints: 'Controle de acesso por perfil, hist?rico imutavel e notificacoes de atraso.',
+    mainFlows: 'Abrir solicitação, priorizar fila, aprovar exceção, acompanhar SLA e consultar histórico.',
+    constraints: 'Controle de acesso por perfil, histórico imutável e notificações de atraso.',
   },
   {
     label: 'Portal do cliente',
@@ -27,7 +27,7 @@ const STORY_SHORTCUT_EXAMPLES = [
     objective: 'Diminuir volume de suporte e aumentar autonomia do cliente.',
     audience: 'Clientes finais e equipe de atendimento.',
     mainFlows: 'Consultar pedido, enviar documentos, responder pendencias e acompanhar timeline.',
-    constraints: 'Experi?ncia mobile, notifica??es e integra??o com sistema interno.',
+    constraints: 'Experiência mobile, notificações e integração com sistema interno.',
   },
 ];
 
@@ -81,6 +81,67 @@ export default function ProjectOverviewPage() {
   const shortcutReady = ideaLength >= 40;
   const riskCount = project?.intakeConfig?.riskRegister?.risks?.length || 0;
   const impedimentCount = project?.intakeConfig?.riskRegister?.impediments?.length || 0;
+  const projectJourney = useMemo(() => {
+    if (!tasks.length) {
+      return {
+        stage: 'Briefing',
+        title: 'Consolidar briefing e gerar stories',
+        message: 'Descreva o produto com contexto suficiente e deixe o PM Agent abrir o backlog inicial.',
+        tone: 'border-slate-200 bg-white text-slate-900',
+        ctaLabel: 'Preencher briefing',
+        ctaAction: () => document.getElementById('project-briefing-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+        ctaDisabled: loading,
+        ctaType: 'button',
+      };
+    }
+
+    if (!architectureStatus?.hasArchitecture) {
+      return {
+        stage: 'Arquitetura',
+        title: 'Gerar arquitetura do projeto',
+        message: 'O backlog já existe. O próximo passo é materializar a arquitetura para liberar implementação.',
+        tone: 'border-slate-200 bg-white text-slate-900',
+        ctaLabel: generatingArchitecture ?'Gerando arquitetura...' : 'Gerar arquitetura',
+        ctaAction: handleGenerateArchitecture,
+        ctaDisabled: loading || generatingArchitecture || !architectureStatus?.canGenerateArchitecture,
+        ctaType: 'button',
+      };
+    }
+
+    if (!architectureStatus?.architectureApproved) {
+      return {
+        stage: 'Aprovação',
+        title: 'Fazer aprovação humana da arquitetura',
+        message: 'A arquitetura já foi gerada, mas a implementação ainda depende dessa aprovação.',
+        tone: 'border-slate-200 bg-white text-slate-900',
+        ctaLabel: approvingArchitecture ?'Aprovando...' : 'Aprovar arquitetura',
+        ctaAction: handleApproveArchitecture,
+        ctaDisabled: loading || approvingArchitecture || !architectureStatus?.hasArchitecture || architectureStatus?.architectureApproved,
+        ctaType: 'button',
+      };
+    }
+
+    return {
+      stage: 'Execução',
+      title: 'Seguir para board e planning',
+      message: 'Briefing, backlog e arquitetura já estão resolvidos. Agora a jornada continua no board operacional.',
+      tone: 'border-slate-200 bg-white text-slate-900',
+      ctaLabel: 'Abrir board',
+      ctaAction: () => navigate(`/projects?project=${projectUuid}`),
+      ctaDisabled: false,
+      ctaType: 'button',
+    };
+  }, [
+    tasks.length,
+    architectureStatus,
+    isBriefingLocked,
+    generating,
+    loading,
+    generatingArchitecture,
+    approvingArchitecture,
+    navigate,
+    projectUuid,
+  ]);
 
   useEffect(() => {
     loadOverview();
@@ -230,12 +291,6 @@ export default function ProjectOverviewPage() {
           <button onClick={() => navigate('/projects')} className="dashboard-button-secondary w-full sm:w-auto">
             Voltar para projetos
           </button>
-          <button onClick={() => navigate(`/projects/${projectUuid}/team`)} className="dashboard-button-secondary w-full sm:w-auto">
-            Abrir equipe
-          </button>
-          <button onClick={() => navigate(`/projects/${projectUuid}/planning`)} className="dashboard-button-secondary w-full sm:w-auto">
-            Abrir planejamento
-          </button>
           <button
             type="button"
             onClick={handleExportPdf}
@@ -245,8 +300,13 @@ export default function ProjectOverviewPage() {
           >
             {exportingPdf ?'Preparando PDF...' : 'Exportar PDF'}
           </button>
-          <button onClick={() => navigate(`/projects?project=${projectUuid}`)} className="dashboard-button-primary w-full sm:w-auto">
-            Abrir board
+          <button
+            type={projectJourney.ctaType}
+            onClick={projectJourney.ctaType === 'button' ? projectJourney.ctaAction : undefined}
+            disabled={projectJourney.ctaDisabled}
+            className="dashboard-button-primary w-full sm:w-auto"
+          >
+            {projectJourney.ctaLabel}
           </button>
         </div>
       }
@@ -271,21 +331,33 @@ export default function ProjectOverviewPage() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Próxima ação</p>
-            <p className="mt-3 text-sm leading-7 text-slate-700">
-              Depois de gerar as stories, abra o planejamento para manter roadmap, riscos e timeline em um lugar mais limpo.
-            </p>
+          <section className={`rounded-2xl border p-5 shadow-sm ${projectJourney.tone}`}>
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em]">Próxima ação</p>
+            <p className="mt-3 text-base font-semibold text-slate-900">{projectJourney.title}</p>
+            <p className="mt-2 text-sm leading-7 text-slate-600">{projectJourney.message}</p>
             <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Etapa atual: {projectJourney.stage}
+            </p>
+            <div className="mt-4 flex flex-col gap-3">
+              <button
+                type={projectJourney.ctaType}
+                onClick={projectJourney.ctaType === 'button' ? projectJourney.ctaAction : undefined}
+                disabled={projectJourney.ctaDisabled}
+                className="dashboard-button-secondary w-full bg-white/80"
+              >
+                {projectJourney.ctaLabel}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(`/projects/${projectUuid}/planning`)}
+                className="dashboard-button-secondary w-full bg-white/70"
+              >
+                Abrir planejamento
+              </button>
+            </div>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
               {riskCount} riscos · {impedimentCount} impedimentos
             </p>
-            <button
-              type="button"
-              onClick={() => navigate(`/projects/${projectUuid}/planning`)}
-              className="dashboard-button-secondary mt-4 w-full"
-            >
-              Abrir planejamento
-            </button>
           </section>
         </>
       }
@@ -293,14 +365,25 @@ export default function ProjectOverviewPage() {
       <section className="space-y-6">
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
         {successMessage && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{successMessage}</div>}
-        {isBriefingLocked && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            O briefing foi bloqueado porque o backlog deste projeto ja foi gerado. Depois dessa etapa, os campos ficam somente leitura para preservar o contexto original.
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="grid gap-4 px-6 py-6 lg:grid-cols-[1.2fr_0.8fr]">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Fluxo do projeto</p>
+              <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">{projectJourney.title}</h2>
+              <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">{projectJourney.message}</p>
+            </div>
+            <div className={`rounded-2xl border px-5 py-4 ${projectJourney.tone}`}>
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Etapa atual</p>
+              <p className="mt-2 text-base font-semibold text-slate-900">{projectJourney.stage}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                {tasks.length} tasks · {groupedStats.done} concluídas · {architectureStatus?.hasArchitecture ?'arquitetura gerada' : 'arquitetura pendente'}
+              </p>
+            </div>
           </div>
-        )}
-        <section className="dashboard-panel">
+        </section>
+        <section className="dashboard-panel" id="project-briefing-form">
           <div className="dashboard-panel-header">
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Contexto inicial</p>
           </div>
           <div className="grid gap-4 p-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
@@ -314,12 +397,21 @@ export default function ProjectOverviewPage() {
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Configuração atual</p>
-              <div className="mt-4 space-y-3 text-sm text-slate-700">
-                <p><strong>Workspace:</strong> {project?.workspace?.name || '-'}</p>
-                <p><strong>Status:</strong> {project?.status || '-'}</p>
-                <p><strong>Modo:</strong> {project?.startMode || 'blank'}</p>
-                <p><strong>Template:</strong> {project?.templateKey || 'Sem template'}</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Leitura rápida</p>
+              <div className="mt-4 grid gap-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Onde estamos</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{projectJourney.stage}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Próxima entrega</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{projectJourney.title}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  <p><strong>Workspace:</strong> {project?.workspace?.name || '-'}</p>
+                  <p><strong>Status:</strong> {project?.status || '-'}</p>
+                  <p><strong>Template:</strong> {project?.templateKey || 'Sem template'}</p>
+                </div>
               </div>
             </div>
           </div>
@@ -329,7 +421,7 @@ export default function ProjectOverviewPage() {
           <div className="dashboard-panel-header">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Arquitetura</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Etapa 2</p>
             <h3 className="mt-2 text-2xl font-bold text-slate-900">Arquitetura e aprovação</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
                   Gere a arquitetura só quando o backlog estiver maduro. Depois, faça a aprovação humana para liberar implementação e exportação final.
@@ -381,8 +473,8 @@ export default function ProjectOverviewPage() {
                 {architectureStatus?.canGenerateCode ?'Liberada' : 'Bloqueada'}
               </p>
             </div>
-            <div className="rounded-xl border border-rose-200 bg-rose-50 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-600">Aprovação humana</p>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Aprovação humana</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.hasArchitecture
                   ?architectureStatus?.architectureApproved
@@ -405,7 +497,7 @@ export default function ProjectOverviewPage() {
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">
             <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing do projeto</p>
-            <h3 className="mt-2 text-2xl font-bold text-slate-900">Gerar user stories</h3>
+            <h3 className="mt-2 text-2xl font-bold text-slate-900">Etapa 1 · Gerar user stories</h3>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
               Descreva o produto com contexto suficiente e o PM Agent transforma isso em user stories acionáveis para o board.
             </p>
@@ -415,11 +507,16 @@ export default function ProjectOverviewPage() {
             <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div className="max-w-3xl">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Atalho rápido</p>
-                  <h4 className="mt-2 text-xl font-bold text-slate-900">Escreva como se estivesse pedindo o produto para um PM sênior</h4>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Antes de gerar</p>
+                  <h4 className="mt-2 text-xl font-bold text-slate-900">Dê contexto suficiente para nascer um backlog bom</h4>
                   <p className="mt-2 text-sm leading-7 text-slate-600">
-                    Quanto melhor o contexto sobre usuário, objetivo, fluxo e restrições, melhores ficam as histórias criadas.
+                    O PM Agent responde melhor quando entende usuário, objetivo, fluxos e restrições logo nesta primeira etapa.
                   </p>
+                  {isBriefingLocked && (
+                    <p className="mt-3 text-sm leading-6 text-amber-700">
+                      Briefing bloqueado: o backlog já foi gerado e os campos ficam em modo leitura para preservar o contexto original.
+                    </p>
+                  )}
                 </div>
                 {!isBriefingLocked && (
                   <div className="flex flex-wrap gap-2">
@@ -440,15 +537,15 @@ export default function ProjectOverviewPage() {
               <div className="mt-4 grid gap-3 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Entrada</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{shortcutReady ?'Boa para gerar stories' : 'Precisa de mais contexto'}</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{shortcutReady ?'Boa para gerar' : 'Precisa de mais contexto'}</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Tamanho da ideia</p>
                   <p className="mt-2 text-sm font-semibold text-slate-900">{ideaLength} caracteres</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Saída esperada</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">Stories prontas para refinamento</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Saída</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">Stories prontas para o board</p>
                 </div>
               </div>
             </div>
@@ -509,8 +606,11 @@ export default function ProjectOverviewPage() {
           <div className="dashboard-panel-header">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">User stories geradas</p>
-                <h3 className="mt-2 text-xl font-bold text-slate-900">Stories que vão aparecer no board</h3>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Etapa 3</p>
+                <h3 className="mt-2 text-xl font-bold text-slate-900">Stories que seguem para o board</h3>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+                  Aqui você valida rapidamente o tipo de histórias que nasceram antes de seguir para refinamento e execução.
+                </p>
               </div>
               <span className="rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600">
                 {tasks.length} tasks
@@ -522,24 +622,53 @@ export default function ProjectOverviewPage() {
             {loading ?(
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">Carregando overview...</div>
             ) : tasks.length ?(
-              <div className="grid gap-4 lg:grid-cols-2">
-                {tasks.slice(0, 8).map((task) => (
-                  <button
-                    key={task.uuid}
-                    onClick={() => navigate(`/projects?project=${projectUuid}`)}
-                    className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-left transition hover:border-[#102a72]/30 hover:bg-white"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <h4 className="text-base font-semibold text-slate-900">{task.title}</h4>
-                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {task.status}
-                      </span>
-                    </div>
-                    <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">
-                      {task.description || 'Story criada pelo PM Agent e pronta para refinamento.'}
-                    </p>
-                  </button>
-                ))}
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Backlog</p>
+                    <p className="mt-2 text-lg font-semibold text-slate-900">{groupedStats.backlog}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Em QA</p>
+                    <p className="mt-2 text-lg font-semibold text-slate-900">{groupedStats.qa}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Concluídas</p>
+                    <p className="mt-2 text-lg font-semibold text-slate-900">{groupedStats.done}</p>
+                  </div>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {tasks.slice(0, 8).map((task) => (
+                    <button
+                      key={task.uuid}
+                      onClick={() => navigate(`/projects?project=${projectUuid}`)}
+                      className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-left transition hover:border-[#102a72]/30 hover:bg-white"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <h4 className="text-base font-semibold text-slate-900">{task.title}</h4>
+                        <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${
+                          task.status === 'done'
+                            ?'bg-emerald-50 text-emerald-700'
+                            : task.status === 'qa'
+                              ?'bg-amber-50 text-amber-700'
+                              : 'bg-white text-slate-500'
+                        }`}>
+                          {task.status === 'done' ?'pronta' : task.status}
+                        </span>
+                      </div>
+                      <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">
+                        {task.description || 'Story criada pelo PM Agent e pronta para refinamento.'}
+                      </p>
+                      <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {task.status === 'backlog'
+                          ?'Vai entrar no board para refinamento'
+                          : task.status === 'qa'
+                            ?'Já avançou para validação'
+                            : 'Já entrou no fluxo técnico'}
+                      </p>
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
-  Activity,
   Braces,
   CheckCircle2,
   Copy,
-  Cpu,
   Download,
   ExternalLink,
   FolderGit2,
@@ -13,16 +13,13 @@ import {
   Layers3,
   RefreshCw,
   Search,
-  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import {
   bootstrapGeneratedApp,
   getApiErrorMessage,
-  getAiOperationsOverview,
   getGeneratedApp,
-  getOperationalHealth,
   getProjectArchitectureStatus,
   getTaskImplementationStatus,
   listProjects,
@@ -34,28 +31,6 @@ import {
 function formatDate(value) {
   if (!value) return 'Sem data';
   return new Date(value).toLocaleString('pt-BR');
-}
-
-function MetricCard({ label, value, hint, icon: Icon, tone = 'slate' }) {
-  const tones = {
-    blue: 'bg-blue-50 text-[#102a72] border-blue-100',
-    emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
-    amber: 'bg-amber-50 text-amber-700 border-amber-100',
-    slate: 'bg-slate-50 text-slate-700 border-slate-200',
-  };
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className={`flex h-11 w-11 items-center justify-center rounded-2xl border ${tones[tone]}`}>
-          <Icon className="h-5 w-5" strokeWidth={2} />
-        </div>
-        <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">{label}</span>
-      </div>
-      <p className="mt-4 text-3xl font-bold tracking-tight text-slate-900">{value}</p>
-      {hint ?<p className="mt-2 text-sm leading-6 text-slate-500">{hint}</p> : null}
-    </div>
-  );
 }
 
 function StatusBadge({ value }) {
@@ -120,6 +95,70 @@ function parseJsonContent(content) {
   } catch {
     return null;
   }
+}
+
+function normalizeArtifactContent(content) {
+  return String(content || '').replace(/\r\n/g, '\n').trim();
+}
+
+function getArtifactPreview(content, maxLines = 10) {
+  const lines = normalizeArtifactContent(content).split('\n');
+  return lines.slice(0, maxLines).join('\n').trim();
+}
+
+function slugifyHeading(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-');
+}
+
+function extractArchitectureOutline(content, maxItems = 8) {
+  const lines = normalizeArtifactContent(content).split('\n');
+  const outline = [];
+
+  lines.forEach((line) => {
+    const match = line.match(/^(#{1,3})\s+(.+)$/);
+    if (!match) return;
+    outline.push({
+      level: match[1].length,
+      title: match[2].trim(),
+      anchor: slugifyHeading(match[2].trim()),
+    });
+  });
+
+  return outline.slice(0, maxItems);
+}
+
+function extractArchitectureHighlights(content, maxItems = 3) {
+  const lines = normalizeArtifactContent(content).split('\n');
+  const highlights = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(/^(#{1,3})\s+(.+)$/);
+    if (!match || match[1].length < 2) continue;
+
+    const body = [];
+    for (let innerIndex = index + 1; innerIndex < lines.length; innerIndex += 1) {
+      const nextLine = lines[innerIndex];
+      if (/^#{1,3}\s+/.test(nextLine)) break;
+      if (nextLine.trim()) body.push(nextLine.trim());
+      if (body.join(' ').length > 220) break;
+    }
+
+    highlights.push({
+      title: match[2].trim(),
+      body: body.join(' ').slice(0, 220),
+      anchor: slugifyHeading(match[2].trim()),
+    });
+
+    if (highlights.length >= maxItems) break;
+  }
+
+  return highlights;
 }
 
 function getArchitectureStateLabel(architectureStatus) {
@@ -310,8 +349,7 @@ export default function CodeStudioPage() {
   const [generationProgress, setGenerationProgress] = useState('');
   const [error, setError] = useState(null);
   const [copyFeedback, setCopyFeedback] = useState('');
-  const [operationsOverview, setOperationsOverview] = useState(null);
-  const [health, setHealth] = useState(null);
+  const [isViewingArchitecture, setIsViewingArchitecture] = useState(false);
   const [projectQuery, setProjectQuery] = useState('');
   const [readyTaskQuery, setReadyTaskQuery] = useState('');
 
@@ -372,13 +410,6 @@ export default function CodeStudioPage() {
 
       setTasks(taskList);
       setArchitectureStatus(nextArchitectureStatus);
-
-      const [nextOverview, nextHealth] = await Promise.all([
-        getAiOperationsOverview({ projectUuid }),
-        getOperationalHealth().catch(() => null),
-      ]);
-      setOperationsOverview(nextOverview);
-      setHealth(nextHealth);
 
       try {
         const app = await getGeneratedApp(projectUuid);
@@ -497,6 +528,12 @@ export default function CodeStudioPage() {
     }
   }
 
+  function handleCloseTechnicalDetails() {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('task');
+    setSearchParams(nextParams);
+  }
+
   const readyTasks = useMemo(() => tasks.filter((task) => task.status === 'done'), [tasks]);
   const orderedReadyTasks = useMemo(
     () =>
@@ -566,6 +603,10 @@ export default function CodeStudioPage() {
     () => parseJsonContent(selectedImplementation?.diffReviewArtifact?.content),
     [selectedImplementation]
   );
+  const selectedQualitySummary = selectedImplementation?.qualitySummary || null;
+  const selectedTraceability = selectedQualitySummary?.traceability || null;
+  const selectedBenchmark = selectedQualitySummary?.benchmark || null;
+  const selectedFindingsBySeverity = selectedQualitySummary?.findingsBySeverity || null;
   const nextStep = getCodeStudioNextStep({
     selectedProject,
     architectureStatus,
@@ -574,6 +615,18 @@ export default function CodeStudioPage() {
     integratedTasks,
     generatedApp,
   });
+  const architecturePreview = useMemo(
+    () => getArtifactPreview(architectureStatus?.architectureArtifact?.content, 12),
+    [architectureStatus?.architectureArtifact?.content]
+  );
+  const architectureOutline = useMemo(
+    () => extractArchitectureOutline(architectureStatus?.architectureArtifact?.content, 10),
+    [architectureStatus?.architectureArtifact?.content]
+  );
+  const architectureHighlights = useMemo(
+    () => extractArchitectureHighlights(architectureStatus?.architectureArtifact?.content, 3),
+    [architectureStatus?.architectureArtifact?.content]
+  );
   const nextStepTone =
     nextStep.tone === 'emerald'
       ?'border-emerald-200 bg-emerald-50 text-emerald-800'
@@ -617,41 +670,35 @@ export default function CodeStudioPage() {
 
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">App base</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Contexto tecnico</p>
             </div>
-            <div className="space-y-3 p-4 text-sm text-slate-700">
-              <p><strong>Status:</strong> {generatedApp?.status || 'Ainda não gerado'}</p>
-              <p><strong>Stack:</strong> {generatedApp?.stackPreset || 'Full stack padrao'}</p>
-              <p><strong>Local:</strong> {generatedApp?.rootPath || 'Será criado quando a arquitetura ou a implementação rodar.'}</p>
-              <p><strong>Stories prontas:</strong> {readyTasks.length}</p>
-              <p><strong>Prontas para iniciar agora:</strong> {executionReadyTasks.length}</p>
-              <p><strong>Com bloqueios sugeridos:</strong> {blockedReadyTasks.length}</p>
-              <p><strong>Planos técnicos:</strong> {plannedTasks.length}</p>
-              <p><strong>Integradas:</strong> {integratedTasks.length}</p>
+            <div className="grid gap-3 p-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">App base</p>
+                <p className="mt-2 font-semibold text-slate-900">{generatedApp?.status || 'Ainda não gerado'}</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {generatedApp?.rootPath || 'Será criado quando a arquitetura ou a implementação rodar.'}
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em]">Prontas agora</p>
+                  <p className="mt-2 text-lg font-semibold">{executionReadyTasks.length}</p>
+                </div>
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em]">Com bloqueio</p>
+                  <p className="mt-2 text-lg font-semibold">{blockedReadyTasks.length}</p>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                <p><strong>Arquitetura:</strong> {architectureStateLabel}</p>
+                <p><strong>Stories prontas:</strong> {readyTasks.length}</p>
+                <p><strong>Planos técnicos:</strong> {plannedTasks.length}</p>
+                <p><strong>Integradas:</strong> {integratedTasks.length}</p>
+              </div>
             </div>
           </section>
 
-          <section className="dashboard-panel">
-            <div className="dashboard-panel-header">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Operação IA</p>
-            </div>
-            <div className="space-y-3 p-4 text-sm text-slate-700">
-              <p><strong>Runs recentes:</strong> {operationsOverview?.summary?.totalRuns || 0}</p>
-              <p><strong>Falhas:</strong> {operationsOverview?.summary?.failedRuns || 0}</p>
-              <p><strong>Sucesso:</strong> {operationsOverview?.summary?.successRatePercent || 0}%</p>
-              <p><strong>P95 duração:</strong> {operationsOverview?.summary?.p95RunDurationSeconds || 0}s</p>
-              <p><strong>Tokens:</strong> {operationsOverview?.summary?.totalEstimatedTokens || 0}</p>
-              <p><strong>Custo estimado:</strong> {Number(operationsOverview?.summary?.totalCostUsd || 0).toFixed(4)} USD</p>
-              <p><strong>Acima do budget:</strong> {operationsOverview?.summary?.overBudgetRuns || 0}</p>
-              <p><strong>Runs travados:</strong> {operationsOverview?.summary?.staleRunningRuns || 0}</p>
-              <p><strong>Saude API:</strong> {health?.status || 'n/a'}</p>
-              <p><strong>Banco:</strong> {health?.database || 'n/a'}</p>
-              <button onClick={() => navigate('/governance')} className="dashboard-button-secondary w-full justify-center">
-                <ShieldCheck className="h-4 w-4" />
-                Abrir Governanca
-              </button>
-            </div>
-          </section>
         </>
       }
     >
@@ -717,123 +764,13 @@ export default function CodeStudioPage() {
           </div>
         </section>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard icon={Layers3} label="Projeto ativo" value={selectedProject ?'pronto' : 'pendente'} hint={selectedProject?.name || 'Escolha um projeto para começar'} tone="blue" />
-          <MetricCard icon={Braces} label="App base" value={generatedApp?.status || 'pendente'} hint={generatedApp?.rootPath || 'Será materializado na geração'} tone="emerald" />
-          <MetricCard icon={CheckCircle2} label="Stories prontas" value={readyTasks.length} hint={`${executionReadyTasks.length} prontas agora · ${integratedTasks.length} integradas`} tone="amber" />
-          <MetricCard icon={Cpu} label="Pipeline IA" value={`${operationsOverview?.summary?.p95RunDurationSeconds || 0}s`} hint={`${operationsOverview?.summary?.successRatePercent || 0}% de sucesso · ${operationsOverview?.summary?.failedRuns || 0} falhas`} tone="slate" />
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <section className="dashboard-panel">
-            <div className="dashboard-panel-header">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Checklist técnico</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">O que já destravou a implementação</h2>
-              </div>
-            </div>
-            <div className="grid gap-4 p-6 md:grid-cols-2">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Arquitetura</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">
-                  {architectureStatus?.hasArchitecture
-                    ?architectureStatus?.architectureNeedsRefresh
-                      ?'Desatualizada'
-                      : architectureStatus?.architectureApproved
-                        ?'Aprovada'
-                        : 'Pendente de aprovação'
-                    : 'Pendente'}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Historias refinadas</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">
-                  {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">App base</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{generatedApp?.status || 'Pendente'}</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Planos técnicos</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{plannedTasks.length}/{readyTasks.length}</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Confiabilidade</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{operationsOverview?.summary?.successRatePercent || 0}% de sucesso</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Integração</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ?'Liberada' : 'Bloqueada'}</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Pipeline</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">
-                  P95 {operationsOverview?.summary?.p95RunDurationSeconds || 0}s · {operationsOverview?.summary?.failedRuns || 0} falhas
-                </p>
-              </div>
-            </div>
-          </section>
-
-          <section className="dashboard-panel">
-            <div className="dashboard-panel-header">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Acesso rápido</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Governança e trilha operacional</h2>
-              </div>
-            </div>
-            <div className="p-6">
-              <button onClick={() => navigate('/governance')} className="dashboard-button-primary">
-                <ShieldCheck className="h-4 w-4" />
-                Abrir Governanca
-              </button>
-            </div>
-          </section>
-        </div>
 
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
         {generationProgress && (
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-[#102a72]">{generationProgress}</div>
         )}
 
-        {operationsOverview?.recentRuns?.length ?(
-          <section className="dashboard-panel">
-            <div className="dashboard-panel-header">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Observabilidade</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Execucoes recentes de IA</h2>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto p-6">
-              <table className="min-w-full text-sm">
-                <thead className="text-left text-slate-500">
-                  <tr>
-                    <th className="pb-3 pr-4">Agente</th>
-                    <th className="pb-3 pr-4">Status</th>
-                    <th className="pb-3 pr-4">Provider</th>
-                    <th className="pb-3 pr-4">Tokens</th>
-                    <th className="pb-3 pr-4">Duração</th>
-                    <th className="pb-3 pr-4">Budget</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {operationsOverview.recentRuns.slice(0, 8).map((run) => (
-                    <tr key={run.uuid} className="border-t border-slate-100">
-                      <td className="py-3 pr-4">{run.agentName}</td>
-                      <td className="py-3 pr-4"><StatusBadge value={run.status} /></td>
-                      <td className="py-3 pr-4">{run.runtimeMeta?.primaryProvider || '-'}</td>
-                      <td className="py-3 pr-4">{run.totalTokens || 0}</td>
-                      <td className="py-3 pr-4">{run.durationSeconds != null ?`${run.durationSeconds}s` : '-'}</td>
-                      <td className="py-3 pr-4">{run.overBudget ?'acima' : 'ok'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        ) : null}
+        
 
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">
@@ -893,7 +830,7 @@ export default function CodeStudioPage() {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Gate técnico</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Arquitetura e liberação</h2>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Liberação para gerar código</h2>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <StatusBadge value={architectureStatus?.canGenerateCode ?'integrated' : 'planned'} />
@@ -910,7 +847,7 @@ export default function CodeStudioPage() {
             </div>
           </div>
 
-          <div className="grid gap-4 p-6 lg:grid-cols-3">
+          <div className="grid gap-4 p-6 lg:grid-cols-2">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-[#102a72]">
@@ -929,28 +866,26 @@ export default function CodeStudioPage() {
                   </p>
                 </div>
               </div>
+              <p className="mt-4 text-sm leading-6 text-slate-600">
+                {architectureStatus?.canGenerateCode
+                  ?'A base técnica já pode ser gerada para receber as stories prontas.'
+                  : architectureStatus?.blockers?.[0] || 'Ainda existe um bloqueio antes da geração.'}
+              </p>
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-[#102a72]">
-                  <CheckCircle2 className="h-4 w-4" />
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Prontas</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-900">{readyTasks.length}</p>
                 </div>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Historias prontas</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">{readyTasks.length}</p>
+                <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Entram agora</p>
+                  <p className="mt-2 text-lg font-semibold">{executionReadyTasks.length}</p>
                 </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-[#102a72]">
-                  <Hammer className="h-4 w-4" />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Entrega</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">{architectureStatus?.canGenerateCode ?'Liberado' : 'Bloqueado'}</p>
+                <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Aguardam</p>
+                  <p className="mt-2 text-lg font-semibold">{blockedReadyTasks.length}</p>
                 </div>
               </div>
             </div>
@@ -997,6 +932,14 @@ export default function CodeStudioPage() {
                   <Download className="h-4 w-4" />
                   Exportar markdown
                 </button>
+                <button
+                  onClick={() => setIsViewingArchitecture(true)}
+                  disabled={!architectureStatus?.architectureArtifact?.content}
+                  className="dashboard-button-secondary"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Visualizar arquitetura
+                </button>
               </div>
             </div>
           </div>
@@ -1024,10 +967,52 @@ export default function CodeStudioPage() {
                 </div>
               )}
 
-              <div className="rounded-xl border border-slate-200 bg-slate-950 p-1">
-                <pre className="max-h-[780px] overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-5 text-sm leading-7 text-slate-100">
-                  {architectureStatus.architectureArtifact.content}
-                </pre>
+              <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Previa do documento</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Mostramos apenas uma leitura reduzida aqui para nao poluir a superficie principal do studio.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsViewingArchitecture(true)}
+                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-white"
+                  >
+                    Visualizar artefato
+                  </button>
+                </div>
+                {architectureHighlights.length ?(
+                  <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                    {architectureHighlights.map((item) => (
+                      <div key={item.anchor} className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#2f6c58]">Secao chave</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">{item.title}</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-600">
+                          {item.body || 'Abra a visualizacao completa para ler essa secao com o contexto inteiro.'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {architectureOutline.length ?(
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Indice rapido</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {architectureOutline.slice(0, 6).map((item) => (
+                        <span key={item.anchor} className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600">
+                          {item.title}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap px-5 py-4 text-sm leading-7 text-slate-700">
+                    {architecturePreview}
+                    {architecturePreview && normalizeArtifactContent(architectureStatus.architectureArtifact.content) !== architecturePreview ?'\n\n...' : ''}
+                  </pre>
+                </div>
               </div>
             </div>
           ) : (
@@ -1074,7 +1059,11 @@ export default function CodeStudioPage() {
                   <div
                     key={task.uuid}
                     className={`rounded-xl border p-5 transition ${
-                      isSelected ?'border-[#102a72]/30 bg-[#102a72]/5' : 'border-slate-200 bg-white'
+                      isSelected
+                        ?'border-[#102a72]/30 bg-[#102a72]/5'
+                        : canStartNow
+                          ?'border-emerald-200 bg-emerald-50/40'
+                          : 'border-amber-200 bg-amber-50/30'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -1087,7 +1076,7 @@ export default function CodeStudioPage() {
                             {order.stage}
                           </span>
                           <span className={`dashboard-badge ${canStartNow ?'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                            {canStartNow ?'Pronta para iniciar' : 'Aguardando dependências'}
+                            {canStartNow ?'Pronta agora' : 'Aguardando dependências'}
                           </span>
                         </div>
                         <h3 className="text-base font-semibold text-slate-900">{task.title}</h3>
@@ -1115,8 +1104,8 @@ export default function CodeStudioPage() {
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                         <strong>Plano técnico:</strong> {hasTechnicalPlan ?'Disponível' : 'Pendente'}
                       </div>
-                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600 sm:col-span-2">
-                        <strong>Por que agora:</strong> {order.reason}
+                      <div className={`rounded-lg px-3 py-2 text-sm sm:col-span-2 ${canStartNow ?'bg-emerald-50 text-emerald-900' : 'bg-amber-50 text-amber-900'}`}>
+                        <strong>{canStartNow ?'Entra agora:' : 'Ainda espera:'}</strong> {order.reason}
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                         <strong>Destrava:</strong> {unlocks} story{unlocks === 1 ?'' : 's'}
@@ -1211,84 +1200,137 @@ export default function CodeStudioPage() {
         </section>
 
         {selectedTaskUuid && selectedImplementation && (
-          <section className="dashboard-panel">
-            <div className="dashboard-panel-header">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Detalhe técnico</p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-900">{selectedImplementation.task?.title || 'Implementação selecionada'}</h2>
-            </div>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
+            <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#102a72]">Detalhe técnico</p>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                    {selectedImplementation.task?.title || 'Implementação selecionada'}
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Leitura completa da implementação, qualidade e impacto.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseTechnicalDetails}
+                  className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Fechar
+                </button>
+              </div>
 
-            <div className="grid gap-4 p-6 lg:grid-cols-2">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Resumo</p>
-                <div className="mt-4 space-y-3 text-sm text-slate-700">
-                  <p><strong>Status:</strong> {selectedImplementation.status}</p>
-                  <p><strong>Fase atual:</strong> {selectedExecutionState?.phaseLabel || 'n/a'}</p>
-                  <p><strong>Review:</strong> {selectedImplementation.qualitySummary?.reviewStatus || 'n/a'}</p>
-                  <p><strong>Specialist review:</strong> {selectedImplementation.qualitySummary?.specialistReviewStatus || 'n/a'}</p>
-                  <p><strong>Score:</strong> {selectedImplementation.qualitySummary?.score ?? 'n/a'}</p>
-                  <p><strong>Score premium:</strong> {selectedImplementation.qualitySummary?.premiumScore ?? 'n/a'}</p>
-                  <p><strong>Score comparativo:</strong> {selectedImplementation.qualitySummary?.benchmark?.comparativeScore ?? 'n/a'}</p>
-                  <p><strong>Policy version:</strong> {selectedImplementation.qualitySummary?.versioning?.policyVersion ?? 'v1'}</p>
-                  <p><strong>Prompt version:</strong> {selectedImplementation.qualitySummary?.versioning?.promptVersion ?? 'v1'}</p>
-                  <p><strong>Release version:</strong> {selectedImplementation.qualitySummary?.versioning?.releaseVersion ?? '1.0.0'}</p>
-                  <p><strong>Specialist score:</strong> {selectedImplementation.qualitySummary?.specialistScore ?? 'n/a'}</p>
-                  <p><strong>Semântica:</strong> {selectedImplementation.qualitySummary?.semanticScore ?? 'n/a'}</p>
-                  <p><strong>UX:</strong> {selectedImplementation.qualitySummary?.uxScore ?? 'n/a'}</p>
-                  <p><strong>Arquitetura:</strong> {selectedImplementation.qualitySummary?.specialistArchitectureScore ?? 'n/a'}</p>
-                  <p><strong>Validação:</strong> {selectedImplementation.qualitySummary?.validationScore ?? 'n/a'}</p>
-                  <p><strong>Risco:</strong> {selectedDiffReview?.summary?.riskLevel || 'n/a'}</p>
-                  <p><strong>Build:</strong> {selectedImplementation.buildStatus || 'n/a'}</p>
-                  <p><strong>Testes:</strong> {selectedImplementation.testStatus || 'n/a'}</p>
-                  <p><strong>Template:</strong> {selectedImplementation.qualitySummary?.screenTemplate || 'n/a'}</p>
-                  <p><strong>Domínio esperado:</strong> {selectedImplementation.qualitySummary?.expectedDomain || 'n/a'}</p>
-                  <p><strong>Domínio implementado:</strong> {selectedImplementation.qualitySummary?.implementedDomain || 'n/a'}</p>
-                  <p><strong>Rastreabilidade:</strong> {selectedImplementation.qualitySummary?.traceability?.traceabilityScore ?? 'n/a'}</p>
-                  <p><strong>Sucesso no projeto:</strong> {(selectedImplementation.qualitySummary?.benchmark?.projectSuccessRatePercent ?? 'n/a')}%</p>
-                  <p><strong>Sucesso no domínio:</strong> {(selectedImplementation.qualitySummary?.benchmark?.domainSuccessRatePercent ?? 'n/a')}%</p>
-                  <p><strong>Projeto:</strong> {selectedImplementation.generatedApp?.name || 'App full stack'}</p>
-                  <p><strong>Pasta:</strong> {selectedImplementation.generatedApp?.rootPath || 'Ainda não materializado'}</p>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="space-y-4 p-6">
+              <div className="grid gap-4 lg:grid-cols-4">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Status</p>
+                  <div className="mt-3 flex items-center gap-3">
+                    <StatusBadge value={selectedImplementation.status} />
+                    <span className="text-sm text-slate-600">{selectedExecutionState?.phaseLabel || 'Sem fase registrada'}</span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Qualidade</p>
+                  <div className="mt-3 flex items-center gap-3">
+                    <ScoreBadge value={selectedQualitySummary?.score} />
+                    <span className="text-sm text-slate-600">
+                      premium {selectedQualitySummary?.premiumScore ?? 'n/a'}
+                    </span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Risco</p>
+                  <div className="mt-3 flex items-center gap-3">
+                    <RiskBadge value={selectedDiffReview?.summary?.riskLevel} />
+                    <span className="text-sm text-slate-600">
+                      score {selectedDiffReview?.summary?.riskScore ?? 'n/a'}
+                    </span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Entrega</p>
+                  <div className="mt-3 space-y-1 text-sm text-slate-600">
+                    <p>Build: <strong className="text-slate-900">{selectedImplementation.buildStatus || 'n/a'}</strong></p>
+                    <p>Testes: <strong className="text-slate-900">{selectedImplementation.testStatus || 'n/a'}</strong></p>
+                  </div>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Arquivos gerados</p>
-                  <ScoreBadge value={selectedImplementation.qualitySummary?.score} />
-                </div>
-                <div className="mt-4 space-y-2">
-                  {(selectedImplementation.generatedFiles || []).slice(0, 8).map((file) => (
-                    <div key={file.id} className="rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
-                      {file.filePath}
+              <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Leitura rapida</p>
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div className="rounded-xl bg-white p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Saude da implementacao</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <p><strong>Review:</strong> {selectedQualitySummary?.reviewStatus || 'n/a'}</p>
+                        <p><strong>Specialist:</strong> {selectedQualitySummary?.specialistReviewStatus || 'n/a'}</p>
+                        <p><strong>Validação:</strong> {selectedQualitySummary?.validationScore ?? 'n/a'}</p>
+                        <p><strong>Atualizado:</strong> {formatDate(selectedImplementation.updatedAt)}</p>
+                      </div>
                     </div>
-                  ))}
-                  {!selectedImplementation.generatedFiles?.length && (
-                    <div className="rounded-lg bg-white px-3 py-4 text-sm text-slate-500">
-                      Nenhum arquivo registrado ainda para esta implementação.
+                    <div className="rounded-xl bg-white p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Aderencia</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <p><strong>Template:</strong> {selectedQualitySummary?.screenTemplate || 'n/a'}</p>
+                        <p><strong>Dominio:</strong> {selectedQualitySummary?.implementedDomain || 'n/a'}</p>
+                        <p><strong>Rastreabilidade:</strong> {selectedTraceability?.traceabilityScore ?? 'n/a'}</p>
+                        <p><strong>Contrato e docs:</strong> {selectedTraceability?.hasSharedContract && selectedTraceability?.hasDocumentation ?'ok' : 'pendente'}</p>
+                      </div>
                     </div>
-                  )}
-                </div>
-                {selectedImplementation.qualitySummary && (
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>Findings:</strong> {selectedImplementation.qualitySummary.totalFindings}
+                    <div className="rounded-xl bg-white p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Benchmarks</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <p><strong>Comparativo:</strong> {selectedBenchmark?.comparativeScore ?? 'n/a'}</p>
+                        <p><strong>Projeto:</strong> {selectedBenchmark?.projectSuccessRatePercent ?? 'n/a'}%</p>
+                        <p><strong>Dominio:</strong> {selectedBenchmark?.domainSuccessRatePercent ?? 'n/a'}%</p>
+                      </div>
                     </div>
-                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>Altas:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.high || 0}
-                    </div>
-                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>Médias:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.medium || 0}
-                    </div>
-                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>Baixas:</strong> {selectedImplementation.qualitySummary.findingsBySeverity?.low || 0}
-                    </div>
-                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>Frontend:</strong> {selectedImplementation.qualitySummary.traceability?.hasFrontendPage ?'ok' : 'pendente'}
-                    </div>
-                    <div className="rounded-lg bg-white px-3 py-3 text-sm text-slate-700">
-                      <strong>Contrato/docs:</strong> {selectedImplementation.qualitySummary.traceability?.hasSharedContract && selectedImplementation.qualitySummary.traceability?.hasDocumentation ?'ok' : 'pendente'}
+                    <div className="rounded-xl bg-white p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Artefato entregue</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <p><strong>Projeto:</strong> {selectedImplementation.generatedApp?.name || 'App full stack'}</p>
+                        <p><strong>Pasta:</strong> {selectedImplementation.generatedApp?.rootPath || 'Ainda nao materializado'}</p>
+                        <p><strong>Prompt:</strong> {selectedQualitySummary?.versioning?.promptVersion ?? 'v1'}</p>
+                      </div>
                     </div>
                   </div>
-                )}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Arquivos e findings</p>
+                    <ScoreBadge value={selectedQualitySummary?.score} />
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700">
+                      <strong>Findings:</strong> {selectedQualitySummary?.totalFindings ?? 'n/a'}
+                    </div>
+                    <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700">
+                      <strong>Altas:</strong> {selectedFindingsBySeverity?.high || 0}
+                    </div>
+                    <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700">
+                      <strong>Medias:</strong> {selectedFindingsBySeverity?.medium || 0}
+                    </div>
+                    <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700">
+                      <strong>Baixas:</strong> {selectedFindingsBySeverity?.low || 0}
+                    </div>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {(selectedImplementation.generatedFiles || []).slice(0, 8).map((file) => (
+                      <div key={file.id} className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700">
+                        {file.filePath}
+                      </div>
+                    ))}
+                    {!selectedImplementation.generatedFiles?.length && (
+                      <div className="rounded-xl bg-white px-4 py-4 text-sm text-slate-500">
+                        Nenhum arquivo registrado ainda para esta implementação.
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
             {selectedExecutionState && (
@@ -1494,56 +1536,110 @@ export default function CodeStudioPage() {
                 </div>
               </div>
             )}
-          </section>
+                </div>
+              </div>
+            </div>
         )}
         {selectedTaskUuid && !selectedImplementation && (
-          <section className="dashboard-panel">
-            <div className="dashboard-panel-header">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Detalhe técnico</p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-900">A implementação ainda não começou</h2>
-            </div>
-            <div className="p-6">
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
-                Gere um plano técnico ou integre a story para abrir technical spec, estratégia, arquivos e relatórios desta implementação.
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
+            <div className="w-full max-w-3xl overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#102a72]">Detalhe técnico</p>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-900">A implementação ainda não começou</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    A story já está no studio, mas ainda não abriu uma implementação detalhada.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseTechnicalDetails}
+                  className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Fechar
+                </button>
+              </div>
+              <div className="p-6">
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-slate-500">
+                  Gere um plano técnico ou integre a story para abrir technical spec, estratégia, arquivos e relatórios desta implementação.
+                </div>
               </div>
             </div>
-          </section>
+          </div>
         )}
-        {!selectedTaskUuid && readyTasks.length > 0 && (
-          <section className="dashboard-panel">
-            <div className="dashboard-panel-header">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Detalhe técnico</p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-900">Selecione uma story para aprofundar</h2>
-            </div>
-            <div className="p-6">
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
-                Abra uma das stories prontas acima para ver score, arquivos gerados, achados e rastreabilidade da implementação.
+        {isViewingArchitecture && architectureStatus?.architectureArtifact ?(
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
+            <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Visualizar arquitetura</p>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-900">{architectureStatus.architectureArtifact.title}</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    architecture • v{architectureStatus.architectureArtifact.version}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsViewingArchitecture(false)}
+                  className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Fechar
+                </button>
+              </div>
+              <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[260px_minmax(0,1fr)]">
+                <aside className="overflow-auto border-b border-slate-200 bg-slate-50 px-6 py-6 lg:border-b-0 lg:border-r">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Navegacao</p>
+                  <div className="mt-4 space-y-2">
+                    {architectureOutline.length ?(
+                      architectureOutline.map((item) => (
+                        <button
+                          key={item.anchor}
+                          type="button"
+                          onClick={() => {
+                            const element = document.getElementById(item.anchor);
+                            element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }}
+                          className={`block w-full rounded-2xl px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-white ${
+                            item.level > 2 ?'pl-6' : ''
+                          }`}
+                        >
+                          {item.title}
+                        </button>
+                      ))
+                    ) : (
+                      <p className="text-sm leading-6 text-slate-500">
+                        O documento nao trouxe headings suficientes para montar um indice.
+                      </p>
+                    )}
+                  </div>
+                </aside>
+                <div className="overflow-auto px-6 py-6">
+                  <div className="prose prose-slate max-w-none text-sm leading-7 prose-headings:font-semibold prose-headings:text-slate-900 prose-p:text-slate-700 prose-li:text-slate-700 prose-strong:text-slate-900 prose-code:rounded prose-code:bg-slate-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.9em] prose-pre:overflow-auto prose-pre:rounded-2xl prose-pre:bg-slate-950 prose-pre:text-slate-100">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h1: ({ children }) => {
+                          const text = Array.isArray(children) ?children.join('') : String(children || '');
+                          return <h1 id={slugifyHeading(text)}>{children}</h1>;
+                        },
+                        h2: ({ children }) => {
+                          const text = Array.isArray(children) ?children.join('') : String(children || '');
+                          return <h2 id={slugifyHeading(text)}>{children}</h2>;
+                        },
+                        h3: ({ children }) => {
+                          const text = Array.isArray(children) ?children.join('') : String(children || '');
+                          return <h3 id={slugifyHeading(text)}>{children}</h3>;
+                        },
+                      }}
+                    >
+                      {normalizeArtifactContent(architectureStatus.architectureArtifact.content)}
+                    </ReactMarkdown>
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="px-6 pb-6">
-              <div className="grid gap-4 lg:grid-cols-3">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Technical spec</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">
-                    Disponível depois do plano técnico
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Plano de implementação</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">
-                    Disponível depois do planejamento
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Estratégia de execução</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">
-                    Disponível quando uma story for planejada
-                  </p>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
+          </div>
+        ) : null}
       </div>
     </AppShell>
   );
