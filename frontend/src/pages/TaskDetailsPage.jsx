@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import AppShell from '../components/AppShell';
 import {
   bootstrapGeneratedApp,
@@ -99,6 +101,21 @@ function getFallbackStatusAfterUnblock(task) {
   return fallback?.toStatus || 'todo';
 }
 
+function isTechnicalArtifact(artifact) {
+  const title = String(artifact?.title || '').toLowerCase();
+  const type = String(artifact?.artifactType || '').toLowerCase();
+  return title.startsWith('[system]') || title.includes('spec') || type.includes('spec');
+}
+
+function normalizeArtifactContent(content) {
+  return String(content || '').replace(/\r\n/g, '\n').trim();
+}
+
+function getArtifactPreview(content, maxLines = 6) {
+  const lines = normalizeArtifactContent(content).split('\n');
+  return lines.slice(0, maxLines).join('\n').trim();
+}
+
 const TASK_TYPE_LABELS = {
   epic: 'Épico',
   story: 'Story',
@@ -146,6 +163,83 @@ function getTaskStageHint(task, architectureStatus, hasRequirements, hasTestPlan
   return 'Use Gerar código para iniciar a implementação técnica.';
 }
 
+function getTaskJourney(task, architectureStatus, hasRequirements, hasTestPlan, implementationStatus) {
+  const implementationReady = Boolean(architectureStatus?.canGenerateCode);
+  return [
+    {
+      id: 'requirements',
+      label: 'Requisitos',
+      status: hasRequirements ?'Concluída' : 'Pendente',
+      tone: hasRequirements ?'success' : 'neutral',
+    },
+    {
+      id: 'qa',
+      label: 'QA',
+      status: hasTestPlan ?'Concluída' : hasRequirements ?'Disponível' : 'Aguardando requisitos',
+      tone: hasTestPlan ?'success' : hasRequirements ?'active' : 'neutral',
+    },
+    {
+      id: 'implementation',
+      label: 'Implementação',
+      status: implementationStatus?.status
+        ? implementationStatus.status
+        : implementationReady
+          ? 'Liberada'
+          : 'Aguardando arquitetura',
+      tone: implementationStatus?.status ?'active' : implementationReady ?'active' : 'neutral',
+    },
+    {
+      id: 'delivery',
+      label: 'Entrega',
+      status: task?.status === 'done' ?'Concluída' : 'Em andamento',
+      tone: task?.status === 'done' ?'success' : 'neutral',
+    },
+  ];
+}
+
+function getPrimaryAction({
+  taskIsBlocked,
+  canRunRequirements,
+  requirementsRunning,
+  canRunQa,
+  qaRunning,
+  taskIsDone,
+  implementationUnlocked,
+  implementationStatus,
+  architectureStatus,
+}) {
+  if (taskIsBlocked) {
+    return { key: 'blocked', label: 'Task bloqueada', disabled: true, helper: 'Desbloqueie a task para continuar.' };
+  }
+  if (requirementsRunning) {
+    return { key: 'requirements-running', label: 'Requisitos em execução', disabled: true, helper: 'O analista de requisitos já está processando esta task.' };
+  }
+  if (canRunRequirements) {
+    return { key: 'requirements', label: 'Refinar requisitos', disabled: false, helper: 'Transforme o briefing em um requisito refinado antes de seguir.' };
+  }
+  if (qaRunning) {
+    return { key: 'qa-running', label: 'QA em execução', disabled: true, helper: 'O QA Engineer já está validando a task.' };
+  }
+  if (canRunQa) {
+    return { key: 'qa', label: 'Executar QA', disabled: false, helper: 'Consolide o plano de testes antes de liberar a implementação.' };
+  }
+  if (taskIsDone && !implementationUnlocked) {
+    return {
+      key: 'architecture-blocked',
+      label: 'Aguardando arquitetura',
+      disabled: true,
+      helper: architectureStatus?.blockers?.[0] || 'A arquitetura do projeto ainda precisa ser gerada.',
+    };
+  }
+  if (taskIsDone && !implementationStatus) {
+    return { key: 'code', label: 'Gerar código', disabled: false, helper: 'Inicie a implementação técnica desta task.' };
+  }
+  if (taskIsDone && implementationStatus) {
+    return { key: 'studio', label: 'Abrir Code Studio', disabled: false, helper: 'Acompanhe arquivos, revisão e execuções da implementação.' };
+  }
+  return { key: 'overview', label: 'Acompanhar task', disabled: true, helper: 'Esta task ainda está em andamento.' };
+}
+
 export default function TaskDetailsPage() {
   const { projectUuid, taskUuid } = useParams();
   const navigate = useNavigate();
@@ -158,6 +252,7 @@ export default function TaskDetailsPage() {
   const [error, setError] = useState(null);
   const [commentBody, setCommentBody] = useState('');
   const [editingArtifactId, setEditingArtifactId] = useState(null);
+  const [viewingArtifactId, setViewingArtifactId] = useState(null);
   const [artifactDraft, setArtifactDraft] = useState('');
   const [taskOwnerUuid, setTaskOwnerUuid] = useState('');
   const [taskDueDate, setTaskDueDate] = useState('');
@@ -185,8 +280,25 @@ export default function TaskDetailsPage() {
   const lintReport = parseJsonContent(implementationStatus?.lintReportArtifact?.content);
   const implementationSummary = reviewReport?.summary || null;
   const stageHint = getTaskStageHint(task, architectureStatus, taskHasRequirements, taskHasTestPlan, taskIsDone, implementationStatus);
+  const journey = getTaskJourney(task, architectureStatus, taskHasRequirements, taskHasTestPlan, implementationStatus);
+  const primaryAction = getPrimaryAction({
+    taskIsBlocked,
+    canRunRequirements,
+    requirementsRunning,
+    canRunQa,
+    qaRunning,
+    taskIsDone,
+    implementationUnlocked,
+    implementationStatus,
+    architectureStatus,
+  });
+  const refinementArtifacts = (task?.artifacts || []).filter((artifact) => artifact.isCurrent);
+  const humanArtifacts = refinementArtifacts.filter((artifact) => !isTechnicalArtifact(artifact));
+  const technicalArtifacts = refinementArtifacts.filter((artifact) => isTechnicalArtifact(artifact));
   const activeArtifactForEdit =
     editingArtifactId != null ?task?.artifacts?.find((artifact) => artifact.id === editingArtifactId) || null : null;
+  const activeArtifactForView =
+    viewingArtifactId != null ?task?.artifacts?.find((artifact) => artifact.id === viewingArtifactId) || null : null;
 
   async function loadTask() {
     setLoading(true);
@@ -237,6 +349,19 @@ export default function TaskDetailsPage() {
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
   }, [editingArtifactId]);
+
+  useEffect(() => {
+    if (!viewingArtifactId) return undefined;
+
+    function handleEscape(event) {
+      if (event.key === 'Escape') {
+        setViewingArtifactId(null);
+      }
+    }
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [viewingArtifactId]);
 
   async function handleCommentSubmit(e) {
     e.preventDefault();
@@ -323,6 +448,10 @@ export default function TaskDetailsPage() {
     setArtifactDraft(artifact.content || '');
   }
 
+  function handleOpenArtifactView(artifact) {
+    setViewingArtifactId(artifact.id);
+  }
+
   function handleCancelArtifactEdit() {
     setEditingArtifactId(null);
     setArtifactDraft('');
@@ -399,7 +528,7 @@ export default function TaskDetailsPage() {
 
   const tabs = [
     { id: 'overview', label: 'Resumo' },
-    { id: 'refinement', label: 'Refinamento' },
+    { id: 'refinement', label: 'Requisitos' },
     { id: 'development', label: 'Desenvolvimento' },
     { id: 'history', label: 'Histórico' },
   ];
@@ -411,49 +540,66 @@ export default function TaskDetailsPage() {
       description="Acompanhe contexto, refinamento, desenvolvimento, histórico e execuções da tarefa."
       actions={
         <div className="flex flex-col gap-3 sm:flex-row">
-          <button
-            onClick={handleRunRequirements}
-            disabled={saving || loading || !canRunRequirements}
-            className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
-            title={
-              requirementsRunning
-                ? 'J? existe uma execu??o de requisitos em andamento para esta task.'
-                : !canRunRequirements
-                  ? 'A etapa de requisitos j? foi conclu?da.'
-                  : undefined
-            }
-          >
-            {actionLoading === 'requirements'
-              ?'Refinando...'
-              : requirementsRunning
-                ? 'Requisitos em execu??o'
-                : 'Refinar com Requisitos'}
-          </button>
-          <button
-            onClick={handleRunQa}
-            disabled={saving || loading || !canRunQa}
-            className="w-full rounded-2xl bg-[#7b3aa4] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#6d3194] disabled:opacity-50 sm:w-auto"
-            title={
-              qaRunning
-                ? 'J? existe uma execu??o de QA em andamento para esta task.'
-                : !canRunQa && taskHasTestPlan
-                  ? 'A etapa de QA j? foi conclu?da.'
-                  : undefined
-            }
-          >
-            {actionLoading === 'qa'
-              ?'Executando QA...'
-              : qaRunning
-                ? 'QA em execu??o'
-                : 'Executar QA'}
-          </button>
-          {taskIsDone && (
+          {primaryAction.key === 'requirements' && (
             <button
-              onClick={handleOpenCodeStudio}
-              disabled={loading}
+              onClick={handleRunRequirements}
+              disabled={saving || loading || primaryAction.disabled}
               className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
             >
-              Abrir Code Studio
+              {actionLoading === 'requirements' ?'Refinando...' : primaryAction.label}
+            </button>
+          )}
+          {primaryAction.key === 'qa' && (
+            <button
+              onClick={handleRunQa}
+              disabled={saving || loading || primaryAction.disabled}
+              className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
+            >
+              {actionLoading === 'qa' ?'Executando QA...' : primaryAction.label}
+            </button>
+          )}
+          {primaryAction.key === 'code' && (
+            <button
+              onClick={handleGenerateCode}
+              disabled={saving || loading || primaryAction.disabled}
+              className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
+            >
+              {actionLoading === 'code' ?'Gerando código...' : primaryAction.label}
+            </button>
+          )}
+          {primaryAction.key === 'studio' && (
+            <button
+              onClick={handleOpenCodeStudio}
+              disabled={loading || primaryAction.disabled}
+              className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
+            >
+              {primaryAction.label}
+            </button>
+          )}
+          {['blocked', 'requirements-running', 'qa-running', 'architecture-blocked', 'overview'].includes(primaryAction.key) && (
+            <button
+              disabled
+              className="w-full rounded-2xl bg-slate-200 px-4 py-2 text-sm font-medium text-slate-500 sm:w-auto"
+            >
+              {primaryAction.label}
+            </button>
+          )}
+          {primaryAction.key !== 'requirements' && canRunRequirements && (
+            <button
+              onClick={handleRunRequirements}
+              disabled={saving || loading}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 sm:w-auto"
+            >
+              Refinar requisitos
+            </button>
+          )}
+          {primaryAction.key !== 'qa' && canRunQa && (
+            <button
+              onClick={handleRunQa}
+              disabled={saving || loading}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 sm:w-auto"
+            >
+              Executar QA
             </button>
           )}
           <button
@@ -564,10 +710,10 @@ export default function TaskDetailsPage() {
           </div>
         ) : task ?(
           <>
-            <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-              <div className="space-y-6">
-                <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Resumo da task</p>
+            <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-4xl">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Condução da task</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">{taskTypeLabel}</span>
                     <span className="rounded-full bg-[#fff5d9] px-3 py-1 text-xs font-semibold text-[#8a6a1f]">{taskStatusLabel}</span>
@@ -575,136 +721,66 @@ export default function TaskDetailsPage() {
                   </div>
                   <h2 className="mt-4 font-serif text-2xl font-semibold text-slate-900 sm:text-3xl">{task.title}</h2>
                   <p className="mt-4 text-sm leading-7 text-slate-600">{task.description || 'Sem descrição cadastrada.'}</p>
-                  <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Responsável</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">{task.assigneeUser?.name || task.assigneeAgentLabel || getAgentLabel(task.assigneeAgentName, 'Sem responsável')}</p>
-                    </article>
-                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Prazo</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">{formatDate(task.dueDate)}</p>
-                    </article>
-                    <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Status</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">{taskStatusLabel}</p>
-                    </article>
-                  </div>
-                </section>
-
-                <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Gestão da task</p>
-                      <p className="mt-2 text-sm text-slate-500">Responsável, prazo e bloqueio em um só lugar.</p>
-                    </div>
-                    <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
-                      {taskIsBlocked ?'Bloqueada' : 'Em fluxo'}
-                    </span>
-                  </div>
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Responsável</span>
-                      <select
-                        value={taskOwnerUuid}
-                        onChange={(event) => setTaskOwnerUuid(event.target.value)}
-                        className="dashboard-input"
-                      >
-                        <option value="">Sem responsável</option>
-                        {(task.project?.members || []).map((member) => (
-                          <option key={member.user.uuid} value={member.user.uuid}>
-                            {member.user.name || member.user.email}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="block">
-                      <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Prazo</span>
-                      <input
-                        type="date"
-                        value={taskDueDate}
-                        onChange={(event) => setTaskDueDate(event.target.value)}
-                        className="dashboard-input"
-                      />
-                    </label>
-                  </div>
-                  <div className="mt-4 rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Bloqueio</p>
-                    <p className="mt-2 text-sm text-slate-600">
-                      {taskIsBlocked
-                        ?'Essa task está bloqueada. Desbloqueie quando a dependência estiver resolvida.'
-                        : 'Use o bloqueio para sinalizar dependências externas ou impedimentos reais.'}
-                    </p>
-                    {!taskIsBlocked && (
-                      <label className="mt-4 block">
-                        <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">
-                          Motivo do bloqueio
-                        </span>
-                        <textarea
-                          value={blockReason}
-                          onChange={(event) => setBlockReason(event.target.value)}
-                          placeholder="Ex.: aguardando validação do financeiro"
-                          rows={3}
-                          className="dashboard-input resize-none"
-                        />
-                      </label>
-                    )}
-                    {taskIsBlocked && (
-                      <div className="mt-4 rounded-2xl bg-white p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-500">Motivo atual</p>
-                        <p className="mt-2 text-sm leading-6 text-slate-700">
-                          {getLatestStatusHistoryNote(task, 'blocked') || 'Bloqueio sem observação registrada.'}
-                        </p>
-                      </div>
-                    )}
-                    <div className="mt-4 flex flex-wrap justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={handleToggleBlockTask}
-                        disabled={saving || loading}
-                        className={taskIsBlocked ?'dashboard-button-secondary' : 'dashboard-button-primary'}
-                      >
-                        {actionLoading === 'block'
-                          ?'Bloqueando...'
-                          : actionLoading === 'unblock'
-                            ?'Desbloqueando...'
-                            : taskIsBlocked
-                              ?'Desbloquear tarefa'
-                              : 'Bloquear tarefa'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSaveTaskMeta}
-                        disabled={saving || loading}
-                        className="dashboard-button-primary"
-                      >
-                        {actionLoading === 'meta' ?'Salvando...' : 'Salvar gestão da task'}
-                      </button>
-                    </div>
-                  </div>
-                </section>
+                  <p className="mt-4 text-sm font-medium text-slate-700">{primaryAction.helper}</p>
+                </div>
+                <div className="min-w-[240px] rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Próxima ação</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{primaryAction.label}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{stageHint}</p>
+                </div>
               </div>
+            </section>
 
-              <aside className="space-y-6">
-                <section className="rounded-[32px] border border-slate-200 bg-[#faf8f2] p-6 shadow-[0_20px_60px_rgba(23,50,43,0.06)]">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Direção da task</p>
-                  <p className="mt-3 text-sm leading-7 text-slate-600">{stageHint}</p>
-                  <div className="mt-5 grid gap-3 text-sm">
-                    <div className="rounded-2xl bg-white p-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Requisitos</p>
-                      <p className="mt-2 font-medium text-slate-700">{taskHasRequirements ?'Já gerados' : 'Ainda não gerados'}</p>
-                    </div>
-                    <div className="rounded-2xl bg-white p-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">QA</p>
-                      <p className="mt-2 font-medium text-slate-700">{taskHasTestPlan ?'Já gerado' : 'Ainda não gerado'}</p>
-                    </div>
-                    <div className="rounded-2xl bg-white p-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Implementação</p>
-                      <p className="mt-2 font-medium text-slate-700">{implementationUnlocked ?'Liberada' : 'Aguardando arquitetura'}</p>
-                    </div>
-                  </div>
-                </section>
-              </aside>
-            </div>
+            <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Progresso da task</p>
+                <p className="mt-2 text-sm text-slate-500">O que já foi concluído e o que ainda falta para avançar.</p>
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {journey.map((step) => (
+                  <article key={step.id} className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{step.label}</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">{step.status}</p>
+                    <span
+                      className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                        step.tone === 'success'
+                          ?'bg-[#eef5ef] text-[#2f6c58]'
+                          : step.tone === 'active'
+                            ?'bg-[#e8eefc] text-[#1f4bb8]'
+                            : 'bg-white text-slate-500'
+                      }`}
+                    >
+                      {step.tone === 'success' ?'Consolidado' : step.tone === 'active' ?'Pronto para agir' : 'Aguardando'}
+                    </span>
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Resumo operacional</p>
+                <p className="mt-2 text-sm text-slate-500">O essencial para seguir sem disputar atenção com blocos administrativos repetidos.</p>
+              </div>
+              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Responsável</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{task.assigneeUser?.name || task.assigneeAgentLabel || getAgentLabel(task.assigneeAgentName, 'Sem responsável')}</p>
+                </article>
+                <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Prazo</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{formatDate(task.dueDate)}</p>
+                </article>
+                <article className="rounded-[22px] border border-slate-200 bg-[#faf8f2] p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Implementação</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{implementationStatus?.status || 'Não iniciada'}</p>
+                </article>
+              </div>
+              <div className="mt-6 rounded-[24px] border border-slate-200 bg-[#faf8f2] p-5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#2f6c58]">Contexto da task</p>
+                <p className="mt-3 text-sm leading-7 text-slate-600">{stageHint}</p>
+              </div>
+            </section>
 
             <section className="rounded-[32px] border border-slate-200 bg-white/88 p-3 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
               <div className="flex flex-wrap gap-2">
@@ -832,6 +908,134 @@ export default function TaskDetailsPage() {
             )}
 
             {activeTab === 'refinement' && (
+              <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Requisitos</p>
+                    <p className="mt-2 text-sm text-slate-500">A leitura humana fica separada das especificações técnicas para reduzir ruído.</p>
+                  </div>
+                  <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
+                    {refinementArtifacts.length || 0}
+                  </span>
+                </div>
+
+                <div className="mt-6 space-y-8">
+                  <section className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#2f6c58]">Artefatos humanos</p>
+                        <p className="mt-2 text-sm text-slate-500">User story, requisitos refinados e planos legíveis por pessoas.</p>
+                      </div>
+                      <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
+                        {humanArtifacts.length}
+                      </span>
+                    </div>
+
+                    <div className="space-y-4">
+                      {humanArtifacts.map((artifact) => (
+                        <article key={artifact.id} className="rounded-[24px] border border-slate-200 bg-[#fcfbf7] p-5 shadow-[0_10px_30px_rgba(23,50,43,0.04)]">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="max-w-4xl">
+                              <h3 className="text-base font-semibold text-slate-900">{artifact.title}</h3>
+                              <p className="mt-2 text-xs uppercase tracking-[0.16em] text-slate-500">
+                                {artifact.artifactType} • v{artifact.version}
+                              </p>
+                            </div>
+                            <span className={`w-fit rounded-full px-3 py-1 text-[11px] font-semibold ${artifact.isApproved ?'bg-[#e5f3e8] text-[#2f6c58]' : 'bg-[#fff5d9] text-[#8a6a1f]'}`}>
+                              {artifact.isApproved ?'Aprovado' : 'Pendente'}
+                            </span>
+                          </div>
+                          <div className="mt-4 rounded-[20px] border border-slate-200 bg-white px-5 py-4">
+                            <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-sm leading-7 text-slate-700">
+                              {getArtifactPreview(artifact.content)}
+                            </pre>
+                          </div>
+                          {artifact.isCurrent && (
+                            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <p className="text-xs leading-5 text-slate-500">
+                                Prévia reduzida para manter a aba leve. Abra o artefato para leitura completa em Markdown.
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenArtifactView(artifact)}
+                                  className="rounded-2xl bg-[#17322b] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#214338]"
+                                >
+                                  Visualizar artefato
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartArtifactEdit(artifact)}
+                                  className="rounded-2xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                                >
+                                  Editar artefato
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </article>
+                      ))}
+                      {!humanArtifacts.length && (
+                        <div className="rounded-[22px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
+                          Nenhum artefato humano de refinamento associado a esta task.
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Especificações técnicas</p>
+                        <p className="mt-2 text-sm text-slate-500">Specs estruturadas e artefatos de sistema ficam isolados da narrativa humana.</p>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                        {technicalArtifacts.length}
+                      </span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {technicalArtifacts.map((artifact) => (
+                        <article key={artifact.id} className="rounded-[22px] border border-slate-200 bg-[#f7f8fb] p-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <h3 className="text-sm font-semibold text-slate-900">{artifact.title}</h3>
+                              <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
+                                {artifact.artifactType} • v{artifact.version}
+                              </p>
+                            </div>
+                            <span className={`w-fit rounded-full px-3 py-1 text-[11px] font-semibold ${artifact.isApproved ?'bg-[#e5f3e8] text-[#2f6c58]' : 'bg-[#fff5d9] text-[#8a6a1f]'}`}>
+                              {artifact.isApproved ?'Aprovado' : 'Pendente'}
+                            </span>
+                          </div>
+                          <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap rounded-2xl bg-white p-4 text-xs leading-6 text-slate-600">
+                            {artifact.content}
+                          </pre>
+                          {artifact.isCurrent && (
+                            <div className="mt-3 flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleStartArtifactEdit(artifact)}
+                                className="rounded-2xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                              >
+                                Editar artefato
+                              </button>
+                            </div>
+                          )}
+                        </article>
+                      ))}
+                      {!technicalArtifacts.length && (
+                        <div className="rounded-[22px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
+                          Nenhuma especificação técnica associada a esta task.
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                </div>
+              </section>
+            )}
+
+            {activeTab === 'refinement-legacy' && (
               <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1234,6 +1438,35 @@ export default function TaskDetailsPage() {
           </>
         ) : null}
       </section>
+      {activeArtifactForView ?(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
+          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Visualizar artefato</p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-900">{activeArtifactForView.title}</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  {activeArtifactForView.artifactType} • v{activeArtifactForView.version}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingArtifactId(null)}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="overflow-auto px-6 py-6">
+              <div className="prose prose-slate max-w-none text-sm leading-7 prose-headings:font-semibold prose-headings:text-slate-900 prose-p:text-slate-700 prose-li:text-slate-700 prose-strong:text-slate-900 prose-code:rounded prose-code:bg-slate-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.9em] prose-pre:overflow-auto prose-pre:rounded-2xl prose-pre:bg-slate-950 prose-pre:text-slate-100">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {normalizeArtifactContent(activeArtifactForView.content)}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {activeArtifactForEdit ?(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
           <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_30px_120px_rgba(15,23,42,0.35)]">

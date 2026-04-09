@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/check-mojibake.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "test:visual-contract": "node scripts/visual-contract.mjs"

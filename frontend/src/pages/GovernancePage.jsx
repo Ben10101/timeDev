@@ -215,7 +215,7 @@ export default function GovernancePage() {
     if (readinessFailures.length) {
       items.push({
         title: `${readinessFailures.length} check${readinessFailures.length > 1 ?'s' : ''} critico${readinessFailures.length > 1 ?'s' : ''}`,
-        subtitle: 'Corrija os itens de readiness marcados como failed antes de ampliar a operaÃ§Ã£o.',
+        subtitle: 'Corrija os itens de readiness marcados como failed antes de ampliar a operação.',
         tone: 'rose',
       });
     }
@@ -247,7 +247,7 @@ export default function GovernancePage() {
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Opera??o da plataforma</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">
-                Veja o que precisa de atenÃ§Ã£o agora sem misturar isso com o fluxo de produto.
+                Veja o que precisa de atenção agora sem misturar isso com o fluxo de produto.
               </h2>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
                 Esta ?rea concentra sa?de da API, estabilidade dos agentes, custos, trilha de auditoria e alertas ativos.
@@ -314,7 +314,7 @@ export default function GovernancePage() {
                 hint={alerts.length ? 'Existe pelo menos um ponto de atenção exigindo ação.' : 'Nenhum alerta ativo agora.'}
               />
               <InsightCard
-                label="P95 de execuÃ§Ã£o"
+                label="P95 de execução"
                 value={`${summary.p95RunDurationSeconds || 0}s`}
                 hint="Mostra a cauda lenta das execu?es recentes."
               />
@@ -405,16 +405,16 @@ export default function GovernancePage() {
             <div className="grid gap-4 p-6 md:grid-cols-2">
               <EventCard
                 title={`v${readiness?.release?.version || 'n/a'} · ${readiness?.release?.channel || 'n/a'}`}
-                subtitle="Release em operaÃ§Ã£o"
+                subtitle="Release em operação"
               />
               <EventCard
                 title={readiness?.governance?.implementationRemoteOnly ?'Somente APIs remotas' : 'Fallback local permitido'}
-                subtitle="Policy de execuÃ§Ã£o da IA"
+                subtitle="Policy de execução da IA"
                 tone="amber"
               />
               <EventCard
                 title={readiness?.security?.authSecretConfigured ?'Segredo de auth configurado' : 'Segredo de auth ausente'}
-                subtitle="SeguranÃ§a de autenticaÃ§Ã£o"
+                subtitle="Segurança de autenticação"
                 tone={readiness?.security?.authSecretConfigured ?'emerald' : 'rose'}
               />
               <EventCard
@@ -441,7 +441,7 @@ export default function GovernancePage() {
           <motion.section {...fade(0.2)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Alertas e hotspots</p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-900">Onde a operaÃ§Ã£o mais sofre</h2>
+              <h2 className="mt-2 text-2xl font-bold text-slate-900">Onde a operação mais sofre</h2>
             </div>
             <div className="space-y-3 p-6">
               {alerts.length ?(
@@ -454,7 +454,7 @@ export default function GovernancePage() {
                   />
                 ))
               ) : (
-                <EventCard title="Nenhum alerta ativo" subtitle="A governanÃ§a da plataforma estÃ¡ estÃ¡vel agora." tone="emerald" />
+                <EventCard title="Nenhum alerta ativo" subtitle="A governança da plataforma está estável agora." tone="emerald" />
               )}
               {(governance?.failureHotspots || []).slice(0, 3).map((item) => (
                 <EventCard
@@ -479,7 +479,7 @@ export default function GovernancePage() {
         <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr_1fr]">
           <motion.section {...fade(0.24)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">HistÃ³rico</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Histórico</p>
               <h2 className="mt-2 text-xl font-bold text-slate-900">?ltimos 7 dias</h2>
             </div>
             <div className="space-y-3 p-6">
@@ -554,7 +554,7 @@ export default function GovernancePage() {
             />
             <EventCard
               title={`${governance?.summary?.coveredActionTypes || 0} fluxos auditados`}
-              subtitle="Mostra quantos tipos de aÃ§Ã£o entraram no recorte de governanÃ§a."
+              subtitle="Mostra quantos tipos de ação entraram no recorte de governança."
               tone="slate"
             />
           </div>

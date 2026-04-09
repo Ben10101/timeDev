@@ -562,7 +562,7 @@ export default function BacklogKanban({
                   </p>
                 </div>
               </div>
-              {processing && <span className="dashboard-badge bg-blue-50 text-blue-700">Em execuÃ§Ã£o</span>}
+              {processing && <span className="dashboard-badge bg-blue-50 text-blue-700">Em execução</span>}
             </div>
           </div>
 

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Activity,
@@ -239,7 +239,7 @@ function getImplementationOrder(task, implementation) {
       stage: 'Expansão e gestão',
       rank: 5,
       reason: 'Amplia governança, análise, relatórios e funções administrativas depois do fluxo base.',
-      keywords: ['relatorio', 'dashboard', 'metric', 'governanÃ§a', 'auditoria', 'sla', 'admin', 'finance', 'exportar'],
+      keywords: ['relatorio', 'dashboard', 'metric', 'governança', 'auditoria', 'sla', 'admin', 'finance', 'exportar'],
     },
   ];
 
@@ -626,7 +626,7 @@ export default function CodeStudioPage() {
               <p><strong>Stories prontas:</strong> {readyTasks.length}</p>
               <p><strong>Prontas para iniciar agora:</strong> {executionReadyTasks.length}</p>
               <p><strong>Com bloqueios sugeridos:</strong> {blockedReadyTasks.length}</p>
-              <p><strong>Planos tÃ©cnicos:</strong> {plannedTasks.length}</p>
+              <p><strong>Planos técnicos:</strong> {plannedTasks.length}</p>
               <p><strong>Integradas:</strong> {integratedTasks.length}</p>
             </div>
           </section>
@@ -756,7 +756,7 @@ export default function CodeStudioPage() {
                 <p className="mt-2 text-sm font-semibold text-slate-900">{generatedApp?.status || 'Pendente'}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Planos tÃ©cnicos</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Planos técnicos</p>
                 <p className="mt-2 text-sm font-semibold text-slate-900">{plannedTasks.length}/{readyTasks.length}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
