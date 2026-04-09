@@ -42,6 +42,108 @@ const GENERIC_INTERFACE_LIBRARY = {
 
 export function resolveInterfaceExamples(domainKey, productMode = 'structured-workspace', screenTemplate = 'crud') {
   const byDomain = {
+    'visit-operational-responsibles': {
+      settingsSummaryItems: [
+        'A recepcao encontra rapidamente quem apoiar a visita em cada tipo de suporte.',
+        'Contato e papel operacional aparecem juntos para reduzir duvida no acionamento.',
+        'A lista deve parecer um registro operacional vivo, nao um cadastro generico.',
+      ],
+      summaryStateTitle: 'Apoio operacional pronto',
+      summaryStateEmpty: 'Nenhum responsavel cadastrado ainda. Adicione o primeiro contato de apoio para a visita.',
+      summaryMetaIdle: 'Aguardando cadastro',
+      summaryMetaReady: 'Base operacional ativa',
+      seedRequests: [
+        {
+          responsibleName: 'Joao Silva',
+          contact: 'joao@empresa.com',
+          supportType: 'seguranca',
+        },
+        {
+          responsibleName: 'Mariana Costa',
+          contact: '(11) 99876-5432',
+          supportType: 'logistica',
+        },
+      ],
+      promptExamples: [
+        'Workspace operacional com lista clara de contatos e suporte por visita.',
+        'Tela de cadastro rapido para recepcao, com contexto de acionamento e leitura simples.',
+      ],
+      sectionLabels: ['Responsaveis ativos', 'Contato rapido', 'Papel na operacao'],
+      ctaLabels: ['Cadastrar responsavel', 'Salvar contato', 'Atualizar apoio'],
+      emptyStates: [
+        'Nenhum responsavel operacional cadastrado ainda.',
+        'Assim que o primeiro responsavel entrar, ele aparecera aqui com contato e tipo de suporte.',
+      ],
+      reviewSignals: ['contexto operacional', 'acionamento rapido', 'evitar cadastro generico'],
+    },
+    'visit-recurring-history': {
+      settingsSummaryItems: [
+        'O anfitriao encontra rapidamente visitas anteriores do cliente para evitar retrabalho.',
+        'A lista precisa destacar visitante principal, data e tipo de visita antes de qualquer detalhe secundario.',
+        'O historico deve apoiar novo agendamento com leitura operacional, nao com linguagem de dashboard generico.',
+      ],
+      summaryStateTitle: 'Historico pronto para consulta',
+      summaryStateEmpty: 'Nenhuma visita recorrente localizada ainda para o cliente informado.',
+      summaryMetaIdle: 'Aguardando busca',
+      summaryMetaReady: 'Historico localizado',
+      seedRequests: [
+        {
+          clientIdentifier: '12345678909',
+          periodRange: 'ultimos_12_meses',
+          visitStatus: 'realizada',
+        },
+        {
+          clientIdentifier: '11222333000144',
+          periodRange: 'ultimos_6_meses',
+          visitStatus: 'concluida',
+        },
+      ],
+      promptExamples: [
+        'Workspace de consulta com busca por cliente e lista cronologica de visitas anteriores.',
+        'Tela de historico operacional para anfitriao reaproveitar dados de visitas recorrentes sem parecer cadastro.',
+      ],
+      sectionLabels: ['Busca do cliente', 'Historico encontrado', 'Dados reaproveitaveis'],
+      ctaLabels: ['Buscar historico', 'Atualizar busca', 'Reaproveitar dados'],
+      emptyStates: [
+        'Nenhuma visita recorrente localizada ainda para o cliente informado.',
+        'Assim que houver visitas dentro do recorte, elas aparecerao aqui com dados prontos para consulta.',
+      ],
+      reviewSignals: ['consulta operacional', 'historico do cliente', 'evitar auth ou cadastro generico'],
+    },
+    'visit-extra-companions': {
+      settingsSummaryItems: [
+        'A recepcao entende rapidamente em qual visita aprovada o acompanhante foi incluído.',
+        'A decisao rapida da seguranca precisa ficar clara para evitar revalidacao desnecessaria na entrada.',
+        'A tela deve parecer extensao operacional da visita, e nao uma configuracao administrativa.',
+      ],
+      summaryStateTitle: 'Inclusao pronta para recepcao',
+      summaryStateEmpty: 'Nenhum acompanhante extra vinculado ainda a visitas aprovadas.',
+      summaryMetaIdle: 'Aguardando primeira inclusao',
+      summaryMetaReady: 'Fluxo complementar ativo',
+      seedRequests: [
+        {
+          approvedVisitCode: 'VIS-2026-0142',
+          companionName: 'Ana Beatriz Lopes',
+          securityFastApproval: 'aprovado',
+        },
+        {
+          approvedVisitCode: 'VIS-2026-0188',
+          companionName: 'Carlos Menezes',
+          securityFastApproval: 'pendente',
+        },
+      ],
+      promptExamples: [
+        'Workspace enxuto para anexar acompanhantes extras a visitas ja aprovadas com decisao rapida da seguranca.',
+        'Tela operacional de extensao da visita, com leitura clara de visita vinculada, acompanhante e aprovacao rapida.',
+      ],
+      sectionLabels: ['Visita aprovada', 'Acompanhantes extras', 'Decisao da seguranca'],
+      ctaLabels: ['Adicionar acompanhante', 'Registrar inclusao', 'Atualizar decisao'],
+      emptyStates: [
+        'Nenhum acompanhante extra vinculado ainda a visitas aprovadas.',
+        'Assim que a primeira inclusao for registrada, ela aparecera aqui vinculada a visita e a decisao da seguranca.',
+      ],
+      reviewSignals: ['extensao da visita', 'aprovacao rapida', 'evitar tela de configuracao'],
+    },
     'access-control-roles': {
       settingsSummaryItems: [
         'Perfis com escopo claro para cada papel da operacao.',

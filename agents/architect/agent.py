@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import os
 import re
 import sys
@@ -40,6 +41,53 @@ class Architect:
 
     def __init__(self, project_id):
         self.project_id = project_id
+
+    def _compact_project_context(self, project_context):
+        context = project_context or {}
+        project_dna = context.get("project_dna") or {}
+        backlog_contract = context.get("backlog_contract") or {}
+
+        if isinstance(project_dna, str):
+            project_dna = {
+                "summary": project_dna,
+            }
+        if isinstance(backlog_contract, str):
+            backlog_contract = {
+                "summary": backlog_contract,
+            }
+
+        compact = {
+            "product_mode": project_dna.get("productMode"),
+            "experience_style": project_dna.get("experienceStyle"),
+            "primary_actor": project_dna.get("primaryActor"),
+            "domain_language": project_dna.get("domainLanguage") or [],
+            "allowed_screen_families": project_dna.get("allowedScreenFamilies") or [],
+            "project_dna_summary": project_dna.get("summary"),
+            "backlog_overview": backlog_contract.get("overview") or backlog_contract.get("summary"),
+            "mvp_goal": None,
+            "stories_sample": [],
+        }
+
+        release_slices = backlog_contract.get("releaseSlices") or []
+        mvp_slice = next(
+            (item for item in release_slices if "mvp" in str(item.get("name") or "").lower()),
+            None,
+        )
+        if mvp_slice:
+            compact["mvp_goal"] = mvp_slice.get("goal")
+
+        stories = context.get("stories") or []
+        compact["stories_sample"] = [
+            {
+                "taskUuid": story.get("taskUuid"),
+                "title": story.get("title"),
+            }
+            for story in stories[:8]
+            if story.get("title")
+        ]
+
+        compact_text = json.dumps(compact, ensure_ascii=False, indent=2).strip()
+        return compact_text[:2800]
 
     def _normalize_text(self, value):
         text = (value or "").strip()
@@ -254,7 +302,7 @@ REGRAS
     def _build_full_architecture(self, sections):
         ordered_sections = []
         for title in self.REQUIRED_SECTIONS:
-            body = self._sanitize_section_body(sections.get(title) or "")
+            body = self._sanitize_section_body(sections.get(title) or "", title=title)
             if body:
                 ordered_sections.append(f"## {title}\n{body}")
 
@@ -281,12 +329,13 @@ REGRAS
       +--> [Storage de Arquivos]
 ```"""
 
-    def _sanitize_section_body(self, body):
+    def _sanitize_section_body(self, body, title=None):
         text = (body or "").strip()
         if not text:
             return ""
 
         text = text.replace("---.", "---")
+        text = text.replace("|.", "|")
         text = text.replace("```mermaid\n", "```mermaid\n")
         text = re.sub(r"^\s*---\s*$", "", text, flags=re.MULTILINE)
         text = re.sub(r"\n\s*---\s*\n", "\n\n", text)
@@ -307,6 +356,58 @@ REGRAS
         text = re.sub(r"[ \t]+\n", "\n", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(r"^\s*\.\s*$", "", text, flags=re.MULTILINE)
+        text = re.sub(r"\b([A-Za-z0-9_]+)\.java\b", r"\1.ts", text)
+        text = text.replace("LocalDateTime", "Date")
+        text = text.replace("Boolean", "boolean")
+        text = text.replace("String", "string")
+        text = text.replace("Integer", "number")
+
+        banned_line_markers = [
+            "sendgrid",
+            "firebase",
+            "fcm",
+            "apns",
+            "aws ses",
+            "redis",
+            "prometheus",
+            "grafana",
+            "pagerduty",
+            "/metrics",
+            "google oauth",
+            "terminus",
+            "typeorm",
+        ]
+        filtered_lines = []
+        for line in text.splitlines():
+            normalized_line = line.lower()
+            if any(marker in normalized_line for marker in banned_line_markers):
+                continue
+            if normalized_line.strip().endswith(":."):
+                continue
+            filtered_lines.append(line)
+        text = "\n".join(filtered_lines).strip()
+
+        if title == "Padroes de Design":
+            filtered_lines = []
+            for line in text.splitlines():
+                if "cqrs" in line.lower():
+                    continue
+                filtered_lines.append(line)
+            text = "\n".join(filtered_lines).strip()
+
+        if title == "Contratos e Integracoes":
+            text = re.sub(r"```json\s*\{[\s\S]{0,400}?```", "", text, flags=re.IGNORECASE)
+            filtered_lines = []
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("- `") and stripped.count("`") % 2 != 0:
+                    continue
+                filtered_lines.append(line)
+            text = "\n".join(filtered_lines).strip()
+            text = re.sub(r"\n{3,}", "\n\n", text)
+
+        if not text.strip():
+            return ""
 
         last_line = text.splitlines()[-1].rstrip()
         if re.search(r"[:|*_\-/(\[{,;]$", last_line):
@@ -314,7 +415,8 @@ REGRAS
 
         return text.strip()
 
-    def _generate_multi_block_architecture(self, idea, compact_requirements, architecture_model):
+    def _generate_multi_block_architecture(self, idea, compact_requirements, architecture_model, project_context=None):
+        compact_project_context = self._compact_project_context(project_context)
         base_context = f"""
 Voce e um Arquiteto de Software Principal.
 
@@ -327,15 +429,28 @@ BRIEFING
 RESUMO DAS HISTORIAS
 {compact_requirements}
 
+CONTRATO ESTRUTURADO DO PROJETO
+{compact_project_context}
+
 REGRAS GERAIS
 - Responda em portugues.
 - Nao invente escopo fora das historias.
 - Seja tecnico, objetivo e economico em tokens.
 - Nao inclua introducao nem conclusao fora das secoes pedidas.
 - Prefira bullets curtos, contratos claros e decisoes implementaveis.
+- Trate isto como arquitetura de MVP implementavel, nao como arquitetura enterprise aspiracional.
+- Priorize web-first, backend REST simples e modular monolith antes de mobile, microsservicos ou plataforma distribuida.
+- Quando nao houver stack obrigatoria explicita no briefing, prefira a stack-base desta factory: React + TypeScript + Vite no frontend, Node.js + Express no backend, Prisma como ORM e PostgreSQL como banco relacional.
+- Se o briefing e as historias nao pedirem explicitamente, nao use como escolha principal: React Native, GraphQL, CQRS, Event Sourcing, Redis, Kafka, Kubernetes, EKS, Keycloak, Firebase, SMS, LaunchDarkly, Terraform, Helm, PagerDuty ou Grafana/Prometheus.
+- Quando citar evolucoes futuras, deixe-as claramente separadas do MVP e em no maximo 1 ou 2 bullets por secao.
+- O stack principal deve caber no contexto atual do produto e da esteira: frontend web, backend HTTP, banco relacional, auth/roles, logs, healthcheck e deploy simples.
+- Evite vendor lock-in e nomes de produtos cloud como padrao, a menos que estejam explicitamente pedidos.
+- Mantenha consistencia de linguagem e stack em todo o documento: se o backend for Node/Nest, exemplos de pastas, arquivos, tipos e classes devem ser TypeScript, nunca Java/.java.
+- Nao deixe exemplos ou blocos truncados; se incluir payload/exemplo, feche-o completamente.
+- Nao misture frameworks de backend ou runtime no mesmo documento. Escolha uma linha principal e sustente-a ate o fim.
 """
 
-        retry_count = max(1, int(os.getenv("ARCHITECT_MAX_RETRIES", "1")))
+        retry_count = max(1, int(os.getenv("ARCHITECT_MAX_RETRIES", "2")))
         last_reason = "sem detalhes"
 
         for _attempt in range(1, retry_count + 1):
@@ -350,10 +465,20 @@ Gere APENAS estas secoes em Markdown:
 
 ## Stack Tecnologico
 
+REGRAS ESPECIFICAS
+- Liste a stack principal do MVP agora.
+- Prefira algo como frontend web + backend REST + PostgreSQL.
+- Prefira explicitamente: React + TypeScript + Vite, Node.js + Express, Prisma e PostgreSQL.
+- Se houver evolucao futura relevante, coloque no maximo 1 bullet final iniciado por "Evolucao futura:".
+- Nao troque Express/Prisma por NestJS/TypeORM sem necessidade explicita muito forte no backlog.
+- Nao misture com convenÃ§Ãµes Java, Spring, .NET, arquivos `.java` ou tipos como `LocalDateTime`.
+- Se escolher Node/Nest, nao misture com convenções Java, Spring ou arquivos `.java`.
+
 ## Modulos e Responsabilidades
 
 ## Diagrama de Arquitetura
 Use Mermaid ou ASCII curto.
+- Diagrama curto, com poucos blocos, refletindo um sistema implementavel agora.
 """
                 foundation_result = self._generate_block(
                     foundation_prompt,
@@ -379,12 +504,31 @@ Use Mermaid ou ASCII curto.
 Gere APENAS estas secoes em Markdown:
 
 ## Estrutura de Diretorios Sugerida
+- Use exemplos de pastas e arquivos coerentes com o stack escolhido.
+- Para o stack padrao da factory, exemplos de backend devem parecer `src/routes`, `src/controllers`, `src/services`, `src/repositories`, `src/middlewares`, `src/lib/prisma.ts`.
+- Nunca use estrutura Java, Spring ou .NET como exemplo se o stack principal for Node.js.
+- Se o backend for Node/Nest, use nomes `.ts` e estrutura de módulos/controllers/services típica de TypeScript.
 
 ## Modelo de Dados e Entidades Principais
 
+REGRAS ESPECIFICAS
+- Modele somente entidades e campos bem sustentados pelo backlog/refinamentos.
+- Nao antecipe QR code, foto, biometria, push, SSO corporativo, integrações externas ou event store como parte central se ainda nao forem necessarios no MVP.
+
 ## Contratos e Integracoes
 
+REGRAS ESPECIFICAS
+- Prefira contratos REST simples e poucos endpoints nucleares.
+- Nao invente integracoes corporativas externas como LDAP/AD, RH, catracas ou impressoras como parte obrigatoria do MVP sem base explicita.
+- Se incluir exemplo de request/response, entregue JSON completo e curto, sem cortar no meio.
+- Se nao houver seguranca suficiente para montar um JSON completo e curto, liste somente endpoint + finalidade, sem exemplo.
+- Se o MVP nao exigir integracao externa, deixe isso explicito em vez de sugerir SendGrid, Firebase, SES, FCM, APNS ou equivalentes como parte central.
+
 ## Padroes de Design
+- Prefira padroes simples e justificaveis para o estagio atual.
+- Evite CQRS/Event Sourcing como padrao principal, salvo necessidade explicita muito forte.
+- Prefira Service + Repository + schema validation + RBAC simples.
+- Nao cite CQRS, mesmo "leve", neste projeto.
 """
                 design_result = self._generate_block(
                     design_prompt,
@@ -412,13 +556,27 @@ Gere APENAS estas secoes em Markdown:
 ## Observabilidade e Operacao
 Cubra logs, metricas, alertas, suporte operacional e recovery.
 
+REGRAS ESPECIFICAS
+- Mantenha observabilidade proporcional ao MVP: logs estruturados, healthcheck, poucos indicadores operacionais.
+- Evite vendors e stacks de observabilidade enterprise como padrao do MVP sem necessidade explicita.
+- Nao proponha `/metrics` Prometheus, Grafana, PagerDuty, Terminus ou stacks similares como base do MVP.
+
 ## Estrategia de Deploy
 
+- Descreva deploy simples e implementavel agora. Prefira ambientes basicos e pipeline direta.
+- Nao assuma Kubernetes, canario, blue/green, Terraform ou feature flags corporativas como base.
+- Prefira Docker Compose + processo Node + proxy reverso simples.
+
 ## Seguranca
+
+- Cubra autenticacao, autorizacao, protecao de dados e auditoria de forma pragmatica para o MVP.
+- Nao assuma SSO corporativo, Azure AD, Keycloak, WAF enterprise ou requisitos bancarios sem base explicita.
+- Prefira JWT + roles + hashing de senha + trilha de auditoria simples.
 
 ## Riscos Tecnicos e Trade-offs
 
 ## Sequencia Recomendada de Implementacao
+- Separar claramente MVP agora vs evolucao futura.
 """
                 operations_result = self._generate_block(
                     operations_prompt,
@@ -464,7 +622,7 @@ Cubra logs, metricas, alertas, suporte operacional e recovery.
             f"Ultimo motivo: {last_reason}"
         )
 
-    def process(self, idea, requirements):
+    def process(self, idea, requirements, project_context=None):
         architecture_model = os.getenv("ARCHITECT_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL", "gemma3:4b")
         previous_timeout = os.environ.get("OLLAMA_REQUEST_TIMEOUT_SECONDS")
         os.environ["OLLAMA_REQUEST_TIMEOUT_SECONDS"] = os.getenv(
@@ -475,7 +633,12 @@ Cubra logs, metricas, alertas, suporte operacional e recovery.
         compact_requirements = self._compact_requirements(requirements)
 
         try:
-            result = self._generate_multi_block_architecture(idea, compact_requirements, architecture_model)
+            result = self._generate_multi_block_architecture(
+                idea,
+                compact_requirements,
+                architecture_model,
+                project_context=project_context,
+            )
         finally:
             if previous_timeout is None:
                 os.environ.pop("OLLAMA_REQUEST_TIMEOUT_SECONDS", None)

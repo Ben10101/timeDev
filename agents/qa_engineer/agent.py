@@ -406,6 +406,37 @@ class QAEngineer:
             f"8. Limite: valor exatamente no limite minimo aceito para {secondary_text}; sistema aceita e persiste corretamente.",
         ]
 
+    def _synthesize_smoke_lines(self, idea, requirement_summary, requirement_spec=None):
+        route_label = self._extract_primary_route_label(idea)
+        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        primary_field = fields[0] if fields else "campo principal"
+        secondary_field = fields[1] if len(fields) > 1 else "campo complementar"
+        return [
+            f"- UI: abrir a tela/fluxo principal da feature sem erro visivel.",
+            f"- Validacao: submeter {primary_field} e {secondary_field} com valores validos e verificar aceite do formulario.",
+            f"- API: confirmar resposta de sucesso no {route_label} ou no endpoint principal equivalente.",
+            "- Persistencia: consultar em seguida e verificar que o registro/reflexo da acao ficou disponivel.",
+            "- Auditoria: verificar existencia de feedback de sucesso ou sinal operacional minimo apos a acao principal.",
+        ]
+
+    def _synthesize_scenarios(self, idea, requirement_summary, requirement_spec=None):
+        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        primary_field = fields[0] if fields else "campo principal"
+        secondary_field = fields[1] if len(fields) > 1 else "campo complementar"
+        tertiary_field = fields[2] if len(fields) > 2 else secondary_field
+        return [
+            f"1. Caminho Feliz: criar/registrar a feature com {primary_field} e {secondary_field} validos; sistema conclui a operacao com sucesso.",
+            f"2. Caminho Feliz: repetir o fluxo principal com variacao valida de {secondary_field}; sistema persiste e exibe confirmacao coerente.",
+            f"3. Caminho Feliz: consultar o registro apos a acao principal; sistema apresenta os dados mais recentes sem divergencia.",
+            f"4. Excecao: submeter a feature sem {primary_field}; sistema bloqueia a operacao e informa o erro.",
+            f"5. Excecao: informar {secondary_field} em formato invalido; sistema rejeita a submissao sem persistencia parcial.",
+            "6. Excecao: simular falha do backend durante a confirmacao; sistema exibe erro tratado e evita inconsistencias.",
+            f"7. Limite: informar {primary_field} exatamente no tamanho maximo permitido; sistema aceita e persiste corretamente.",
+            f"8. Limite: informar {tertiary_field} exatamente no menor valor valido previsto; sistema aceita sem degradar a experiencia.",
+            "9. Resiliencia: repetir a operacao apos falha transitória; sistema recupera o fluxo sem duplicar registros.",
+            "10. Resiliencia: executar consulta/acao principal com lentidao moderada da API; sistema preserva feedback e nao trava a interface.",
+        ]
+
     def _synthesize_functional_cases(self, idea, requirement_summary, requirement_spec=None):
         route_label = self._extract_primary_route_label(idea)
         spec = self._parse_requirement_spec(requirement_spec)
@@ -449,11 +480,15 @@ class QAEngineer:
 
         scenarios_body = sections.get("Cenarios de teste", "")
         scenario_lines = self._normalize_section_lines(scenarios_body)
+        happy_lines = [line for line in scenario_lines if "caminho feliz" in line.lower()]
         limit_lines = [line for line in scenario_lines if "limite" in line.lower()]
         weak_limit_markers = ["vazia", "vazio", "null", "nulo", "em branco", "\"\"", "''"]
-        if len(limit_lines) < 2 or any(any(marker in line.lower() for marker in weak_limit_markers) for line in limit_lines):
-            non_limit_lines = [line for line in scenario_lines if "limite" not in line.lower()]
-            sections["Cenarios de teste"] = "\n".join(non_limit_lines + self._synthesize_limit_lines(idea, requirement_summary, requirement_spec))
+        if (
+            len(happy_lines) < 3
+            or len(limit_lines) < 2
+            or any(any(marker in line.lower() for marker in weak_limit_markers) for line in limit_lines)
+        ):
+            sections["Cenarios de teste"] = "\n".join(self._synthesize_scenarios(idea, requirement_summary, requirement_spec))
 
         functional_cases_body = sections.get("Casos de teste funcionais", "")
         functional_case_lines = self._normalize_section_lines(functional_cases_body)
@@ -461,6 +496,11 @@ class QAEngineer:
         expected_count = sum(1 for line in functional_case_lines if line.lower().startswith("resultado esperado:"))
         if action_count < 3 or expected_count < 3:
             sections["Casos de teste funcionais"] = self._synthesize_functional_cases(idea, requirement_summary, requirement_spec)
+
+        smoke_body = sections.get("Smoke Minimo da Feature", "")
+        smoke_lines = [line for line in self._normalize_section_lines(smoke_body) if re.match(r"^\s*[-*]", line)]
+        if len(smoke_lines) < 3:
+            sections["Smoke Minimo da Feature"] = "\n".join(self._synthesize_smoke_lines(idea, requirement_summary, requirement_spec))
 
         return self._sanitize_plan(self._build_full_plan(sections))
 

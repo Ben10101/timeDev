@@ -14,9 +14,10 @@ const DEFAULT_AI_SETTINGS = {
     developer_backend: 'Developer Backend',
     developer_frontend: 'Developer Frontend',
     implementation_architect: 'UI Agent',
+    implementation_autonomous_agent: 'Implementation Autonomous Agent',
   },
   ollama: {
-    enabled: true,
+    enabled: false,
     host: 'http://127.0.0.1:11434',
     model: 'gemma3:4b',
   },
@@ -356,13 +357,18 @@ export async function updateAiSettingsForUser(userUuid, input = {}) {
 
 export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
   const settings = await getAiSettingsForUser(userUuid, { includeSecrets: true });
-  const includeLocalFallback = options.includeLocalFallback !== false;
+  const includeLocalFallback = options.includeLocalFallback === true;
   const agentName = String(options.agentName || '').trim().toLowerCase();
   const remoteProviders = REMOTE_PROVIDER_KEYS.filter(
     (providerKey) => settings[providerKey]?.enabled && settings[providerKey]?.apiKey
   );
+  const agentForcesNvidia =
+    ['implementation_autonomous_agent', 'implementation_architect'].includes(agentName) &&
+    remoteProviders.includes('nvidia');
   const preferredProvider =
-    settings.providerPreference && settings.providerPreference !== 'auto' && settings.providerPreference !== 'ollama'
+    agentForcesNvidia
+      ? 'nvidia'
+      : settings.providerPreference && settings.providerPreference !== 'auto' && settings.providerPreference !== 'ollama'
       ? settings.providerPreference
       : null;
   const orderedRemoteProviders = [
@@ -373,8 +379,12 @@ export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
     ...orderedRemoteProviders,
     ...(includeLocalFallback && settings.ollama?.enabled !== false ? ['ollama'] : []),
   ];
+  const effectiveProviderPreference =
+    includeLocalFallback || settings.providerPreference !== 'ollama'
+      ? settings.providerPreference || 'auto'
+      : preferredProvider || 'auto';
   const env = {
-    LLM_PROVIDER: settings.providerPreference || 'auto',
+    LLM_PROVIDER: effectiveProviderPreference,
     AI_PROVIDER_ORDER: providerOrder.join(','),
     AI_DISABLE_OLLAMA_FALLBACK: includeLocalFallback ? '0' : '1',
     OLLAMA_HOST: settings.ollama?.host || DEFAULT_AI_SETTINGS.ollama.host,

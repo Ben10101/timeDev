@@ -322,6 +322,612 @@ function buildEmptyState(componentMap = {}, recordsEmptyState = 'Nenhum registro
         </div>`;
 }
 
+function renderAutonomousPageTemplate(template, context) {
+  const replacements = {
+    __SHARED_IMPORT_PATH__: context.sharedImportPath,
+    __UI_IMPORT_PATH__: context.uiImportPath,
+    __REQUEST_CONTRACT_NAME__: context.requestContractName,
+    __RESPONSE_CONTRACT_NAME__: context.responseContractName,
+    __LIST_CONTRACT_NAME__: context.listContractName,
+    __ENTITY_NAME__: context.entityName,
+    __PAGE_COMPONENT_NAME__: context.pageComponentName,
+    __QUERY_KEY_NAME__: context.queryKeyName,
+    __SCHEMA_NAME__: context.schemaName,
+    __FORM_VALUES_TYPE__: context.formValuesType,
+    __ROUTE_BASE__: context.routeBase,
+    __SUBMIT_LABEL__: context.submitLabel,
+    __SUCCESS_MESSAGE__: context.successMessage,
+  };
+
+  return Object.entries(replacements).reduce(
+    (content, [token, value]) => content.replaceAll(token, escapeTemplate(String(value || ''))),
+    String(template || '')
+  );
+}
+
+function buildVisitOperationalResponsiblesPage(technicalSpec, {
+  sharedImportPath,
+  uiImportPath,
+  schemaName,
+  formValuesType,
+  queryKeyName,
+}) {
+  return `import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
+import type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';
+import { FieldGroup, PrimaryButton, inputStyle, tokens } from '${uiImportPath}';
+import { ${schemaName}, type ${formValuesType} } from './schema';
+import { ${queryKeyName}, create${technicalSpec.entityName}, fetch${technicalSpec.entityName}Items } from './service';
+
+const initialForm: ${formValuesType} = {
+  responsibleName: '',
+  contact: '',
+  supportType: 'tecnico',
+};
+
+const supportCatalog = {
+  tecnico: { label: 'Tecnico', tone: '#0f766e', soft: '#dcfce7' },
+  logistica: { label: 'Logistica', tone: '#b45309', soft: '#fef3c7' },
+  seguranca: { label: 'Seguranca', tone: '#1d4ed8', soft: '#dbeafe' },
+  apoio: { label: 'Apoio', tone: '#7c3aed', soft: '#ede9fe' },
+} as const;
+
+function formatCreatedAt(value?: string) {
+  if (!value) return 'Agora';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Agora';
+  return parsed.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function normalizeSupportType(value?: string) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized in supportCatalog ? (normalized as keyof typeof supportCatalog) : 'apoio';
+}
+
+function formatContactChannel(value?: string) {
+  return String(value || '').includes('@') ? 'E-mail' : 'Telefone';
+}
+
+function panelStyle(overrides = {}) {
+  return {
+    border: \`1px solid \${tokens.color.border}\`,
+    borderRadius: 12,
+    background: '#ffffff',
+    ...overrides,
+  };
+}
+
+export function ${technicalSpec.frontend.pageComponentName}() {
+  const queryClient = useQueryClient();
+  const { data: items = [], isLoading } = useQuery<${technicalSpec.shared.responseContractName}[]>({
+    queryKey: ${queryKeyName},
+    queryFn: fetch${technicalSpec.entityName}Items,
+  });
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<${formValuesType}>({
+    resolver: zodResolver(${schemaName}),
+    defaultValues: initialForm,
+  });
+
+  const mutation = useMutation({
+    mutationFn: (input: ${technicalSpec.shared.requestContractName}) => create${technicalSpec.entityName}(input),
+    onSuccess: (created) => {
+      queryClient.setQueryData<${technicalSpec.shared.responseContractName}[]>(${queryKeyName}, (current = []) => [created, ...current]);
+      reset(initialForm);
+    },
+  });
+
+  const groupedItems = (['seguranca', 'logistica', 'tecnico', 'apoio'] as const).map((type) => ({
+    type,
+    meta: supportCatalog[type],
+    items: items.filter((item) => normalizeSupportType(item.supportType) === type),
+  }));
+
+  return (
+    <section style={{ display: 'grid', gap: 12 }}>
+      <header style={{ ...panelStyle({ padding: 16, background: '#f8fafc' }), display: 'grid', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gap: 4 }}>
+            <div style={{ fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', color: tokens.color.muted, fontWeight: 800 }}>
+              Operacao de visitas
+            </div>
+            <h1 style={{ margin: 0, fontSize: 26, lineHeight: 1.08, letterSpacing: '-0.03em', color: '#0f172a' }}>
+              Responsaveis operacionais
+            </h1>
+            <p style={{ margin: 0, color: tokens.color.mutedStrong, maxWidth: 760, lineHeight: 1.55, fontSize: 14 }}>
+              Cadastre os contatos que apoiam a visita para facilitar o acionamento por tipo de suporte durante a operacao.
+            </p>
+          </div>
+        </div>
+      </header>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '360px minmax(0, 1fr)', gap: 12, alignItems: 'start' }}>
+        <aside style={{ ...panelStyle(), padding: 14, display: 'grid', gap: 14 }}>
+          <div style={{ display: 'grid', gap: 2 }}>
+            <strong style={{ color: '#0f172a', fontSize: 15 }}>Novo responsavel</strong>
+            <span style={{ color: tokens.color.mutedStrong, fontSize: 13, lineHeight: 1.5 }}>
+              Nome, contato e tipo de suporte. O restante deve ser comportamento da tela, nao explicacao.
+            </span>
+          </div>
+
+          <form
+            onSubmit={handleSubmit((values) =>
+              mutation.mutateAsync({
+                responsibleName: values.responsibleName,
+                contact: values.contact,
+                supportType: values.supportType,
+              })
+            )}
+            style={{ display: 'grid', gap: 14 }}
+          >
+            <FieldGroup label="Nome" hint="Identificacao principal para a recepcao.">
+              <input {...register('responsibleName')} type="text" placeholder="Joao Silva" style={inputStyle({ borderRadius: 10, padding: '12px 13px' })} />
+              {errors.responsibleName ? <small style={{ color: tokens.color.danger }}>{errors.responsibleName.message}</small> : null}
+            </FieldGroup>
+            <FieldGroup label="Contato" hint="E-mail ou telefone com DDD.">
+              <input {...register('contact')} type="text" placeholder="joao@empresa.com" style={inputStyle({ borderRadius: 10, padding: '12px 13px' })} />
+              {errors.contact ? <small style={{ color: tokens.color.danger }}>{errors.contact.message}</small> : null}
+            </FieldGroup>
+            <FieldGroup label="Tipo de suporte" hint="Categoria principal de apoio.">
+              <select {...register('supportType')} style={inputStyle({ borderRadius: 10, padding: '12px 13px' })}>
+                <option value="tecnico">Tecnico</option>
+                <option value="logistica">Logistica</option>
+                <option value="seguranca">Seguranca</option>
+                <option value="apoio">Apoio</option>
+              </select>
+              {errors.supportType ? <small style={{ color: tokens.color.danger }}>{errors.supportType.message}</small> : null}
+            </FieldGroup>
+            <div style={{ display: 'grid', gap: 10 }}>
+              <PrimaryButton type="submit" accent="teal">
+                {isSubmitting || mutation.isPending ? 'Salvando...' : 'Cadastrar responsavel'}
+              </PrimaryButton>
+              <span style={{ color: tokens.color.muted, fontSize: 12, lineHeight: 1.5 }}>
+                O cadastro aparece na lista logo apos a confirmacao.
+              </span>
+            </div>
+            {mutation.isSuccess && mutation.data ? (
+              <div style={{ padding: '11px 12px', borderRadius: 10, background: '#ecfdf3', border: '1px solid #86efac', display: 'grid', gap: 4 }}>
+                <strong style={{ color: '#166534' }}>Cadastro concluido</strong>
+                <span style={{ color: '#166534', fontSize: 13 }}>
+                  ID gerado: <strong>{mutation.data.id}</strong>
+                </span>
+              </div>
+            ) : null}
+            {mutation.error ? (
+              <div style={{ padding: '11px 12px', borderRadius: 10, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 13, lineHeight: 1.5 }}>
+                {mutation.error instanceof Error ? mutation.error.message : 'Falha ao enviar formulario.'}
+              </div>
+            ) : null}
+          </form>
+
+        </aside>
+
+        <section style={{ ...panelStyle(), overflow: 'hidden' }}>
+          <div style={{ padding: '12px 14px', borderBottom: \`1px solid \${tokens.color.border}\`, background: '#f8fafc', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'grid', gap: 2 }}>
+              <strong style={{ color: '#0f172a', fontSize: 15 }}>Registro ativo</strong>
+              <span style={{ color: tokens.color.muted, fontSize: 13 }}>
+                Conferencia por tipo, contato e data de criacao.
+              </span>
+            </div>
+            <div style={{ color: tokens.color.mutedStrong, fontSize: 12, fontWeight: 700 }}>
+              {isLoading ? 'Carregando dados...' : \`\${items.length} itens no total\`}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr 128px 92px 144px', gap: 10, padding: '10px 14px', borderBottom: \`1px solid \${tokens.color.border}\`, fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: tokens.color.muted, background: '#ffffff' }}>
+              <span>Responsavel</span>
+              <span>Contato</span>
+              <span>Suporte</span>
+              <span>Canal</span>
+              <span>Criado</span>
+            </div>
+
+            {isLoading ? (
+              <div style={{ display: 'grid', gap: 0 }}>
+                {[0, 1, 2, 3].map((placeholder) => (
+                  <div key={placeholder} style={{ height: 52, borderBottom: \`1px solid \${tokens.color.border}\`, background: placeholder % 2 === 0 ? '#ffffff' : '#fbfcfe' }} />
+                ))}
+              </div>
+            ) : items.length ? (
+              <div style={{ display: 'grid' }}>
+                {groupedItems.flatMap((group) =>
+                  group.items.map((item, index) => (
+                    <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr 128px 92px 144px', gap: 10, padding: '12px 14px', borderBottom: \`1px solid \${tokens.color.border}\`, background: index % 2 === 0 ? '#ffffff' : '#fbfcfe', alignItems: 'center' }}>
+                      <div style={{ display: 'grid', gap: 3 }}>
+                        <strong style={{ color: '#0f172a', fontSize: 14 }}>{item.responsibleName}</strong>
+                        <span style={{ color: tokens.color.muted, fontSize: 11, fontFamily: '"Consolas", "SFMono-Regular", monospace' }}>ID {item.id.slice(0, 8)}</span>
+                      </div>
+                      <span style={{ color: tokens.color.mutedStrong, fontSize: 13 }}>{item.contact}</span>
+                      <span style={{ width: 'fit-content', padding: '4px 8px', borderRadius: 999, background: group.meta.soft, color: group.meta.tone, fontSize: 11, fontWeight: 800 }}>
+                        {group.meta.label}
+                      </span>
+                      <span style={{ color: tokens.color.mutedStrong, fontSize: 12 }}>
+                        {formatContactChannel(item.contact)}
+                      </span>
+                      <span style={{ color: tokens.color.mutedStrong, fontSize: 12 }}>
+                        {formatCreatedAt(item.createdAt)}
+                      </span>
+                    </div>
+                  )),
+                )}
+              </div>
+            ) : (
+              <div style={{ padding: 20, color: tokens.color.mutedStrong, lineHeight: 1.6 }}>
+                Nenhum responsavel operacional cadastrado ainda. O primeiro registro deve aparecer aqui assim que o envio for concluido.
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+`;
+}
+
+function buildVisitRecurringHistoryPage(technicalSpec, {
+  sharedImportPath,
+  uiImportPath,
+  schemaName,
+  formValuesType,
+  queryKeyName,
+}) {
+  return `import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
+import type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';
+import { FieldGroup, PrimaryButton, inputStyle, tokens } from '${uiImportPath}';
+import { ${schemaName}, type ${formValuesType} } from './schema';
+import { ${queryKeyName}, create${technicalSpec.entityName}, fetch${technicalSpec.entityName}Items } from './service';
+
+const initialForm: ${formValuesType} = {
+  clientIdentifier: '',
+  periodRange: 'ultimos_12_meses',
+  visitStatus: 'realizada',
+};
+
+const periodLabels = {
+  ultimos_3_meses: '3 meses',
+  ultimos_6_meses: '6 meses',
+  ultimos_12_meses: '12 meses',
+} as const;
+
+const statusLabels = {
+  realizada: 'Realizada',
+  concluida: 'Concluida',
+} as const;
+
+function shellPanel(overrides = {}) {
+  return {
+    background: '#ffffff',
+    border: \`1px solid \${tokens.color.border}\`,
+    borderRadius: 16,
+    boxShadow: '0 14px 38px rgba(15, 23, 42, 0.06)',
+    ...overrides,
+  };
+}
+
+function formatCreatedAt(value?: string) {
+  if (!value) return '--';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '--';
+  return parsed.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function normalizePeriod(value?: string) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized in periodLabels ? (normalized as keyof typeof periodLabels) : 'ultimos_12_meses';
+}
+
+function normalizeStatus(value?: string) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized in statusLabels ? (normalized as keyof typeof statusLabels) : 'realizada';
+}
+
+export function ${technicalSpec.frontend.pageComponentName}() {
+  const queryClient = useQueryClient();
+  const { data: items = [], isLoading } = useQuery<${technicalSpec.shared.responseContractName}[]>({
+    queryKey: ${queryKeyName},
+    queryFn: fetch${technicalSpec.entityName}Items,
+  });
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<${formValuesType}>({
+    resolver: zodResolver(${schemaName}),
+    defaultValues: initialForm,
+  });
+
+  const mutation = useMutation({
+    mutationFn: (input: ${technicalSpec.shared.requestContractName}) => create${technicalSpec.entityName}(input),
+    onSuccess: (created) => {
+      queryClient.setQueryData<${technicalSpec.shared.responseContractName}[]>(
+        ${queryKeyName},
+        (current = []) => [created, ...current],
+      );
+      reset(initialForm);
+    },
+  });
+
+  return (
+    <section style={{ display: 'grid', gap: 14 }}>
+      <header
+        style={{
+          ...shellPanel({
+            padding: '16px 18px',
+            background:
+              'linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.98) 100%)',
+          }),
+          display: 'grid',
+          gap: 10,
+        }}
+      >
+        <div style={{ display: 'grid', gap: 4 }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: tokens.color.muted,
+            }}
+          >
+            Operacao de visitas
+          </div>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 28,
+              lineHeight: 1.04,
+              letterSpacing: '-0.03em',
+              color: '#0f172a',
+            }}
+          >
+            Historico de visitas
+          </h1>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: tokens.color.mutedStrong }}>
+            Consulte visitas anteriores do cliente recorrente para retomar contexto e agilizar um
+            novo agendamento com menos retrabalho.
+          </p>
+        </div>
+      </header>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '380px minmax(0, 1fr)',
+          gap: 14,
+          alignItems: 'start',
+        }}
+      >
+        <aside
+          style={{
+            ...shellPanel({
+              padding: 16,
+            }),
+            display: 'grid',
+            gap: 16,
+          }}
+        >
+          <div
+            style={{
+              padding: '12px 14px',
+              borderRadius: 12,
+              background: '#f8fafc',
+              border: \`1px solid \${tokens.color.border}\`,
+              display: 'grid',
+              gap: 4,
+            }}
+          >
+            <strong style={{ color: '#0f172a', fontSize: 14 }}>Nova consulta</strong>
+            <span style={{ color: tokens.color.mutedStrong, fontSize: 13, lineHeight: 1.5 }}>
+              Informe o cliente, escolha o recorte e filtre apenas visitas reaproveitaveis.
+            </span>
+          </div>
+
+          <form
+            onSubmit={handleSubmit((values) =>
+              mutation.mutateAsync({
+                clientIdentifier: values.clientIdentifier,
+                periodRange: values.periodRange,
+                visitStatus: values.visitStatus,
+              })
+            )}
+            style={{ display: 'grid', gap: 14 }}
+          >
+            <FieldGroup label="Cliente" hint="CPF, CNPJ ou ID do cadastro.">
+              <input
+                {...register('clientIdentifier')}
+                type="text"
+                placeholder="CPF, CNPJ ou ID"
+                style={inputStyle({ borderRadius: 12, padding: '12px 13px' })}
+              />
+              {errors.clientIdentifier ? (
+                <small style={{ color: tokens.color.danger }}>{errors.clientIdentifier.message}</small>
+              ) : null}
+            </FieldGroup>
+
+            <FieldGroup label="Periodo" hint="Recorte de visitas mais recentes.">
+              <select {...register('periodRange')} style={inputStyle({ borderRadius: 12, padding: '12px 13px' })}>
+                <option value="ultimos_3_meses">Ultimos 3 meses</option>
+                <option value="ultimos_6_meses">Ultimos 6 meses</option>
+                <option value="ultimos_12_meses">Ultimos 12 meses</option>
+              </select>
+              {errors.periodRange ? (
+                <small style={{ color: tokens.color.danger }}>{errors.periodRange.message}</small>
+              ) : null}
+            </FieldGroup>
+
+            <FieldGroup label="Status" hint="Mostre apenas visitas ja aproveitaveis.">
+              <select {...register('visitStatus')} style={inputStyle({ borderRadius: 12, padding: '12px 13px' })}>
+                <option value="realizada">Realizada</option>
+                <option value="concluida">Concluida</option>
+              </select>
+              {errors.visitStatus ? (
+                <small style={{ color: tokens.color.danger }}>{errors.visitStatus.message}</small>
+              ) : null}
+            </FieldGroup>
+
+            <div style={{ display: 'grid', gap: 10 }}>
+              <PrimaryButton type="submit" accent="teal">
+                {isSubmitting || mutation.isPending ? 'Buscando...' : 'Buscar historico'}
+              </PrimaryButton>
+              <span style={{ color: tokens.color.muted, fontSize: 12, lineHeight: 1.5 }}>
+                A consulta atualiza a lista logo ao confirmar o recorte informado.
+              </span>
+            </div>
+
+            {mutation.isSuccess && mutation.data ? (
+              <div
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: 12,
+                  background: '#ecfdf3',
+                  border: '1px solid #86efac',
+                  display: 'grid',
+                  gap: 4,
+                }}
+              >
+                <strong style={{ color: '#166534', fontSize: 14 }}>Consulta concluida</strong>
+                <span style={{ color: '#166534', fontSize: 13 }}>
+                  Registro base: <strong>{mutation.data.id}</strong>
+                </span>
+              </div>
+            ) : null}
+
+            {mutation.error ? (
+              <div
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: 12,
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#b91c1c',
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                {mutation.error instanceof Error ? mutation.error.message : 'Falha ao consultar historico.'}
+              </div>
+            ) : null}
+          </form>
+        </aside>
+
+        <section
+          style={{
+            ...shellPanel(),
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 132px 112px 144px',
+              gap: 10,
+              padding: '11px 14px',
+              borderBottom: \`1px solid \${tokens.color.border}\`,
+              background: '#f8fafc',
+              color: tokens.color.muted,
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+            }}
+          >
+            <span>Cliente / registro</span>
+            <span>Periodo</span>
+            <span>Status</span>
+            <span>Consultado</span>
+          </div>
+
+          {isLoading ? (
+            <div style={{ display: 'grid' }}>
+              {[0, 1, 2, 3].map((placeholder) => (
+                <div
+                  key={placeholder}
+                  style={{
+                    height: 54,
+                    borderBottom: \`1px solid \${tokens.color.border}\`,
+                    background: placeholder % 2 === 0 ? '#ffffff' : '#fbfcfe',
+                  }}
+                />
+              ))}
+            </div>
+          ) : items.length ? (
+            <div style={{ display: 'grid' }}>
+              {items.map((item, index) => (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 132px 112px 144px',
+                    gap: 10,
+                    padding: '12px 14px',
+                    borderBottom: \`1px solid \${tokens.color.border}\`,
+                    background: index % 2 === 0 ? '#ffffff' : '#fbfcfe',
+                    alignItems: 'center',
+                  }}
+                >
+                  <div style={{ display: 'grid', gap: 3 }}>
+                    <strong style={{ color: '#0f172a', fontSize: 14 }}>
+                      {String(item.clientIdentifier || item.id)}
+                    </strong>
+                    <span
+                      style={{
+                        color: tokens.color.muted,
+                        fontSize: 11,
+                        fontFamily: '"Consolas", "SFMono-Regular", monospace',
+                      }}
+                    >
+                      ID {item.id.slice(0, 8)}
+                    </span>
+                  </div>
+                  <span style={{ color: tokens.color.mutedStrong, fontSize: 12 }}>
+                    {periodLabels[normalizePeriod(item.periodRange)]}
+                  </span>
+                  <span style={{ color: tokens.color.mutedStrong, fontSize: 12 }}>
+                    {statusLabels[normalizeStatus(item.visitStatus)]}
+                  </span>
+                  <span style={{ color: tokens.color.mutedStrong, fontSize: 12 }}>
+                    {formatCreatedAt(item.createdAt)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div
+              style={{
+                padding: 20,
+                color: tokens.color.mutedStrong,
+                lineHeight: 1.6,
+              }}
+            >
+              Nenhum historico localizado ainda para o cliente consultado. O primeiro resultado deve aparecer aqui com recorte e status reaproveitavel.
+            </div>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+`;
+}
+
 export function buildModernFrontendFeatureFiles(task, technicalSpec, { sharedImportPath, uiImportPath, domainTemplate }) {
   const entityName = technicalSpec.entityName;
   const fields = technicalSpec.domain.fields || [];
@@ -373,11 +979,14 @@ export function buildModernFrontendFeatureFiles(task, technicalSpec, { sharedImp
   const loadingState = buildLoadingState(componentMap, technicalSpec.frontend.recordsEmptyState || domainTemplate?.recordsEmptyState || 'Nenhum registro disponivel ainda.');
   const recordCard = buildRecordCard(componentMap, previewField?.name || 'id', secondaryField?.name || 'status');
   const emptyState = buildEmptyState(componentMap, technicalSpec.frontend.recordsEmptyState || domainTemplate?.recordsEmptyState || 'Nenhum registro disponivel ainda.');
+  const autonomousPageTemplate = technicalSpec.frontend?.autonomousPageTsxTemplate || '';
+  const autonomousServiceTemplate = technicalSpec.frontend?.autonomousServiceTsTemplate || '';
+  const autonomousIndexTemplate = technicalSpec.frontend?.autonomousIndexTsTemplate || '';
   const summaryMeta = isSettingsLayout
     ? "isLoading ? 'Atualizando' : items.length ? 'Configuracao salva' : 'Sem alteracoes'"
     : "isLoading ? 'Atualizando' : items.length ? `${items.length} registro(s)` : 'Nenhum registro'";
 
-  const pageContent = `import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+  const genericPageContent = `import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';
@@ -484,6 +1093,40 @@ ${emptyState}
 }
 `;
 
+  const pageContent = autonomousPageTemplate
+    ? renderAutonomousPageTemplate(autonomousPageTemplate, {
+        sharedImportPath,
+        uiImportPath,
+        requestContractName: technicalSpec.shared.requestContractName,
+        responseContractName: technicalSpec.shared.responseContractName,
+        listContractName: technicalSpec.shared.listContractName,
+        entityName,
+        pageComponentName: technicalSpec.frontend.pageComponentName,
+        queryKeyName,
+        schemaName,
+        formValuesType,
+        routeBase: technicalSpec.backend.routeBase,
+        submitLabel: technicalSpec.domain.submitLabel,
+        successMessage: technicalSpec.domain.successMessage,
+      })
+    : technicalSpec.featureKey === 'visit-operational-responsibles'
+      ? buildVisitOperationalResponsiblesPage(technicalSpec, {
+          sharedImportPath,
+          uiImportPath,
+          schemaName,
+          formValuesType,
+          queryKeyName,
+        })
+      : technicalSpec.featureKey === 'visit-recurring-history'
+        ? buildVisitRecurringHistoryPage(technicalSpec, {
+            sharedImportPath,
+            uiImportPath,
+            schemaName,
+            formValuesType,
+            queryKeyName,
+          })
+      : genericPageContent;
+
   return [
     {
       relativePath: `${technicalSpec.frontend.featurePath}/schema.ts`,
@@ -492,7 +1135,23 @@ ${emptyState}
     },
     {
       relativePath: `${technicalSpec.frontend.featurePath}/service.ts`,
-      content: `import type { ${technicalSpec.shared.listContractName}, ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nexport const ${queryKeyName} = ['${escapeTemplate(technicalSpec.featureKey)}'];\n\nexport async function fetch${entityName}Items(): Promise<${technicalSpec.shared.responseContractName}[]> {\n  const response = await fetch('${technicalSpec.backend.routeBase}');\n  if (!response.ok) {\n    throw new Error('Falha ao carregar registros da feature.');\n  }\n  const data: ${technicalSpec.shared.listContractName} = await response.json();\n  return data.items || [];\n}\n\nexport async function create${entityName}(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n  const response = await fetch('${technicalSpec.backend.routeBase}', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(input),\n  });\n\n  if (!response.ok) {\n    const error = await response.json().catch(() => ({ message: 'Falha ao criar registro.' }));\n    throw new Error(error.message || 'Falha ao criar registro.');\n  }\n\n  return response.json();\n}\n`,
+      content: autonomousServiceTemplate
+        ? renderAutonomousPageTemplate(autonomousServiceTemplate, {
+            sharedImportPath,
+            uiImportPath,
+            requestContractName: technicalSpec.shared.requestContractName,
+            responseContractName: technicalSpec.shared.responseContractName,
+            listContractName: technicalSpec.shared.listContractName,
+            entityName,
+            pageComponentName: technicalSpec.frontend.pageComponentName,
+            queryKeyName,
+            schemaName,
+            formValuesType,
+            routeBase: technicalSpec.backend.routeBase,
+            submitLabel: technicalSpec.domain.submitLabel,
+            successMessage: technicalSpec.domain.successMessage,
+          })
+        : `import type { ${technicalSpec.shared.listContractName}, ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nexport const ${queryKeyName} = ['${escapeTemplate(technicalSpec.featureKey)}'];\n\nexport async function fetch${entityName}Items(): Promise<${technicalSpec.shared.responseContractName}[]> {\n  const response = await fetch('${technicalSpec.backend.routeBase}');\n  if (!response.ok) {\n    throw new Error('Falha ao carregar registros da feature.');\n  }\n  const data: ${technicalSpec.shared.listContractName} = await response.json();\n  return data.items || [];\n}\n\nexport async function create${entityName}(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n  const response = await fetch('${technicalSpec.backend.routeBase}', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(input),\n  });\n\n  if (!response.ok) {\n    const error = await response.json().catch(() => ({ message: 'Falha ao criar registro.' }));\n    throw new Error(error.message || 'Falha ao criar registro.');\n  }\n\n  return response.json();\n}\n`,
       fileType: 'ts',
     },
     {
@@ -502,7 +1161,23 @@ ${emptyState}
     },
     {
       relativePath: `${technicalSpec.frontend.featurePath}/index.ts`,
-      content: `export { ${technicalSpec.frontend.pageComponentName} } from './page';\nexport { fetch${entityName}Items } from './service';\n`,
+      content: autonomousIndexTemplate
+        ? renderAutonomousPageTemplate(autonomousIndexTemplate, {
+            sharedImportPath,
+            uiImportPath,
+            requestContractName: technicalSpec.shared.requestContractName,
+            responseContractName: technicalSpec.shared.responseContractName,
+            listContractName: technicalSpec.shared.listContractName,
+            entityName,
+            pageComponentName: technicalSpec.frontend.pageComponentName,
+            queryKeyName,
+            schemaName,
+            formValuesType,
+            routeBase: technicalSpec.backend.routeBase,
+            submitLabel: technicalSpec.domain.submitLabel,
+            successMessage: technicalSpec.domain.successMessage,
+          })
+        : `export { ${technicalSpec.frontend.pageComponentName} } from './page';\nexport { fetch${entityName}Items } from './service';\n`,
       fileType: 'ts',
     },
     {

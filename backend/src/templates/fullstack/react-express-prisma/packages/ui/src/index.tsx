@@ -1,4 +1,4 @@
-import React from 'react'
+﻿import React from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 
 export const tokens = {
@@ -35,8 +35,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
     <main
       style={{
         minHeight: '100vh',
-        background:
-          'radial-gradient(circle at top left, rgba(138, 180, 248, 0.18), transparent 24%), radial-gradient(circle at top right, rgba(49, 129, 255, 0.14), transparent 18%), linear-gradient(180deg, #edf3ff 0%, #f6f8fc 34%, #eef2f8 100%)',
+        background: '#eef2f7',
         color: tokens.color.text,
         fontFamily: '"Manrope", "Segoe UI", sans-serif',
       }}
@@ -56,59 +55,66 @@ export function AppHeader({
   return (
     <header
       style={{
-        height: 64,
-        padding: '0 22px',
-        background: 'linear-gradient(135deg, #1f2447 0%, #28315f 58%, #202a54 100%)',
-        color: '#f8fafc',
+        height: 56,
+        padding: '0 18px',
+        background: '#f8fafc',
+        color: '#0f172a',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        boxShadow: tokens.shadow.header,
+        borderBottom: `1px solid ${tokens.color.border}`,
         position: 'sticky',
         top: 0,
         zIndex: 20,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
         <div
           style={{
-            width: 34,
-            height: 34,
-            borderRadius: 12,
-            display: 'grid',
-            alignContent: 'center',
-            gap: 4,
-            padding: '0 8px',
-            background: 'rgba(255,255,255,0.08)',
-            border: '1px solid rgba(255,255,255,0.1)',
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: '#0f172a',
+            color: '#f8fafc',
+            fontSize: 12,
+            fontWeight: 800,
           }}
         >
-          <span style={{ height: 2, borderRadius: 999, background: 'rgba(255,255,255,0.94)' }} />
-          <span style={{ height: 2, borderRadius: 999, background: 'rgba(255,255,255,0.94)' }} />
-          <span style={{ height: 2, borderRadius: 999, background: 'rgba(255,255,255,0.94)' }} />
+          OP
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-          <strong style={{ fontSize: 16 }}>Início</strong>
-          <span style={{ color: 'rgba(248,250,252,0.55)' }}>›</span>
-          <strong style={{ fontSize: 16, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</strong>
+        <div style={{ display: 'grid', gap: 1, minWidth: 0 }}>
+          <span
+            style={{
+              fontSize: 11,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: tokens.color.muted,
+              fontWeight: 800,
+            }}
+          >
+            Plataforma de visitas
+          </span>
+          <strong style={{ fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</strong>
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-        <span style={{ fontSize: 18, opacity: 0.9 }}>◔</span>
-        <strong style={{ fontSize: 14 }}>Supervisor</strong>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>Operacao ativa</span>
         <span
           style={{
-            width: 34,
-            height: 34,
+            width: 28,
+            height: 28,
             borderRadius: '50%',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: '#eef1f7',
-            color: tokens.color.shell,
+            background: '#dbe4ee',
+            color: '#0f172a',
             fontWeight: 800,
-            fontSize: 13,
+            fontSize: 11,
           }}
         >
           BL
@@ -128,22 +134,21 @@ export function SidebarNav({
   return (
     <aside
       style={{
-        width: 252,
-        minHeight: 'calc(100vh - 64px)',
-        background: 'rgba(255,255,255,0.88)',
-        backdropFilter: 'blur(16px)',
-        borderRight: '1px solid rgba(215,220,237,0.9)',
+        width: 220,
+        minHeight: 'calc(100vh - 56px)',
+        background: '#f8fafc',
+        borderRight: '1px solid #dbe4ee',
         display: 'grid',
         alignContent: 'start',
       }}
     >
-      <div style={{ padding: '22px 18px 14px', borderBottom: `1px solid ${tokens.color.shellBorder}` }}>
-        <div style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: tokens.color.muted, fontWeight: 800 }}>
-          Navegação
+      <div style={{ padding: '16px 16px 12px', borderBottom: `1px solid ${tokens.color.border}` }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', color: tokens.color.muted, fontWeight: 800 }}>
+          Modulos
         </div>
       </div>
 
-      <nav style={{ display: 'grid', gap: 8, padding: 12 }}>
+      <nav style={{ display: 'grid', gap: 6, padding: 10 }}>
         {routes.map((route) => {
           const active = activePath === route.path
           return (
@@ -151,14 +156,14 @@ export function SidebarNav({
               key={route.path}
               href={route.path}
               style={{
-                padding: '14px 16px',
+                padding: '12px 14px',
                 textDecoration: 'none',
-                color: active ? tokens.color.shell : tokens.color.mutedStrong,
+                color: active ? '#0f172a' : tokens.color.mutedStrong,
                 fontWeight: active ? 800 : 700,
-                background: active ? 'linear-gradient(135deg, #e7eeff 0%, #f3f6ff 100%)' : 'transparent',
-                border: active ? `1px solid ${tokens.color.accentSoft}` : '1px solid transparent',
-                borderRadius: 16,
-                boxShadow: active ? '0 10px 24px rgba(36, 81, 183, 0.12)' : 'none',
+                background: active ? '#ffffff' : 'transparent',
+                border: active ? `1px solid ${tokens.color.border}` : '1px solid transparent',
+                borderRadius: 12,
+                boxShadow: active ? '0 6px 18px rgba(15, 23, 42, 0.06)' : 'none',
               }}
             >
               {route.label}
@@ -167,13 +172,12 @@ export function SidebarNav({
         })}
       </nav>
 
-      <div style={{ marginTop: 'auto', padding: 18, fontSize: 12, color: tokens.color.muted }}>
-        Workspace pronto para evoluÃ§Ã£o incremental.
+      <div style={{ marginTop: 'auto', padding: 14, fontSize: 11, color: tokens.color.muted }}>
+        Navegacao direta pelas areas ativas do projeto.
       </div>
     </aside>
   )
 }
-
 export function StudioHome({
   title,
   routes,
@@ -196,23 +200,23 @@ export function StudioHome({
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'start' }}>
         <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
           <div style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: tokens.color.muted, fontWeight: 800 }}>
-            Visão geral
+            VisÃ£o geral
           </div>
           <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.05, letterSpacing: '-0.03em', color: tokens.color.shell }}>{title}</h1>
           <p style={{ margin: 0, fontSize: 15, lineHeight: 1.7, color: tokens.color.mutedStrong }}>
-            Estrutura base pronta para evoluir mÃ³dulos operacionais, fluxos de cadastro e jornadas de acompanhamento com mais consistÃªncia.
+            Estrutura base pronta para evoluir mÃƒÂ³dulos operacionais, fluxos de cadastro e jornadas de acompanhamento com mais consistÃƒÂªncia.
           </p>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>?ltima atualização</div>
+          <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>?ltima atualizaÃ§Ã£o</div>
           <strong style={{ display: 'block', marginTop: 6, color: tokens.color.shell }}>Agora</strong>
         </div>
       </div>
 
       <MetricRow
         items={[
-          { label: 'MÃ³dulos ativos', value: String(routes.length) },
-          { label: 'NavegaÃ§Ã£o', value: 'Pronta' },
+          { label: 'MÃƒÂ³dulos ativos', value: String(routes.length) },
+          { label: 'NavegaÃƒÂ§ÃƒÂ£o', value: 'Pronta' },
           { label: 'Base', value: 'Web + API' },
         ]}
       />
@@ -829,7 +833,7 @@ export function FeaturePage({
             </div>
           </div>
           <div style={{ minWidth: 180, textAlign: 'right' }}>
-            <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>?ltima atualização</div>
+            <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 700 }}>?ltima atualizaÃ§Ã£o</div>
             <strong style={{ display: 'block', marginTop: 6, color: tokens.color.shell }}>Agora</strong>
           </div>
         </div>
@@ -851,7 +855,7 @@ export function FeaturePage({
                 lineHeight: 1.6,
               }}
             >
-              {highlights[0] || 'Fluxo pronto para operaÃ§Ã£o com mais clareza.'}
+              {highlights[0] || 'Fluxo pronto para operaÃƒÂ§ÃƒÂ£o com mais clareza.'}
             </div>
             {form}
           </div>
@@ -870,7 +874,7 @@ export function FeaturePage({
                 border: `1px solid ${tokens.color.border}`,
               }}
             >
-              <span style={{ color: tokens.color.muted }}>⌕</span>
+              <span style={{ color: tokens.color.muted }}>âŒ•</span>
               <span style={{ color: tokens.color.mutedStrong }}>Pesquisar...</span>
             </div>
             <div
@@ -889,7 +893,7 @@ export function FeaturePage({
             >
               <span>Registro</span>
               <span>Status</span>
-              <span>Atualização</span>
+              <span>AtualizaÃ§Ã£o</span>
             </div>
             {children}
           </div>
@@ -1699,3 +1703,4 @@ export function SettingsConsole(props: SettingsWorkbenchProps) {
     />
   )
 }
+

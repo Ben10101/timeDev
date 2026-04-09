@@ -295,14 +295,53 @@ def validate_requirements_output(result):
 
         if "escopo" in normalized and (
             "status inicial" in normalized
-            or "status \"escopo definido\"" in normalized
+            or 'status "escopo definido"' in normalized
             or "status escopo definido" in normalized
             or "pendente de aprovacao" in normalized
             or "numero sequencial" in normalized
             or "identificador unico sequencial" in normalized
+            or "identificador unico" in normalized
+                or "identificador gerado" in normalized
+            or "uuid" in normalized
+            or "guid" in normalized
+            or "timestamp" in normalized
             or "protocolo" in normalized
         ):
             return False, "Story de escopo expandiu para workflow ou identificacao indevida."
+
+        if "escopo" in normalized and (
+            "duracao estimada" in normalized
+            or "dura??o estimada" in normalized
+            or "areas da empresa" in normalized
+            or "?reas da empresa" in normalized
+            or "acesso especial" in normalized
+            or "estimativa de recursos" in normalized
+            or "salvar como rascunho" in normalized
+        ):
+            return False, "Story de escopo expandiu para parametros nao pedidos pela task."
+
+        if (
+            ("eu quero criar" in normalized or "eu quero registrar" in normalized)
+            and ("contexto inicial" in normalized or "dados iniciais" in normalized)
+            and (
+                "status inicial" in normalized
+                or "aguardando aprovacao" in normalized
+                or "aguardando aprova??o" in normalized
+                or "status registrado" in normalized
+                or "status pendente" in normalized
+                or "pendente de analise" in normalized
+                or "pendente de an?lise" in normalized
+                or "numero sequencial" in normalized
+                or "identificador unico" in normalized
+                or "identificador gerado" in normalized
+                or "timestamp de criacao" in normalized
+                or "timestamp de cria??o" in normalized
+                or "data/hora de criacao" in normalized
+                or "data/hora de cria??o" in normalized
+                or "protocolo" in normalized
+            )
+        ):
+            return False, "Story de cadastro inicial antecipou workflow ou identificacao sem base explicita."
 
     return True, None
 
@@ -665,6 +704,62 @@ def validate_architecture_output(result):
 
     if has_truncated_ending(text):
         return False, "Resposta aparenta ter sido cortada no final."
+
+    advanced_stack_markers = [
+        "react native",
+        "graphql",
+        "kubernetes",
+        "eks",
+        "keycloak",
+        "firebase",
+        "launchdarkly",
+        "terraform",
+        "helm",
+        "pagerduty",
+        "grafana",
+        "prometheus",
+        "event sourcing",
+        "cqrs",
+    ]
+    advanced_hits = [marker for marker in advanced_stack_markers if marker in normalized]
+    if len(advanced_hits) >= 5:
+        return False, "Arquitetura ambiciosa demais para o estagio atual do backlog."
+
+    if "cqrs" in normalized:
+        return False, "Arquitetura ainda usa CQRS, o que foge da simplicidade esperada para o MVP atual."
+
+    if "react native" in normalized and "mobile" in normalized and "web" in normalized:
+        return False, "Arquitetura abriu frente mobile sem necessidade explicita suficiente."
+
+    if re.search(r"(?:^|\n)\s*get\s+/api\s*(?:\n|$)", normalized, re.IGNORECASE):
+        return False, "Contratos e integracoes contem endpoint incompleto."
+
+    if "fase 3" in normalized and re.search(r"fase 3[\s\S]{0,80}gestao de polit\s*$", normalized, re.IGNORECASE):
+        return False, "Fatias de implementacao aparentam truncadas."
+
+    if "nestjs" in normalized and re.search(r"\.java\b|localdatetime\b", normalized, re.IGNORECASE):
+        return False, "Arquitetura misturou stack Node/Nest com convencoes Java."
+
+    if "nestjs" in normalized and re.search(r"\btypeorm\b|\bterminus\b", normalized, re.IGNORECASE):
+        return False, "Arquitetura desviou da stack-base da factory com Nest/TypeORM/Terminus."
+
+    if re.search(r"\bserilog\b|\.net\b|dotnet\b", normalized, re.IGNORECASE):
+        return False, "Arquitetura misturou referencias de .NET/Serilog com stack Node."
+
+    if re.search(r"\bsendgrid\b|\bgoogle oauth\b|\bprometheus\b|/metrics\b", normalized, re.IGNORECASE):
+        return False, "Arquitetura ainda traz integracoes ou observabilidade alem do necessario para o MVP."
+
+    if re.search(r"\|\.\s*$", text, re.MULTILINE):
+        return False, "Arquitetura contem artefato editorial malformado."
+
+    if re.search(r"\"scheduleddate\"\s*:\s*\"20\d?$", normalized, re.IGNORECASE | re.MULTILINE):
+        return False, "Exemplo de request/response aparenta truncado."
+
+    if re.search(r"```json\s*\{[\s\S]{0,240}```", text, re.IGNORECASE) and not re.search(r"```json\s*\{[\s\S]{0,240}\}\s*```", text, re.IGNORECASE):
+        return False, "Exemplo JSON em contratos aparenta truncado ou sem fechamento."
+
+    if re.search(r"^\s*-\s*`[^`\n]*$", text, re.MULTILINE):
+        return False, "Lista de endpoints contem linha truncada ou com backtick sem fechamento."
 
     return True, None
 

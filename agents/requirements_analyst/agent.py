@@ -77,6 +77,256 @@ class RequirementsAnalyst:
             return []
         return [item.strip() for item in match.group(1).split(",") if item.strip()]
 
+    def _extract_actor(self, idea):
+        match = re.search(r"como\s+([^,]+)", str(idea or ""), re.IGNORECASE)
+        return match.group(1).strip() if match else "usuario autenticado"
+
+    def _infer_entity(self, idea, backlog):
+        normalized = self._normalize_text(f"{idea} {backlog}")
+        if "visita" in normalized:
+            return "visita"
+        if "visitante" in normalized:
+            return "visitante"
+        if "responsavel operacional" in normalized:
+            return "responsavel operacional"
+        return "registro principal"
+
+    def _infer_scope_fields(self, idea):
+        normalized = self._normalize_text(idea)
+        fields = []
+        if "volume" in normalized:
+            fields.append(("Volume estimado", "numero inteiro positivo", "Sim", "minimo 1"))
+        if "formato" in normalized:
+            fields.append(("Formato da visita", "lista predefinida", "Sim", "valor controlado"))
+        if "parametro" in normalized or "contexto" in normalized or "escopo" in normalized:
+            fields.append(("Parametros principais", "texto curto", "Nao", "maximo 240 caracteres"))
+        if (" data " in f" {normalized} " or " hora " in f" {normalized} ") and "escopo" not in normalized:
+            fields.append(("Data/hora prevista", "data/hora", "Sim", "nao pode ser no passado"))
+        if not fields:
+            fields.append(("Campo principal da feature", "texto", "Sim", "conforme regra da historia"))
+        unique_fields = []
+        seen_fields = set()
+        for field in fields:
+            if field[0] in seen_fields:
+                continue
+            seen_fields.add(field[0])
+            unique_fields.append(field)
+        return unique_fields[:4]
+
+    def _prune_scope_definition_content(self, content, idea):
+        text = (content or "").strip()
+        if not text:
+            return ""
+
+        normalized_idea = self._normalize_text(idea)
+        concept_rules = [
+            (("data/hora prevista", "data prevista", "hora prevista"), (" data ", " hora ")),
+            (("duracao estimada", "duração estimada"), ("duracao", "duração")),
+            (("areas da empresa", "áreas da empresa", "area da empresa", "área da empresa"), ("area", "área")),
+            (("acesso especial",), ("acesso especial",)),
+            (("estimativa de recursos", "recursos iniciais"), ("recurso",)),
+            (("salvar como rascunho", "rascunho"), ("rascunho",)),
+            (("responsavel interno", "responsável interno"), ("responsavel interno", "responsável interno")),
+        ]
+
+        for forbidden_terms, allow_tokens in concept_rules:
+            if any(token in normalized_idea for token in allow_tokens):
+                continue
+            pattern = "|".join(re.escape(term) for term in forbidden_terms)
+            text = re.sub(rf"(?im)^.*(?:{pattern}).*$\n?", "", text)
+
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    def _prune_initial_registration_content(self, content, idea):
+        text = (content or "").strip()
+        if not text:
+            return ""
+
+        story_type = self._classify_story_type(idea)
+        if story_type not in {"create", "record"}:
+            return text
+
+        normalized_idea = self._normalize_text(idea)
+        if not any(
+            marker in normalized_idea
+            for marker in ["contexto inicial", "dados iniciais", "iniciar o fluxo", "antes da aprovacao", "antes da aprovação"]
+        ):
+            return text
+
+        guarded_concepts = [
+            (("identificador unico", "identificador único", "numero sequencial", "número sequencial", "id gerado"), ("identificador", "id", "numero", "número")),
+            (("status inicial", "status aguardando", "status registrado", "status pendente", "aguardando aprovacao", "aguardando aprova??o", "pendente de analise", "pendente de an?lise"), ("status",)),
+            (("timestamp de criacao", "timestamp de criação", "data/hora de criacao", "data/hora de criação", "registrar data/hora de criacao", "registrar data/hora de criação"), ("timestamp", "data/hora de criacao", "data/hora de criação")),
+            (("protocolo",), ("protocolo",)),
+        ]
+
+        for forbidden_terms, allow_tokens in guarded_concepts:
+            if any(token in normalized_idea for token in allow_tokens):
+                continue
+            pattern = "|".join(re.escape(term) for term in forbidden_terms)
+            text = re.sub(rf"(?im)^.*(?:{pattern}).*$\n?", "", text)
+
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    def _synthesize_missing_sections(self, sections, idea, backlog, missing_sections):
+        story_type = self._classify_story_type(idea)
+        actor = self._extract_actor(idea)
+        entity = self._infer_entity(idea, backlog)
+        field_specs = self._infer_scope_fields(idea)
+
+        if "Requisitos Funcionais" in missing_sections or not re.search(r"###\s*RF-?0*1", sections.get("Requisitos Funcionais", ""), re.IGNORECASE):
+            inputs = "\n".join([f"- {field}: {field_type}" for field, field_type, _, _ in field_specs[:4]])
+            output_lines = [
+                f"### RF-01 - Registro principal de {entity.title()}",
+                f"- Descricao: Permitir que {actor} execute a acao principal da historia sem expandir para etapas posteriores.",
+                f"- Atores: {actor}",
+                "- Entradas:",
+                inputs,
+                "- Processamento:",
+                "- Validar obrigatoriedade e formato dos dados desta etapa",
+                "- Registrar apenas as informacoes necessarias para a acao central",
+                "- Saidas:",
+                f"- Confirmacao do registro da etapa de {entity}",
+                "- Visualizacao resumida dos dados informados",
+            ]
+            sections["Requisitos Funcionais"] = "\n".join(output_lines)
+
+        if "Fluxos de Excecao" in missing_sections and not sections.get("Fluxos de Excecao"):
+            first_field = field_specs[0][0]
+            sections["Fluxos de Excecao"] = (
+                f"**FE-01 - Campo obrigatorio invalido**\n"
+                f"- Sistema detecta {first_field.lower()} ausente ou invalido\n"
+                f"- Sistema exibe mensagem clara e impede continuidade\n"
+                f"- Fluxo retorna ao preenchimento\n\n"
+                f"**FE-02 - Dado fora da regra da historia**\n"
+                f"- Sistema detecta valor fora do limite ou formato esperado\n"
+                f"- Sistema destaca o campo problemático\n"
+                f"- {actor} corrige e tenta novamente"
+            )
+
+        if "Regras de Negocio" in missing_sections and not sections.get("Regras de Negocio"):
+            rules = []
+            for index, (field, _, required, validation) in enumerate(field_specs, start=1):
+                required_text = "obrigatorio" if required.lower() == "sim" else "opcional"
+                rules.append(f"{index}. {field} e {required_text} e deve respeitar a regra: {validation}.")
+            if story_type == "scope-definition":
+                rules.append(f"{len(rules)+1}. O registro de escopo da {entity} nao deve introduzir identificador, protocolo, aprovacao ou status de workflow nesta etapa.")
+            sections["Regras de Negocio"] = "\n".join(rules[:6])
+
+        if "Validacoes e Dados" in missing_sections and not sections.get("Validacoes e Dados"):
+            lines = []
+            for field, field_type, required, validation in field_specs:
+                lines.append(f"- {field}: {field_type}, obrigatorio: {required}, validacao: {validation}.")
+            sections["Validacoes e Dados"] = "\n".join(lines)
+
+        if "Permissoes e Auditoria" in missing_sections and not sections.get("Permissoes e Auditoria"):
+            sections["Permissoes e Auditoria"] = (
+                f"- Execucao: {actor}.\n"
+                f"- Visualizacao: perfis autorizados do fluxo de {entity}.\n"
+                f"- Auditoria: registrar usuario responsavel, data/hora e alteracoes relevantes desta etapa."
+            )
+
+        if "Criterios de Aceite (BDD)" in missing_sections and not sections.get("Criterios de Aceite (BDD)"):
+            main_field = field_specs[0][0]
+            sections["Criterios de Aceite (BDD)"] = (
+                f"DADO que {actor} acessa a funcionalidade da {entity}\n"
+                f"QUANDO informa os dados obrigatorios e confirma a operacao\n"
+                f"ENTAO o sistema registra a etapa com sucesso e exibe confirmacao adequada\n\n"
+                f"DADO que {actor} deixa {main_field.lower()} ausente ou invalido\n"
+                f"QUANDO tenta confirmar a operacao\n"
+                f"ENTAO o sistema bloqueia a continuidade e exibe mensagem clara\n\n"
+                f"DADO que existe dado fora da regra definida para a etapa\n"
+                f"QUANDO o sistema valida a solicitacao\n"
+                f"ENTAO a operacao nao e concluida ate que a inconsistencia seja corrigida"
+            )
+
+        return sections
+
+    def _build_scope_definition_document(self, idea, backlog):
+        actor = self._extract_actor(idea)
+        entity = self._infer_entity(idea, backlog)
+        field_specs = self._infer_scope_fields(idea)
+        user_story = (
+            f"Como {actor}, eu quero registrar o escopo básico da {entity} "
+            "com os parâmetros iniciais necessários, para dimensionar a operação sem antecipar etapas posteriores do fluxo."
+        )
+        requirements = [
+            "### RF-01 - Registro de Escopo Básico",
+            f"- Descricao: Permitir que {actor} registre apenas os parâmetros iniciais necessários para o escopo da {entity}.",
+            f"- Atores: {actor}",
+            "- Entradas:",
+        ]
+        for field, field_type, _, _ in field_specs[:4]:
+            requirements.append(f"- {field}: {field_type}")
+        requirements.extend([
+            "- Processamento:",
+            "- Validar obrigatoriedade e formato dos dados da etapa",
+            "- Registrar somente os parâmetros de escopo informados",
+            "- Saidas:",
+            f"- Confirmação do registro do escopo da {entity}",
+            "- Resumo dos parâmetros informados",
+        ])
+        rules = []
+        validations = []
+        for index, (field, field_type, required, validation) in enumerate(field_specs, start=1):
+            req_text = "obrigatorio" if required.lower() == "sim" else "opcional"
+            rules.append(f"{index}. {field} e {req_text} e deve respeitar a regra: {validation}.")
+            validations.append(f"- {field}: {field_type}, obrigatorio: {required}, validacao: {validation}.")
+        rules.append(f"{len(rules)+1}. Esta etapa registra apenas escopo da {entity}; nao define aprovacao, protocolo, status de workflow ou identificador da entidade.")
+
+        sections = {
+            "User Story Refinada": user_story,
+            "Requisitos Funcionais": "\n".join(requirements),
+            "Fluxo Principal": (
+                f"1. {actor} acessa a funcionalidade de escopo da {entity}\n"
+                "2. Sistema apresenta os campos iniciais da etapa\n"
+                "3. Usuário informa os parâmetros de escopo exigidos\n"
+                "4. Usuário confirma o registro\n"
+                "5. Sistema valida os dados\n"
+                "6. Sistema grava o escopo e exibe confirmação"
+            ),
+            "Fluxos Alternativos": (
+                "**FA-01 - Cancelamento antes da confirmação**\n"
+                "- Usuário cancela a operação antes de confirmar\n"
+                "- Sistema descarta dados não confirmados e retorna à tela inicial"
+            ),
+            "Fluxos de Excecao": (
+                "**FE-01 - Campo obrigatório ausente**\n"
+                "- Sistema identifica dado obrigatório não informado\n"
+                "- Sistema exibe mensagem clara e impede a continuidade\n\n"
+                "**FE-02 - Dado fora da regra definida**\n"
+                "- Sistema identifica valor fora do formato ou limite aceito\n"
+                "- Sistema solicita correção antes de concluir a etapa"
+            ),
+            "Regras de Negocio": "\n".join(rules[:6]),
+            "Estados da Interface e Feedback": (
+                "- Carregando: durante a validação e gravação.\n"
+                "- Sucesso: após registro do escopo.\n"
+                "- Erro: quando houver inconsistência de validação.\n"
+                "- Vazio: formulário inicial sem dados."
+            ),
+            "Validacoes e Dados": "\n".join(validations),
+            "Permissoes e Auditoria": (
+                f"- Execucao: {actor}.\n"
+                f"- Visualizacao: perfis autorizados da operação de {entity}.\n"
+                "- Auditoria: registrar usuário responsável e data/hora da ação."
+            ),
+            "Criterios de Aceite (BDD)": (
+                f"DADO que {actor} acessa a funcionalidade de escopo da {entity}\n"
+                "QUANDO informa os dados obrigatórios e confirma a operação\n"
+                "ENTAO o sistema registra o escopo e exibe confirmação adequada\n\n"
+                f"DADO que {actor} deixa um campo obrigatório sem preenchimento\n"
+                "QUANDO tenta confirmar a operação\n"
+                "ENTAO o sistema bloqueia a continuidade e informa o erro\n\n"
+                "DADO que um valor é informado fora do formato ou limite aceito\n"
+                "QUANDO o sistema valida os dados\n"
+                "ENTAO a operação não é concluída até que a inconsistência seja corrigida"
+            ),
+        }
+        return self._build_document(sections)
+
     def process(self, idea, backlog):
         prompt = self._build_main_prompt(idea, backlog)
         max_retries = max(2, int(os.getenv("REQUIREMENTS_MAX_RETRIES", "2")))
@@ -106,18 +356,34 @@ class RequirementsAnalyst:
                 last_reason = "Resposta vazia ou invalida."
                 continue
 
-            sanitized = self._sanitize_requirements(result)
+            sanitized = self._apply_story_type_guardrails(self._sanitize_requirements(result), idea)
             is_complete, reason = validate_requirements_output(sanitized)
             if is_complete:
                 return sanitized
 
             repaired = self._repair_requirements(sanitized, idea, backlog, reason or "")
-            repaired = self._sanitize_requirements(repaired)
+            repaired = self._apply_story_type_guardrails(self._sanitize_requirements(repaired), idea)
             is_complete, repaired_reason = validate_requirements_output(repaired)
             if is_complete:
                 return repaired
 
-            last_reason = repaired_reason or reason or "Refinamento considerado incompleto."
+            deterministic = self._complete_requirements_deterministically(repaired, idea, backlog, repaired_reason or reason or "")
+            deterministic = self._apply_story_type_guardrails(self._sanitize_requirements(deterministic), idea)
+            is_complete, deterministic_reason = validate_requirements_output(deterministic)
+            if is_complete:
+                return deterministic
+
+            if self._classify_story_type(idea) == "scope-definition" and (
+                "identificacao indevida" in (deterministic_reason or "")
+                or "bleed de dominio" in (deterministic_reason or "").lower()
+            ):
+                scope_safe = self._apply_story_type_guardrails(self._sanitize_requirements(self._build_scope_definition_document(idea, backlog)), idea)
+                scope_ok, scope_reason = validate_requirements_output(scope_safe)
+                if scope_ok:
+                    return scope_safe
+                deterministic_reason = scope_reason or deterministic_reason
+
+            last_reason = deterministic_reason or repaired_reason or reason or "Refinamento considerado incompleto."
 
         raise RuntimeError(
             f"O agente requirements_analyst nao conseguiu gerar uma resposta completa apos {max_retries} tentativas. "
@@ -194,7 +460,8 @@ COMO LIDAR COM INFORMACAO FALTANTE:
 - Para historias de cadastro/criacao/registro com uma unica acao central, gere EXATAMENTE 1 RF principal, a menos que a historia traga explicitamente uma segunda acao de usuario independente.
 - Preserve rigorosamente o vocabulario do dominio informado. Nao troque "visita" por "evento", "chamado", "solicitacao" ou outra entidade de outro contexto.
 - Se a story for do tipo "scope-definition", foque apenas em parametros de escopo. Nao introduza ID sequencial, numero da entidade, status de workflow, aprovacao, protocolo ou ciclo de vida completo, salvo se isso estiver explicitamente na historia.
-- Se a story for do tipo "create" ou "record", um status inicial ou identificador pode aparecer apenas como consequencia direta da criacao, sem expandir para etapas posteriores.
+- Se a story for do tipo "create" ou "record" com foco em contexto inicial, dados iniciais ou cadastro minimo, NAO antecipe status, protocolo, timestamp, identificador, aprovacao ou ciclo posterior, salvo quando a propria historia pedir isso de forma explicita.
+- Para stories de criacao/registro, descreva a confirmacao do cadastro e os dados salvos, mas nao transforme consequencias de workflow em nucleo do requisito.
 - Se a story for do tipo "view", nao invente comandos de cadastro, aprovacao, alteracao ou processamento.
 - Se a story for do tipo "approval", nao invente campos de criacao pertencentes a etapas anteriores.
 
@@ -370,6 +637,10 @@ DIRETRIZES FINAIS:
             for section in ["Requisitos Funcionais", "Fluxo Principal", "Regras de Negocio", "Validacoes e Dados"]:
                 if section not in missing_sections:
                     missing_sections.append(section)
+        if "identificacao indevida" in normalized_reason:
+            for section in ["Requisitos Funcionais", "Fluxo Principal", "Regras de Negocio", "Validacoes e Dados", "Criterios de Aceite (BDD)"]:
+                if section not in missing_sections:
+                    missing_sections.append(section)
         if "regras de negocio insuficientes" in normalized_reason and "Regras de Negocio" not in missing_sections:
             missing_sections.append("Regras de Negocio")
 
@@ -405,7 +676,7 @@ Tarefa:
 - Nao transforme a clausula "para ..." em novo RF. Se a historia descreve uma unica acao central, mantenha um unico RF principal e mova efeitos derivados para processamento, saidas, regras ou BDD.
 - Se a historia for de cadastro/criacao/registro com uma unica acao central, gere EXATAMENTE 1 RF principal.
 - Preserve o vocabulario do dominio do backlog. Se a historia for de visitas, nao use "evento" ou linguagem de outro dominio.
-- Se a historia for de escopo/configuracao, remova qualquer expansao para workflow, status, aprovacao, protocolo ou ID, salvo se a propria historia disser isso explicitamente.
+- Se a historia for de escopo/configuracao, remova qualquer expansao para workflow, status, aprovacao, protocolo, ID, UUID, GUID ou timestamp como parte do requisito, salvo se a propria historia disser isso explicitamente.
 - Em "Criterios de Aceite (BDD)", use obrigatoriamente DADO, QUANDO e ENTAO.
 
 Secoes para reparar:
@@ -430,6 +701,27 @@ Secoes para reparar:
             if body:
                 sections[section] = body
 
+        still_missing = [section for section in missing_sections if not (sections.get(section) or "").strip()]
+        if still_missing:
+            sections = self._synthesize_missing_sections(sections, idea, backlog, still_missing)
+
+        return self._build_document(sections)
+
+    def _complete_requirements_deterministically(self, current_text, idea, backlog, reason):
+        sections = self._extract_sections(current_text)
+        missing_sections = self._extract_missing_sections(reason)
+        if not missing_sections:
+            missing_sections = [
+                section
+                for section in self.SECTION_TITLES
+                if not (sections.get(section) or "").strip()
+            ]
+        normalized_reason = (reason or "").lower()
+        if "requisitos funcionais sem rfs estruturados" in normalized_reason and "Requisitos Funcionais" not in missing_sections:
+            missing_sections.append("Requisitos Funcionais")
+        if not missing_sections:
+            return current_text
+        sections = self._synthesize_missing_sections(sections, idea, backlog, missing_sections)
         return self._build_document(sections)
 
     def _sanitize_requirements(self, content):
@@ -503,3 +795,32 @@ Secoes para reparar:
         )
 
         return text
+
+    def _apply_story_type_guardrails(self, content, idea):
+        text = (content or "").strip()
+        if not text:
+            return ""
+
+        if self._classify_story_type(idea) == "scope-definition":
+            replacements = {
+                "com identificador ??nico": "com confirma????o do registro",
+                "com identificador unico": "com confirma????o do registro",
+                "com ID gerado": "com confirma????o do registro",
+                "com ID da visita": "com confirma????o do registro",
+                "com n??mero da solicita????o": "com confirma????o do registro",
+            }
+            for source, target in replacements.items():
+                text = text.replace(source, target)
+
+            text = re.sub(r"(?im)^.*\bidentificador unico\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\bnumero sequencial\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\bprotocolo\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\btimestamp\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\buuid\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\bguid\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\bstatus\b.*$\n?", "", text)
+            text = self._prune_scope_definition_content(text, idea)
+
+        text = self._prune_initial_registration_content(text, idea)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()

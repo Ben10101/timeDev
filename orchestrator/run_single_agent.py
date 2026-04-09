@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.project_manager.agent import ProjectManager
 from agents.requirements_analyst.agent import RequirementsAnalyst
 from agents.architect.agent import Architect
+from agents.implementation_autonomous.agent import ImplementationAutonomousAgent
 from agents.developer.agent_new import Developer as NewDeveloper
 from agents.developer_backend.agent import DeveloperBackend
 from agents.developer_frontend.agent import DeveloperFrontend
@@ -43,8 +44,17 @@ def main():
         elif agent_name == "architect":
             requirements = payload.get("requirements")
             if not requirements: raise ValueError("Faltando 'requirements' para o architect.")
+            project_context = payload.get("project_context")
             agent = Architect(project_id)
-            result = agent.process(idea, requirements)
+            result = agent.process(idea, requirements, project_context=project_context)
+
+        elif agent_name == "implementation_autonomous_agent":
+            implementation_manifest = payload.get("implementation_manifest")
+            technical_spec = payload.get("technical_spec")
+            if not implementation_manifest or not technical_spec:
+                raise ValueError("Faltando 'implementation_manifest' ou 'technical_spec' para o implementation_autonomous_agent.")
+            agent = ImplementationAutonomousAgent(project_id)
+            result = agent.process(payload)
 
         elif agent_name == "developer":
             architecture = payload.get("architecture")

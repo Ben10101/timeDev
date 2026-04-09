@@ -8,12 +8,17 @@ import { prisma } from '../lib/prisma.js';
 import { resolveDomainTemplate } from '../templates/domains/index.js';
 import { resolveProjectTemplate } from '../templates/projects/index.js';
 import { materializeFullstackTemplate, materializeFullstackTemplateSubset } from './generatedAppTemplateService.js';
-import { generateImplementationUi } from './implementationAiService.js';
 import { buildModernFrontendFeatureFiles } from './implementationFrontendGenerator.js';
 import { buildRuntimeAiEnvForUser } from './aiSettingsService.js';
 import { createGenerationIR, validateGenerationIR } from './generationSpecService.js';
 import { getProjectArchitectureStatus } from './projectDataService.js';
+import { runSingleAgent } from './orchestratorService.js';
 import { buildPatternHints, resolveUiArchetype } from './uiArchetypeService.js';
+import { resolveProjectShell } from './frontendShellRegistry.js';
+import {
+  buildAutonomousImplementationContract,
+  resolveImplementationExecutionMode,
+} from './implementationAutonomyService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
@@ -851,6 +856,15 @@ function compactRepairContext(repairContext) {
     reviewScore: repairContext.reviewScore,
     specialistReviewStatus: repairContext.specialistReviewStatus,
     specialistReviewScore: repairContext.specialistReviewScore,
+    generationSource: repairContext.generationSource,
+    repairStyle: repairContext.repairStyle,
+    materialization: repairContext.materialization
+      ? {
+          generationSource: repairContext.materialization.generationSource || null,
+          llmFileCount: repairContext.materialization.llmFileCount ?? null,
+          fallbackFileCount: repairContext.materialization.fallbackFileCount ?? null,
+        }
+      : null,
     findings: (repairContext.findings || []).slice(0, 4).map((item) => ({
       code: item.code,
       severity: item.severity,
@@ -992,6 +1006,53 @@ function getExpectedDomainKeywords(domainKey = '') {
     events: ['evento', 'eventos', 'operacao', 'operacional', 'planejamento', 'execucao'],
     'event-schedules': ['evento', 'eventos', 'cronograma', 'etapa', 'etapas', 'prazo', 'prazos', 'planejamento', 'execucao'],
     'event-suppliers': ['evento', 'eventos', 'fornecedor', 'fornecedores', 'prestador', 'parceiro', 'categoria', 'servico', 'contato'],
+    'visit-operational-responsibles': [
+      'visita',
+      'visitas',
+      'recepcao',
+      'responsavel operacional',
+      'responsavel',
+      'contato',
+      'tipo de suporte',
+      'suporte',
+      'operacional',
+    ],
+    'visit-recurring-history': [
+      'visita',
+      'visitas',
+      'historico',
+      'cliente',
+      'recorrente',
+      'agendamento',
+      'cpf',
+      'cnpj',
+      'identificador',
+      'anfitriao',
+    ],
+    'visit-extra-companions': [
+      'visita',
+      'visitas',
+      'acompanhante',
+      'acompanhantes',
+      'extra',
+      'extras',
+      'consultor',
+      'seguranca',
+      'aprovada',
+      'aprovacao rapida',
+      'anfitriao',
+    ],
+    'visit-approval-cutoff-settings': [
+      'visita',
+      'visitas',
+      'horario',
+      'horarios',
+      'limite',
+      'aprovacao',
+      'dia util',
+      'gestor administrativo',
+      'analise',
+    ],
     'support-ticket-attachments': ['support', 'suporte', 'ticket', 'chamado', 'attachment', 'attachments', 'anexo', 'arquivo', 'documento', 'comprovante', 'fiscal'],
     'access-control': ['access', 'acesso', 'permission', 'permissao', 'role', 'funcao', 'perfil'],
     'ticket-notification-preferences': ['notification', 'notificacao', 'email', 'alerta', 'ticket', 'chamado'],
@@ -1043,6 +1104,10 @@ function inferImplementedDomain(featureKey = '', routeBase = '') {
   const candidates = [
     'event-schedules',
     'event-suppliers',
+    'visit-operational-responsibles',
+    'visit-recurring-history',
+    'visit-extra-companions',
+    'visit-approval-cutoff-settings',
     'support-ticket-attachments',
     'ticket-notification-preferences',
     'access-control',
@@ -1174,6 +1239,43 @@ function buildTraceabilitySummary(task, implementation, technicalSpecContent, ex
   };
 }
 
+function buildAutonomousGenerationSummary(technicalSpecContent = {}) {
+  const materialization = technicalSpecContent?.autonomousMaterialization || {};
+  const frontendSources = technicalSpecContent?.frontend?.autonomousFileSources || {};
+  const backendSources = technicalSpecContent?.backend?.autonomousFileSources || {};
+  const generationSource =
+    materialization.generationSource ||
+    technicalSpecContent?.frontend?.autonomousGenerationSource ||
+    technicalSpecContent?.autonomousExecution?.generationSource ||
+    'unknown';
+  const llmFileCount = Number(materialization.llmFileCount || 0);
+  const fallbackFileCount = Number(materialization.fallbackFileCount || 0);
+  const totalFiles = llmFileCount + fallbackFileCount;
+  const autonomyPercent = totalFiles ? Math.round((llmFileCount / totalFiles) * 100) : 0;
+
+  return {
+    generationSource,
+    llmFileCount,
+    fallbackFileCount,
+    totalTrackedFiles: totalFiles,
+    autonomyPercent,
+    variationProfile:
+      materialization.variationProfile ||
+      technicalSpecContent?.frontend?.autonomousVariationProfile ||
+      technicalSpecContent?.autonomousExecution?.variationProfile ||
+      null,
+    compositionSignature:
+      technicalSpecContent?.frontend?.autonomousCompositionSignature ||
+      technicalSpecContent?.autonomousExecution?.compositionSignature ||
+      null,
+    frontendFileSources: frontendSources,
+    backendFileSources: backendSources,
+    isLlmPrimary: generationSource === 'llm_primary',
+    isHybrid: generationSource === 'llm_primary_with_fallback',
+    isFallbackDominant: generationSource === 'fallback_full',
+  };
+}
+
 async function buildImplementationBenchmarkSummary(implementation, technicalSpecContent, qualitySummary) {
   const generatedAppId = implementation?.generatedAppId;
   if (!generatedAppId) return null;
@@ -1253,7 +1355,40 @@ async function buildImplementationBenchmarkSummary(implementation, technicalSpec
   };
 }
 
-function buildRepairContext({ reviewReport, specialistReviewReport, validationSummary, attemptNumber }) {
+function resolveRepairStyle({ technicalSpec, findings, specialistFindings, validationFailures }) {
+  const materialization = technicalSpec?.autonomousMaterialization || {};
+  const generationSource =
+    materialization.generationSource ||
+    technicalSpec?.frontend?.autonomousGenerationSource ||
+    technicalSpec?.autonomousExecution?.generationSource ||
+    'unknown';
+  const fallbackFileCount = Number(materialization.fallbackFileCount || 0);
+  const llmFileCount = Number(materialization.llmFileCount || 0);
+  const totalFiles = fallbackFileCount + llmFileCount;
+  const fallbackRatio = totalFiles ? fallbackFileCount / totalFiles : 1;
+  const allSignals = [...findings, ...specialistFindings, ...validationFailures];
+  const onlyValidationFailures = !findings.length && !specialistFindings.length && validationFailures.length > 0;
+  const frontendOnlyReview =
+    !validationFailures.length &&
+    allSignals.length > 0 &&
+    allSignals.every((item) => String(item.filePath || item.scriptName || '').includes('apps/web/'));
+
+  if (generationSource === 'fallback_full' || fallbackRatio >= 0.75) {
+    return 'reconstructive';
+  }
+
+  if (onlyValidationFailures) {
+    return 'iterative';
+  }
+
+  if (frontendOnlyReview || generationSource === 'llm_primary' || generationSource === 'llm_primary_with_fallback') {
+    return 'iterative';
+  }
+
+  return 'reconstructive';
+}
+
+function buildRepairContext({ reviewReport, specialistReviewReport, validationSummary, attemptNumber, technicalSpec }) {
   const findings = (reviewReport?.findings || []).slice(0, 10).map((finding) => ({
     code: finding.code,
     severity: finding.severity,
@@ -1278,6 +1413,14 @@ function buildRepairContext({ reviewReport, specialistReviewReport, validationSu
     specialistFindings,
     validationStatus: validationSummary?.status || 'unknown',
     validationFailures,
+    generationSource:
+      technicalSpec?.autonomousMaterialization?.generationSource ||
+      technicalSpec?.frontend?.autonomousGenerationSource ||
+      technicalSpec?.autonomousExecution?.generationSource ||
+      'unknown',
+    materialization:
+      technicalSpec?.autonomousMaterialization || null,
+    repairStyle: resolveRepairStyle({ technicalSpec, findings, specialistFindings, validationFailures }),
     repairScope: inferRepairScope({ findings, specialistFindings, validationFailures }),
   };
 }
@@ -1480,6 +1623,7 @@ function buildImplementationQualitySummary({ task, implementation, reviewArtifac
   );
   const semanticScore = specialistReviewContent?.summary?.semanticScore ?? Math.max(0, 100 - semanticFindings.length * 25);
   const traceability = buildTraceabilitySummary(task, implementation, technicalSpecContent, expectedDomain, implementedDomain);
+  const autonomousGeneration = buildAutonomousGenerationSummary(technicalSpecContent);
   const findingsByLane = summarizeFindingsByLane(findings);
   const specialistFindingsByLane = summarizeFindingsByLane(specialistFindings);
   const premiumScore = Math.round(
@@ -1509,6 +1653,7 @@ function buildImplementationQualitySummary({ task, implementation, reviewArtifac
     implementedDomain,
     domainAligned: expectedDomain ? expectedDomain === implementedDomain : null,
     traceability,
+    autonomousGeneration,
     verdict: reviewContent?.summary?.verdict || null,
     buildStatus: buildContent?.status || implementation?.buildStatus || 'unknown',
     testStatus: testContent?.status || implementation?.testStatus || 'unknown',
@@ -2109,8 +2254,10 @@ function buildAppCompositionManifest({ project, generatedApp, routeSpecs = [], p
   const visualTone = projectTemplate?.frontend?.visualTone || 'profissional';
   const navigationStyle = projectTemplate?.frontend?.navigationStyle || 'generic-suite';
   const homeLabel = projectTemplate?.frontend?.homeLabel || 'Workspace do produto';
-  const productMode = project?.intakeConfig?.projectDna?.project?.productMode || null;
-  const experienceStyle = project?.intakeConfig?.projectDna?.project?.experienceStyle || null;
+  const projectDna = project?.intakeConfig?.projectDna || null;
+  const productMode = projectDna?.project?.productMode || null;
+  const experienceStyle = projectDna?.project?.experienceStyle || null;
+  const shell = resolveProjectShell({ projectTemplate, projectDna });
 
   return {
     version: 1,
@@ -2130,21 +2277,19 @@ function buildAppCompositionManifest({ project, generatedApp, routeSpecs = [], p
     },
     frontend: {
       shell: {
-        frame: 'AppFrame',
-        header: 'AppHeader',
-        sidebar: 'SidebarNav',
-        home: 'StudioHome',
+        shellKey: shell.key,
+        family: shell.family,
+        label: shell.label,
+        frame: shell.frame,
+        header: shell.header,
+        sidebar: shell.sidebar,
       },
       routes: sortedRouteSpecs.map((spec) => ({
         featureKey: spec.featureKey,
         path: spec.frontend?.suggestedRoute || null,
         label: spec.frontend?.navigationLabel || spec.entityName || spec.featureKey,
         pageComponentName: spec.frontend?.pageComponentName || null,
-        uiFamily:
-          spec.implementationManifest?.classification?.uiFamily ||
-          spec.frontend?.uiFamily ||
-          spec.structured?.classification?.uiFamily ||
-          null,
+        uiFamily: inferUiFamilyFromSpec(spec, spec.implementationManifest || null),
       })),
     },
     backend: {
@@ -2201,8 +2346,9 @@ function buildImplementationManifest(task, technicalSpec) {
   const testSpec = parseJsonArtifactContent(
     currentArtifacts.find((artifact) => artifact.title === '[SYSTEM] Test Spec' && artifact.isCurrent)
   );
+  const execution = resolveImplementationExecutionMode(task, technicalSpec);
 
-  return {
+  const manifest = {
     version: 1,
     generatedAt: new Date().toISOString(),
     source: 'implementation_planner',
@@ -2230,17 +2376,7 @@ function buildImplementationManifest(task, technicalSpec) {
       screenTemplate:
         technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud',
       productMode: technicalSpec.frontend?.productMode || technicalSpec.structured?.classification?.productMode || null,
-      uiFamily:
-        technicalSpec.architecture?.screenTemplate === 'settings'
-          ? 'settings-console'
-          : technicalSpec.architecture?.screenTemplate === 'dashboard'
-            ? 'executive-cockpit'
-            : technicalSpec.architecture?.screenTemplate === 'workspace' &&
-                String(
-                  technicalSpec.frontend?.productMode || technicalSpec.structured?.classification?.productMode || ''
-                ).includes('planner')
-              ? 'planner-workbench'
-              : 'operations-workspace',
+      uiFamily: inferUiFamilyFromSpec(technicalSpec),
     },
     objective: technicalSpec.implementationObjective || null,
     routes: {
@@ -2271,12 +2407,112 @@ function buildImplementationManifest(task, technicalSpec) {
     architecture: {
       sourceSummary: technicalSpec.architecture?.sourceSummary || null,
     },
+    execution,
     qualityTargets: {
       reviewScore: 85,
       validationScore: 80,
       specialistApproval: true,
     },
   };
+
+  manifest.autonomousAgent = buildAutonomousImplementationContract(task, technicalSpec, manifest);
+  return manifest;
+}
+
+function applyAutonomousImplementationDraft(technicalSpec, autonomousDraft) {
+  if (!autonomousDraft || typeof autonomousDraft !== 'object') {
+    return technicalSpec;
+  }
+
+  const frontend = autonomousDraft.frontend && typeof autonomousDraft.frontend === 'object' ? autonomousDraft.frontend : {};
+  const backend = autonomousDraft.backend && typeof autonomousDraft.backend === 'object' ? autonomousDraft.backend : {};
+  const shared = autonomousDraft.shared && typeof autonomousDraft.shared === 'object' ? autonomousDraft.shared : {};
+  const materialization = autonomousDraft.materialization && typeof autonomousDraft.materialization === 'object'
+    ? autonomousDraft.materialization
+    : null;
+
+  return {
+    ...technicalSpec,
+    frontend: {
+      ...technicalSpec.frontend,
+      heroEyebrow: frontend.heroEyebrow || technicalSpec.frontend?.heroEyebrow,
+      heroTitle: frontend.heroTitle || technicalSpec.frontend?.heroTitle || technicalSpec.frontend?.pageTitle,
+      heroDescription: frontend.heroDescription || technicalSpec.frontend?.heroDescription || technicalSpec.frontend?.pageDescription,
+      formCardTitle: frontend.formCardTitle || technicalSpec.frontend?.formCardTitle,
+      formCardDescription: frontend.formCardDescription || technicalSpec.frontend?.formCardDescription,
+      recordsTitle: frontend.recordsTitle || technicalSpec.frontend?.recordsTitle,
+      recordsEmptyState: frontend.recordsEmptyState || technicalSpec.frontend?.recordsEmptyState,
+      highlights: Array.isArray(frontend.highlights) ? frontend.highlights : technicalSpec.frontend?.highlights,
+      pageArchetype: frontend.pageArchetype || technicalSpec.frontend?.pageArchetype,
+      fallbackPattern: frontend.fallbackPattern || technicalSpec.frontend?.fallbackPattern,
+      sections: Array.isArray(frontend.sections) ? frontend.sections : technicalSpec.frontend?.sections,
+      autonomousPageTsxTemplate: frontend.pageTsxTemplate || technicalSpec.frontend?.autonomousPageTsxTemplate || null,
+      autonomousServiceTsTemplate: frontend.serviceTsTemplate || technicalSpec.frontend?.autonomousServiceTsTemplate || null,
+      autonomousIndexTsTemplate: frontend.indexTsTemplate || technicalSpec.frontend?.autonomousIndexTsTemplate || null,
+      componentMap:
+        frontend.componentMap && typeof frontend.componentMap === 'object'
+          ? {
+              ...(technicalSpec.frontend?.componentMap || {}),
+              ...frontend.componentMap,
+            }
+          : technicalSpec.frontend?.componentMap,
+      layoutVariant: frontend.layoutVariant || technicalSpec.frontend?.layoutVariant,
+      autonomousFileSources: frontend.fileSources || technicalSpec.frontend?.autonomousFileSources || null,
+      autonomousGenerationSource:
+        autonomousDraft.generationSource ||
+        materialization?.generationSource ||
+        technicalSpec.frontend?.autonomousGenerationSource ||
+        null,
+      autonomousVariationProfile:
+        autonomousDraft.variationProfile ||
+        materialization?.variationProfile ||
+        technicalSpec.frontend?.autonomousVariationProfile ||
+        null,
+      autonomousCompositionSignature:
+        autonomousDraft.compositionSignature ||
+        technicalSpec.frontend?.autonomousCompositionSignature ||
+        null,
+      autonomousDraft,
+    },
+    backend: {
+      ...technicalSpec.backend,
+      autonomousGuidance: backend,
+      autonomousServiceTsTemplate: backend.serviceTsTemplate || technicalSpec.backend?.autonomousServiceTsTemplate || null,
+      autonomousRouterTsTemplate: backend.routerTsTemplate || technicalSpec.backend?.autonomousRouterTsTemplate || null,
+      autonomousIndexTsTemplate: backend.indexTsTemplate || technicalSpec.backend?.autonomousIndexTsTemplate || null,
+      autonomousFileSources: backend.fileSources || technicalSpec.backend?.autonomousFileSources || null,
+    },
+    shared: {
+      ...technicalSpec.shared,
+      autonomousGuidance: shared,
+    },
+    autonomousExecution: autonomousDraft,
+    autonomousMaterialization: materialization,
+  };
+}
+
+async function runAutonomousImplementationAgent(task, technicalSpec, implementationManifest, userUuid = null, repairContext = null) {
+  if (implementationManifest?.execution?.mode !== 'autonomous') {
+    return null;
+  }
+
+  const payload = {
+    project_id: task.project?.uuid,
+    task_uuid: task.uuid,
+    idea: task.title,
+    implementation_manifest: implementationManifest,
+    technical_spec: technicalSpec,
+    requirement_spec: implementationManifest?.upstreamContracts?.requirementSpec || null,
+    test_spec: implementationManifest?.upstreamContracts?.testSpec || null,
+    architecture: technicalSpec?.architecture?.sourceSummary || null,
+    repair_context: compactRepairContext(repairContext),
+  };
+
+  const envOverrides = userUuid
+    ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'implementation_autonomous_agent' })
+    : {};
+
+  return runSingleAgent('implementation_autonomous_agent', payload, { envOverrides });
 }
 
 async function loadProjectCoherenceContracts(projectId) {
@@ -2382,11 +2618,7 @@ function buildCoherenceReport(task, technicalSpec, implementationManifest, coher
   const allowedScreenFamilies = Array.isArray(projectDna?.designSystem?.allowedScreenFamilies)
     ? projectDna.designSystem.allowedScreenFamilies
     : [];
-  const actualUiFamily =
-    implementationManifest?.classification?.uiFamily ||
-    technicalSpec.frontend?.uiFamily ||
-    technicalSpec.structured?.classification?.uiFamily ||
-    null;
+  const actualUiFamily = inferUiFamilyFromSpec(technicalSpec, implementationManifest);
   const actualScreenTemplate =
     implementationManifest?.classification?.screenTemplate ||
     technicalSpec.architecture?.screenTemplate ||
@@ -2538,6 +2770,170 @@ function resolveImplementationUserUuid(task, explicitUserUuid = null) {
 
 function inferFieldDefinitions(sourceText, actionSpec = null) {
   const normalized = stripAccents(sourceText).toLowerCase();
+
+  if (actionSpec?.domainKey === 'visit-operational-responsibles') {
+    return [
+      {
+        name: 'responsibleName',
+        label: 'Nome do responsavel operacional',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Informe o nome de quem apoia a operacao desta visita.',
+        placeholder: 'Ex.: Joao Silva',
+        defaultValue: '',
+        sampleValue: 'Joao Silva',
+        validations: ['required', 'min:3'],
+      },
+      {
+        name: 'contact',
+        label: 'Contato',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Registre um e-mail ou telefone com DDD para acionamento rapido.',
+        placeholder: 'joao@empresa.com ou (11) 98765-4321',
+        defaultValue: '',
+        sampleValue: 'joao@empresa.com',
+        validations: ['required', 'contact'],
+      },
+      {
+        name: 'supportType',
+        label: 'Tipo de suporte',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Selecione o tipo principal de apoio prestado por este responsavel.',
+        placeholder: 'tecnico | logistica | seguranca | apoio',
+        defaultValue: 'tecnico',
+        sampleValue: 'seguranca',
+        selectOptions: ['tecnico', 'logistica', 'seguranca', 'apoio'],
+        validations: ['required'],
+      },
+    ];
+  }
+
+  if (actionSpec?.domainKey === 'visit-recurring-history') {
+    return [
+      {
+        name: 'clientIdentifier',
+        label: 'Identificador do cliente',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Informe CPF, CNPJ ou ID do cliente para localizar visitas anteriores.',
+        placeholder: 'CPF, CNPJ ou ID do cliente',
+        defaultValue: '',
+        sampleValue: '12345678909',
+        validations: ['required', 'min:5'],
+      },
+      {
+        name: 'periodRange',
+        label: 'Periodo',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Defina o recorte temporal usado para consultar o historico recorrente.',
+        placeholder: 'ultimos_3_meses | ultimos_6_meses | ultimos_12_meses',
+        defaultValue: 'ultimos_12_meses',
+        sampleValue: 'ultimos_12_meses',
+        selectOptions: ['ultimos_3_meses', 'ultimos_6_meses', 'ultimos_12_meses'],
+        validations: ['required'],
+      },
+      {
+        name: 'visitStatus',
+        label: 'Status da visita',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Mostre apenas visitas realmente aproveitaveis para o novo agendamento.',
+        placeholder: 'realizada | concluida',
+        defaultValue: 'realizada',
+        sampleValue: 'concluida',
+        selectOptions: ['realizada', 'concluida'],
+        validations: ['required'],
+      },
+    ];
+  }
+
+  if (actionSpec?.domainKey === 'visit-extra-companions') {
+    return [
+      {
+        name: 'approvedVisitCode',
+        label: 'Visita aprovada',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Informe o identificador da visita ja aprovada para vincular o acompanhante extra ao registro correto.',
+        placeholder: 'Ex.: VIS-2026-0142',
+        defaultValue: '',
+        sampleValue: 'VIS-2026-0142',
+        validations: ['required', 'min:5'],
+      },
+      {
+        name: 'companionName',
+        label: 'Nome do acompanhante',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Registre o nome de quem sera incluído na mesma visita aprovada.',
+        placeholder: 'Ex.: Ana Beatriz Lopes',
+        defaultValue: '',
+        sampleValue: 'Ana Beatriz Lopes',
+        validations: ['required', 'min:3'],
+      },
+      {
+        name: 'securityFastApproval',
+        label: 'Aprovacao rapida da seguranca',
+        inputType: 'select',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Indique a decisao rapida da seguranca para liberar a inclusao sem reiniciar o fluxo completo.',
+        placeholder: 'pendente | aprovado',
+        defaultValue: 'pendente',
+        sampleValue: 'aprovado',
+        selectOptions: ['pendente', 'aprovado'],
+        validations: ['required'],
+      },
+    ];
+  }
+
+  if (actionSpec?.domainKey === 'visit-approval-cutoff-settings') {
+    return [
+      {
+        name: 'cutoffTime',
+        label: 'Horario limite',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Use o formato HH:MM para definir o horario limite diario.',
+        placeholder: '17:00',
+        defaultValue: '17:00',
+        sampleValue: '17:00',
+        validations: ['required', 'time_hhmm'],
+      },
+    ];
+  }
 
   if (actionSpec?.domainKey === 'event-schedules') {
     return [
@@ -3127,6 +3523,28 @@ function inferActionSpec(task, sourceText) {
         /\bcategoria\b|\bservico\b|\bcontato\b|\bcontatos\b/.test(normalized))) &&
     (/\bevento\b|\beventos\b/.test(titleNormalized) ||
       /\bevento\b|\beventos\b|\boperacao\b|\boperacional\b|\bcoordenador de eventos\b/.test(normalized));
+  const looksLikeVisitOperationalResponsible =
+    (/\bresponsavel operacional\b/.test(titleNormalized) ||
+      (/\bresponsavel\b/.test(titleNormalized) && /\boperacional\b/.test(titleNormalized)) ||
+      (/\bresponsavel\b/.test(normalized) &&
+        /\boperacional\b/.test(normalized) &&
+        /\bcontato\b/.test(normalized) &&
+        /\btipo de suporte\b|\bsuporte\b/.test(normalized))) &&
+    (/\bvisita\b|\bvisitas\b|\brecepcao\b/.test(titleNormalized) ||
+      /\bvisita\b|\bvisitas\b|\brecepcao\b|\bassistente de recepcao\b/.test(normalized));
+  const looksLikeVisitRecurringHistory =
+    (/\bhistorico\b/.test(titleNormalized) || /\bhistorico\b|\brecorrente\b|\bnovo agendamento\b|\bpre preenchid/.test(normalized)) &&
+    (/\bcliente\b/.test(titleNormalized) || /\bcliente\b|\bcpf\b|\bcnpj\b|\bidentificador\b/.test(normalized)) &&
+    (/\bvisita\b|\bvisitas\b/.test(titleNormalized) || /\bvisita\b|\bvisitas\b|\banfitriao\b|\bagendamento\b/.test(normalized));
+  const looksLikeVisitExtraCompanions =
+    (/\bacompanhante\b|\bacompanhantes\b|\bconsultor\b/.test(titleNormalized) ||
+      /\bacompanhante\b|\bacompanhantes\b|\bconsultor\b|\bacrescentar acompanhante\b|\badicionar acompanhante\b/.test(normalized)) &&
+    (/\bvisita\b|\bvisitas\b/.test(titleNormalized) || /\bvisita\b|\bvisitas\b|\banfitriao\b/.test(normalized)) &&
+    (/\baprovad/.test(titleNormalized) || /\baprovad/.test(normalized) || /\bseguranc/.test(normalized));
+  const looksLikeVisitApprovalCutoff =
+    (/\bhorario\b|\bhorarios\b|\blimite\b/.test(titleNormalized) || /\bhorario\b|\bhorarios\b|\blimite\b|\bdia util anterior\b/.test(normalized)) &&
+    (/\baprov/.test(titleNormalized) || /\baprov/.test(normalized)) &&
+    (/\bvisita\b|\bvisitas\b/.test(titleNormalized) || /\bvisita\b|\bvisitas\b|\bgestor administrativo\b/.test(normalized));
   const looksLikeEventSchedule =
     (/\bcronograma\b|\betapa\b|\betapas\b|\bprazo\b|\bprazos\b|\bmarco\b|\bagenda operacional\b/.test(titleNormalized) ||
       ((/\bcronograma\b|\betapa\b|\betapas\b|\bprazo\b|\bprazos\b|\bmarco\b/.test(normalized)) &&
@@ -3189,6 +3607,74 @@ function inferActionSpec(task, sourceText) {
       pageDescription: 'Defina quais funcoes podem acessar cada parte da operacao com seguranca e rastreabilidade.',
       successMessage: 'Perfil de acesso atualizado com sucesso.',
       summary: 'Permite configurar perfis de acesso e permissoes por funcao para controlar a operacao com seguranca.',
+    };
+  }
+
+  if (looksLikeVisitOperationalResponsible) {
+    return {
+      domainKey: 'visit-operational-responsibles',
+      entityName: 'VisitOperationalResponsible',
+      routeBase: '/api/visit-operational-responsibles',
+      frontendRoute: '/operations/responsibles',
+      pageComponentName: 'VisitOperationalResponsiblesPage',
+      serviceName: 'VisitOperationalResponsiblesService',
+      submitLabel: 'Cadastrar Responsavel',
+      navigationLabel: 'Responsaveis',
+      pageTitle: 'Cadastre responsaveis operacionais',
+      pageDescription: 'Registre quem apoia a operacao da visita com nome, contato e tipo de suporte.',
+      successMessage: 'Responsavel operacional cadastrado com sucesso.',
+      summary: 'Permite cadastrar responsaveis operacionais para apoiar a execucao da visita com acionamento rapido.',
+    };
+  }
+
+  if (looksLikeVisitRecurringHistory) {
+    return {
+      domainKey: 'visit-recurring-history',
+      entityName: 'VisitRecurringHistory',
+      routeBase: '/api/visit-recurring-history',
+      frontendRoute: '/operations/visit-history',
+      pageComponentName: 'VisitRecurringHistoryPage',
+      serviceName: 'VisitRecurringHistoryService',
+      submitLabel: 'Buscar Historico',
+      navigationLabel: 'Historico de visitas',
+      pageTitle: 'Consulte historico de visitas',
+      pageDescription: 'Busque visitas anteriores de um cliente recorrente para reaproveitar dados em um novo agendamento.',
+      successMessage: 'Historico consultado com sucesso.',
+      summary: 'Permite ao anfitriao localizar visitas anteriores de um cliente recorrente e reaproveitar contexto no novo agendamento.',
+    };
+  }
+
+  if (looksLikeVisitExtraCompanions) {
+    return {
+      domainKey: 'visit-extra-companions',
+      entityName: 'VisitExtraCompanion',
+      routeBase: '/api/visit-extra-companions',
+      frontendRoute: '/operations/extra-companions',
+      pageComponentName: 'VisitExtraCompanionsPage',
+      serviceName: 'VisitExtraCompanionsService',
+      submitLabel: 'Adicionar Acompanhante',
+      navigationLabel: 'Acompanhantes extras',
+      pageTitle: 'Adicione acompanhantes extras',
+      pageDescription: 'Inclua acompanhantes adicionais em visitas aprovadas sem reiniciar todo o fluxo de aprovacao.',
+      successMessage: 'Acompanhante extra registrado com sucesso.',
+      summary: 'Permite ao anfitriao incluir acompanhantes extras em visitas ja aprovadas com decisao rapida da seguranca.',
+    };
+  }
+
+  if (looksLikeVisitApprovalCutoff) {
+    return {
+      domainKey: 'visit-approval-cutoff-settings',
+      entityName: 'VisitApprovalCutoffSetting',
+      routeBase: '/api/settings/visit-approval-cutoff',
+      frontendRoute: '/settings/visit-approval-cutoff',
+      pageComponentName: 'VisitApprovalCutoffSettingsPage',
+      serviceName: 'VisitApprovalCutoffSettingsService',
+      submitLabel: 'Salvar Horario',
+      navigationLabel: 'Horarios limite',
+      pageTitle: 'Configure horarios limite',
+      pageDescription: 'Defina o horario diario usado para bloquear aprovacoes de ultima hora sem tempo de analise.',
+      successMessage: 'Horario limite atualizado com sucesso.',
+      summary: 'Permite configurar o horario limite de aprovacao das visitas para evitar solicitacoes sem tempo habil de analise.',
     };
   }
 
@@ -3802,56 +4288,59 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
     dataSpec: createGenerationIR({ technicalSpec, domainTemplate, task }).frontend.dataSpec,
   }));
   const uiGenerationContext = buildUiGenerationContext(task, technicalSpec, repairContext);
+  const artifactFirstDraft = polishGeneratedUiDraft(
+    {
+      ...fallback,
+      componentMap: fallback.componentMap || fallback.screenSpec?.componentMap || {},
+      screenSpec: fallback.screenSpec,
+      dataSpec: fallback.dataSpec,
+      layoutVariant: fallback.layoutVariant,
+    },
+    {
+      ...uiGenerationContext,
+      interfaceExamples: uiGenerationContext.designReference?.interfaceExamples || {},
+    }
+  );
 
-  try {
-      const envOverrides = userUuid
-        ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'implementation_architect' })
-        : { AI_DISABLE_OLLAMA_FALLBACK: '0' };
-      const aiDraft = await generateImplementationUi({
-        ...uiGenerationContext,
-      }, {
-        envOverrides,
-        bypassCache: Boolean(options.forceRefresh),
-      });
-      const aiResult = polishGeneratedUiDraft(aiDraft, {
-        ...uiGenerationContext,
-        interfaceExamples: uiGenerationContext.designReference?.interfaceExamples || {},
-      });
-
-    return {
-      ...technicalSpec,
-      frontend: {
-        ...technicalSpec.frontend,
-        ...fallback,
-        ...normalizeUiCopy(normalizeGeneratedCopy(aiResult)),
-        screenSpec: normalizeUiCopy(normalizeGeneratedCopy(aiResult?.screenSpec || uiGenerationContext.generationIR?.frontend?.screenSpec || fallback.screenSpec)),
-        dataSpec: normalizeUiCopy(normalizeGeneratedCopy(aiResult?.dataSpec || uiGenerationContext.generationIR?.frontend?.dataSpec || fallback.dataSpec)),
-        componentMap: normalizeUiCopy(normalizeGeneratedCopy(aiResult?.componentMap || aiResult?.screenSpec?.componentMap || uiGenerationContext.generationIR?.frontend?.screenSpec?.componentMap || fallback.componentMap || fallback.screenSpec?.componentMap || {})),
-        generationIR: uiGenerationContext.generationIR,
-        layoutVariant: normalizeLayoutVariant(
-          aiResult?.layoutVariant,
-          uiGenerationContext.productMode,
-          uiGenerationContext.screenTemplate,
-          uiGenerationContext.uiIntent
-        ),
-      },
-      domain: {
-        ...technicalSpec.domain,
-        submitLabel: toAsciiUiText(aiResult?.submitLabel || technicalSpec.domain.submitLabel),
-      },
-    };
-  } catch {
-    return {
-      ...technicalSpec,
-      frontend: {
-        ...technicalSpec.frontend,
-        ...fallback,
-        componentMap: normalizeUiCopy(normalizeGeneratedCopy(fallback.componentMap || fallback.screenSpec?.componentMap || {})),
-        generationIR: uiGenerationContext.generationIR,
-        layoutVariant: fallback.layoutVariant,
-      },
-    };
-  }
+  return {
+    ...technicalSpec,
+    frontend: {
+      ...technicalSpec.frontend,
+      ...fallback,
+      ...normalizeUiCopy(normalizeGeneratedCopy(artifactFirstDraft)),
+      screenSpec: normalizeUiCopy(
+        normalizeGeneratedCopy(
+          artifactFirstDraft?.screenSpec || uiGenerationContext.generationIR?.frontend?.screenSpec || fallback.screenSpec
+        )
+      ),
+      dataSpec: normalizeUiCopy(
+        normalizeGeneratedCopy(
+          artifactFirstDraft?.dataSpec || uiGenerationContext.generationIR?.frontend?.dataSpec || fallback.dataSpec
+        )
+      ),
+      componentMap: normalizeUiCopy(
+        normalizeGeneratedCopy(
+          artifactFirstDraft?.componentMap ||
+            artifactFirstDraft?.screenSpec?.componentMap ||
+            uiGenerationContext.generationIR?.frontend?.screenSpec?.componentMap ||
+            fallback.componentMap ||
+            fallback.screenSpec?.componentMap ||
+            {}
+        )
+      ),
+      generationIR: uiGenerationContext.generationIR,
+      layoutVariant: normalizeLayoutVariant(
+        artifactFirstDraft?.layoutVariant || fallback.layoutVariant,
+        uiGenerationContext.productMode,
+        uiGenerationContext.screenTemplate,
+        uiGenerationContext.uiIntent
+      ),
+    },
+    domain: {
+      ...technicalSpec.domain,
+      submitLabel: toAsciiUiText(artifactFirstDraft?.submitLabel || technicalSpec.domain.submitLabel),
+    },
+  };
 }
 
 function inferBusinessRules(sourceText, actionSpec = null) {
@@ -3869,6 +4358,14 @@ function inferBusinessRules(sourceText, actionSpec = null) {
     rules.push('O fornecedor precisa ter nome unico para evitar duplicidade na base operacional.');
     rules.push('Cada fornecedor deve estar associado a pelo menos uma categoria de servico valida para facilitar triagem e acionamento.');
     rules.push('O cadastro precisa registrar ao menos um contato principal com contexto suficiente para acao rapida durante a operacao.');
+    return rules;
+  }
+
+  if (actionSpec?.domainKey === 'visit-operational-responsibles') {
+    rules.push('O responsavel operacional precisa ter nome valido para identificacao clara durante a operacao.');
+    rules.push('O contato deve aceitar e-mail valido ou telefone com DDD para acionamento rapido.');
+    rules.push('O tipo de suporte precisa vir de uma lista predefinida para padronizar a classificacao.');
+    rules.push('Nao e permitido duplicar responsavel operacional com mesmo nome e tipo de suporte.');
     return rules;
   }
 
@@ -3950,6 +4447,14 @@ function inferQaScenarios(sourceText, actionSpec = null) {
     scenarios.push({ code: 'missing_service_category', message: 'Selecione a categoria de servico principal do fornecedor.' });
     scenarios.push({ code: 'missing_primary_contacts', message: 'Registre pelo menos um contato principal para acionar este fornecedor.' });
     scenarios.push({ code: 'duplicated_supplier_name', message: 'Ja existe um fornecedor cadastrado com este nome.' });
+    return scenarios;
+  }
+
+  if (actionSpec?.domainKey === 'visit-operational-responsibles') {
+    scenarios.push({ code: 'missing_responsible_name', message: 'Informe o nome do responsavel operacional antes de salvar.' });
+    scenarios.push({ code: 'invalid_contact', message: 'Informe um contato valido por e-mail ou telefone com DDD.' });
+    scenarios.push({ code: 'missing_support_type', message: 'Selecione o tipo de suporte principal deste responsavel.' });
+    scenarios.push({ code: 'duplicated_operational_responsible', message: 'Ja existe um responsavel operacional com este nome e tipo de suporte.' });
     return scenarios;
   }
 
@@ -4169,6 +4674,25 @@ function buildDomainSpecificValidation(actionSpec, fields) {
     ];
   }
 
+  if (actionSpec.domainKey === 'visit-operational-responsibles') {
+    return [
+      `  const duplicatedResponsible = records.find((record) => String(record.responsibleName || '').toLowerCase() === String(input.responsibleName || '').trim().toLowerCase() && String(record.supportType || '') === String(input.supportType || ''));`,
+      `  if (duplicatedResponsible) throw new Error('Ja existe um responsavel operacional com este nome e tipo de suporte.');`,
+      `  const contactValue = String(input.contact || '').trim();`,
+      `  const isEmail = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(contactValue);`,
+      `  const isPhone = /^\\(?\\d{2}\\)?\\s?\\d{4,5}-?\\d{4}$/.test(contactValue);`,
+      `  if (!isEmail && !isPhone) throw new Error('Informe um contato valido por e-mail ou telefone com DDD.');`,
+    ];
+  }
+
+  if (actionSpec.domainKey === 'visit-extra-companions') {
+    return [
+      `  const duplicatedCompanion = records.find((record) => String(record.approvedVisitCode || '').toLowerCase() === String(input.approvedVisitCode || '').trim().toLowerCase() && String(record.companionName || '').toLowerCase() === String(input.companionName || '').trim().toLowerCase());`,
+      `  if (duplicatedCompanion) throw new Error('Este acompanhante extra ja foi vinculado a esta visita aprovada.');`,
+      `  if (String(input.securityFastApproval || '') !== 'aprovado' && String(input.securityFastApproval || '') !== 'pendente') throw new Error('Informe se a aprovacao rapida da seguranca esta pendente ou aprovada.');`,
+    ];
+  }
+
   if (actionSpec.domainKey === 'event-suppliers') {
     return [
       `  const duplicatedSupplier = records.find((record) => String(record.supplierName || '').toLowerCase() === String(input.supplierName || '').toLowerCase());`,
@@ -4208,12 +4732,18 @@ function inferPermissions(sourceText) {
   const normalized = stripAccents(sourceText).toLowerCase();
   return {
     requiresAuthentication: /\blogado\b|\bautenticad|\bconta ativa\b/.test(normalized),
-    actor: /\baluno\b/.test(normalized)
-      ? 'student'
-      : /\binfoprodutor\b/.test(normalized)
-        ? 'creator'
-        : 'user',
-    scope: /\badmin\b|\badministrador\b/.test(normalized) ? 'admin' : 'self_service',
+    actor: /\bassistente de recepcao\b|\brecepcionista\b/.test(normalized)
+      ? 'receptionist'
+      : /\baluno\b/.test(normalized)
+        ? 'student'
+        : /\binfoprodutor\b/.test(normalized)
+          ? 'creator'
+          : 'user',
+    scope: /\badmin\b|\badministrador\b/.test(normalized)
+      ? 'admin'
+      : /\bvisita\b|\bvisitas\b|\brecepcao\b|\boperacional\b/.test(normalized)
+        ? 'operations'
+        : 'self_service',
   };
 }
 
@@ -4223,6 +4753,9 @@ function inferDomainName(actionSpec, sourceText) {
   if (actionSpec.domainKey.startsWith('auth-')) return 'auth';
   if (actionSpec.domainKey === 'event-schedules') return 'events';
   if (actionSpec.domainKey === 'event-suppliers') return 'events';
+  if (actionSpec.domainKey === 'visit-operational-responsibles') return 'visits';
+  if (actionSpec.domainKey === 'visit-recurring-history') return 'visits';
+  if (actionSpec.domainKey === 'visit-extra-companions') return 'visits';
   if (actionSpec.domainKey === 'support-performance-dashboard' || /\bpainel\b|\bdashboard\b|\brelatorio\b/.test(normalized) && /\bchamado\b|\batendimento\b|\bperformance\b/.test(normalized)) return 'support';
   if (actionSpec.domainKey === 'support-ticket-attachments' || /\bchamado\b|\bsuporte\b|\bticket\b/.test(normalized) && /\banexo\b|\barquivo\b|\bdocumento\b/.test(normalized)) return 'support';
   if (actionSpec.domainKey === 'access-control-roles' || /\bpermiss/.test(normalized) || /\brole\b|\broles\b/.test(normalized)) return 'access-control';
@@ -4244,6 +4777,9 @@ function inferIntent(actionSpec, sourceText) {
   if (actionSpec.domainKey === 'auth-register' || /\bregistr/.test(normalized) || /\bcadastr/.test(normalized)) return 'register';
   if (actionSpec.domainKey === 'event-schedules') return 'plan';
   if (actionSpec.domainKey === 'event-suppliers') return 'register';
+  if (actionSpec.domainKey === 'visit-operational-responsibles') return 'register';
+  if (actionSpec.domainKey === 'visit-recurring-history') return 'review';
+  if (actionSpec.domainKey === 'visit-extra-companions') return 'attach';
   if (actionSpec.domainKey === 'support-performance-dashboard') return 'monitor';
   if (actionSpec.domainKey === 'support-ticket-attachments') return 'attach';
   if (actionSpec.domainKey === 'access-control-roles' || /\bconfigurar\b/.test(normalized) && /\bpermiss/.test(normalized)) return 'configure';
@@ -4266,6 +4802,10 @@ function inferScreenTemplate(actionSpec, fields, sourceText) {
 
   if (actionSpec.domainKey === 'event-schedules') return 'workspace';
   if (actionSpec.domainKey === 'event-suppliers') return 'workspace';
+  if (actionSpec.domainKey === 'visit-operational-responsibles') return 'workspace';
+  if (actionSpec.domainKey === 'visit-recurring-history') return 'workspace';
+  if (actionSpec.domainKey === 'visit-extra-companions') return 'workspace';
+  if (actionSpec.domainKey === 'visit-approval-cutoff-settings') return 'settings';
   if (actionSpec.domainKey === 'support-performance-dashboard') return 'dashboard';
   if (actionSpec.domainKey === 'support-ticket-attachments') return 'workspace';
   if (actionSpec.domainKey === 'access-control-roles') return 'settings';
@@ -4314,6 +4854,127 @@ function extractArchitectureHighlights(architectureSource) {
   }
 
   return sections;
+}
+
+function inferUiFamilyFromSpec(technicalSpec = {}, implementationManifest = null) {
+  const explicitUiFamily =
+    implementationManifest?.classification?.uiFamily ||
+    technicalSpec.implementationManifest?.classification?.uiFamily ||
+    technicalSpec.classification?.uiFamily ||
+    technicalSpec.frontend?.uiFamily ||
+    technicalSpec.structured?.classification?.uiFamily;
+
+  if (explicitUiFamily) return explicitUiFamily;
+
+  const screenTemplate =
+    implementationManifest?.classification?.screenTemplate ||
+    technicalSpec.architecture?.screenTemplate ||
+    technicalSpec.structured?.classification?.screenTemplate ||
+    'crud';
+  const productMode =
+    implementationManifest?.classification?.productMode ||
+    technicalSpec.frontend?.productMode ||
+    technicalSpec.structured?.classification?.productMode ||
+    '';
+  const pageArchetype =
+    technicalSpec.generationIR?.frontend?.screenSpec?.pageArchetype ||
+    technicalSpec.frontend?.pageArchetype ||
+    '';
+
+  if (screenTemplate === 'settings') return 'settings-console';
+  if (screenTemplate === 'dashboard' || productMode === 'manager-cockpit' || pageArchetype === 'executive-dashboard') {
+    return 'executive-cockpit';
+  }
+  if (screenTemplate === 'workspace' && (String(productMode).includes('planner') || pageArchetype === 'approval-flow')) {
+    return 'planner-workbench';
+  }
+  return 'operations-workspace';
+}
+
+function sanitizeArchitectureSummaryItems(items = [], { kind = 'generic', limit = 5 } = {}) {
+  const bannedPatterns = [
+    /FIM_DA_ARQUITETURA/i,
+    /FIM_DO_/i,
+    /WEB\[/i,
+    /\/modules\/auth/i,
+    /\bKeycloak\b/i,
+    /\bGraphQL\b/i,
+    /\bKubernetes\b/i,
+    /\bEKS\b/i,
+    /\bLaunchDarkly\b/i,
+    /\bFirebase\b/i,
+    /\bRedis\b/i,
+    /\bCQRS\b/i,
+    /\bEvent Sourcing\b/i,
+    /\bDRAFT\b.*\bAPPROVED\b/i,
+  ];
+
+  const kindPatterns =
+    kind === 'stack'
+      ? [/\bfrontend\b/i, /\bbackend\b/i, /\breact\b/i, /\bexpress\b/i, /\bvite\b/i, /\bprisma\b/i, /\bpostgres/i, /\btypescript\b/i]
+      : [/\bmodulo\b/i, /\bmodulos\b/i, /\bresponsab/i, /\bvisita\b/i, /\bresponsavel\b/i, /\boperac/i, /\broute\b/i, /\brota\b/i, /\bcontrato\b/i];
+
+  return Array.from(
+    new Set(
+      (Array.isArray(items) ? items : [])
+        .map((item) => String(item || '').replace(/^[\-\s#|]+/, '').trim())
+        .filter(Boolean)
+        .filter((item) => !bannedPatterns.some((pattern) => pattern.test(item)))
+        .filter((item) => kindPatterns.some((pattern) => pattern.test(item)))
+        .map((item) => item.replace(/\s+/g, ' ').trim())
+    )
+  ).slice(0, limit);
+}
+
+function buildImplementationDocContent(task, technicalSpec) {
+  const screenTemplate =
+    technicalSpec.architecture?.screenTemplate ||
+    technicalSpec.structured?.classification?.screenTemplate ||
+    'crud';
+  const uiFamily = inferUiFamilyFromSpec(technicalSpec, technicalSpec.implementationManifest || null);
+  const stackLines = sanitizeArchitectureSummaryItems(technicalSpec.architecture?.sourceSummary?.stack || [], {
+    kind: 'stack',
+    limit: 5,
+  });
+  const moduleLines = sanitizeArchitectureSummaryItems(technicalSpec.architecture?.sourceSummary?.modules || [], {
+    kind: 'modules',
+    limit: 6,
+  });
+  const domainRules = Array.isArray(technicalSpec.businessRules) ? technicalSpec.businessRules.slice(0, 4) : [];
+
+  return `# ${task.title}
+
+Task UUID: ${task.uuid}
+
+## Resumo
+Implementacao incremental desta story no fluxo operacional de visitas corporativas.
+
+## Template de tela
+- screenTemplate: ${screenTemplate}
+- uiFamily: ${uiFamily}
+- productMode: ${technicalSpec.frontend?.productMode || technicalSpec.structured?.classification?.productMode || 'operations-registry'}
+
+## Rotas
+- Frontend: ${technicalSpec.frontend.suggestedRoute}
+- Backend: ${technicalSpec.backend.routeBase}
+
+## Contratos da feature
+- Request: ${technicalSpec.shared?.requestContractName || 'n/d'}
+- Response: ${technicalSpec.shared?.responseContractName || 'n/d'}
+- Shared contract: ${technicalSpec.shared?.contractPath || 'n/d'}
+
+## Campos principais
+${(technicalSpec.domain?.fields || []).map((field) => `- ${field.label || field.name}: ${field.helperText || 'Campo operacional da feature.'}`).join('\n') || '- Sem campos identificados.'}
+
+## Regras operacionais
+${domainRules.map((line) => `- ${line}`).join('\n') || '- Sem regras adicionais registradas.'}
+
+## Stack e arquitetura
+${stackLines.map((line) => `- ${line}`).join('\n') || '- React + TypeScript + Vite no frontend; Express + Prisma no backend.'}
+
+## Modulos e limites
+${moduleLines.map((line) => `- ${line}`).join('\n') || '- Modulo isolado para responsaveis operacionais com contratos compartilhados e rotas REST basicas.'}
+`;
 }
 
 function buildUiSections(actionSpec, fields, frontendSpec) {
@@ -4789,19 +5450,25 @@ function buildImplementationPlan(task, generatedApp, technicalSpec, implementati
   ];
   const persistenceFiles = [technicalSpec.database.schemaPath];
   const documentationFiles = [`docs/implementations/${implementationManifest?.classification?.featureKey || technicalSpec.featureKey}.md`];
+  const executionMode = implementationManifest?.execution?.mode || 'deterministic';
+  const autonomousContract = implementationManifest?.autonomousAgent || null;
 
   return {
     version: 4,
     taskUuid: task.uuid,
     generatedAppUuid: generatedApp.uuid,
     generatedAppRoot: generatedApp.rootPath,
-    executionModel: 'goal_driven_incremental',
+    executionModel: executionMode === 'autonomous' ? 'autonomous_goal_driven_incremental' : 'goal_driven_incremental',
     objective: implementationManifest?.objective || technicalSpec.implementationObjective,
     implementationManifest,
     coherenceReport,
     reuseGuidance: reuseHints,
+    autonomousAgent: autonomousContract,
     steps: [
       'Ler o contexto atual do monorepo gerado',
+      executionMode === 'autonomous'
+        ? 'Permitir que o agente autonomo defina a melhor composicao dentro dos contratos da feature'
+        : 'Seguir o caminho deterministico atual de materializacao por workstreams',
       `Aplicar o template de tela ${screenTemplate}`,
       'Usar os highlights da arquitetura para respeitar stack, modulos e contratos ja definidos',
       'Reaproveitar padroes de dominio e referencias bem avaliadas do proprio projeto',
@@ -5053,6 +5720,22 @@ function backendModuleFiles(task, technicalSpec) {
   const readmeOperationSummary = Object.entries(operationMap)
     .map(([name, mode]) => `- \`${name}\`: ${mode}`)
     .join('\n');
+  const renderAutonomousTemplate = (template) =>
+    String(template || '')
+      .replaceAll('__SHARED_IMPORT_PATH__', escapeTemplate(sharedImportPath))
+      .replaceAll('__REQUEST_CONTRACT_NAME__', escapeTemplate(technicalSpec.shared.requestContractName))
+      .replaceAll('__RESPONSE_CONTRACT_NAME__', escapeTemplate(technicalSpec.shared.responseContractName))
+      .replaceAll('__LIST_CONTRACT_NAME__', escapeTemplate(technicalSpec.shared.listContractName))
+      .replaceAll('__ENTITY_NAME__', escapeTemplate(entityName))
+      .replaceAll('__ROUTE_BASE__', escapeTemplate(technicalSpec.backend.routeBase))
+      .replaceAll('__SUBMIT_LABEL__', escapeTemplate(technicalSpec.domain.submitLabel))
+      .replaceAll('__SUCCESS_MESSAGE__', escapeTemplate(technicalSpec.domain.successMessage))
+      .replaceAll('__BACKEND_ROUTER_NAME__', escapeTemplate(technicalSpec.backend.routerName))
+      .replaceAll('__BACKEND_SERVICE_NAME__', escapeTemplate(technicalSpec.backend.serviceName))
+      .replaceAll('__BACKEND_SERVICE_INSTANCE_NAME__', escapeTemplate(technicalSpec.backend.serviceInstanceName));
+  const autonomousBackendServiceTemplate = technicalSpec.backend?.autonomousServiceTsTemplate || '';
+  const autonomousBackendRouterTemplate = technicalSpec.backend?.autonomousRouterTsTemplate || '';
+  const autonomousBackendIndexTemplate = technicalSpec.backend?.autonomousIndexTsTemplate || '';
 
   return [
     {
@@ -5062,17 +5745,23 @@ function backendModuleFiles(task, technicalSpec) {
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/service.ts`,
-      content: `import { randomUUID } from 'crypto';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\ntype InternalRecord = ${technicalSpec.shared.responseContractName} & {\n  updatedAt?: string;\n  reviewDecision?: 'approved' | 'rejected';\n  reviewNote?: string;\n  attachmentCount?: number;\n  latestAttachment?: string;\n  priority?: string;\n  title?: string;\n  name?: string;\n  subject?: string;\n};\n\nconst records: InternalRecord[] = [];\n\n${validateInputFunction}/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n${listImplementation}  create(input: ${technicalSpec.shared.requestContractName}): ${technicalSpec.shared.responseContractName} {\n${validateInputRules ? `    validateInput(input, records);\n` : ''}    const item: InternalRecord = {\n      id: randomUUID(),\n${responseFieldAssignments}\n      status: ${createStatusValue},\n      createdAt: new Date().toISOString(),${createUpdatedAtField}\n    };\n\n    records.push(item);\n    return item;\n  }\n\n${reviewMethod}${attachMethod}${activityMethod}  buildSeedRecordsFromTask(): ${technicalSpec.shared.requestContractName}[] {\n    return ${seedRequestLiteral};\n  }\n}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\nfor (const seedInput of ${technicalSpec.backend.serviceInstanceName}.buildSeedRecordsFromTask()) {\n  records.push(${technicalSpec.backend.serviceInstanceName}.create(seedInput));\n}\n`,
+      content: autonomousBackendServiceTemplate
+        ? renderAutonomousTemplate(autonomousBackendServiceTemplate)
+        : `import { randomUUID } from 'crypto';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\ntype InternalRecord = ${technicalSpec.shared.responseContractName} & {\n  updatedAt?: string;\n  reviewDecision?: 'approved' | 'rejected';\n  reviewNote?: string;\n  attachmentCount?: number;\n  latestAttachment?: string;\n  priority?: string;\n  title?: string;\n  name?: string;\n  subject?: string;\n};\n\nconst records: InternalRecord[] = [];\n\n${validateInputFunction}/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n${listImplementation}  create(input: ${technicalSpec.shared.requestContractName}): ${technicalSpec.shared.responseContractName} {\n${validateInputRules ? `    validateInput(input, records);\n` : ''}    const item: InternalRecord = {\n      id: randomUUID(),\n${responseFieldAssignments}\n      status: ${createStatusValue},\n      createdAt: new Date().toISOString(),${createUpdatedAtField}\n    };\n\n    records.push(item);\n    return item;\n  }\n\n${reviewMethod}${attachMethod}${activityMethod}  buildSeedRecordsFromTask(): ${technicalSpec.shared.requestContractName}[] {\n    return ${seedRequestLiteral};\n  }\n}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\nfor (const seedInput of ${technicalSpec.backend.serviceInstanceName}.buildSeedRecordsFromTask()) {\n  records.push(${technicalSpec.backend.serviceInstanceName}.create(seedInput));\n}\n`,
       fileType: 'ts',
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/router.ts`,
-      content: `import { Router } from 'express';\nimport type { ${technicalSpec.shared.requestContractName} } from '${sharedImportPath}';\nimport { ${technicalSpec.backend.serviceInstanceName} } from './service';\n\nexport const ${technicalSpec.backend.routerName} = Router();\n\n${technicalSpec.backend.routerName}.get('/', (_req, res) => {\n  res.json(${technicalSpec.backend.serviceInstanceName}.list());\n});\n${routerActivityBody}\n${technicalSpec.backend.routerName}.post('/', (req, res) => {\n  try {\n    const payload = req.body || {};\n    const input: ${technicalSpec.shared.requestContractName} = {\n${routerRequestAssignments}\n    };\n    const created = ${technicalSpec.backend.serviceInstanceName}.create(input);\n    res.status(201).json(created);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao processar a requisicao.' });\n  }\n});\n${routerDecisionBody}${routerAttachmentBody}`,
+      content: autonomousBackendRouterTemplate
+        ? renderAutonomousTemplate(autonomousBackendRouterTemplate)
+        : `import { Router } from 'express';\nimport type { ${technicalSpec.shared.requestContractName} } from '${sharedImportPath}';\nimport { ${technicalSpec.backend.serviceInstanceName} } from './service';\n\nexport const ${technicalSpec.backend.routerName} = Router();\n\n${technicalSpec.backend.routerName}.get('/', (_req, res) => {\n  res.json(${technicalSpec.backend.serviceInstanceName}.list());\n});\n${routerActivityBody}\n${technicalSpec.backend.routerName}.post('/', (req, res) => {\n  try {\n    const payload = req.body || {};\n    const input: ${technicalSpec.shared.requestContractName} = {\n${routerRequestAssignments}\n    };\n    const created = ${technicalSpec.backend.serviceInstanceName}.create(input);\n    res.status(201).json(created);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao processar a requisicao.' });\n  }\n});\n${routerDecisionBody}${routerAttachmentBody}`,
       fileType: 'ts',
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/index.ts`,
-      content: `export { ${technicalSpec.backend.routerName} } from './router';\nexport { ${technicalSpec.backend.serviceInstanceName} } from './service';\n`,
+      content: autonomousBackendIndexTemplate
+        ? renderAutonomousTemplate(autonomousBackendIndexTemplate)
+        : `export { ${technicalSpec.backend.routerName} } from './router';\nexport { ${technicalSpec.backend.serviceInstanceName} } from './service';\n`,
       fileType: 'ts',
     },
     {
@@ -5506,6 +6195,11 @@ async function getLatestTaskImplementation(taskId) {
   });
 }
 
+function shouldReuseImplementationRecord(implementation) {
+  if (!implementation) return false;
+  return implementation.status === 'planned' || implementation.status === 'in_progress';
+}
+
 async function cleanupImplementationFiles(generatedAppRoot, implementation) {
   const filePaths = [...new Set((implementation?.generatedFiles || []).map((file) => file.filePath))];
 
@@ -5854,8 +6548,8 @@ function buildSyntheticTaskFromSpec(technicalSpec) {
 }
 
 async function ensureValidationScripts(generatedAppRoot) {
-  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\nconst hasPremiumShellSignals =\n  appContent.includes('AppFrame') &&\n  appContent.includes('AppHeader') &&\n  appContent.includes('StudioHome') &&\n  appContent.includes('MetricRow') &&\n  appContent.includes('SurfaceCard') &&\n  appContent.includes('function HomePage()') &&\n  appContent.includes('Resumo do workspace');\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !hasPremiumShellSignals) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de uma home estruturada com navegacao premium.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem textos genericos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluido sem problemas.');\n`;
-  const testContent = `import { access, readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatorio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nasync function listFeatureDirs() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nasync function listDirectories(relativePath) {\n  try {\n    const entries = await readdir(path.join(root, relativePath), { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nconst requiredFiles = [\n  'apps/api/src/server.ts',\n  'apps/web/src/App.tsx',\n  'prisma/schema.prisma',\n];\n\nfor (const file of requiredFiles) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\nconst featureDirs = await listFeatureDirs();\nconst apiModuleDirs = await listDirectories('apps/api/src/modules');\nconst contractFiles = await readdir(path.join(root, 'packages', 'shared', 'src', 'contracts')).catch(() => []);\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nif (!appContent.includes(\"path: '/'\")) {\n  throw new Error('Frontend sem rota Home registrada.');\n}\n\nfor (const featureDir of featureDirs) {\n  const pagePath = \`apps/web/src/features/\${featureDir}/page.tsx\`;\n  const servicePath = \`apps/web/src/features/\${featureDir}/service.ts\`;\n  const apiRouterPath = \`apps/api/src/modules/\${featureDir}/router.ts\`;\n  const apiServicePath = \`apps/api/src/modules/\${featureDir}/service.ts\`;\n  const contractPath = \`packages/shared/src/contracts/\${featureDir}.ts\`;\n  await assertFile(pagePath);\n  await assertFile(servicePath);\n  await assertFile(apiRouterPath);\n  await assertFile(apiServicePath);\n  await assertFile(contractPath);\n\n  const pageContent = await readSafe(pagePath);\n  const routerContent = await readSafe(apiRouterPath);\n  const backendServiceContent = await readSafe(apiServicePath);\n  const contractContent = await readSafe(contractPath);\n  const usesSharedUi =\n    pageContent.includes('packages/ui/src/index.tsx') &&\n    (pageContent.includes('FeatureWorkbench') ||\n      pageContent.includes('SettingsWorkbench') ||\n      pageContent.includes('FeaturePage'));\n  if (!usesSharedUi) {\n    throw new Error(\`Feature \${featureDir} nao esta usando o design system compartilhado.\`);\n  }\n  if (!routerContent.includes(\".get('/',\") || !routerContent.includes(\".post('/',\")) {\n    throw new Error(\`Modulo \${featureDir} sem rotas GET/POST basicas.\`);\n  }\n  if (!backendServiceContent.includes('buildSeedRecordsFromTask')) {\n    throw new Error(\`Modulo \${featureDir} sem seeds basicos para validacao incremental.\`);\n  }\n  if (!/Request\\s*\\{/.test(contractContent) || !/Response\\s*\\{/.test(contractContent) || !/ListResponse\\s*\\{/.test(contractContent)) {\n    throw new Error(\`Contrato \${featureDir} sem Request/Response/ListResponse completos.\`);\n  }\n  const expectedModelName = contractContent.match(/export interface ([A-Za-z0-9]+)Request/)?.[1]?.replace(/Request$/, '');\n  if (expectedModelName && !schemaContent.includes(\`model \${expectedModelName} {\`)) {\n    throw new Error(\`Schema Prisma sem model esperado para \${featureDir}: \${expectedModelName}.\`);\n  }\n}\n\nconst frontendRoutes = [...appContent.matchAll(/path:\\s*'([^']+)'/g)].map((match) => match[1]);\nconst apiRoutes = [...serverContent.matchAll(/app\\.use\\('([^']+)'/g)].map((match) => match[1]);\n\nif (featureDirs.length && frontendRoutes.length < featureDirs.length) {\n  throw new Error('O frontend nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length && apiRoutes.length < featureDirs.length) {\n  throw new Error('A API nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length !== apiModuleDirs.length) {\n  throw new Error('Quantidade de features web difere da quantidade de modulos da API.');\n}\n\nif (featureDirs.length !== contractFiles.filter((file) => String(file).endsWith('.ts')).length) {\n  throw new Error('Quantidade de contratos compartilhados difere das features geradas.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nif (!/createdAt\\s+DateTime/.test(schemaContent) || !/updatedAt\\s+DateTime/.test(schemaContent)) {\n  throw new Error('Schema Prisma sem trilha minima de datas nas models geradas.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluidos com sucesso.');\n`;
+  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\nconst hasPremiumShellSignals =\n  appContent.includes('AppFrame') &&\n  appContent.includes('AppHeader') &&\n  appContent.includes('SidebarNav') &&\n  appContent.includes('SurfaceCard') &&\n  appContent.includes('const routes = [');\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !hasPremiumShellSignals) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de navegacao estruturada entre as features.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem textos genericos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluido sem problemas.');\n`;
+  const testContent = `import { access, readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatorio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nasync function listFeatureDirs() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nasync function listDirectories(relativePath) {\n  try {\n    const entries = await readdir(path.join(root, relativePath), { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nconst requiredFiles = [\n  'apps/api/src/server.ts',\n  'apps/web/src/App.tsx',\n  'prisma/schema.prisma',\n];\n\nfor (const file of requiredFiles) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\nconst featureDirs = await listFeatureDirs();\nconst apiModuleDirs = await listDirectories('apps/api/src/modules');\nconst contractFiles = await readdir(path.join(root, 'packages', 'shared', 'src', 'contracts')).catch(() => []);\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nfor (const featureDir of featureDirs) {\n  const pagePath = \`apps/web/src/features/\${featureDir}/page.tsx\`;\n  const servicePath = \`apps/web/src/features/\${featureDir}/service.ts\`;\n  const apiRouterPath = \`apps/api/src/modules/\${featureDir}/router.ts\`;\n  const apiServicePath = \`apps/api/src/modules/\${featureDir}/service.ts\`;\n  const contractPath = \`packages/shared/src/contracts/\${featureDir}.ts\`;\n  await assertFile(pagePath);\n  await assertFile(servicePath);\n  await assertFile(apiRouterPath);\n  await assertFile(apiServicePath);\n  await assertFile(contractPath);\n\n  const pageContent = await readSafe(pagePath);\n  const routerContent = await readSafe(apiRouterPath);\n  const backendServiceContent = await readSafe(apiServicePath);\n  const contractContent = await readSafe(contractPath);\n  const importsSharedUi =\n    pageContent.includes('packages/ui/src/index.tsx') ||\n    pageContent.includes('/packages/ui/src/index.tsx');\n  if (!importsSharedUi) {\n    throw new Error(\`Feature \${featureDir} nao esta usando o design system compartilhado.\`);\n  }\n  if (!routerContent.includes(\".get('/',\") || !routerContent.includes(\".post('/',\")) {\n    throw new Error(\`Modulo \${featureDir} sem rotas GET/POST basicas.\`);\n  }\n  if (!backendServiceContent.includes('buildSeedRecordsFromTask')) {\n    throw new Error(\`Modulo \${featureDir} sem seeds basicos para validacao incremental.\`);\n  }\n  if (!/Request\\s*\\{/.test(contractContent) || !/Response\\s*\\{/.test(contractContent) || !/ListResponse\\s*\\{/.test(contractContent)) {\n    throw new Error(\`Contrato \${featureDir} sem Request/Response/ListResponse completos.\`);\n  }\n  const expectedModelName = contractContent.match(/export interface ([A-Za-z0-9]+)Request/)?.[1]?.replace(/Request$/, '');\n  if (expectedModelName && !schemaContent.includes(\`model \${expectedModelName} {\`)) {\n    throw new Error(\`Schema Prisma sem model esperado para \${featureDir}: \${expectedModelName}.\`);\n  }\n}\n\nconst frontendRoutes = [...appContent.matchAll(/path:\\s*'([^']+)'/g)].map((match) => match[1]);\nconst apiRoutes = [...serverContent.matchAll(/app\\.use\\('([^']+)'/g)].map((match) => match[1]);\n\nif (featureDirs.length && frontendRoutes.length < featureDirs.length) {\n  throw new Error('O frontend nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length && apiRoutes.length < featureDirs.length) {\n  throw new Error('A API nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length !== apiModuleDirs.length) {\n  throw new Error('Quantidade de features web difere da quantidade de modulos da API.');\n}\n\nif (featureDirs.length !== contractFiles.filter((file) => String(file).endsWith('.ts')).length) {\n  throw new Error('Quantidade de contratos compartilhados difere das features geradas.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nif (!/createdAt\\s+DateTime/.test(schemaContent) || !/updatedAt\\s+DateTime/.test(schemaContent)) {\n  throw new Error('Schema Prisma sem trilha minima de datas nas models geradas.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluidos com sucesso.');\n`;
 
   return [
     {
@@ -5896,27 +6590,14 @@ async function updateWebApp(generatedAppRoot, routeSpecs, projectName, options =
         `const ${spec.pageComponentName} = lazy(() => import('./features/${spec.featureKey}/index').then((module) => ({ default: module.${spec.pageComponentName} })))`
     )
     .join('\n');
-  const shellImport = `import { AppFrame, AppHeader, MetricRow, SidebarNav, StudioHome, SurfaceCard } from '../../../packages/ui/src/index.tsx'`;
+  const shellImport = `import { AppFrame, AppHeader, SidebarNav, SurfaceCard } from '../../../packages/ui/src/index.tsx'`;
   const routeLines = frontendRoutes
     .map(
       (spec) =>
         `  { path: '${spec.path}', label: '${escapeTemplate(spec.label)}', render: () => <${spec.pageComponentName} /> },`
     )
     .join('\n');
-  const homeDescription = escapeTemplate(
-    projectTemplate.positioning ||
-      projectTemplate.summary ||
-      'Acompanhe a base gerada, as areas prontas para evolucao e a proxima frente operacional do produto.'
-  );
-  const evolutionDescription = escapeTemplate(
-    projectTemplate.coreCapabilities?.length
-      ? `Blueprint inicial prioriza ${projectTemplate.coreCapabilities.slice(0, 3).join(', ')}.`
-      : 'Escolha um modulo para continuar a implementacao incremental com contratos, backend e experiencia conectados.'
-  );
-  const visualTone = escapeTemplate(projectTemplate.frontend?.visualTone || 'profissional');
-  const navigationStyle = escapeTemplate(projectTemplate.frontend?.navigationStyle || 'generic-suite');
-
-  const content = `import { Suspense, lazy } from 'react'\n${shellImport}\n${importLines ? `\n${importLines}\n` : '\n'}const routes = [\n  { path: '/', label: 'Inicio', render: () => <HomePage /> },\n${routeLines}\n]\n\nfunction HomePage() {\n  const productAreas = routes.filter((route) => route.path !== '/')\n\n  return (\n    <div style={{ display: 'grid', gap: 20 }}>\n      <StudioHome title="${escapeTemplate(projectName)}" routes={productAreas} />\n      <div style={{ display: 'grid', gap: 18, gridTemplateColumns: 'minmax(0, 1.12fr) minmax(320px, 0.88fr)' }}>\n        <SurfaceCard\n          title="Resumo do workspace"\n          description="${homeDescription}"\n          meta={\`\${productAreas.length} modulo(s)\`}\n        >\n          <MetricRow\n            items={[\n              { label: 'Modulos ativos', value: String(productAreas.length) },\n              { label: 'Tom visual', value: '${visualTone}' },\n              { label: 'Navegacao', value: '${navigationStyle}' },\n            ]}\n          />\n        </SurfaceCard>\n        <SurfaceCard\n          title="Fila de evolucao"\n          description="${evolutionDescription}"\n          meta="Blueprint guiado"\n        >\n          <div style={{ display: 'grid', gap: 12 }}>\n            {productAreas.map((route) => (\n              <a\n                key={route.path}\n                href={route.path}\n                style={{\n                  padding: '16px 18px',\n                  borderRadius: 18,\n                  border: '1px solid #dbe4ee',\n                  background: '#f8fafc',\n                  textDecoration: 'none',\n                  color: '#0f172a',\n                  fontWeight: 700,\n                }}\n              >\n                {route.label}\n              </a>\n            ))}\n          </div>\n        </SurfaceCard>\n      </div>\n    </div>\n  )\n}\n\nfunction RouteLoadingFallback() {\n  return (\n    <SurfaceCard\n      title="Preparando modulo"\n      description="Carregando a experiencia dessa area com navegacao progressiva para manter o shell mais leve."\n      meta="Lazy loading ativo"\n    >\n      <div style={{ display: 'grid', gap: 10 }}>\n        <div style={{ height: 12, borderRadius: 999, background: '#dbe4ee' }} />\n        <div style={{ height: 12, width: '72%', borderRadius: 999, background: '#e7edf5' }} />\n      </div>\n    </SurfaceCard>\n  )\n}\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const activeRoute = routes.find((route) => route.path === currentPath) || routes[0]\n\n  return (\n    <AppFrame>\n      <AppHeader title={activeRoute.label} routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n      <div style={{ display: 'grid', gridTemplateColumns: '234px minmax(0, 1fr)' }}>\n        <SidebarNav routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute.path} />\n        <div style={{ padding: 18 }}>\n          <Suspense fallback={<RouteLoadingFallback />}>\n            {activeRoute.render()}\n          </Suspense>\n        </div>\n      </div>\n    </AppFrame>\n  )\n}\n`;
+  const content = `import { Suspense, lazy } from 'react'\n${shellImport}\n${importLines ? `\n${importLines}\n` : '\n'}const routes = [\n${routeLines}\n]\n\nfunction RouteLoadingFallback() {\n  return (\n    <SurfaceCard\n      title="Preparando modulo"\n      description="Carregando a experiencia dessa area com navegacao progressiva para manter o shell mais leve."\n      meta="Lazy loading ativo"\n    >\n      <div style={{ display: 'grid', gap: 10 }}>\n        <div style={{ height: 12, borderRadius: 999, background: '#dbe4ee' }} />\n        <div style={{ height: 12, width: '72%', borderRadius: 999, background: '#e7edf5' }} />\n      </div>\n    </SurfaceCard>\n  )\n}\n\nexport default function App() {\n  const currentPath = window.location.pathname\n  const defaultRoute = routes[0]\n  const activeRoute = routes.find((route) => route.path === currentPath) || defaultRoute\n\n  if (currentPath === '/' && defaultRoute && window.location.pathname !== defaultRoute.path) {\n    window.history.replaceState({}, '', defaultRoute.path)\n  }\n\n  return (\n    <AppFrame>\n      <AppHeader title={activeRoute?.label || '${escapeTemplate(projectName)}'} routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute?.path || ''} />\n      <div style={{ display: 'grid', gridTemplateColumns: '234px minmax(0, 1fr)' }}>\n        <SidebarNav routes={routes.map(({ path, label }) => ({ path, label }))} activePath={activeRoute?.path || ''} />\n        <div style={{ padding: 18 }}>\n          <Suspense fallback={<RouteLoadingFallback />}>\n            {activeRoute ? activeRoute.render() : null}\n          </Suspense>\n        </div>\n      </div>\n    </AppFrame>\n  )\n}\n`;
 
   await writeText(appPath, content);
 
@@ -6416,11 +7097,9 @@ async function runImplementationReviewInternal({ task, implementation, technical
   const hasPremiumShellSignals =
     webAppContent.includes('AppFrame') &&
     webAppContent.includes('AppHeader') &&
-    webAppContent.includes('StudioHome') &&
-    webAppContent.includes('function HomePage()') &&
-    webAppContent.includes('MetricRow') &&
     webAppContent.includes('SurfaceCard') &&
-    webAppContent.includes('Resumo do workspace');
+    webAppContent.includes('SidebarNav') &&
+    webAppContent.includes('const routes = [');
   const encodingPattern = /[\u00C3\u00C2\u00E2\uFFFD]/;
 
   if (/Campo principal da feature gerada|Informe o valor principal/.test(pageContent)) {
@@ -6699,6 +7378,12 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
 
   const findings = [];
   const screenTemplate = technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud';
+  const autonomousAgentContract =
+    technicalSpec.implementationManifest?.autonomousAgent ||
+    technicalSpec.implementationManifest?.execution?.autonomousAgent ||
+    null;
+  const frontendControlMode = autonomousAgentContract?.frontendControlMode || 'guided';
+  const canSkipSharedShell = Boolean(autonomousAgentContract?.freedomWithinBounds?.canSkipSharedShell);
   const productMode =
     technicalSpec.frontend?.productMode ||
     technicalSpec.architecture?.productMode ||
@@ -6706,12 +7391,84 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
     '';
   const usesFeatureWorkbench = pageContent.includes('FeatureWorkbench');
   const usesSettingsWorkbench = pageContent.includes('SettingsWorkbench');
+  const usesOperationsWorkspace = pageContent.includes('OperationsWorkspace');
+  const usesExecutiveCockpit = pageContent.includes('ExecutiveCockpit');
+  const usesSettingsConsole = pageContent.includes('SettingsConsole');
+  const usesPlannerWorkbench = pageContent.includes('PlannerWorkbench');
   const usesFeaturePage = pageContent.includes('FeaturePage');
-  const hasExplicitLayout = pageContent.includes(`layout="${screenTemplate}"`);
-  const hasExplicitProductMode = productMode ? pageContent.includes(`productMode="${productMode}"`) : false;
-  const usesSharedFeatureShell = usesFeatureWorkbench || usesSettingsWorkbench || usesFeaturePage;
+  const usesSurfaceCard = pageContent.includes('SurfaceCard');
+  const usesInputStyle = pageContent.includes('inputStyle');
+  const usesTokens = pageContent.includes('tokens');
+  const escapedScreenTemplate = String(screenTemplate || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedProductMode = String(productMode || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const hasExplicitLayout = new RegExp(`layout\\s*=\\s*["']${escapedScreenTemplate}["']`).test(pageContent);
+  const hasExplicitProductMode = productMode
+    ? new RegExp(`productMode\\s*=\\s*["']${escapedProductMode}["']`).test(pageContent)
+    : false;
+  const usesSharedFeatureShell =
+    usesFeatureWorkbench ||
+    usesSettingsWorkbench ||
+    usesOperationsWorkspace ||
+    usesExecutiveCockpit ||
+    usesSettingsConsole ||
+      usesPlannerWorkbench ||
+      usesFeaturePage;
+  const usesSharedDesignPrimitives =
+    pageContent.includes('FieldGroup') &&
+    pageContent.includes('PrimaryButton') &&
+    (usesInputStyle || usesSurfaceCard || usesTokens);
+  const requiredFieldNames = (
+    technicalSpec.structured?.ui?.sections?.find((section) => section?.type === 'form')?.fields ||
+    technicalSpec.domain?.fields ||
+    []
+  )
+    .map((field) => String(field?.name || '').trim())
+    .filter(Boolean);
+  const explicitFieldCoverage =
+    !requiredFieldNames.length ||
+    requiredFieldNames.every((fieldName) => pageContent.includes(fieldName));
+  const hasRenderedRecords =
+    pageContent.includes('.map((item)') ||
+    pageContent.includes('.map((record)') ||
+    pageContent.includes('items.length ?');
+  const usesSharedShellWithProductMode =
+    (usesFeatureWorkbench ||
+      usesSettingsWorkbench ||
+      usesOperationsWorkspace ||
+      usesExecutiveCockpit ||
+      usesSettingsConsole ||
+      usesPlannerWorkbench) &&
+    hasExplicitProductMode;
 
-  if (!hasExplicitLayout && !((usesFeatureWorkbench || usesSettingsWorkbench) && hasExplicitProductMode)) {
+  const workspaceShellMatches =
+    screenTemplate === 'workspace' && (usesOperationsWorkspace || usesPlannerWorkbench || usesFeatureWorkbench);
+  const freeformAutonomousMatch =
+    frontendControlMode === 'freeform' &&
+    canSkipSharedShell &&
+    usesSharedDesignPrimitives;
+  const standaloneSharedWorkspaceMatch =
+    screenTemplate === 'workspace' &&
+    usesSharedDesignPrimitives &&
+    !usesSharedFeatureShell;
+  const standaloneSharedSettingsMatch =
+    screenTemplate === 'settings' &&
+    usesSharedDesignPrimitives &&
+    !usesSharedFeatureShell;
+  const autonomousResultOrientedMatch =
+    frontendControlMode === 'freeform' &&
+    usesSharedDesignPrimitives &&
+    explicitFieldCoverage &&
+    hasRenderedRecords;
+
+  if (
+    !hasExplicitLayout &&
+    !usesSharedShellWithProductMode &&
+    !workspaceShellMatches &&
+    !freeformAutonomousMatch &&
+    !standaloneSharedWorkspaceMatch &&
+    !standaloneSharedSettingsMatch &&
+    !autonomousResultOrientedMatch
+  ) {
     findings.push({
       severity: 'high',
       code: 'specialist_screen_template_mismatch',
@@ -6721,7 +7478,15 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
     });
   }
 
-  if (!usesSharedFeatureShell || !pageContent.includes('FieldGroup') || !pageContent.includes('PrimaryButton')) {
+  if (
+    ((!usesSharedFeatureShell &&
+      !freeformAutonomousMatch &&
+      !standaloneSharedWorkspaceMatch &&
+      !standaloneSharedSettingsMatch &&
+      !autonomousResultOrientedMatch) ||
+      !pageContent.includes('FieldGroup') ||
+      !pageContent.includes('PrimaryButton'))
+  ) {
     findings.push({
       severity: 'high',
       code: 'specialist_missing_design_system',
@@ -6771,8 +7536,12 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
     });
   }
 
+  const expectedDomain = technicalSpec.structured?.classification?.domain || technicalSpec.featureKey;
+  const implementedDomain = inferImplementedDomain(technicalSpec.featureKey, technicalSpec.backend.routeBase);
+  const domainAligned = areDomainKeysAligned(expectedDomain, implementedDomain);
+
   const semanticSignals = extractSemanticSignals(task.title, technicalSpec.featureKey, technicalSpec.backend.routeBase);
-  if (semanticSignals.some((signal) => !signal.matchedInFeature)) {
+  if (!domainAligned && semanticSignals.some((signal) => !signal.matchedInFeature)) {
     findings.push({
       severity: 'high',
       code: 'specialist_semantic_feature_mismatch',
@@ -6795,10 +7564,6 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
       filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
     });
   }
-
-  const expectedDomain = technicalSpec.structured?.classification?.domain || technicalSpec.featureKey;
-  const implementedDomain = inferImplementedDomain(technicalSpec.featureKey, technicalSpec.backend.routeBase);
-  const domainAligned = areDomainKeysAligned(expectedDomain, implementedDomain);
   if (expectedDomain && implementedDomain !== 'custom' && !domainAligned) {
     findings.push({
       severity: 'high',
@@ -6914,6 +7679,8 @@ async function persistImplementationExecutionState(task, implementation, state) 
         taskUuid: task.uuid,
         implementationId: String(implementation.id),
         generatedAt: new Date().toISOString(),
+        generationSource: state?.generationSource || null,
+        repairStyle: state?.repairStyle || null,
         ...state,
       },
       null,
@@ -6935,6 +7702,12 @@ async function persistImplementationExecutionState(task, implementation, state) 
 }
 
 async function createRefactorPlanArtifact(task, implementation, technicalSpec, reviewReport, specialistReviewReport, validationSummary) {
+  const repairStyle = resolveRepairStyle({
+    technicalSpec,
+    findings: reviewReport?.findings || [],
+    specialistFindings: specialistReviewReport?.findings || [],
+    validationFailures: formatValidationFailures(validationSummary),
+  });
   const actions = [
     ...(reviewReport?.fixPlan || []),
     ...((specialistReviewReport?.findings || []).map((finding) => ({
@@ -6964,6 +7737,12 @@ async function createRefactorPlanArtifact(task, implementation, technicalSpec, r
         featureKey: technicalSpec.featureKey,
         generatedAt: new Date().toISOString(),
         stages: ['review_structural', 'review_specialist', 'validation', 'refactor'],
+        repairStyle,
+        generationSource:
+          technicalSpec?.autonomousMaterialization?.generationSource ||
+          technicalSpec?.frontend?.autonomousGenerationSource ||
+          technicalSpec?.autonomousExecution?.generationSource ||
+          'unknown',
         actions,
       },
       null,
@@ -6995,27 +7774,25 @@ async function materializeImplementationFiles({ task, implementation, technicalS
   });
   const featureFiles = Array.from(
     new Map(
-      routeSpecs
-        .flatMap((spec) => {
-          const syntheticTask = buildSyntheticTaskFromSpec(spec);
-          return [
-            ...buildBackendModuleFilesFromTemplate(syntheticTask, spec).map((file) => {
-              const normalizedPath = file.relativePath.replace(/\\/g, '/');
-              const isSharedContract = normalizedPath.startsWith('packages/shared/');
-              return {
-                ...file,
-                lane: isSharedContract ? 'shared' : 'backend',
-                workstreamId: isSharedContract ? 'shared_contracts' : 'backend_module',
-              };
-            }),
-            ...buildFrontendFeatureFilesFromTemplate(syntheticTask, spec).map((file) => ({
+      (() => {
+        const syntheticTask = buildSyntheticTaskFromSpec(technicalSpec);
+        return [
+          ...buildBackendModuleFilesFromTemplate(syntheticTask, technicalSpec).map((file) => {
+            const normalizedPath = file.relativePath.replace(/\\/g, '/');
+            const isSharedContract = normalizedPath.startsWith('packages/shared/');
+            return {
               ...file,
-              lane: 'frontend',
-              workstreamId: 'frontend_feature',
-            })),
-          ];
-        })
-        .map((file) => [file.relativePath.replace(/\\/g, '/'), file])
+              lane: isSharedContract ? 'shared' : 'backend',
+              workstreamId: isSharedContract ? 'shared_contracts' : 'backend_module',
+            };
+          }),
+          ...buildFrontendFeatureFilesFromTemplate(syntheticTask, technicalSpec).map((file) => ({
+            ...file,
+            lane: 'frontend',
+            workstreamId: 'frontend_feature',
+          })),
+        ];
+      })().map((file) => [file.relativePath.replace(/\\/g, '/'), file])
     ).values()
   );
 
@@ -7033,7 +7810,7 @@ async function materializeImplementationFiles({ task, implementation, technicalS
     })),
     {
       relativePath: `docs/implementations/${technicalSpec.featureKey}.md`,
-      content: `# ${task.title}\n\nTask UUID: ${task.uuid}\n\n## Resumo\nFeature integrada no baseline full stack pos-refinamento.\n\n## Template de tela\n- ${technicalSpec.architecture?.screenTemplate || technicalSpec.structured?.classification?.screenTemplate || 'crud'}\n\n## Rotas\n- Frontend: ${technicalSpec.frontend.suggestedRoute}\n- Backend: ${technicalSpec.backend.routeBase}\n\n## Stack e arquitetura\n${(technicalSpec.architecture?.sourceSummary?.stack || []).map((line) => `- ${line}`).join('\n') || '- Sem resumo de stack extraido.'}\n\n## Modulos e limites\n${(technicalSpec.architecture?.sourceSummary?.modules || []).map((line) => `- ${line}`).join('\n') || '- Sem resumo de modulos extraido.'}\n`,
+      content: buildImplementationDocContent(task, technicalSpec),
       fileType: 'md',
       lane: 'shared',
       workstreamId: 'persistence_and_docs',
@@ -7402,7 +8179,21 @@ export async function planTaskImplementation(taskUuid, userUuid = null, options 
     projectMemory,
   };
   technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid, null, options);
-  const implementationManifest = buildImplementationManifest(task, technicalSpec);
+  let implementationManifest = buildImplementationManifest(task, technicalSpec);
+  let autonomousDraftArtifact = null;
+  if (implementationManifest.execution?.mode === 'autonomous') {
+    const autonomousDraft = await runAutonomousImplementationAgent(task, technicalSpec, implementationManifest, runtimeUserUuid);
+    if (autonomousDraft) {
+      technicalSpec = applyAutonomousImplementationDraft(technicalSpec, autonomousDraft);
+      implementationManifest = buildImplementationManifest(task, technicalSpec);
+      autonomousDraftArtifact = await createCurrentArtifact(
+        task.id,
+        `Autonomous Implementation Draft - ${task.title}`,
+        JSON.stringify(autonomousDraft, null, 2),
+        'implementation_autonomous_agent'
+      );
+    }
+  }
   const coherenceContracts = await loadProjectCoherenceContracts(task.project.id);
   const coherenceReport = buildCoherenceReport(task, technicalSpec, implementationManifest, coherenceContracts);
   const coherenceArtifact = await createCurrentArtifact(
@@ -7451,10 +8242,11 @@ export async function planTaskImplementation(taskUuid, userUuid = null, options 
   );
 
   const existingImplementation = await getLatestTaskImplementation(task.id);
+  const implementationToReuse = shouldReuseImplementationRecord(existingImplementation) ? existingImplementation : null;
 
-  const implementation = existingImplementation
+  const implementation = implementationToReuse
     ? await prisma.taskImplementation.update({
-        where: { id: existingImplementation.id },
+        where: { id: implementationToReuse.id },
         data: {
           generatedAppId: generatedApp.id,
           technicalSpecArtifactId: technicalSpecArtifact.id,
@@ -7520,6 +8312,16 @@ export async function planTaskImplementation(taskUuid, userUuid = null, options 
     },
   });
 
+  if (autonomousDraftArtifact?.id) {
+    await prisma.taskArtifact.update({
+      where: { id: autonomousDraftArtifact.id },
+      data: {
+        taskImplementationId: implementation.id,
+        artifactScope: 'implementation',
+      },
+    });
+  }
+
   const memoryArtifact = await createProjectMemoryArtifact(task, implementation, generatedApp);
   await prisma.taskArtifact.update({
     where: { id: memoryArtifact.artifact.id },
@@ -7549,6 +8351,15 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
   }
 
   const implementationPlanContent = parseJsonArtifactContent(implementation?.implementationPlanArtifact);
+  let implementationManifest = parseJsonArtifactContent(
+    await prisma.taskArtifact.findFirst({
+      where: {
+        taskId: task.id,
+        title: `Implementation Manifest - ${task.title}`,
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+  );
 
   implementation = await prisma.taskImplementation.update({
     where: { id: implementation.id },
@@ -7693,6 +8504,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
         specialistReviewReport: cycleResult.specialistReviewReport,
         validationSummary: cycleResult.validationSuite.summary,
         attemptNumber: attemptIndex,
+        technicalSpec,
       });
 
       await createRepairAttemptArtifact(task, implementation, technicalSpec, repairContext);
@@ -7708,15 +8520,52 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
           ...((repairContext.findings || [])
           .slice(0, 3)
           .map((item) => `${item.severity}: ${item.message}`)),
+          `Estilo: ${repairContext.repairStyle || 'iterative'}`,
           `Escopo: ${(repairContext.repairScope?.workstreamIds || []).join(', ') || 'persistence_and_docs'}`,
         ],
         repairScope: repairContext.repairScope || null,
+        repairStyle: repairContext.repairStyle || null,
+        generationSource: repairContext.generationSource || null,
         ...getWorkstreamExecutionState(implementationPlanContent, 'integration_and_validation'),
       });
 
-        if (repairContext.repairScope?.needsFrontend) {
-          technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid, repairContext, options);
+      if (implementationManifest?.execution?.mode === 'autonomous' && repairContext.repairStyle === 'iterative') {
+        const autonomousRepairDraft = await runAutonomousImplementationAgent(
+          task,
+          technicalSpec,
+          implementationManifest,
+          runtimeUserUuid,
+          repairContext
+        );
+        if (autonomousRepairDraft) {
+          technicalSpec = applyAutonomousImplementationDraft(technicalSpec, autonomousRepairDraft);
+          implementationManifest = buildImplementationManifest(task, technicalSpec);
+          await createCurrentArtifact(
+            task.id,
+            `Autonomous Implementation Repair Draft - ${task.title}`,
+            JSON.stringify(autonomousRepairDraft, null, 2),
+            'implementation_autonomous_agent',
+            {
+              taskImplementationId: implementation.id,
+              artifactScope: 'implementation',
+            }
+          );
+          await createCurrentArtifact(
+            task.id,
+            `Implementation Manifest - ${task.title}`,
+            JSON.stringify(implementationManifest, null, 2),
+            'implementation_architect',
+            {
+              taskImplementationId: implementation.id,
+              artifactScope: 'implementation',
+            }
+          );
         }
+      }
+
+      if (repairContext.repairScope?.needsFrontend && repairContext.repairStyle === 'iterative') {
+          technicalSpec = await enrichFrontendWithAi(task, technicalSpec, runtimeUserUuid, repairContext, options);
+      }
       const repairWorkstreamIds = repairContext.repairScope?.workstreamIds?.length
         ? repairContext.repairScope.workstreamIds
         : ['persistence_and_docs'];
@@ -8001,6 +8850,7 @@ export async function getTaskImplementationStatus(taskUuid) {
       ...qualitySummary,
       benchmark: benchmarkSummary,
     },
+    autonomySummary: qualitySummary.autonomousGeneration,
   };
 }
 

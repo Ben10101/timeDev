@@ -19,6 +19,7 @@ Os gargalos mais relevantes agora estao em:
 - geracao de UI com composicao mais rica
 - maturidade real dos agentes `developer_backend` e `developer_frontend`
 - convivencia entre pipeline legado e runtime moderno
+- autonomia real da etapa de implementacao
 
 ## Prioridade Geral
 
@@ -27,6 +28,7 @@ Os gargalos mais relevantes agora estao em:
 3. fortalecer implementacao backend/frontend
 4. reduzir dependencia do pipeline legado
 5. ampliar evals de produto real
+6. abrir a camada autonoma de implementacao
 
 ## Sprint 1
 
@@ -51,7 +53,7 @@ Fazer o `projectTemplateKey` sair do nivel de metadata e passar a influenciar a 
 - [implementationService.js](/c:/Users/bleao/ai-software-factory/backend/src/services/implementationService.js)
 - [catalog.js](/c:/Users/bleao/ai-software-factory/backend/src/templates/projects/catalog.js)
 
-### Critério de pronto
+### Criterio de pronto
 
 - ao criar um projeto de suporte, o bootstrap inicial ja nasce com jornadas coerentes de suporte
 - ao criar um projeto de EAD, o bootstrap inicial ja nasce com jornadas coerentes de educacao
@@ -80,7 +82,7 @@ Evoluir o gerador de UI para escolher nao so a copy, mas tambem a familia de lay
 - [implementationService.js](/c:/Users/bleao/ai-software-factory/backend/src/services/implementationService.js)
 - [agent-evals](/c:/Users/bleao/ai-software-factory/agent-evals/README.md)
 
-### Critério de pronto
+### Criterio de pronto
 
 - duas telas do mesmo tipo nao saem sempre no mesmo esqueleto
 - dashboard de performance e tela de configuracao passam a parecer familias diferentes de produto
@@ -108,7 +110,7 @@ Fazer `developer_backend` e `developer_frontend` sairem de planejadores estrutur
 - [developer_frontend agent.py](/c:/Users/bleao/ai-software-factory/agents/developer_frontend/agent.py)
 - [shared.py](/c:/Users/bleao/ai-software-factory/agents/developer/shared.py)
 
-### Critério de pronto
+### Criterio de pronto
 
 - os agentes geram artefatos mais profundos e menos genericos
 - a qualidade de backend/frontend melhora de forma mensuravel nas evals
@@ -135,7 +137,7 @@ Reduzir a duplicidade entre `factory.py` legado e o runtime moderno baseado em N
 - [run_single_agent.py](/c:/Users/bleao/ai-software-factory/orchestrator/run_single_agent.py)
 - [orchestratorService.js](/c:/Users/bleao/ai-software-factory/backend/src/services/orchestratorService.js)
 
-### Critério de pronto
+### Criterio de pronto
 
 - um caminho principal claro para execucao de agentes
 - menos duplicidade conceitual e operacional
@@ -162,9 +164,46 @@ Tornar mais facil provar ganho real de qualidade por provider, prompt e agente.
 - [run-eval.mjs](/c:/Users/bleao/ai-software-factory/scripts/agent-evals/run-eval.mjs)
 - [agent-evals](/c:/Users/bleao/ai-software-factory/agent-evals/README.md)
 
-### Critério de pronto
+### Criterio de pronto
 
 - cada melhoria relevante em agentes ou prompts pode ser comparada com evidencia
+
+## Sprint 6
+
+### Tema
+
+Agente autonomo de implementacao
+
+### Meta
+
+Fazer a etapa de codificacao deixar de depender apenas de templates e heuristicas fixas, adicionando um executor autonomo guiado por contratos.
+
+### Entregas
+
+- modo `autonomous` no `implementation-manifest`
+- contrato do `implementation_autonomous_agent`
+- caminho unico de implementacao via `implementation_autonomous_agent`
+- checklist de review e limites operacionais do agente
+- migracao do executor de `autonomia guiada` para `autonomia com guardrails`
+- review orientado a resultado, nao a forma fixa
+- repair iterativo preservando autoria da solucao
+- `repair_context` passando pelo `implementation_autonomous_agent` antes de reparos auxiliares
+- observabilidade de `llm_primary` vs `fallback`
+
+### Arquivos alvo
+
+- [implementationService.js](/c:/Users/bleao/ai-software-factory/backend/src/services/implementationService.js)
+- [implementationAutonomyService.js](/c:/Users/bleao/ai-software-factory/backend/src/services/implementationAutonomyService.js)
+- [IMPLEMENTATION_AUTONOMOUS_AGENT.md](/c:/Users/bleao/ai-software-factory/docs/IMPLEMENTATION_AUTONOMOUS_AGENT.md)
+
+### Criterio de pronto
+
+- a esteira usa sempre execucao autonoma na etapa de implementacao
+- o manifesto de implementacao carrega o contrato do executor autonomo
+- o proximo passo da factory pode plugar um agente de codificacao sem reinventar o pipeline
+- a LLM passa a ser fonte primaria da materializacao na maior parte das features
+- o specialist review aceita frontend livre quando requisito, QA e design system estao corretos
+- o repair deixa de reconstruir a feature inteira sem necessidade
 
 ## Ordem Recomendada de Execucao
 
@@ -172,14 +211,16 @@ Tornar mais facil provar ganho real de qualidade por provider, prompt e agente.
 2. Sprint 2
 3. Sprint 3
 4. Sprint 5
-5. Sprint 4
+5. Sprint 6
+6. Sprint 4
 
 ## Por que essa ordem
 
 - primeiro damos contexto estrutural ao projeto
 - depois melhoramos a experiencia gerada
 - em seguida fortalecemos os implementadores
-- so depois consolidamos comparabilidade e convergencia final
+- depois abrimos a camada autonoma de implementacao
+- so entao consolidamos comparabilidade e convergencia final
 
 ## Resultado Esperado
 
@@ -194,6 +235,7 @@ para:
 - implementacao mais forte por camada
 - runtime mais coerente
 - melhoria continua baseada em eval
+- codificacao com mais julgamento e menos dependencia de moldes fixos
 
 ## Status Atual
 
@@ -202,3 +244,4 @@ para:
 - Sprint 3: concluida com fortalecimento dos agentes de implementacao e comparacao em [DEVELOPER_AGENTS_SPRINT3_COMPARISON.md](/c:/Users/bleao/ai-software-factory/docs/DEVELOPER_AGENTS_SPRINT3_COMPARISON.md)
 - Sprint 4: pendente
 - Sprint 5: concluida com comparabilidade ampliada e evidencias em [SPRINT5_EVAL_COMPARISON.md](/c:/Users/bleao/ai-software-factory/docs/SPRINT5_EVAL_COMPARISON.md)
+- Sprint 6: primeiro corte concluido com contrato e selecao de modo documentados em [IMPLEMENTATION_AUTONOMOUS_AGENT.md](/c:/Users/bleao/ai-software-factory/docs/IMPLEMENTATION_AUTONOMOUS_AGENT.md), com fase seguinte definida para migrar de `agente dentro de trilhos` para `agente livre com guardrails`

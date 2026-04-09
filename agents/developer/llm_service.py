@@ -85,7 +85,7 @@ def get_provider_order():
 
     disable_ollama_value = (
         os.getenv(f"AI_DISABLE_OLLAMA_FALLBACK_{agent_suffix}") if agent_suffix else None
-    ) or os.getenv("AI_DISABLE_OLLAMA_FALLBACK", "0")
+    ) or os.getenv("AI_DISABLE_OLLAMA_FALLBACK", "1")
     disable_ollama_fallback = str(disable_ollama_value).lower() in ("1", "true", "yes")
 
     configured_order_value = (
@@ -117,7 +117,9 @@ def get_provider_order():
             if provider not in (llm_provider, "ollama") and (not disable_ollama_fallback or provider != "ollama")
         ]
         if llm_provider == "ollama":
-            return [] if disable_ollama_fallback else ["ollama"]
+            if disable_ollama_fallback:
+                return [provider for provider in SUPPORTED_PROVIDERS if provider != "ollama"]
+            return ["ollama"]
         return [llm_provider, *others] if disable_ollama_fallback else [llm_provider, *others, "ollama"]
 
     fallback_order = ["gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "openrouter", "ollama"]
