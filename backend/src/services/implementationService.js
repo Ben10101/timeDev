@@ -274,6 +274,79 @@ async function removeEmptyParentDirectories(filePath, stopAtPath) {
   }
 }
 
+async function removeDirectoryIfExists(targetPath) {
+  try {
+    await rm(targetPath, { recursive: true, force: true });
+  } catch {
+    // Mantem a limpeza idempotente quando o diretório já não existe.
+  }
+}
+
+async function removeObsoleteGeneratedFeatureSlices(rootPath, compositionManifest) {
+  const expectedFeatureKeys = new Set(
+    (compositionManifest?.frontend?.routes || [])
+      .map((route) => route.featureKey)
+      .filter(Boolean)
+  );
+
+  const cleanupDirectoryChildren = async (relativeRoot, shouldKeep) => {
+    const absoluteRoot = path.join(rootPath, relativeRoot);
+    let entries = [];
+
+    try {
+      entries = await readdir(absoluteRoot, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const entryName = entry.name;
+      if (shouldKeep(entryName)) {
+        continue;
+      }
+
+      const targetPath = path.join(absoluteRoot, entryName);
+      if (entry.isDirectory()) {
+        await removeDirectoryIfExists(targetPath);
+      } else {
+        await removeFileIfExists(targetPath);
+      }
+    }
+  };
+
+  await cleanupDirectoryChildren(
+    path.join('apps', 'web', 'src', 'features'),
+    (entryName) => expectedFeatureKeys.has(entryName)
+  );
+
+  await cleanupDirectoryChildren(
+    path.join('apps', 'api', 'src', 'modules'),
+    (entryName) => expectedFeatureKeys.has(entryName)
+  );
+
+  await cleanupDirectoryChildren(
+    path.join('packages', 'shared', 'src', 'contracts'),
+    (entryName) => {
+      if (!String(entryName).endsWith('.ts')) {
+        return true;
+      }
+      const featureKey = entryName.replace(/\.ts$/, '');
+      return expectedFeatureKeys.has(featureKey);
+    }
+  );
+
+  await cleanupDirectoryChildren(
+    path.join('docs', 'implementations'),
+    (entryName) => {
+      if (!String(entryName).endsWith('.md')) {
+        return true;
+      }
+      const featureKey = entryName.replace(/\.md$/, '');
+      return expectedFeatureKeys.has(featureKey);
+    }
+  );
+}
+
 function collectDuplicateLines(content, predicate) {
   const lines = String(content || '')
     .split(/\r?\n/)
@@ -847,8 +920,190 @@ function compactProjectMemory(projectMemory) {
   };
 }
 
-function compactRepairContext(repairContext) {
+function buildAutonomousCurrentFileRegistry(currentImplementationContext = {}) {
+  const featureKey = currentImplementationContext?.featureKey || 'feature';
+  const frontendFiles = currentImplementationContext?.frontend?.files || {};
+  const frontendSources = currentImplementationContext?.frontend?.fileSources || {};
+  const backendFiles = currentImplementationContext?.backend?.files || {};
+  const backendSources = currentImplementationContext?.backend?.fileSources || {};
+
+  return [
+    {
+      layer: 'frontend',
+      fileKey: 'frontend.pageTsxTemplate',
+      relativePath: `apps/web/src/features/${featureKey}/page.tsx`,
+      hasContent: Boolean(frontendFiles.pageTsxTemplate),
+      source: frontendSources.pageTsxTemplate || null,
+    },
+    {
+      layer: 'frontend',
+      fileKey: 'frontend.serviceTsTemplate',
+      relativePath: `apps/web/src/features/${featureKey}/service.ts`,
+      hasContent: Boolean(frontendFiles.serviceTsTemplate),
+      source: frontendSources.serviceTsTemplate || null,
+    },
+    {
+      layer: 'frontend',
+      fileKey: 'frontend.indexTsTemplate',
+      relativePath: `apps/web/src/features/${featureKey}/index.ts`,
+      hasContent: Boolean(frontendFiles.indexTsTemplate),
+      source: frontendSources.indexTsTemplate || null,
+    },
+    {
+      layer: 'backend',
+      fileKey: 'backend.serviceTsTemplate',
+      relativePath: `apps/api/src/modules/${featureKey}/service.ts`,
+      hasContent: Boolean(backendFiles.serviceTsTemplate),
+      source: backendSources.serviceTsTemplate || null,
+    },
+    {
+      layer: 'backend',
+      fileKey: 'backend.routerTsTemplate',
+      relativePath: `apps/api/src/modules/${featureKey}/router.ts`,
+      hasContent: Boolean(backendFiles.routerTsTemplate),
+      source: backendSources.routerTsTemplate || null,
+    },
+    {
+      layer: 'backend',
+      fileKey: 'backend.indexTsTemplate',
+      relativePath: `apps/api/src/modules/${featureKey}/index.ts`,
+      hasContent: Boolean(backendFiles.indexTsTemplate),
+      source: backendSources.indexTsTemplate || null,
+    },
+  ].filter((entry) => entry.hasContent || entry.source);
+}
+
+function signalMatchesRegistryPath(signalPath = '', relativePath = '') {
+  const normalizedSignal = String(signalPath || '').replace(/\\/g, '/').toLowerCase();
+  const normalizedRelative = String(relativePath || '').replace(/\\/g, '/').toLowerCase();
+
+  if (!normalizedSignal || !normalizedRelative) {
+    return false;
+  }
+
+  return (
+    normalizedSignal === normalizedRelative ||
+    normalizedSignal.endsWith(normalizedRelative) ||
+    normalizedRelative.endsWith(normalizedSignal)
+  );
+}
+
+function inferRepairExecutionFocus(repairContext = {}, currentImplementationContext = {}) {
+  const registry = buildAutonomousCurrentFileRegistry(currentImplementationContext);
+  const findings = [...(repairContext.findings || []), ...(repairContext.specialistFindings || [])];
+  const validationFailures = repairContext.validationFailures || [];
+  const focusEntries = new Map();
+  let matchedExactFile = false;
+
+  const addFocusEntry = (entry, reason) => {
+    if (!entry) return;
+
+    const existing = focusEntries.get(entry.fileKey);
+    if (existing) {
+      if (reason && !existing.reasons.includes(reason)) {
+        existing.reasons.push(reason);
+      }
+      return;
+    }
+
+    focusEntries.set(entry.fileKey, {
+      layer: entry.layer,
+      fileKey: entry.fileKey,
+      relativePath: entry.relativePath,
+      source: entry.source || null,
+      reasons: reason ? [reason] : [],
+    });
+  };
+
+  const addLayerEntries = (layer, reason) => {
+    registry.filter((entry) => entry.layer === layer).forEach((entry) => addFocusEntry(entry, reason));
+  };
+
+  for (const item of findings) {
+    const filePath = item.filePath || '';
+    const exactMatches = registry.filter((entry) => signalMatchesRegistryPath(filePath, entry.relativePath));
+
+    if (exactMatches.length) {
+      matchedExactFile = true;
+      exactMatches.forEach((entry) => addFocusEntry(entry, item.code || item.message || 'review_finding'));
+      continue;
+    }
+
+    const normalizedSignal = String(filePath || '').replace(/\\/g, '/').toLowerCase();
+    if (normalizedSignal.includes('apps/web/')) {
+      addLayerEntries('frontend', item.code || 'frontend_review');
+    }
+    if (normalizedSignal.includes('apps/api/')) {
+      addLayerEntries('backend', item.code || 'backend_review');
+    }
+  }
+
+  for (const failure of validationFailures) {
+    const signal = `${failure.scriptName || ''} ${failure.errorMessage || ''}`.toLowerCase();
+    if (signal.includes('build:web') || signal.includes('lint')) {
+      addLayerEntries('frontend', failure.scriptName || 'validation_frontend');
+    }
+    if (signal.includes('build:api')) {
+      addLayerEntries('backend', failure.scriptName || 'validation_backend');
+    }
+    if (signal.includes('test')) {
+      addLayerEntries('frontend', failure.scriptName || 'validation_test');
+      addLayerEntries('backend', failure.scriptName || 'validation_test');
+    }
+  }
+
+  if (!focusEntries.size && repairContext.repairScope?.needsFrontend) {
+    addLayerEntries('frontend', 'repair_scope_frontend');
+  }
+  if (!focusEntries.size && repairContext.repairScope?.needsBackend) {
+    addLayerEntries('backend', 'repair_scope_backend');
+  }
+
+  const focusFiles = Array.from(focusEntries.values());
+  const preserveFiles = registry
+    .filter((entry) => entry.hasContent && !focusEntries.has(entry.fileKey))
+    .map((entry) => ({
+      layer: entry.layer,
+      fileKey: entry.fileKey,
+      relativePath: entry.relativePath,
+      source: entry.source || null,
+    }));
+
+  const touchedLayers = [...new Set(focusFiles.map((item) => item.layer))];
+  const primaryFailureSurface = touchedLayers.length === 1
+    ? touchedLayers[0]
+    : touchedLayers.length > 1
+      ? 'cross_surface'
+      : repairContext.repairScope?.needsFrontend && !repairContext.repairScope?.needsBackend
+        ? 'frontend'
+        : repairContext.repairScope?.needsBackend && !repairContext.repairScope?.needsFrontend
+          ? 'backend'
+          : 'unknown';
+
+  const locality = matchedExactFile && focusFiles.length <= 2
+    ? 'local_patch'
+    : touchedLayers.length > 1
+      ? 'cross_surface'
+      : focusFiles.length
+        ? 'layer_scoped'
+        : 'fallback_scope';
+
+  return {
+    primaryFailureSurface,
+    locality,
+    writeSet: {
+      mode: locality,
+      fileKeys: focusFiles.map((item) => item.fileKey),
+    },
+    focusFiles,
+    preserveFiles,
+  };
+}
+
+function compactRepairContext(repairContext, currentImplementationContext = null) {
   if (!repairContext) return null;
+
+  const executionFocus = inferRepairExecutionFocus(repairContext, currentImplementationContext);
 
   return {
     attemptNumber: repairContext.attemptNumber,
@@ -858,6 +1113,16 @@ function compactRepairContext(repairContext) {
     specialistReviewScore: repairContext.specialistReviewScore,
     generationSource: repairContext.generationSource,
     repairStyle: repairContext.repairStyle,
+    repairScope: repairContext.repairScope
+      ? {
+          needsFrontend: Boolean(repairContext.repairScope.needsFrontend),
+          needsBackend: Boolean(repairContext.repairScope.needsBackend),
+          needsShared: Boolean(repairContext.repairScope.needsShared),
+          workstreamIds: Array.isArray(repairContext.repairScope.workstreamIds)
+            ? repairContext.repairScope.workstreamIds
+            : [],
+        }
+      : null,
     materialization: repairContext.materialization
       ? {
           generationSource: repairContext.materialization.generationSource || null,
@@ -865,6 +1130,7 @@ function compactRepairContext(repairContext) {
           fallbackFileCount: repairContext.materialization.fallbackFileCount ?? null,
         }
       : null,
+    executionFocus,
     findings: (repairContext.findings || []).slice(0, 4).map((item) => ({
       code: item.code,
       severity: item.severity,
@@ -2496,16 +2762,19 @@ async function runAutonomousImplementationAgent(task, technicalSpec, implementat
     return null;
   }
 
+  const currentImplementationContext = buildAutonomousCurrentImplementationContext(technicalSpec);
+
   const payload = {
     project_id: task.project?.uuid,
     task_uuid: task.uuid,
     idea: task.title,
     implementation_manifest: implementationManifest,
     technical_spec: technicalSpec,
+    current_implementation_context: currentImplementationContext,
     requirement_spec: implementationManifest?.upstreamContracts?.requirementSpec || null,
     test_spec: implementationManifest?.upstreamContracts?.testSpec || null,
     architecture: technicalSpec?.architecture?.sourceSummary || null,
-    repair_context: compactRepairContext(repairContext),
+    repair_context: compactRepairContext(repairContext, currentImplementationContext),
   };
 
   const envOverrides = userUuid
@@ -2513,6 +2782,52 @@ async function runAutonomousImplementationAgent(task, technicalSpec, implementat
     : {};
 
   return runSingleAgent('implementation_autonomous_agent', payload, { envOverrides });
+}
+
+function buildAutonomousCurrentImplementationContext(technicalSpec = {}) {
+  const frontend = technicalSpec?.frontend || {};
+  const backend = technicalSpec?.backend || {};
+  const autonomousMaterialization = technicalSpec?.autonomousMaterialization || {};
+  const autonomousExecution = technicalSpec?.autonomousExecution || {};
+
+  return {
+    featureKey: technicalSpec?.featureKey || null,
+    generationSource:
+      autonomousMaterialization?.generationSource ||
+      frontend?.autonomousGenerationSource ||
+      autonomousExecution?.generationSource ||
+      null,
+    variationProfile:
+      autonomousMaterialization?.variationProfile ||
+      frontend?.autonomousVariationProfile ||
+      autonomousExecution?.variationProfile ||
+      null,
+    compositionSignature:
+      frontend?.autonomousCompositionSignature ||
+      autonomousExecution?.compositionSignature ||
+      null,
+    frontend: {
+      layoutVariant: frontend?.layoutVariant || null,
+      pageArchetype: frontend?.pageArchetype || null,
+      sections: Array.isArray(frontend?.sections) ? frontend.sections : [],
+      highlights: Array.isArray(frontend?.highlights) ? frontend.highlights : [],
+      fileSources: frontend?.autonomousFileSources || null,
+      files: {
+        pageTsxTemplate: frontend?.autonomousPageTsxTemplate || null,
+        serviceTsTemplate: frontend?.autonomousServiceTsTemplate || null,
+        indexTsTemplate: frontend?.autonomousIndexTsTemplate || null,
+      },
+    },
+    backend: {
+      fileSources: backend?.autonomousFileSources || null,
+      notes: Array.isArray(backend?.autonomousGuidance?.notes) ? backend.autonomousGuidance.notes : [],
+      files: {
+        serviceTsTemplate: backend?.autonomousServiceTsTemplate || null,
+        routerTsTemplate: backend?.autonomousRouterTsTemplate || null,
+        indexTsTemplate: backend?.autonomousIndexTsTemplate || null,
+      },
+    },
+  };
 }
 
 async function loadProjectCoherenceContracts(projectId) {
@@ -4802,9 +5117,9 @@ function inferScreenTemplate(actionSpec, fields, sourceText) {
 
   if (actionSpec.domainKey === 'event-schedules') return 'workspace';
   if (actionSpec.domainKey === 'event-suppliers') return 'workspace';
-  if (actionSpec.domainKey === 'visit-operational-responsibles') return 'workspace';
-  if (actionSpec.domainKey === 'visit-recurring-history') return 'workspace';
-  if (actionSpec.domainKey === 'visit-extra-companions') return 'workspace';
+  if (actionSpec.domainKey === 'visit-operational-responsibles') return hasFewFields ? 'crud' : 'workspace';
+  if (actionSpec.domainKey === 'visit-recurring-history') return 'dashboard';
+  if (actionSpec.domainKey === 'visit-extra-companions') return hasFewFields ? 'crud' : 'workspace';
   if (actionSpec.domainKey === 'visit-approval-cutoff-settings') return 'settings';
   if (actionSpec.domainKey === 'support-performance-dashboard') return 'dashboard';
   if (actionSpec.domainKey === 'support-ticket-attachments') return 'workspace';
@@ -7772,6 +8087,7 @@ async function materializeImplementationFiles({ task, implementation, technicalS
     routeSpecs,
     projectTemplate,
   });
+  await removeObsoleteGeneratedFeatureSlices(generatedApp.rootPath, compositionManifest);
   const featureFiles = Array.from(
     new Map(
       (() => {

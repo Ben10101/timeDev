@@ -737,6 +737,7 @@ class ImplementationAutonomousAgent:
         idea = payload.get("idea") or ""
         implementation_manifest = payload.get("implementation_manifest") or {}
         technical_spec = payload.get("technical_spec") or {}
+        current_implementation_context = payload.get("current_implementation_context") or {}
         requirement_spec = payload.get("requirement_spec") or {}
         test_spec = payload.get("test_spec") or {}
         architecture = payload.get("architecture") or {}
@@ -756,6 +757,9 @@ IMPLEMENTATION MANIFEST
 
 TECHNICAL SPEC
 {_compact_json(technical_spec, 4200)}
+
+CURRENT IMPLEMENTATION CONTEXT
+{_compact_json(current_implementation_context, 4200)}
 
 REQUIREMENT SPEC
 {_compact_json(requirement_spec, 2800)}
@@ -782,8 +786,14 @@ REGRAS
 - Evite paginas com cara de template repetido, loops genéricos de campos, placeholders abstratos, texto autoexplicativo da esteira, hero desnecessario ou cockpit sem motivo.
 - Para frontend, prefira codigo final explicito: campos nomeados, lista legivel, hierarquia de informacao concreta, copy de produto, estrutura coerente com a tarefa.
 - Se a feature for operacional simples, uma tela seca e utilitaria e melhor que um workspace ornamental.
+- Use `CURRENT IMPLEMENTATION CONTEXT` como base da iteracao: se ja houver arquivos materializados, evolua esses arquivos em vez de reinventar a feature do zero.
+- Em repair, trate `CURRENT IMPLEMENTATION CONTEXT.files` como a versao atual da solucao. Corrija em cima dela e preserve o que ja estiver bom.
 - Se houver REPAIR CONTEXT, trate-o como prioridade alta: corrija os findings diretamente na solucao proposta, sem resetar a feature para um molde generico.
 - Preserve a autoria e a estrutura da solucao quando os erros forem locais; reconstrua apenas o que os findings realmente exigirem.
+- Se `REPAIR CONTEXT.executionFocus.focusFiles` vier preenchido, concentre a maior parte das mudancas nesses arquivos.
+- Trate `REPAIR CONTEXT.executionFocus.preserveFiles` como arquivos a preservar. Nao reescreva esses arquivos sem necessidade clara causada pelos findings.
+- Se `REPAIR CONTEXT.executionFocus.writeSet.mode` for `local_patch`, faca uma correcao pequena e cirurgica em vez de recompor a feature inteira.
+- Se `REPAIR CONTEXT.executionFocus.primaryFailureSurface` ou `REPAIR CONTEXT.repairScope` apontarem so para frontend ou so para backend, evite mudar a outra camada.
 - Responda APENAS com JSON valido.
 - Se optar por gerar templates, use placeholders controlados como:
   - `__SHARED_IMPORT_PATH__`

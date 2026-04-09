@@ -1,9 +1,6 @@
 import express from 'express'
 import cors from 'cors'
 import pino from 'pino'
-import { VisitExtraCompanionRouter } from './modules/visit-extra-companions/index'
-import { VisitRecurringHistoryRouter } from './modules/visit-recurring-history/index'
-import { VisitApprovalCutoffSettingRouter } from './modules/visit-approval-cutoff-settings/index'
 import { VisitOperationalResponsibleRouter } from './modules/visit-operational-responsibles/index'
 const app = express()
 const logger = pino({ name: 'plataforma-de-operacoes-de-visitas-corporativas-api' })
@@ -27,9 +24,6 @@ app.use(express.json({ limit: '1mb' }))
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', app: 'plataforma-de-operacoes-de-visitas-corporativas' })
 })
-app.use('/api/visit-extra-companions', VisitExtraCompanionRouter)
-app.use('/api/visit-recurring-history', VisitRecurringHistoryRouter)
-app.use('/api/settings/visit-approval-cutoff', VisitApprovalCutoffSettingRouter)
 app.use('/api/visit-operational-responsibles', VisitOperationalResponsibleRouter)
 app.listen(port, () => {
   logger.info({ port }, 'API running')

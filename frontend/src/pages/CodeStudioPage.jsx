@@ -1157,10 +1157,18 @@ export default function CodeStudioPage() {
                             || implementation?.status === 'failed'
                             || implementation?.status === 'planned'
                         )}
-                        disabled={runningTaskUuid === task.uuid || planningTaskUuid === task.uuid || !architectureStatus?.canGenerateCode || !canStartNow}
+                        disabled={
+                          runningTaskUuid === task.uuid ||
+                          planningTaskUuid === task.uuid ||
+                          implementation?.status === 'in_progress' ||
+                          !architectureStatus?.canGenerateCode ||
+                          !canStartNow
+                        }
                         className="dashboard-button-primary"
                         title={
-                          !canStartNow
+                          implementation?.status === 'in_progress'
+                            ?'A implementação ainda está em execução. Aguarde a esteira concluir antes de integrar direto.'
+                            : !canStartNow
                             ?'A ordem sugerida indica stories anteriores que deveriam entrar antes desta.'
                             : !hasTechnicalPlan
                               ?'Se não existir plano técnico, o studio cria um automaticamente antes da integração.'
@@ -1183,6 +1191,11 @@ export default function CodeStudioPage() {
                         Abrir task
                       </button>
                     </div>
+                    {implementation?.status === 'in_progress' && (
+                      <p className="mt-3 text-xs text-slate-500">
+                        A integração direta fica disponível quando a execução terminar.
+                      </p>
+                    )}
                   </div>
                 );
               })

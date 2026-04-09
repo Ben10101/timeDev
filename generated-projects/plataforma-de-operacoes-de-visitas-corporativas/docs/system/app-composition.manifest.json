@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-04-08T21:27:54.849Z",
+  "generatedAt": "2026-04-09T18:34:42.110Z",
   "project": {
     "uuid": "2ac8b772-1960-4138-bfd1-1a30dd71fe2c",
     "name": "Plataforma de Operações de Visitas Corporativas",
@@ -25,27 +25,6 @@
     },
     "routes": [
       {
-        "featureKey": "visit-extra-companions",
-        "path": "/operations/extra-companions",
-        "label": "Acompanhantes extras",
-        "pageComponentName": "VisitExtraCompanionsPage",
-        "uiFamily": "operations-workspace"
-      },
-      {
-        "featureKey": "visit-recurring-history",
-        "path": "/operations/visit-history",
-        "label": "Historico de visitas",
-        "pageComponentName": "VisitRecurringHistoryPage",
-        "uiFamily": "operations-workspace"
-      },
-      {
-        "featureKey": "visit-approval-cutoff-settings",
-        "path": "/settings/visit-approval-cutoff",
-        "label": "Horarios limite",
-        "pageComponentName": "VisitApprovalCutoffSettingsPage",
-        "uiFamily": "settings-console"
-      },
-      {
         "featureKey": "visit-operational-responsibles",
         "path": "/operations/responsibles",
         "label": "Responsaveis",
@@ -57,21 +36,6 @@
   "backend": {
     "healthRoute": "/health",
     "routes": [
-      {
-        "featureKey": "visit-extra-companions",
-        "routeBase": "/api/visit-extra-companions",
-        "routerName": "VisitExtraCompanionRouter"
-      },
-      {
-        "featureKey": "visit-recurring-history",
-        "routeBase": "/api/visit-recurring-history",
-        "routerName": "VisitRecurringHistoryRouter"
-      },
-      {
-        "featureKey": "visit-approval-cutoff-settings",
-        "routeBase": "/api/settings/visit-approval-cutoff",
-        "routerName": "VisitApprovalCutoffSettingRouter"
-      },
       {
         "featureKey": "visit-operational-responsibles",
         "routeBase": "/api/visit-operational-responsibles",

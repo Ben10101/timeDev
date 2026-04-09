@@ -60,6 +60,49 @@ function resolveExperienceProfile(screenTemplate, intent, productMode) {
   };
 }
 
+function resolveStructuralFreedomHints(screenTemplate, intent, technicalSpec = {}) {
+  const normalizedTemplate = String(screenTemplate || 'crud').toLowerCase();
+  const normalizedIntent = String(intent || 'custom').toLowerCase();
+  const fieldCount = Array.isArray(technicalSpec?.domain?.fields) ? technicalSpec.domain.fields.length : 0;
+
+  if (normalizedIntent === 'register' && fieldCount > 0 && fieldCount <= 3) {
+    return {
+      avoidLayoutSignatures: ['workspace:balanced-split', 'workspace:operations-workspace'],
+      preferredArchetypes: ['single-column-form', 'compact-crud', 'tight-form-with-list'],
+      guidance: [
+        'Para formularios operacionais curtos, evitar nascer como workspace dividido padrao.',
+        'Preferir composicao mais compacta e direta, com formulario e lista sem casca exagerada.',
+      ],
+    };
+  }
+
+  if (normalizedIntent === 'review') {
+    return {
+      avoidLayoutSignatures: ['workspace:balanced-split'],
+      preferredArchetypes: ['evidence-list', 'history-workbench', 'timeline-review'],
+      guidance: [
+        'Para leitura e historico, dar prioridade a lista, filtros e linha do tempo em vez de split generico.',
+      ],
+    };
+  }
+
+  if (normalizedTemplate === 'settings') {
+    return {
+      avoidLayoutSignatures: ['workspace:balanced-split'],
+      preferredArchetypes: ['single-column-settings', 'rule-configurator'],
+      guidance: [
+        'Configuracoes devem evitar cara de workspace operacional padrao.',
+      ],
+    };
+  }
+
+  return {
+    avoidLayoutSignatures: [],
+    preferredArchetypes: [],
+    guidance: [],
+  };
+}
+
 export function resolveImplementationExecutionMode(task, technicalSpec, implementationManifest = null) {
   const screenTemplate =
     implementationManifest?.classification?.screenTemplate ||
@@ -118,6 +161,11 @@ export function buildAutonomousImplementationContract(task, technicalSpec, imple
     manifest?.classification?.intent || technicalSpec?.structured?.classification?.intent,
     manifest?.classification?.productMode || technicalSpec?.frontend?.productMode
   );
+  const structuralFreedomHints = resolveStructuralFreedomHints(
+    manifest?.classification?.screenTemplate || technicalSpec?.architecture?.screenTemplate,
+    manifest?.classification?.intent || technicalSpec?.structured?.classification?.intent,
+    technicalSpec
+  );
 
   return {
     version: 1,
@@ -127,6 +175,7 @@ export function buildAutonomousImplementationContract(task, technicalSpec, imple
     frontendControlMode: execution.autonomyLevel >= 4 ? 'freeform' : 'guided',
     rationale: execution.rationale,
     experienceProfile,
+    structuralFreedomHints,
     mission: {
       primaryGoal: manifest?.objective?.primaryGoal || technicalSpec?.implementationObjective?.primaryGoal || task?.title,
       userOutcome: manifest?.objective?.userOutcome || technicalSpec?.implementationObjective?.userOutcome || null,

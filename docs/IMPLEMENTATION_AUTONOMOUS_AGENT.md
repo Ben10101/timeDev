@@ -106,12 +106,34 @@ Esse contexto inclui:
 - `repairStyle`
 - `generationSource`
 - resumo de materializacao anterior
+- `repairScope`
+- `executionFocus`
+  - `primaryFailureSurface`
+  - `writeSet`
+  - `focusFiles`
+  - `preserveFiles`
 
 Com isso, o papel do agente no repair deixa de ser apenas gerar a primeira versao e passa a ser:
 
 - corrigir a propria solucao quando os problemas forem locais
 - preservar a estrutura boa que ja existe
 - evitar resetar a feature inteira para um template seguro
+
+Para sustentar isso, o executor agora tambem recebe `current_implementation_context`, contendo:
+
+- arquivos atuais materializados de frontend e backend
+- `generationSource`
+- `variationProfile`
+- `compositionSignature`
+- origem por arquivo quando disponivel
+
+Isso permite repair e iteracao sobre a solucao atual, em vez de operar apenas sobre manifesto e spec abstrata.
+
+Com isso, o agente passa a receber uma orientacao mais local para repair:
+
+- quais arquivos devem concentrar a maior parte das mudancas
+- quais arquivos devem ser preservados
+- quando agir como `local_patch` em vez de recompor a feature inteira
 
 Na esteira, o repair iterativo agora tenta primeiro:
 
