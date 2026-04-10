@@ -533,35 +533,28 @@ export { fetch__ENTITY_NAME__Items } from './service';
 
 
 def _default_backend_service_template():
-    return """import { randomUUID } from 'crypto';
+    return """import { PrismaClient } from '@prisma/client';
 import type { __REQUEST_CONTRACT_NAME__, __RESPONSE_CONTRACT_NAME__ } from '__SHARED_IMPORT_PATH__';
 
-type InternalRecord = __RESPONSE_CONTRACT_NAME__ & {
-  updatedAt?: string;
-};
-
-const records: InternalRecord[] = [];
+const prisma = new PrismaClient();
 
 export class __BACKEND_SERVICE_NAME__ {
-  list() {
-    return { items: records };
+  async list(): Promise<{ items: __RESPONSE_CONTRACT_NAME__[] }> {
+    const items = await prisma.__PRISMA_MODEL_ID__.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    return { items: items as unknown as __RESPONSE_CONTRACT_NAME__[] };
   }
 
-  create(input: __REQUEST_CONTRACT_NAME__): __RESPONSE_CONTRACT_NAME__ {
-    const item: InternalRecord = {
-      ...input,
-      id: randomUUID(),
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+  async create(input: __REQUEST_CONTRACT_NAME__): Promise<__RESPONSE_CONTRACT_NAME__> {
+    const item = await prisma.__PRISMA_MODEL_ID__.create({
+      data: {
+        ...input,
+        status: 'active'
+      }
+    });
 
-    records.push(item);
-    return item;
-  }
-
-  buildSeedRecordsFromTask(): __REQUEST_CONTRACT_NAME__[] {
-    return [];
+    return item as unknown as __RESPONSE_CONTRACT_NAME__;
   }
 }
 
@@ -576,14 +569,19 @@ import { __BACKEND_SERVICE_INSTANCE_NAME__ } from './service';
 
 export const __BACKEND_ROUTER_NAME__ = Router();
 
-__BACKEND_ROUTER_NAME__.get('/', (_req, res) => {
-  res.json(__BACKEND_SERVICE_INSTANCE_NAME__.list());
+__BACKEND_ROUTER_NAME__.get('/', async (_req, res) => {
+  try {
+    const data = await __BACKEND_SERVICE_INSTANCE_NAME__.list();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: 'Falha ao buscar registros.' });
+  }
 });
 
-__BACKEND_ROUTER_NAME__.post('/', (req, res) => {
+__BACKEND_ROUTER_NAME__.post('/', async (req, res) => {
   try {
     const input = (req.body || {}) as __REQUEST_CONTRACT_NAME__;
-    const created = __BACKEND_SERVICE_INSTANCE_NAME__.create(input);
+    const created = await __BACKEND_SERVICE_INSTANCE_NAME__.create(input);
     res.status(201).json(created);
   } catch (error) {
     res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao processar a requisicao.' });
@@ -796,6 +794,7 @@ REGRAS
 - Se `REPAIR CONTEXT.executionFocus.primaryFailureSurface` ou `REPAIR CONTEXT.repairScope` apontarem so para frontend ou so para backend, evite mudar a outra camada.
 - Responda APENAS com JSON valido.
 - Se optar por gerar templates, use placeholders controlados como:
+  - `__PRISMA_MODEL_ID__`
   - `__SHARED_IMPORT_PATH__`
   - `__UI_IMPORT_PATH__`
   - `__REQUEST_CONTRACT_NAME__`
@@ -813,6 +812,10 @@ REGRAS
   - `__BACKEND_SERVICE_NAME__`
   - `__BACKEND_SERVICE_INSTANCE_NAME__`
 - `serviceTsTemplate` deve ser um arquivo `service.ts` completo.
+- Para o backend, NAO use arrays em memoria (`const records = []`) para armazenar ou gerenciar dados.
+- Importe o Prisma Client com dependencias no topo do service (`import {{ PrismaClient }} from '@prisma/client'; const prisma = new PrismaClient();`).
+- Utilize puramente metodos assincronos (`async`/`await`) nas classes de servico e routers criados.
+- Utilize explicitamente `await prisma.__PRISMA_MODEL_ID__.findMany()` e `await prisma.__PRISMA_MODEL_ID__.create({{ data }})`. O orquestrador no NodeJS injetara a string correta no lugar de `__PRISMA_MODEL_ID__`.
 - `indexTsTemplate` deve ser um arquivo `index.ts` completo.
 - `routerTsTemplate` deve ser um arquivo `router.ts` completo.
 - O template deve ser um arquivo completo e compilavel para a camada correspondente.

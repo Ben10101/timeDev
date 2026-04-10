@@ -171,3 +171,85 @@ export function runSingleAgent(agent, payload, options = {}) {
     pythonProcess.stdin.end();
   });
 }
+
+/**
+ * Executa o pipeline de sub-agentes para implementação.
+ */
+export function runImplementationPipeline(payload, options = {}) {
+  return new Promise((resolve, reject) => {
+    const pipelineRunnerPath = path.join(__dirname, '..', '..', '..', 'orchestrator', 'run_implementation_pipeline.py');
+    const pythonCmd = getPythonCmd();
+    const timeoutMs = getAgentTimeoutMs();
+    const pythonProcess = spawn(pythonCmd, [...PYTHON_ARGS_PREFIX, pipelineRunnerPath], {
+      env: getPythonEnv(options.envOverrides || {}),
+    });
+
+    let stdoutData = '';
+    let stderrData = '';
+    let timeoutHandle = null;
+    let timeoutError = null;
+    let settled = false;
+
+    const cleanup = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+    };
+
+    const settle = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+
+    pythonProcess.on('error', (err) => {
+      settle(reject, new Error(`Falha ao iniciar Python (${pythonCmd}): ${err.message}`));
+    });
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdoutData += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderrData += data.toString();
+      console.error(`[Pipeline STDERR] ${data}`);
+    });
+
+    timeoutHandle = setTimeout(() => {
+      timeoutError = new Error(`Tempo limite excedido ao executar o pipeline de implementação.`);
+      pythonProcess.kill();
+    }, timeoutMs);
+
+    pythonProcess.on('close', (code, signal) => {
+      if (timeoutError) return settle(reject, timeoutError);
+
+      if (code !== 0) {
+        let detailedError = stderrData;
+        try {
+          if (stdoutData) {
+            const parsed = JSON.parse(stdoutData);
+            if (parsed && parsed.error) detailedError = parsed.error;
+          }
+        } catch {}
+        return settle(reject, new Error(`Erro no pipeline: ${detailedError || 'Sem saida'}`));
+      }
+
+      try {
+        const result = JSON.parse(stdoutData);
+        if (result.success) {
+          settle(resolve, result.data);
+        } else {
+          settle(reject, new Error(`Erro no script do pipeline: ${result.error}`));
+        }
+      } catch (e) {
+        settle(reject, new Error(`Falha ao analisar JSON do pipeline: ${e.message}`));
+      }
+    });
+
+    pythonProcess.stdin.write(JSON.stringify({ payload }));
+    pythonProcess.stdin.end();
+  });
+}
+

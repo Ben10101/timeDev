@@ -4,6 +4,7 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from 'fs/promises';
 import path from 'path';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import ts from 'typescript';
 import { prisma } from '../lib/prisma.js';
 import { resolveDomainTemplate } from '../templates/domains/index.js';
 import { resolveProjectTemplate } from '../templates/projects/index.js';
@@ -12,7 +13,7 @@ import { buildModernFrontendFeatureFiles } from './implementationFrontendGenerat
 import { buildRuntimeAiEnvForUser } from './aiSettingsService.js';
 import { createGenerationIR, validateGenerationIR } from './generationSpecService.js';
 import { getProjectArchitectureStatus } from './projectDataService.js';
-import { runSingleAgent } from './orchestratorService.js';
+import { runSingleAgent, runImplementationPipeline } from './orchestratorService.js';
 import { buildPatternHints, resolveUiArchetype } from './uiArchetypeService.js';
 import { resolveProjectShell } from './frontendShellRegistry.js';
 import {
@@ -169,7 +170,9 @@ function camelCase(value, fallback = 'generatedField') {
 
 function toImportPath(fromRelativePath, toRelativePath) {
   const fromDir = path.posix.dirname(fromRelativePath.replace(/\\/g, '/'));
-  const toFile = toRelativePath.replace(/\\/g, '/');
+  let toFile = toRelativePath.replace(/\\/g, '/');
+  // Strip TS/JS extensions for imports
+  toFile = toFile.replace(/\.(ts|tsx|js|jsx)$/, '');
   const relativePath = path.posix.relative(fromDir, toFile);
   return relativePath.startsWith('.') ? relativePath : `./${relativePath}`;
 }
@@ -2757,9 +2760,38 @@ function applyAutonomousImplementationDraft(technicalSpec, autonomousDraft) {
   };
 }
 
+async function runSubAgentImplementationPipeline(task, technicalSpec, implementationManifest, userUuid = null, repairContext = null) {
+  const currentImplementationContext = buildAutonomousCurrentImplementationContext(technicalSpec);
+
+  const payload = {
+    project_id: task.project?.uuid,
+    task_uuid: task.uuid,
+    idea: task.title,
+    implementation_manifest: implementationManifest,
+    technical_spec: technicalSpec,
+    current_implementation_context: currentImplementationContext,
+    requirement_spec: implementationManifest?.upstreamContracts?.requirementSpec || null,
+    test_spec: implementationManifest?.upstreamContracts?.testSpec || null,
+    architecture: technicalSpec?.architecture?.sourceSummary || null,
+    repair_context: compactRepairContext(repairContext, currentImplementationContext),
+  };
+
+  const envOverrides = userUuid
+    ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'implementation_autonomous_agent' })
+    : {};
+
+  // O runImplementationPipeline orquestra o fluxo sequencial: Schema -> Backend -> Frontend
+  return runImplementationPipeline(payload, { envOverrides });
+}
+
 async function runAutonomousImplementationAgent(task, technicalSpec, implementationManifest, userUuid = null, repairContext = null) {
   if (implementationManifest?.execution?.mode !== 'autonomous') {
     return null;
+  }
+
+  // Feature Toggle para usar a nova pipeline de sub-agentes
+  if (process.env.FEATURE_SUB_AGENTS === 'true' || process.env.FEATURE_SUB_AGENTS === '1') {
+    return runSubAgentImplementationPipeline(task, technicalSpec, implementationManifest, userUuid, repairContext);
   }
 
   const currentImplementationContext = buildAutonomousCurrentImplementationContext(technicalSpec);
@@ -5949,6 +5981,25 @@ function backendModuleFiles(task, technicalSpec) {
     `${technicalSpec.backend.modulePath}/service.ts`,
     technicalSpec.shared.contractPath
   );
+  const toPrismaModelId = (spec) => {
+    const name = String(spec.entityName || spec.backend?.serviceName || spec.shared?.requestContractName || 'entity');
+    const clean = name.replace(/Service$|Router$|Request$|Response$/, '');
+    return clean.charAt(0).toLowerCase() + clean.slice(1);
+  };
+const renderAutonomousTemplate = (template) =>
+    String(template || '')
+      .replaceAll('__SHARED_IMPORT_PATH__', escapeTemplate(sharedImportPath))
+      .replaceAll('__REQUEST_CONTRACT_NAME__', escapeTemplate(technicalSpec.shared.requestContractName))
+      .replaceAll('__RESPONSE_CONTRACT_NAME__', escapeTemplate(technicalSpec.shared.responseContractName))
+      .replaceAll('__LIST_CONTRACT_NAME__', escapeTemplate(technicalSpec.shared.listContractName))
+      .replaceAll('__ENTITY_NAME__', escapeTemplate(entityName))
+      .replaceAll('__ROUTE_BASE__', escapeTemplate(technicalSpec.backend.routeBase))
+      .replaceAll('__SUBMIT_LABEL__', escapeTemplate(technicalSpec.domain.submitLabel))
+      .replaceAll('__SUCCESS_MESSAGE__', escapeTemplate(technicalSpec.domain.successMessage))
+      .replaceAll('__BACKEND_ROUTER_NAME__', escapeTemplate(technicalSpec.backend.routerName))
+      .replaceAll('__BACKEND_SERVICE_NAME__', escapeTemplate(technicalSpec.backend.serviceName))
+      .replaceAll('__BACKEND_SERVICE_INSTANCE_NAME__', escapeTemplate(technicalSpec.backend.serviceInstanceName))
+      .replaceAll('__PRISMA_MODEL_ID__', escapeTemplate(toPrismaModelId(technicalSpec)));
   const responseShape = technicalSpec.domain.fields
     .map((field) => {
       if (field.name === 'password') return `  passwordHint?: string;`;
@@ -6009,17 +6060,18 @@ function backendModuleFiles(task, technicalSpec) {
   const validateInputFunction = validateInputRules
     ? `function validateInput(input: ${technicalSpec.shared.requestContractName}, existingRecords: ${technicalSpec.shared.responseContractName}[]): void {\n${validateInputRules}\n}\n\n`
     : '';
+  const prismaModelIdVar = toPrismaModelId(technicalSpec);
   const listImplementation = isQueueList
-    ? `  list() {\n    const items = [...records].sort((left, right) => {\n      const leftPriority = String(left.priority || left.status || '').toLowerCase();\n      const rightPriority = String(right.priority || right.status || '').toLowerCase();\n      return leftPriority.localeCompare(rightPriority);\n    });\n\n    return {\n      items,\n      meta: {\n        mode: 'queue',\n        total: items.length,\n        sort: '${escapeTemplate(operationMap.prioritize || 'prioritySort')}',\n      },\n    };\n  }\n\n`
-    : `  list() {\n    return { items: records };\n  }\n\n`;
+    ? `  async list() {\n    const items = await prisma['${prismaModelIdVar}'].findMany({ orderBy: { createdAt: 'desc' } });\n    const sorted = items.sort((left, right) => {\n      const leftPriority = String(left.priority || left.status || '').toLowerCase();\n      const rightPriority = String(right.priority || right.status || '').toLowerCase();\n      return leftPriority.localeCompare(rightPriority);\n    });\n    return {\n      items: sorted,\n      meta: { mode: 'queue', total: sorted.length, sort: '${escapeTemplate(operationMap.prioritize || 'prioritySort')}' },\n    };\n  }\n\n`
+    : `  async list() {\n    const items = await prisma['${prismaModelIdVar}'].findMany({ orderBy: { createdAt: 'desc' } });\n    return { items };\n  }\n\n`;
   const reviewMethod = hasDecisionAction
-    ? `  review(id: string, decision: 'approved' | 'rejected', reviewerNote = '') {\n    const record = records.find((item) => item.id === id);\n    if (!record) {\n      throw new Error('Registro nao encontrado para revisao.');\n    }\n\n    const nextStatus = decision === 'approved' ? 'active' : 'draft';\n    Object.assign(record, {\n      status: nextStatus,\n      reviewDecision: decision,\n      reviewNote: reviewerNote || undefined,\n      updatedAt: new Date().toISOString(),\n    });\n\n    return record;\n  }\n\n`
+    ? `  async review(id: string, decision: 'approved' | 'rejected', reviewerNote = '') {\n    return prisma['${prismaModelIdVar}'].update({\n      where: { id: Number(id) || id as any },\n      data: { status: decision === 'approved' ? 'active' : 'draft', reviewDecision: decision, reviewNote: reviewerNote || undefined, updatedAt: new Date().toISOString() },\n    });\n  }\n\n`
     : '';
   const attachMethod = hasEvidenceIngest
-    ? `  attach(id: string, attachmentName: string) {\n    const record = records.find((item) => item.id === id);\n    if (!record) {\n      throw new Error('Registro nao encontrado para anexar evidencia.');\n    }\n\n    const currentCount = Number(record.attachmentCount || 0);\n    Object.assign(record, {\n      attachmentCount: currentCount + 1,\n      latestAttachment: attachmentName || 'Arquivo enviado',\n      updatedAt: new Date().toISOString(),\n    });\n\n    return record;\n  }\n\n`
+    ? `  async attach(id: string, attachmentName: string) {\n    return prisma['${prismaModelIdVar}'].update({\n      where: { id: Number(id) || id as any },\n      data: { latestAttachment: attachmentName || 'Arquivo enviado', updatedAt: new Date().toISOString() },\n    });\n  }\n\n`
     : '';
   const activityMethod = hasTimelineRead
-    ? `  activity() {\n    return {\n      items: records.slice(0, 10).map((record) => ({\n        id: record.id,\n        status: record.status,\n        summary: String(record.title || record.name || record.subject || record.id),\n        createdAt: record.updatedAt || record.createdAt,\n      })),\n    };\n  }\n\n`
+    ? `  async activity() {\n    const items = await prisma['${prismaModelIdVar}'].findMany({ take: 10, orderBy: { createdAt: 'desc' } });\n    return { items: items.map((record: any) => ({ id: record.id, status: record.status, summary: String(record.title || record.name || record.subject || record.id), createdAt: record.updatedAt || record.createdAt })) };\n  }\n\n`
     : '';
   const createStatusValue = hasDecisionAction ? `'draft'` : `'active'`;
   const createUpdatedAtField = hasTimelineRead || hasEvidenceIngest ? `\n      updatedAt: new Date().toISOString(),` : '';
@@ -6035,19 +6087,6 @@ function backendModuleFiles(task, technicalSpec) {
   const readmeOperationSummary = Object.entries(operationMap)
     .map(([name, mode]) => `- \`${name}\`: ${mode}`)
     .join('\n');
-  const renderAutonomousTemplate = (template) =>
-    String(template || '')
-      .replaceAll('__SHARED_IMPORT_PATH__', escapeTemplate(sharedImportPath))
-      .replaceAll('__REQUEST_CONTRACT_NAME__', escapeTemplate(technicalSpec.shared.requestContractName))
-      .replaceAll('__RESPONSE_CONTRACT_NAME__', escapeTemplate(technicalSpec.shared.responseContractName))
-      .replaceAll('__LIST_CONTRACT_NAME__', escapeTemplate(technicalSpec.shared.listContractName))
-      .replaceAll('__ENTITY_NAME__', escapeTemplate(entityName))
-      .replaceAll('__ROUTE_BASE__', escapeTemplate(technicalSpec.backend.routeBase))
-      .replaceAll('__SUBMIT_LABEL__', escapeTemplate(technicalSpec.domain.submitLabel))
-      .replaceAll('__SUCCESS_MESSAGE__', escapeTemplate(technicalSpec.domain.successMessage))
-      .replaceAll('__BACKEND_ROUTER_NAME__', escapeTemplate(technicalSpec.backend.routerName))
-      .replaceAll('__BACKEND_SERVICE_NAME__', escapeTemplate(technicalSpec.backend.serviceName))
-      .replaceAll('__BACKEND_SERVICE_INSTANCE_NAME__', escapeTemplate(technicalSpec.backend.serviceInstanceName));
   const autonomousBackendServiceTemplate = technicalSpec.backend?.autonomousServiceTsTemplate || '';
   const autonomousBackendRouterTemplate = technicalSpec.backend?.autonomousRouterTsTemplate || '';
   const autonomousBackendIndexTemplate = technicalSpec.backend?.autonomousIndexTsTemplate || '';
@@ -6062,14 +6101,14 @@ function backendModuleFiles(task, technicalSpec) {
       relativePath: `${technicalSpec.backend.modulePath}/service.ts`,
       content: autonomousBackendServiceTemplate
         ? renderAutonomousTemplate(autonomousBackendServiceTemplate)
-        : `import { randomUUID } from 'crypto';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\ntype InternalRecord = ${technicalSpec.shared.responseContractName} & {\n  updatedAt?: string;\n  reviewDecision?: 'approved' | 'rejected';\n  reviewNote?: string;\n  attachmentCount?: number;\n  latestAttachment?: string;\n  priority?: string;\n  title?: string;\n  name?: string;\n  subject?: string;\n};\n\nconst records: InternalRecord[] = [];\n\n${validateInputFunction}/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n${listImplementation}  create(input: ${technicalSpec.shared.requestContractName}): ${technicalSpec.shared.responseContractName} {\n${validateInputRules ? `    validateInput(input, records);\n` : ''}    const item: InternalRecord = {\n      id: randomUUID(),\n${responseFieldAssignments}\n      status: ${createStatusValue},\n      createdAt: new Date().toISOString(),${createUpdatedAtField}\n    };\n\n    records.push(item);\n    return item;\n  }\n\n${reviewMethod}${attachMethod}${activityMethod}  buildSeedRecordsFromTask(): ${technicalSpec.shared.requestContractName}[] {\n    return ${seedRequestLiteral};\n  }\n}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\nfor (const seedInput of ${technicalSpec.backend.serviceInstanceName}.buildSeedRecordsFromTask()) {\n  records.push(${technicalSpec.backend.serviceInstanceName}.create(seedInput));\n}\n`,
+        : `import { PrismaClient } from '@prisma/client';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nconst prisma = new PrismaClient();\n\n${validateInputFunction}/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n${listImplementation}  async create(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n    const item = await prisma['${prismaModelIdVar}'].create({\n      data: {\n${responseFieldAssignments}\n        status: ${createStatusValue},\n      }\n    });\n    return item as unknown as ${technicalSpec.shared.responseContractName};\n  }\n\n${reviewMethod}${attachMethod}${activityMethod}}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\n`,
       fileType: 'ts',
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/router.ts`,
       content: autonomousBackendRouterTemplate
         ? renderAutonomousTemplate(autonomousBackendRouterTemplate)
-        : `import { Router } from 'express';\nimport type { ${technicalSpec.shared.requestContractName} } from '${sharedImportPath}';\nimport { ${technicalSpec.backend.serviceInstanceName} } from './service';\n\nexport const ${technicalSpec.backend.routerName} = Router();\n\n${technicalSpec.backend.routerName}.get('/', (_req, res) => {\n  res.json(${technicalSpec.backend.serviceInstanceName}.list());\n});\n${routerActivityBody}\n${technicalSpec.backend.routerName}.post('/', (req, res) => {\n  try {\n    const payload = req.body || {};\n    const input: ${technicalSpec.shared.requestContractName} = {\n${routerRequestAssignments}\n    };\n    const created = ${technicalSpec.backend.serviceInstanceName}.create(input);\n    res.status(201).json(created);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao processar a requisicao.' });\n  }\n});\n${routerDecisionBody}${routerAttachmentBody}`,
+        : `import { Router } from 'express';\nimport type { ${technicalSpec.shared.requestContractName} } from '${sharedImportPath}';\nimport { ${technicalSpec.backend.serviceInstanceName} } from './service';\n\nexport const ${technicalSpec.backend.routerName} = Router();\n\n${technicalSpec.backend.routerName}.get('/', async (_req, res) => {\n  try {\n    const data = await ${technicalSpec.backend.serviceInstanceName}.list();\n    res.json(data);\n  } catch (error) {\n    res.status(500).json({ message: 'Falha ao buscar registros.' });\n  }\n});\n${routerActivityBody}\n${technicalSpec.backend.routerName}.post('/', async (req, res) => {\n  try {\n    const payload = req.body || {};\n    const input: ${technicalSpec.shared.requestContractName} = {\n${routerRequestAssignments}\n    };\n    const created = await ${technicalSpec.backend.serviceInstanceName}.create(input);\n    res.status(201).json(created);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao processar a requisicao.' });\n  }\n});\n${routerDecisionBody}${routerAttachmentBody}`,
       fileType: 'ts',
     },
     {
@@ -6595,6 +6634,8 @@ async function updateApiPackageJson(generatedAppRoot) {
   parsed.dependencies.express = parsed.dependencies.express || '^4.18.2';
   parsed.dependencies.pino = parsed.dependencies.pino || '^9.5.0';
   parsed.dependencies.zod = parsed.dependencies.zod || '^3.24.1';
+  parsed.dependencies['@prisma/client'] = parsed.dependencies['@prisma/client'] || '^6.0.1';
+  parsed.devDependencies.prisma = parsed.devDependencies.prisma || '^6.0.1';
   parsed.devDependencies = parsed.devDependencies || {};
   parsed.devDependencies['@types/cors'] = parsed.devDependencies['@types/cors'] || '^2.8.17';
   parsed.devDependencies['@types/express'] = parsed.devDependencies['@types/express'] || '^5.0.1';
@@ -6802,6 +6843,7 @@ async function updateRootPackageJson(generatedAppRoot) {
     'dev:api': 'npm --workspace apps/api run dev',
     'build:web': 'npm --workspace apps/web run build',
     'build:api': 'npm --workspace apps/api run build',
+    'db:generate': 'npx prisma generate',
     lint: 'node scripts/lint.mjs',
     test: 'node scripts/test.mjs',
   };
@@ -6937,55 +6979,91 @@ function ensurePrismaSchemaFoundation(content) {
   return `${normalized}\n`;
 }
 
-function buildPrismaFieldLineFromContractField(fieldName, tsType) {
+function buildPrismaFieldLineFromContractField(fieldName, tsType, isOptional = false) {
   const normalizedName = String(fieldName || '').trim();
   const normalizedType = String(tsType || '').trim().toLowerCase();
   const compactName = stripAccents(normalizedName).toLowerCase();
+  const optionalSuffix = isOptional ? '?' : '';
 
   if (!normalizedName || ['id', 'status', 'createdAt', 'updatedAt'].includes(normalizedName)) {
     return null;
   }
 
   if (normalizedType.includes('boolean')) {
-    return `  ${normalizedName} Boolean @default(false)`;
+    return `  ${normalizedName}${optionalSuffix} Boolean @default(false)`;
   }
 
   if (normalizedType.includes('number')) {
     if (/price|valor|preco|amount|total|sla|tempo/.test(compactName)) {
-      return `  ${normalizedName} Decimal @db.Decimal(10,2)`;
+      return `  ${normalizedName}${optionalSuffix} Decimal @db.Decimal(10,2)`;
     }
-    return `  ${normalizedName} Int`;
+    return `  ${normalizedName}${optionalSuffix} Int`;
   }
 
   if (normalizedType.includes('date')) {
-    return `  ${normalizedName} DateTime @db.DateTime(0)`;
+    return `  ${normalizedName}${optionalSuffix} DateTime @db.DateTime(0)`;
   }
 
   if (normalizedType.includes('string')) {
-    if (compactName === 'email') return `  ${normalizedName} String @unique @db.VarChar(190)`;
-    if (compactName.includes('url') || compactName.includes('link')) return `  ${normalizedName} String @db.VarChar(500)`;
+    if (compactName === 'email') return `  ${normalizedName}${optionalSuffix} String @unique @db.VarChar(190)`;
+    if (compactName.includes('url') || compactName.includes('link')) return `  ${normalizedName}${optionalSuffix} String @db.VarChar(500)`;
     if (compactName.includes('description') || compactName.includes('details') || compactName.includes('summary')) {
-      return `  ${normalizedName} String @db.Text`;
+      return `  ${normalizedName}${optionalSuffix} String @db.Text`;
     }
-    return `  ${normalizedName} String @db.VarChar(191)`;
+    return `  ${normalizedName}${optionalSuffix} String @db.VarChar(191)`;
   }
 
-  return `  ${normalizedName} String @db.VarChar(191)`;
+  return `  ${normalizedName}${optionalSuffix} String @db.VarChar(191)`;
+}
+
+/**
+ * Extrai informações de esquema de um código TypeScript usando o compilador nativo (AST).
+ * Isso substitui extrações baseadas em RegEx que são frágeis.
+ */
+function extractSchemaFromTsAst(sourceCode) {
+  const sourceFile = ts.createSourceFile('contract.ts', sourceCode || '', ts.ScriptTarget.Latest, true);
+  const interfaces = [];
+
+  function visit(node) {
+    if (ts.isInterfaceDeclaration(node)) {
+      const properties = [];
+      node.members.forEach((member) => {
+        if (ts.isPropertySignature(member) && member.name) {
+          properties.push({
+            name: member.name.getText(sourceFile).trim(),
+            type: member.type ? member.type.getText(sourceFile).trim() : 'any',
+            isOptional: !!member.questionToken,
+          });
+        }
+      });
+
+      interfaces.push({
+        name: node.name.text,
+        properties,
+      });
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return interfaces;
 }
 
 function buildPrismaModelFromContract(contractName, contractContent) {
-  const requestMatch = String(contractContent || '').match(
-    /export interface\s+([A-Za-z0-9]+)Request\s*\{([\s\S]*?)\n\}/m
-  );
-  const modelName = requestMatch?.[1] || pascalCase(contractName, 'GeneratedContractModel');
-  const body = requestMatch?.[2] || '';
-  const fields = body
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.match(/^([A-Za-z0-9_]+)\?:\s*([^;]+);?$/))
-    .filter(Boolean)
-    .map((match) => buildPrismaFieldLineFromContractField(match[1], match[2]))
+  const interfaces = extractSchemaFromTsAst(contractContent);
+  
+  // Procuramos pela interface de Request que define o contrato principal da entidade
+  const requestInterface = interfaces.find((item) => item.name.endsWith('Request')) || interfaces[0];
+  
+  if (!requestInterface) {
+    const fallbackName = pascalCase(contractName, 'GeneratedContractModel');
+    return `model ${fallbackName} {\n  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt\n  status    String   @default("draft") @db.VarChar(40)\n  createdAt DateTime @default(now()) @db.DateTime(0)\n  updatedAt DateTime @updatedAt @db.DateTime(0)\n}`;
+  }
+
+  // Remove o sufixo 'Request' para o nome do modelo no Prisma
+  const modelName = requestInterface.name.replace(/Request$/, '');
+  const fields = requestInterface.properties
+    .map((prop) => buildPrismaFieldLineFromContractField(prop.name, prop.type, prop.isOptional))
     .filter(Boolean);
 
   return `model ${modelName} {\n  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt\n${fields.join('\n')}${fields.length ? '\n' : ''}  status    String   @default("draft") @db.VarChar(40)\n  createdAt DateTime @default(now()) @db.DateTime(0)\n  updatedAt DateTime @updatedAt @db.DateTime(0)\n}`;
@@ -7124,6 +7202,9 @@ async function runGeneratedProjectValidationSuite({ task, implementation, genera
   }
 
   await ensureGeneratedProjectPrismaSchemaConsistency(generatedApp.rootPath);
+
+  // Ensure and generate Prisma Client before build
+  reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, 'db:generate'));
 
   for (const scriptName of ['lint', 'test', 'build:api', 'build:web']) {
     reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, scriptName));

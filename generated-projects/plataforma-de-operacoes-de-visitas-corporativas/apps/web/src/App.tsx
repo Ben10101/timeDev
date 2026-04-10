@@ -1,7 +1,11 @@
 import { Suspense, lazy } from 'react'
 import { AppFrame, AppHeader, SidebarNav, SurfaceCard } from '../../../packages/ui/src/index.tsx'
+const VisitExtraCompanionsPage = lazy(() => import('./features/visit-extra-companions/index').then((module) => ({ default: module.VisitExtraCompanionsPage })))
+const VisitRecurringHistoryPage = lazy(() => import('./features/visit-recurring-history/index').then((module) => ({ default: module.VisitRecurringHistoryPage })))
 const VisitOperationalResponsiblesPage = lazy(() => import('./features/visit-operational-responsibles/index').then((module) => ({ default: module.VisitOperationalResponsiblesPage })))
 const routes = [
+ { path: '/operations/extra-companions', label: 'Acompanhantes extras', render: () => <VisitExtraCompanionsPage /> },
+ { path: '/operations/visit-history', label: 'Historico de visitas', render: () => <VisitRecurringHistoryPage /> },
  { path: '/operations/responsibles', label: 'Responsaveis', render: () => <VisitOperationalResponsiblesPage /> },
 ]
 function RouteLoadingFallback() {

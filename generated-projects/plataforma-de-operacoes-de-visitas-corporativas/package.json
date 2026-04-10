@@ -12,6 +12,13 @@
     "build:web": "npm --workspace apps/web run build",
     "build:api": "npm --workspace apps/api run build",
     "lint": "node scripts/lint.mjs",
-    "test": "node scripts/test.mjs"
+    "test": "node scripts/test.mjs",
+    "db:generate": "npx prisma generate"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.3"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3"
   }
 }
