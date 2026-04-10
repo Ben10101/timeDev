@@ -52,10 +52,21 @@ def _extract_validation_logs(payload):
     return _truncate(payload.get("error_logs") or payload.get("logs") or "Nenhum log fornecido.", 6000)
 
 
+def _extract_failed_script_names(payload):
+    validation_summary = payload.get("validation_summary") or {}
+    reports = validation_summary.get("reports") or [] if isinstance(validation_summary, dict) else []
+    return [
+        str((report or {}).get("scriptName") or "").strip()
+        for report in reports
+        if isinstance(report, dict) and (report.get("status") or "") == "failed"
+    ]
+
+
 def _deterministic_analysis(payload):
     logs = _extract_validation_logs(payload)
     lower_logs = logs.lower()
     findings = []
+    failed_scripts = _extract_failed_script_names(payload)
 
     if "o frontend nao registrou todas as rotas das features geradas" in lower_logs:
         findings.append(
@@ -108,6 +119,54 @@ def _deterministic_analysis(payload):
             )
         )
 
+    prisma_provider_error = re.search(
+        r"(native type .* is not supported for .* connector|error validating.*datasource|the current connector does not support)",
+        logs,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if prisma_provider_error:
+        findings.append(
+            _make_finding(
+                "prisma_provider_incompatibility",
+                "O schema Prisma gerado ficou incompatível com o provider configurado para o projeto.",
+                "prisma/schema.prisma",
+                suggested_fix="Ajuste o schema Prisma gerado para respeitar o datasource atual e remova tipos nativos incompatíveis com o provider ativo.",
+            )
+        )
+
+    missing_ui_field = re.search(
+        r"campo\s+([a-zA-Z0-9_]+)\s+nao apareceu claramente na tela gerada",
+        logs,
+        flags=re.IGNORECASE,
+    )
+    if missing_ui_field:
+        field_name = missing_ui_field.group(1)
+        findings.append(
+            _make_finding(
+                "missing_ui_field",
+                f"O reviewer detectou que o campo {field_name} nao apareceu claramente na tela gerada.",
+                "",
+                severity="high",
+                suggested_fix=f"Garanta que o campo {field_name} apareca explicitamente na page.tsx, com label, controle e comportamento alinhados ao contrato e ao schema.",
+            )
+        )
+
+    smoke_missing_file = re.search(
+        r"Arquivo obrigatorio ausente:\s*([^\r\n]+)",
+        logs,
+        flags=re.IGNORECASE,
+    )
+    if smoke_missing_file:
+        file_path = smoke_missing_file.group(1).strip()
+        findings.append(
+            _make_finding(
+                "missing_required_file",
+                f"O smoke test detectou que o arquivo obrigatorio {file_path} nao foi materializado.",
+                file_path,
+                suggested_fix="Restaure o arquivo-base ausente no projeto gerado antes de reexecutar lint, test e build.",
+            )
+        )
+
     ts_extension_match = re.search(
         r"An import path can only end with a '\\.ts' extension.*?\n.*?([A-Za-z]:[^\r\n]+|apps/[^\r\n:]+|packages/[^\r\n:]+)",
         logs,
@@ -154,6 +213,17 @@ def _deterministic_analysis(payload):
                 "O compilador encontrou erro de sintaxe ou parse em arquivo gerado.",
                 "",
                 suggested_fix="Corrija o trecho gerado com erro de sintaxe e preserve o restante da feature.",
+            )
+        )
+
+    if "test" in failed_scripts and "build:web" not in failed_scripts and "build:api" not in failed_scripts and not findings:
+        findings.append(
+            _make_finding(
+                "test_failure_unclassified",
+                "Os testes falharam sem uma classificacao deterministica mais especifica.",
+                "",
+                severity="high",
+                suggested_fix="Abra o log do teste que falhou, identifique o arquivo-alvo e aplique um patch local sem recompor toda a feature.",
             )
         )
 

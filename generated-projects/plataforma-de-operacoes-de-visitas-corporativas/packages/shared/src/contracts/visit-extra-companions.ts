@@ -4,7 +4,7 @@ export interface VisitExtraCompanionRequest {
   securityFastApproval: string;
 }
 export interface VisitExtraCompanionResponse {
-  id: string;
+  id: number | string;
   approvedVisitCode: string;
   companionName: string;
   securityFastApproval: string;

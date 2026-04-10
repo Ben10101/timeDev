@@ -1,4 +1,4 @@
-import type { VisitOperationalResponsibleListResponse, VisitOperationalResponsibleRequest, VisitOperationalResponsibleResponse } from '../../../../../packages/shared/src/contracts/visit-operational-responsibles.ts';
+import type { VisitOperationalResponsibleListResponse, VisitOperationalResponsibleRequest, VisitOperationalResponsibleResponse } from '../../../../../packages/shared/src/contracts/visit-operational-responsibles';
 export const visitOperationalResponsibleQueryKey = ['VisitOperationalResponsible'];
 export async function fetchVisitOperationalResponsibleItems(): Promise<VisitOperationalResponsibleResponse[]> {
  const response = await fetch('/api/visit-operational-responsibles');

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-04-10T15:18:47.455Z",
+  "generatedAt": "2026-04-10T18:00:30.227Z",
   "project": {
     "uuid": "2ac8b772-1960-4138-bfd1-1a30dd71fe2c",
     "name": "Plataforma de Operações de Visitas Corporativas",
@@ -32,6 +32,13 @@
         "uiFamily": "operations-workspace"
       },
       {
+        "featureKey": "event-schedules",
+        "path": "/operations/schedules",
+        "label": "Cronograma",
+        "pageComponentName": "EventSchedulesPage",
+        "uiFamily": "planner-workbench"
+      },
+      {
         "featureKey": "visit-recurring-history",
         "path": "/operations/visit-history",
         "label": "Historico de visitas",
@@ -54,6 +61,11 @@
         "featureKey": "visit-extra-companions",
         "routeBase": "/api/visit-extra-companions",
         "routerName": "VisitExtraCompanionRouter"
+      },
+      {
+        "featureKey": "event-schedules",
+        "routeBase": "/api/event-schedules",
+        "routerName": "EventScheduleRouter"
       },
       {
         "featureKey": "visit-recurring-history",

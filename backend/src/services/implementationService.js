@@ -204,9 +204,24 @@ async function ensureGeneratedAppFoundation(project, generatedApp) {
   if (!generatedApp?.rootPath || !project) return false;
 
   const requiredFiles = [
+    'package.json',
+    'tsconfig.base.json',
+    'apps/api/package.json',
+    'apps/api/tsconfig.json',
+    'apps/api/src/server.ts',
+    'apps/web/package.json',
+    'apps/web/index.html',
+    'apps/web/tsconfig.json',
+    'apps/web/src/main.tsx',
+    'apps/web/src/App.tsx',
+    'packages/shared/package.json',
+    'packages/shared/src/index.ts',
     'packages/ui/package.json',
     'packages/ui/src/index.tsx',
     'packages/config/package.json',
+    'prisma/schema.prisma',
+    'scripts/lint.mjs',
+    'scripts/test.mjs',
   ];
 
   const missingFiles = [];
@@ -222,34 +237,192 @@ async function ensureGeneratedAppFoundation(project, generatedApp) {
     return false;
   }
 
+  const projectTemplate = resolveProjectTemplate(
+    project?.templateKey || project?.intakeConfig?.projectTemplateKey || null,
+    {
+      projectName: project.name,
+      label: project.name,
+      summary: project.description || project.vision || '',
+    }
+  );
+  const routeSpecs = await getIntegratedTechnicalSpecs(generatedApp.id, null);
+  const compositionManifest = buildAppCompositionManifest({
+    project,
+    generatedApp,
+    routeSpecs,
+    projectTemplate,
+  });
+
   const writtenFiles = await materializeFullstackTemplateSubset({
     destinationRoot: generatedApp.rootPath,
     projectName: project.name,
     projectSlug: generatedApp.slug || slugify(project.slug || project.name, project.uuid),
     includeRelativeRoots: ['packages/ui', 'packages/config'],
   });
+  const workspaceFoundationFiles = await ensureWorkspaceFoundationFiles(generatedApp.rootPath, project.name);
+  const validationFiles = await ensureValidationScripts(generatedApp.rootPath);
+  const apiServerFile = await updateApiServer(generatedApp.rootPath, compositionManifest, generatedApp.slug);
+  const webAppFile = await updateWebApp(generatedApp.rootPath, compositionManifest, project.name, { projectTemplate });
+  const compositionManifestFile = await writeCompositionManifest(generatedApp.rootPath, compositionManifest);
+  const prismaSchemaContent = await ensureGeneratedProjectPrismaSchemaConsistency(generatedApp.rootPath);
 
-  if (writtenFiles.length) {
+  const normalizedWrittenFiles = [
+    ...writtenFiles,
+    ...workspaceFoundationFiles,
+    ...validationFiles,
+    apiServerFile,
+    webAppFile,
+    compositionManifestFile,
+    {
+      relativePath: 'prisma/schema.prisma',
+      content: prismaSchemaContent,
+      fileType: 'prisma',
+    },
+  ];
+
+  if (normalizedWrittenFiles.length) {
     await prisma.generatedFile.deleteMany({
       where: {
         generatedAppId: generatedApp.id,
         taskImplementationId: null,
-        OR: [{ filePath: { startsWith: 'packages/ui/' } }, { filePath: { startsWith: 'packages/config/' } }],
+        filePath: {
+          in: normalizedWrittenFiles.map((file) => file.relativePath.replace(/\\/g, '/')),
+        },
       },
     });
 
     await prisma.generatedFile.createMany({
-      data: writtenFiles.map((file) => ({
+      data: normalizedWrittenFiles.map((file) => ({
         generatedAppId: generatedApp.id,
-        filePath: file.relativePath,
+        filePath: file.relativePath.replace(/\\/g, '/'),
         fileType: file.fileType,
         changeType: 'created',
-        checksum: file.checksum,
+        checksum: file.checksum || sha(file.content),
       })),
     });
   }
 
   return true;
+}
+
+async function reconcileLegacyGeneratedFeatureModules(generatedAppRoot, technicalSpecs = []) {
+  const repairedFiles = [];
+
+  for (const technicalSpec of technicalSpecs) {
+    const backendServicePath = path.join(generatedAppRoot, technicalSpec.backend.modulePath, 'service.ts');
+    const frontendPagePath = path.join(generatedAppRoot, technicalSpec.frontend.featurePath, 'page.tsx');
+    const backendServiceContent = await readText(backendServicePath, '');
+    const frontendPageContent = await readText(frontendPagePath, '');
+
+    const backendNeedsRepair =
+      backendServiceContent.includes('const records:') ||
+      !backendServiceContent.includes("from '@prisma/client'") ||
+      !backendServiceContent.includes('const prisma = new PrismaClient()');
+    const frontendNeedsRepair =
+      frontendPageContent &&
+      !frontendPageContent.includes('packages/ui/src/index.tsx') &&
+      !frontendPageContent.includes('/packages/ui/src/index.tsx');
+
+    if (!backendNeedsRepair && !frontendNeedsRepair) {
+      continue;
+    }
+
+    const syntheticTask = buildSyntheticTaskFromSpec(technicalSpec);
+    const files = [
+      ...buildBackendModuleFilesFromTemplate(syntheticTask, technicalSpec),
+      ...buildFrontendFeatureFilesFromTemplate(syntheticTask, technicalSpec),
+    ];
+
+    for (const file of files) {
+      await writeText(path.join(generatedAppRoot, file.relativePath), file.content);
+      repairedFiles.push(file);
+    }
+  }
+
+  return repairedFiles;
+}
+
+function resolveGeneratedAppRunAgeCutoff(maxAgeSeconds = 900) {
+  return new Date(Date.now() - Math.max(60, Number(maxAgeSeconds || 900)) * 1000);
+}
+
+async function recoverBlockingGeneratedAppRunsForImplementationStart({
+  generatedAppId,
+  taskId = null,
+  maxAgeSeconds = 900,
+  reason = 'Execucao de implementation_apply travada foi encerrada automaticamente antes de uma nova tentativa.',
+} = {}) {
+  if (!generatedAppId) {
+    return {
+      recoveredCount: 0,
+      runs: [],
+    };
+  }
+
+  const cutoff = resolveGeneratedAppRunAgeCutoff(maxAgeSeconds);
+  const staleRuns = await prisma.generatedAppRun.findMany({
+    where: {
+      generatedAppId,
+      runType: 'implementation_apply',
+      status: 'running',
+      startedAt: { lt: cutoff },
+      ...(taskId ? { taskImplementation: { taskId } } : {}),
+    },
+    select: {
+      id: true,
+      uuid: true,
+      startedAt: true,
+      taskImplementationId: true,
+    },
+    orderBy: { startedAt: 'asc' },
+  });
+
+  for (const run of staleRuns) {
+    await prisma.$transaction(async (tx) => {
+      await tx.generatedAppRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'failed',
+          finishedAt: new Date(),
+          logSummary: reason,
+        },
+      });
+
+      if (!run.taskImplementationId) return;
+
+      const implementation = await tx.taskImplementation.findUnique({
+        where: { id: run.taskImplementationId },
+        select: {
+          id: true,
+          status: true,
+          summary: true,
+        },
+      });
+
+      if (!implementation || implementation.status !== 'in_progress') {
+        return;
+      }
+
+      const previousSummary = String(implementation.summary || '').trim();
+      const nextSummary = previousSummary ? `${previousSummary}\n\n${reason}` : reason;
+
+      await tx.taskImplementation.update({
+        where: { id: implementation.id },
+        data: {
+          status: 'failed',
+          summary: nextSummary,
+        },
+      });
+    });
+  }
+
+  return {
+    recoveredCount: staleRuns.length,
+    runs: staleRuns.map((run) => ({
+      uuid: run.uuid,
+      startedAt: run.startedAt,
+    })),
+  };
 }
 
 async function removeFileIfExists(targetPath) {
@@ -1251,6 +1424,7 @@ function inferFailureSurfaceFromRootCause(rootCause = '') {
   const normalized = String(rootCause || '').toLowerCase();
 
   if (!normalized) return 'unknown';
+  if (normalized.includes('missing_shared_design_system_usage')) return 'frontend';
   if (normalized.includes('prisma') || normalized.includes('schema')) return 'database';
   if (normalized.includes('frontend') || normalized.includes('route_registration')) return 'frontend';
   if (normalized.includes('api_route') || normalized.includes('backend')) return 'backend';
@@ -1270,6 +1444,7 @@ function resolveRepairExecutorByFailureSignature(repairContext = {}) {
   }
 
   if (
+    rootCause.includes('missing_shared_design_system_usage') ||
     rootCause.includes('frontend') ||
     rootCause.includes('route_registration') && primaryFailureSurface === 'frontend' ||
     primaryFailureSurface === 'frontend'
@@ -5485,13 +5660,52 @@ function toPrismaEnumName(modelName, fieldName) {
   return `${String(modelName || 'Generated').replace(/[^A-Za-z0-9]/g, '')}${pascalCase(fieldName, 'Field')}Enum`;
 }
 
-function resolvePrismaFieldConfig(field, modelName = 'GeneratedModel') {
+function extractPrismaDatasourceProvider(content) {
+  const match = String(content || '').match(/datasource\s+\w+\s*\{[\s\S]*?provider\s*=\s*"([^"]+)"/m);
+  return String(match?.[1] || 'mysql').trim().toLowerCase();
+}
+
+function normalizePrismaAttributesForProvider(attributes = [], provider = 'mysql') {
+  if (provider !== 'sqlite') {
+    return attributes;
+  }
+
+  return attributes.filter((attribute) => !String(attribute).startsWith('@db.'));
+}
+
+function buildPrismaModelMeta(provider = 'mysql') {
+  if (provider === 'sqlite') {
+    return {
+      idLine: '  id        Int      @id @default(autoincrement())',
+      statusLine: '  status    String   @default("draft")',
+      createdAtLine: '  createdAt DateTime @default(now())',
+      updatedAtLine: '  updatedAt DateTime @updatedAt',
+    };
+  }
+
+  return {
+    idLine: '  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt',
+    statusLine: '  status    String   @default("draft") @db.VarChar(40)',
+    createdAtLine: '  createdAt DateTime @default(now()) @db.DateTime(0)',
+    updatedAtLine: '  updatedAt DateTime @updatedAt @db.DateTime(0)',
+  };
+}
+
+function resolvePrismaFieldConfig(field, modelName = 'GeneratedModel', provider = 'mysql') {
   if (field.name === 'email') {
-    return { fieldName: 'email', type: 'String', attributes: ['@unique', '@db.VarChar(190)'] };
+    return {
+      fieldName: 'email',
+      type: 'String',
+      attributes: normalizePrismaAttributesForProvider(['@unique', '@db.VarChar(190)'], provider),
+    };
   }
 
   if (field.name === 'password') {
-    return { fieldName: 'passwordHash', type: 'String', attributes: ['@db.VarChar(255)'] };
+    return {
+      fieldName: 'passwordHash',
+      type: 'String',
+      attributes: normalizePrismaAttributesForProvider(['@db.VarChar(255)'], provider),
+    };
   }
 
   if (Array.isArray(field.selectOptions) && field.selectOptions.length) {
@@ -5504,30 +5718,50 @@ function resolvePrismaFieldConfig(field, modelName = 'GeneratedModel') {
   }
 
   if (field.inputType === 'textarea') {
-    return { fieldName: field.name, type: 'String', attributes: ['@db.Text'] };
+    return {
+      fieldName: field.name,
+      type: 'String',
+      attributes: normalizePrismaAttributesForProvider(['@db.Text'], provider),
+    };
   }
 
   if (field.inputType === 'number') {
     const normalizedName = stripAccents(field.name).toLowerCase();
     if (/\bprice\b|\bvalor\b|\bpreco\b|\bamount\b/.test(normalizedName)) {
-      return { fieldName: field.name, type: 'Decimal', attributes: ['@db.Decimal(10,2)'] };
+      return {
+        fieldName: field.name,
+        type: 'Decimal',
+        attributes: normalizePrismaAttributesForProvider(['@db.Decimal(10,2)'], provider),
+      };
     }
     return { fieldName: field.name, type: 'Int', attributes: [] };
   }
 
   if (field.inputType === 'date' || /date|data/.test(stripAccents(field.name).toLowerCase())) {
-    return { fieldName: field.name, type: 'DateTime', attributes: ['@db.DateTime(0)'] };
+    return {
+      fieldName: field.name,
+      type: 'DateTime',
+      attributes: normalizePrismaAttributesForProvider(['@db.DateTime(0)'], provider),
+    };
   }
 
   if (field.inputType === 'url') {
-    return { fieldName: field.name, type: 'String', attributes: ['@db.VarChar(500)'] };
+    return {
+      fieldName: field.name,
+      type: 'String',
+      attributes: normalizePrismaAttributesForProvider(['@db.VarChar(500)'], provider),
+    };
   }
 
-  return { fieldName: field.name, type: field.prismaType || 'String', attributes: ['@db.VarChar(190)'] };
+  return {
+    fieldName: field.name,
+    type: field.prismaType || 'String',
+    attributes: normalizePrismaAttributesForProvider(['@db.VarChar(190)'], provider),
+  };
 }
 
-function buildPrismaFieldLine(field, modelName = 'GeneratedModel') {
-  const config = resolvePrismaFieldConfig(field, modelName);
+function buildPrismaFieldLine(field, modelName = 'GeneratedModel', provider = 'mysql') {
+  const config = resolvePrismaFieldConfig(field, modelName, provider);
   const attributes = config.attributes?.length ? ` ${config.attributes.join(' ')}` : '';
   return `  ${config.fieldName.padEnd(18, ' ')} ${config.type}${attributes}`;
 }
@@ -5617,7 +5851,7 @@ function buildServiceFieldValidation(field) {
 function buildDomainSpecificValidation(actionSpec, fields) {
   if (actionSpec.domainKey === 'event-schedules') {
     return [
-      `  const duplicatedStage = records.find((record) => String(record.stageName || '').toLowerCase() === String(input.stageName || '').toLowerCase());`,
+      `  const duplicatedStage = existingRecords.find((record) => String(record.stageName || '').toLowerCase() === String(input.stageName || '').toLowerCase());`,
       `  if (duplicatedStage) throw new Error('Ja existe uma etapa cadastrada com este nome no cronograma.');`,
       `  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(input.plannedDeadline || ''))) throw new Error('Informe um prazo planejado valido para a etapa.');`,
       `  if (String(input.executionNotes || '').trim().length < 10) throw new Error('Descreva melhor o contexto operacional desta etapa.');`,
@@ -5626,7 +5860,7 @@ function buildDomainSpecificValidation(actionSpec, fields) {
 
   if (actionSpec.domainKey === 'access-control-roles') {
     return [
-      `  const duplicatedRole = records.find((record) => record.roleName === input.roleName);`,
+      `  const duplicatedRole = existingRecords.find((record) => record.roleName === input.roleName);`,
       `  if (duplicatedRole) throw new Error('Ja existe um perfil configurado para esta funcao.');`,
     ];
   }
@@ -5648,7 +5882,7 @@ function buildDomainSpecificValidation(actionSpec, fields) {
 
   if (actionSpec.domainKey === 'visit-operational-responsibles') {
     return [
-      `  const duplicatedResponsible = records.find((record) => String(record.responsibleName || '').toLowerCase() === String(input.responsibleName || '').trim().toLowerCase() && String(record.supportType || '') === String(input.supportType || ''));`,
+      `  const duplicatedResponsible = existingRecords.find((record) => String(record.responsibleName || '').toLowerCase() === String(input.responsibleName || '').trim().toLowerCase() && String(record.supportType || '') === String(input.supportType || ''));`,
       `  if (duplicatedResponsible) throw new Error('Ja existe um responsavel operacional com este nome e tipo de suporte.');`,
       `  const contactValue = String(input.contact || '').trim();`,
       `  const isEmail = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(contactValue);`,
@@ -5659,7 +5893,7 @@ function buildDomainSpecificValidation(actionSpec, fields) {
 
   if (actionSpec.domainKey === 'visit-extra-companions') {
     return [
-      `  const duplicatedCompanion = records.find((record) => String(record.approvedVisitCode || '').toLowerCase() === String(input.approvedVisitCode || '').trim().toLowerCase() && String(record.companionName || '').toLowerCase() === String(input.companionName || '').trim().toLowerCase());`,
+      `  const duplicatedCompanion = existingRecords.find((record) => String(record.approvedVisitCode || '').toLowerCase() === String(input.approvedVisitCode || '').trim().toLowerCase() && String(record.companionName || '').toLowerCase() === String(input.companionName || '').trim().toLowerCase());`,
       `  if (duplicatedCompanion) throw new Error('Este acompanhante extra ja foi vinculado a esta visita aprovada.');`,
       `  if (String(input.securityFastApproval || '') !== 'aprovado' && String(input.securityFastApproval || '') !== 'pendente') throw new Error('Informe se a aprovacao rapida da seguranca esta pendente ou aprovada.');`,
     ];
@@ -5667,7 +5901,7 @@ function buildDomainSpecificValidation(actionSpec, fields) {
 
   if (actionSpec.domainKey === 'event-suppliers') {
     return [
-      `  const duplicatedSupplier = records.find((record) => String(record.supplierName || '').toLowerCase() === String(input.supplierName || '').toLowerCase());`,
+      `  const duplicatedSupplier = existingRecords.find((record) => String(record.supplierName || '').toLowerCase() === String(input.supplierName || '').toLowerCase());`,
       `  if (duplicatedSupplier) throw new Error('Ja existe um fornecedor cadastrado com este nome.');`,
       `  if (String(input.primaryContacts || '').trim().length < 10) throw new Error('Informe contatos principais com contexto suficiente para acionamento.');`,
     ];
@@ -5678,6 +5912,14 @@ function buildDomainSpecificValidation(actionSpec, fields) {
 
 function hasEncodingArtifacts(content) {
   return /[\u00C3\u00C2\u00E2\uFFFD]/.test(String(content || ''));
+}
+
+function normalizeSharedUiImportPath(content) {
+  return String(content || '')
+    .replace(/packages\/ui\/src\/index(?=['"])/g, 'packages/ui/src/index.tsx')
+    .replace(/packages\/ui\/src\/index(?:\.tsx)?\/api\/client/g, 'packages/ui/src/api/client')
+    .replace(/packages\/ui\/src\/index(?:\.tsx)?\/apiClient/g, 'packages/ui/src/api/client')
+    .replace(/packages\/ui\/src\/index(?:\.tsx)?\/api-client/g, 'packages/ui/src/api/client');
 }
 
 function inferUiStates(actionSpec, fields, qaScenarios) {
@@ -6715,18 +6957,23 @@ const renderAutonomousTemplate = (template) =>
   const autonomousBackendServiceTemplate = technicalSpec.backend?.autonomousServiceTsTemplate || '';
   const autonomousBackendRouterTemplate = technicalSpec.backend?.autonomousRouterTsTemplate || '';
   const autonomousBackendIndexTemplate = technicalSpec.backend?.autonomousIndexTsTemplate || '';
+  const hasHealthyAutonomousBackendServiceTemplate =
+    autonomousBackendServiceTemplate &&
+    autonomousBackendServiceTemplate.includes("from '@prisma/client'") &&
+    autonomousBackendServiceTemplate.includes('const prisma = new PrismaClient()') &&
+    !autonomousBackendServiceTemplate.includes('const records:');
 
   return [
     {
       relativePath: technicalSpec.shared.contractPath,
-      content: `export interface ${technicalSpec.shared.requestContractName} {\n${requestShape}\n}\n\nexport interface ${technicalSpec.shared.responseContractName} {\n  id: string;\n${responseShape}\n  status: 'draft' | 'active';\n  createdAt: string;\n}\n\nexport interface ${technicalSpec.shared.listContractName} {\n  items: ${technicalSpec.shared.responseContractName}[];\n}\n`,
+      content: `export interface ${technicalSpec.shared.requestContractName} {\n${requestShape}\n}\n\nexport interface ${technicalSpec.shared.responseContractName} {\n  id: number | string;\n${responseShape}\n  status: 'draft' | 'active';\n  createdAt: string;\n}\n\nexport interface ${technicalSpec.shared.listContractName} {\n  items: ${technicalSpec.shared.responseContractName}[];\n}\n`,
       fileType: 'ts',
     },
     {
       relativePath: `${technicalSpec.backend.modulePath}/service.ts`,
-      content: autonomousBackendServiceTemplate
+      content: hasHealthyAutonomousBackendServiceTemplate
         ? renderAutonomousTemplate(autonomousBackendServiceTemplate)
-        : `import { PrismaClient } from '@prisma/client';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nconst prisma = new PrismaClient();\n\n${validateInputFunction}/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n${listImplementation}  async create(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n    const existingRecords = await prisma['${prismaModelIdVar}'].findMany({ orderBy: { createdAt: 'desc' } });\n${validateInputFunction ? `    validateInput(input, existingRecords as ${technicalSpec.shared.responseContractName}[]);\n` : ''}    const item = await prisma['${prismaModelIdVar}'].create({\n      data: {\n${responseFieldAssignments}\n        status: ${createStatusValue},${createUpdatedAtField}\n      }\n    });\n    return item as unknown as ${technicalSpec.shared.responseContractName};\n  }\n\n${reviewMethod}${attachMethod}${activityMethod}}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\n`,
+        : `import { PrismaClient } from '@prisma/client';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nconst prisma = new PrismaClient();\n\n${validateInputFunction}/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n${listImplementation}  async create(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n    const existingRecords = await prisma['${prismaModelIdVar}'].findMany({ orderBy: { createdAt: 'desc' } });\n${validateInputFunction ? `    validateInput(input, existingRecords as unknown as ${technicalSpec.shared.responseContractName}[]);\n` : ''}    const item = await prisma['${prismaModelIdVar}'].create({\n      data: {\n${responseFieldAssignments}\n        status: ${createStatusValue},${createUpdatedAtField}\n      }\n    });\n    return item as unknown as ${technicalSpec.shared.responseContractName};\n  }\n\n${reviewMethod}${attachMethod}${activityMethod}}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\n`,
       fileType: 'ts',
     },
     {
@@ -7260,8 +7507,8 @@ async function updateApiPackageJson(generatedAppRoot) {
   parsed.dependencies.pino = parsed.dependencies.pino || '^9.5.0';
   parsed.dependencies.zod = parsed.dependencies.zod || '^3.24.1';
   parsed.dependencies['@prisma/client'] = parsed.dependencies['@prisma/client'] || '^6.0.1';
-  parsed.devDependencies.prisma = parsed.devDependencies.prisma || '^6.0.1';
   parsed.devDependencies = parsed.devDependencies || {};
+  parsed.devDependencies.prisma = parsed.devDependencies.prisma || '^6.0.1';
   parsed.devDependencies['@types/cors'] = parsed.devDependencies['@types/cors'] || '^2.8.17';
   parsed.devDependencies['@types/express'] = parsed.devDependencies['@types/express'] || '^5.0.1';
   parsed.devDependencies['@types/node'] = parsed.devDependencies['@types/node'] || '^22.10.2';
@@ -7508,6 +7755,81 @@ async function updateRootTsconfigBase(generatedAppRoot) {
   };
 }
 
+async function updateSharedPackageJson(generatedAppRoot) {
+  const rootPackagePath = path.join(generatedAppRoot, 'package.json');
+  const packagePath = path.join(generatedAppRoot, 'packages/shared/package.json');
+  const rootPackageRaw = await readText(rootPackagePath, '{}');
+  const rootPackage = JSON.parse(rootPackageRaw || '{}');
+  const rootName = slugify(rootPackage.name || path.basename(generatedAppRoot), 'generated-app');
+  const raw = await readText(packagePath, '{}');
+  const parsed = JSON.parse(raw || '{}');
+
+  parsed.name = parsed.name || `@${rootName}/shared`;
+  parsed.private = parsed.private ?? true;
+  parsed.version = parsed.version || '1.0.0';
+  parsed.type = parsed.type || 'module';
+
+  const content = `${JSON.stringify(parsed, null, 2)}\n`;
+  await writeText(packagePath, content);
+
+  return {
+    relativePath: 'packages/shared/package.json',
+    content,
+    fileType: 'json',
+  };
+}
+
+async function updateConfigPackageJson(generatedAppRoot) {
+  const rootPackagePath = path.join(generatedAppRoot, 'package.json');
+  const packagePath = path.join(generatedAppRoot, 'packages/config/package.json');
+  const rootPackageRaw = await readText(rootPackagePath, '{}');
+  const rootPackage = JSON.parse(rootPackageRaw || '{}');
+  const rootName = slugify(rootPackage.name || path.basename(generatedAppRoot), 'generated-app');
+  const raw = await readText(packagePath, '{}');
+  const parsed = JSON.parse(raw || '{}');
+
+  parsed.name = parsed.name || `@${rootName}/config`;
+  parsed.private = parsed.private ?? true;
+  parsed.version = parsed.version || '1.0.0';
+  parsed.type = parsed.type || 'module';
+
+  const content = `${JSON.stringify(parsed, null, 2)}\n`;
+  await writeText(packagePath, content);
+
+  return {
+    relativePath: 'packages/config/package.json',
+    content,
+    fileType: 'json',
+  };
+}
+
+async function updateSharedIndexEntry(generatedAppRoot) {
+  const contractsRoot = path.join(generatedAppRoot, 'packages/shared/src/contracts');
+  const indexPath = path.join(generatedAppRoot, 'packages/shared/src/index.ts');
+  let contractEntries = [];
+
+  try {
+    contractEntries = await readdir(contractsRoot, { withFileTypes: true });
+  } catch {
+    contractEntries = [];
+  }
+
+  const exportLines = contractEntries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+    .map((entry) => entry.name.replace(/\.ts$/i, ''))
+    .sort((left, right) => left.localeCompare(right))
+    .map((contractName) => `export * from './contracts/${contractName}'`);
+
+  const content = `${exportLines.join('\n') || 'export {}'}\n`;
+  await writeText(indexPath, content);
+
+  return {
+    relativePath: 'packages/shared/src/index.ts',
+    content,
+    fileType: 'ts',
+  };
+}
+
 async function ensureWorkspaceFoundationFiles(generatedAppRoot, projectName) {
   return [
     await updateRootPackageJson(generatedAppRoot),
@@ -7519,6 +7841,9 @@ async function ensureWorkspaceFoundationFiles(generatedAppRoot, projectName) {
     await updateWebMainEntry(generatedAppRoot),
     await updateWebViteConfig(generatedAppRoot),
     await updateWebTsconfig(generatedAppRoot),
+    await updateSharedPackageJson(generatedAppRoot),
+    await updateConfigPackageJson(generatedAppRoot),
+    await updateSharedIndexEntry(generatedAppRoot),
   ];
 }
 
@@ -7604,7 +7929,7 @@ function ensurePrismaSchemaFoundation(content) {
   return `${normalized}\n`;
 }
 
-function buildPrismaFieldLineFromContractField(fieldName, tsType, isOptional = false) {
+function buildPrismaFieldLineFromContractField(fieldName, tsType, isOptional = false, provider = 'mysql') {
   const normalizedName = String(fieldName || '').trim();
   const normalizedType = String(tsType || '').trim().toLowerCase();
   const compactName = stripAccents(normalizedName).toLowerCase();
@@ -7620,25 +7945,35 @@ function buildPrismaFieldLineFromContractField(fieldName, tsType, isOptional = f
 
   if (normalizedType.includes('number')) {
     if (/price|valor|preco|amount|total|sla|tempo/.test(compactName)) {
-      return `  ${normalizedName}${optionalSuffix} Decimal @db.Decimal(10,2)`;
+      return provider === 'sqlite'
+        ? `  ${normalizedName}${optionalSuffix} Decimal`
+        : `  ${normalizedName}${optionalSuffix} Decimal @db.Decimal(10,2)`;
     }
     return `  ${normalizedName}${optionalSuffix} Int`;
   }
 
   if (normalizedType.includes('date')) {
-    return `  ${normalizedName}${optionalSuffix} DateTime @db.DateTime(0)`;
+    return provider === 'sqlite'
+      ? `  ${normalizedName}${optionalSuffix} DateTime`
+      : `  ${normalizedName}${optionalSuffix} DateTime @db.DateTime(0)`;
   }
 
   if (normalizedType.includes('string')) {
-    if (compactName === 'email') return `  ${normalizedName}${optionalSuffix} String @unique @db.VarChar(190)`;
-    if (compactName.includes('url') || compactName.includes('link')) return `  ${normalizedName}${optionalSuffix} String @db.VarChar(500)`;
-    if (compactName.includes('description') || compactName.includes('details') || compactName.includes('summary')) {
-      return `  ${normalizedName}${optionalSuffix} String @db.Text`;
+    if (compactName === 'email') {
+      return provider === 'sqlite'
+        ? `  ${normalizedName}${optionalSuffix} String @unique`
+        : `  ${normalizedName}${optionalSuffix} String @unique @db.VarChar(190)`;
     }
-    return `  ${normalizedName}${optionalSuffix} String @db.VarChar(191)`;
+    if (compactName.includes('url') || compactName.includes('link')) {
+      return `  ${normalizedName}${optionalSuffix} String`;
+    }
+    if (compactName.includes('description') || compactName.includes('details') || compactName.includes('summary')) {
+      return `  ${normalizedName}${optionalSuffix} String`;
+    }
+    return `  ${normalizedName}${optionalSuffix} String`;
   }
 
-  return `  ${normalizedName}${optionalSuffix} String @db.VarChar(191)`;
+  return `  ${normalizedName}${optionalSuffix} String`;
 }
 
 /**
@@ -7674,29 +8009,31 @@ function extractSchemaFromTsAst(sourceCode) {
   return interfaces;
 }
 
-function buildPrismaModelFromContract(contractName, contractContent) {
+function buildPrismaModelFromContract(contractName, contractContent, provider = 'mysql') {
   const interfaces = extractSchemaFromTsAst(contractContent);
+  const modelMeta = buildPrismaModelMeta(provider);
   
   // Procuramos pela interface de Request que define o contrato principal da entidade
   const requestInterface = interfaces.find((item) => item.name.endsWith('Request')) || interfaces[0];
   
   if (!requestInterface) {
     const fallbackName = pascalCase(contractName, 'GeneratedContractModel');
-    return `model ${fallbackName} {\n  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt\n  status    String   @default("draft") @db.VarChar(40)\n  createdAt DateTime @default(now()) @db.DateTime(0)\n  updatedAt DateTime @updatedAt @db.DateTime(0)\n}`;
+    return `model ${fallbackName} {\n${modelMeta.idLine}\n${modelMeta.statusLine}\n${modelMeta.createdAtLine}\n${modelMeta.updatedAtLine}\n}`;
   }
 
   // Remove o sufixo 'Request' para o nome do modelo no Prisma
   const modelName = requestInterface.name.replace(/Request$/, '');
   const fields = requestInterface.properties
-    .map((prop) => buildPrismaFieldLineFromContractField(prop.name, prop.type, prop.isOptional))
+    .map((prop) => buildPrismaFieldLineFromContractField(prop.name, prop.type, prop.isOptional, provider))
     .filter(Boolean);
 
-  return `model ${modelName} {\n  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt\n${fields.join('\n')}${fields.length ? '\n' : ''}  status    String   @default("draft") @db.VarChar(40)\n  createdAt DateTime @default(now()) @db.DateTime(0)\n  updatedAt DateTime @updatedAt @db.DateTime(0)\n}`;
+  return `model ${modelName} {\n${modelMeta.idLine}\n${fields.join('\n')}${fields.length ? '\n' : ''}${modelMeta.statusLine}\n${modelMeta.createdAtLine}\n${modelMeta.updatedAtLine}\n}`;
 }
 
 async function syncPrismaModelsFromContracts(generatedAppRoot, content, preferredModelBlock = null) {
   const contractsRoot = path.join(generatedAppRoot, 'packages', 'shared', 'src', 'contracts');
   let nextContent = ensurePrismaSchemaFoundation(content);
+  const provider = extractPrismaDatasourceProvider(nextContent);
   let contractFiles = [];
 
   try {
@@ -7709,7 +8046,7 @@ async function syncPrismaModelsFromContracts(generatedAppRoot, content, preferre
     const contractPath = path.join(contractsRoot, fileName);
     const contractContent = await readText(contractPath, '');
     const contractBaseName = fileName.replace(/\.ts$/, '');
-    const modelBlock = buildPrismaModelFromContract(contractBaseName, contractContent);
+    const modelBlock = buildPrismaModelFromContract(contractBaseName, contractContent, provider);
     const modelName = modelBlock.match(/^model\s+([A-Za-z0-9_]+)/m)?.[1];
     if (!modelName) continue;
 
@@ -7734,11 +8071,13 @@ async function syncPrismaModelsFromContracts(generatedAppRoot, content, preferre
 async function updatePrismaSchema(generatedAppRoot, technicalSpec) {
   const schemaPath = path.join(generatedAppRoot, technicalSpec.database.schemaPath);
   let content = ensurePrismaSchemaFoundation(await readText(schemaPath));
+  const provider = extractPrismaDatasourceProvider(content);
+  const modelMeta = buildPrismaModelMeta(provider);
   const enumBlocks = buildPrismaEnumBlocks(technicalSpec.database.fields, technicalSpec.database.modelName);
   const fieldLines = technicalSpec.database.fields
-    .map((field) => buildPrismaFieldLine(field, technicalSpec.database.modelName))
+    .map((field) => buildPrismaFieldLine(field, technicalSpec.database.modelName, provider))
     .join('\n');
-  const modelBlock = `model ${technicalSpec.database.modelName} {\n  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt\n${fieldLines}\n  status    String   @default("draft") @db.VarChar(40)\n  createdAt DateTime @default(now()) @db.DateTime(0)\n  updatedAt DateTime @updatedAt @db.DateTime(0)\n}\n`;
+  const modelBlock = `model ${technicalSpec.database.modelName} {\n${modelMeta.idLine}\n${fieldLines}\n${modelMeta.statusLine}\n${modelMeta.createdAtLine}\n${modelMeta.updatedAtLine}\n}\n`;
 
   if (enumBlocks.length) {
     for (const enumBlock of enumBlocks) {
@@ -7816,6 +8155,105 @@ async function runGeneratedProjectCommand(generatedAppRoot, scriptName) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetriablePrismaGenerateLockError(report) {
+  const details = String(report?.stderr || report?.errorMessage || '');
+  return report?.scriptName === 'db:generate' && /EPERM: operation not permitted, rename/i.test(details);
+}
+
+async function cleanupPrismaGenerateTempArtifacts(generatedAppRoot) {
+  const prismaClientRoot = path.join(generatedAppRoot, 'node_modules', '.prisma', 'client');
+  if (!(await pathExists(prismaClientRoot))) return;
+
+  const entries = await readdir(prismaClientRoot).catch(() => []);
+  await Promise.all(
+    entries
+      .filter((entry) => /\.tmp\d+$/i.test(entry) || /\.tmp$/i.test(entry))
+      .map((entry) => rm(path.join(prismaClientRoot, entry), { force: true }).catch(() => null))
+  );
+}
+
+async function hasUsableGeneratedPrismaClient(generatedAppRoot) {
+  const prismaClientRoot = path.join(generatedAppRoot, 'node_modules', '.prisma', 'client');
+  const candidateFiles = [
+    'query_engine-windows.dll.node',
+    'query_engine-windows.dll',
+    'libquery_engine-windows.dll.node',
+    'edge.js',
+    'index.js',
+    'default.js',
+  ];
+
+  for (const fileName of candidateFiles) {
+    if (await pathExists(path.join(prismaClientRoot, fileName))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function runGeneratedProjectCommandWithRetry(generatedAppRoot, scriptName, options = {}) {
+  const maxAttempts = Math.max(1, Number(options.maxAttempts || 1));
+  const retryDelayMs = Math.max(250, Number(options.retryDelayMs || 1200));
+  const reports = [];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (scriptName === 'db:generate') {
+      await cleanupPrismaGenerateTempArtifacts(generatedAppRoot);
+    }
+
+    const report = await runGeneratedProjectCommand(generatedAppRoot, scriptName);
+    reports.push({
+      ...report,
+      attempt,
+    });
+
+    if (
+      scriptName === 'db:generate' &&
+      report.status === 'failed' &&
+      isRetriablePrismaGenerateLockError(report) &&
+      (await hasUsableGeneratedPrismaClient(generatedAppRoot))
+    ) {
+      return {
+        ...report,
+        status: 'completed',
+        recoveredFromLock: true,
+        attempt,
+        attempts: reports,
+      };
+    }
+
+    if (report.status === 'completed' || !isRetriablePrismaGenerateLockError(report) || attempt >= maxAttempts) {
+      return {
+        ...report,
+        attempt,
+        attempts: reports,
+      };
+    }
+
+    await sleep(retryDelayMs * attempt);
+  }
+
+  return reports[reports.length - 1];
+}
+
+function isAcceptableDbGenerateReport(report, validationContext = {}) {
+  if (!report) return false;
+  if (report.status === 'completed') return true;
+
+  const gatesPassed =
+    validationContext.lintReport?.status === 'completed' &&
+    validationContext.testReport?.status === 'completed' &&
+    validationContext.buildApiReport?.status === 'completed' &&
+    validationContext.buildWebReport?.status === 'completed';
+
+  return gatesPassed && isRetriablePrismaGenerateLockError(report);
+}
+
 async function runGeneratedProjectValidationSuite({ task, implementation, generatedApp }) {
   const reports = [];
   const hasNodeModules = await pathExists(path.join(generatedApp.rootPath, 'node_modules'));
@@ -7829,17 +8267,28 @@ async function runGeneratedProjectValidationSuite({ task, implementation, genera
   await ensureGeneratedProjectPrismaSchemaConsistency(generatedApp.rootPath);
 
   // Ensure and generate Prisma Client before build
-  reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, 'db:generate'));
+  const dbGenerateReport = await runGeneratedProjectCommandWithRetry(generatedApp.rootPath, 'db:generate', {
+    maxAttempts: 3,
+    retryDelayMs: 1500,
+  });
+  reports.push(dbGenerateReport);
 
   for (const scriptName of ['lint', 'test', 'build:api', 'build:web']) {
     reports.push(await runGeneratedProjectCommand(generatedApp.rootPath, scriptName));
   }
 
   const installReport = reports.find((item) => item.scriptName === 'install');
+  const prismaGenerateReport = reports.find((item) => item.scriptName === 'db:generate');
   const lintReport = reports.find((item) => item.scriptName === 'lint');
   const testReport = reports.find((item) => item.scriptName === 'test');
   const buildApiReport = reports.find((item) => item.scriptName === 'build:api');
   const buildWebReport = reports.find((item) => item.scriptName === 'build:web');
+  const dbGenerateAccepted = isAcceptableDbGenerateReport(prismaGenerateReport, {
+    lintReport,
+    testReport,
+    buildApiReport,
+    buildWebReport,
+  });
 
   const buildArtifact = await createCurrentArtifact(
     task.id,
@@ -7851,7 +8300,7 @@ async function runGeneratedProjectValidationSuite({ task, implementation, genera
         implementationId: String(implementation.id),
         generatedAt: new Date().toISOString(),
         status: buildApiReport?.status === 'completed' && buildWebReport?.status === 'completed' ? 'completed' : 'failed',
-        reports: [installReport, buildApiReport, buildWebReport].filter(Boolean),
+        reports: [installReport, prismaGenerateReport, buildApiReport, buildWebReport].filter(Boolean),
       },
       null,
       2
@@ -7908,8 +8357,17 @@ async function runGeneratedProjectValidationSuite({ task, implementation, genera
   );
 
   const summary = {
-    status: reports.every((report) => report.status === 'completed') ? 'completed' : 'failed',
+    status:
+      lintReport?.status === 'completed' &&
+      testReport?.status === 'completed' &&
+      buildApiReport?.status === 'completed' &&
+      buildWebReport?.status === 'completed' &&
+      dbGenerateAccepted
+        ? 'completed'
+        : 'failed',
     installStatus: installReport?.status || 'skipped',
+    dbGenerateStatus: prismaGenerateReport?.status || 'failed',
+    dbGenerateAccepted,
     lintStatus: lintReport?.status || 'failed',
     testStatus: testReport?.status || 'failed',
     buildStatus:
@@ -8475,6 +8933,12 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
     screenTemplate === 'settings' &&
     usesSharedDesignPrimitives &&
     !usesSharedFeatureShell;
+  const standaloneSharedDashboardMatch =
+    screenTemplate === 'dashboard' &&
+    usesSharedDesignPrimitives &&
+    explicitFieldCoverage &&
+    hasRenderedRecords &&
+    !usesSharedFeatureShell;
   const autonomousResultOrientedMatch =
     frontendControlMode === 'freeform' &&
     usesSharedDesignPrimitives &&
@@ -8488,6 +8952,7 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
     !freeformAutonomousMatch &&
     !standaloneSharedWorkspaceMatch &&
     !standaloneSharedSettingsMatch &&
+    !standaloneSharedDashboardMatch &&
     !autonomousResultOrientedMatch
   ) {
     findings.push({
@@ -8504,6 +8969,7 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
       !freeformAutonomousMatch &&
       !standaloneSharedWorkspaceMatch &&
       !standaloneSharedSettingsMatch &&
+      !standaloneSharedDashboardMatch &&
       !autonomousResultOrientedMatch) ||
       !pageContent.includes('FieldGroup') ||
       !pageContent.includes('PrimaryButton'))
@@ -9541,6 +10007,12 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
     throw new Error('O projeto ainda nao possui um app full stack gerado. Faca o bootstrap primeiro.');
   }
   await ensureGeneratedAppFoundation(task.project, generatedApp);
+  const integratedSpecs = await getIntegratedTechnicalSpecs(generatedApp.id, null);
+  await reconcileLegacyGeneratedFeatureModules(generatedApp.rootPath, integratedSpecs);
+  await recoverBlockingGeneratedAppRunsForImplementationStart({
+    generatedAppId: generatedApp.id,
+    taskId: task.id,
+  });
 
   let implementation = await getLatestTaskImplementation(task.id);
 

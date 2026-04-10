@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import pino from 'pino'
 import { VisitExtraCompanionRouter } from './modules/visit-extra-companions/index'
+import { EventScheduleRouter } from './modules/event-schedules/index'
 import { VisitRecurringHistoryRouter } from './modules/visit-recurring-history/index'
 import { VisitOperationalResponsibleRouter } from './modules/visit-operational-responsibles/index'
 const app = express()
@@ -27,6 +28,7 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', app: 'plataforma-de-operacoes-de-visitas-corporativas' })
 })
 app.use('/api/visit-extra-companions', VisitExtraCompanionRouter)
+app.use('/api/event-schedules', EventScheduleRouter)
 app.use('/api/visit-recurring-history', VisitRecurringHistoryRouter)
 app.use('/api/visit-operational-responsibles', VisitOperationalResponsibleRouter)
 app.listen(port, () => {

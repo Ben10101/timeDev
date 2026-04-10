@@ -4,7 +4,7 @@ export interface VisitOperationalResponsibleRequest {
   supportType: string;
 }
 export interface VisitOperationalResponsibleResponse {
-  id: string;
+  id: number | string;
   responsibleName: string;
   contact: string;
   supportType: string;

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { VisitOperationalResponsibleRequest } from '../../../../../packages/shared/src/contracts/visit-operational-responsibles.ts';
+import type { VisitOperationalResponsibleRequest } from '../../../../../packages/shared/src/contracts/visit-operational-responsibles';
 import { VisitOperationalResponsibleServiceInstance } from './service';
 export const VisitOperationalResponsibleRouter = Router();
 VisitOperationalResponsibleRouter.get('/', (_req, res) => {

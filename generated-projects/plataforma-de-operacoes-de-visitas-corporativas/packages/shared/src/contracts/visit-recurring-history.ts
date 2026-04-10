@@ -4,7 +4,7 @@ export interface VisitRecurringHistoryRequest {
   visitStatus: string;
 }
 export interface VisitRecurringHistoryResponse {
-  id: string;
+  id: number | string;
   clientIdentifier: string;
   periodRange: string;
   visitStatus: string;

@@ -63,6 +63,17 @@ def _clean_template_source(value):
     return text
 
 
+def _normalize_shared_ui_imports(template_source):
+    text = str(template_source or "")
+    if not text:
+        return ""
+    return (
+        text.replace("__UI_IMPORT_PATH__", "../../../../../packages/ui/src/index.tsx")
+        .replace("packages/ui/src/index'", "packages/ui/src/index.tsx'")
+        .replace('packages/ui/src/index"', 'packages/ui/src/index.tsx"')
+    )
+
+
 def _escape_ts(value):
     return str(value or "").replace("\\", "\\\\").replace("'", "\\'")
 
@@ -191,10 +202,15 @@ def _default_frontend_page_template(payload):
     form_field_blocks = _build_form_field_blocks(form_fields)
     record_lines = _build_record_lines(form_fields)
     if feature_mode == "review":
-        template = """import { useQuery } from '@tanstack/react-query';
-import type { __RESPONSE_CONTRACT_NAME__ } from '__SHARED_IMPORT_PATH__';
-import { SurfaceCard, inputStyle, tokens } from '__UI_IMPORT_PATH__';
-import { __QUERY_KEY_NAME__, fetch__ENTITY_NAME__Items } from './service';
+        template = """import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
+import type { __REQUEST_CONTRACT_NAME__, __RESPONSE_CONTRACT_NAME__ } from '__SHARED_IMPORT_PATH__';
+import { FieldGroup, PrimaryButton, SurfaceCard, inputStyle, tokens } from '__UI_IMPORT_PATH__';
+import { __SCHEMA_NAME__, type __FORM_VALUES_TYPE__ } from './schema';
+import { __QUERY_KEY_NAME__, create__ENTITY_NAME__, fetch__ENTITY_NAME__Items } from './service';
+
+const initialForm: __FORM_VALUES_TYPE__ = __AUTO_INITIAL_FORM__;
 
 function formatCreatedAt(value?: string) {
   if (!value) return '-';
@@ -204,9 +220,22 @@ function formatCreatedAt(value?: string) {
 }
 
 export function __PAGE_COMPONENT_NAME__() {
+  const queryClient = useQueryClient();
   const { data: items = [], isLoading } = useQuery<__RESPONSE_CONTRACT_NAME__[]>({
     queryKey: __QUERY_KEY_NAME__,
     queryFn: fetch__ENTITY_NAME__Items,
+  });
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<__FORM_VALUES_TYPE__>({
+    resolver: zodResolver(__SCHEMA_NAME__),
+    defaultValues: initialForm,
+  });
+
+  const mutation = useMutation({
+    mutationFn: (input: __REQUEST_CONTRACT_NAME__) => create__ENTITY_NAME__(input),
+    onSuccess: (created) => {
+      queryClient.setQueryData<__RESPONSE_CONTRACT_NAME__[]>(__QUERY_KEY_NAME__, (current = []) => [created, ...current]);
+      reset(initialForm);
+    },
   });
 
   return (
@@ -220,11 +249,15 @@ export function __PAGE_COMPONENT_NAME__() {
       </header>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 320px) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
-        <SurfaceCard title='Consulta' description='Use esta area para orientar a leitura do historico recente.'>
-          <div style={{ display: 'grid', gap: 12 }}>
-            <input readOnly value='Cliente recorrente' style={inputStyle({ borderRadius: 10, padding: '12px 13px', opacity: 0.8 })} />
-            <input readOnly value='Ultimos registros disponiveis' style={inputStyle({ borderRadius: 10, padding: '12px 13px', opacity: 0.8 })} />
-          </div>
+        <SurfaceCard title='Consulta guiada' description='Use os filtros da leitura para recuperar historico e reutilizar contexto operacional.'>
+          <form onSubmit={handleSubmit((values) => mutation.mutateAsync(values as __REQUEST_CONTRACT_NAME__))} style={{ display: 'grid', gap: 14 }}>
+__AUTO_FIELD_BLOCKS__
+            <PrimaryButton type='submit'>
+              {isSubmitting || mutation.isPending ? 'Processando...' : '__SUBMIT_LABEL__'}
+            </PrimaryButton>
+            {mutation.isSuccess ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>__SUCCESS_MESSAGE__</p> : null}
+            {mutation.error ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{mutation.error instanceof Error ? mutation.error.message : 'Falha ao enviar formulario.'}</p> : null}
+          </form>
         </SurfaceCard>
 
         <SurfaceCard title='__AUTO_RECORDS_TITLE__' description='Leitura direta dos registros encontrados.' meta={isLoading ? 'Carregando...' : `${items.length} itens`}>
@@ -638,6 +671,7 @@ def _ensure_materialized_templates(result, payload):
 
     if not frontend.get("pageTsxTemplate"):
         frontend["pageTsxTemplate"] = _default_frontend_page_template(payload)
+    frontend["pageTsxTemplate"] = _normalize_shared_ui_imports(frontend.get("pageTsxTemplate"))
     if not frontend.get("serviceTsTemplate"):
         frontend["serviceTsTemplate"] = _default_frontend_service_template()
     if not frontend.get("indexTsTemplate"):
@@ -888,7 +922,7 @@ FORMATO EXATO
             service_template = _clean_template_source(frontend.get("serviceTsTemplate"))
             index_template = _clean_template_source(frontend.get("indexTsTemplate"))
             if page_template and "export function" in page_template:
-                normalized_frontend["pageTsxTemplate"] = page_template
+                normalized_frontend["pageTsxTemplate"] = _normalize_shared_ui_imports(page_template)
             if service_template and "export " in service_template:
                 normalized_frontend["serviceTsTemplate"] = service_template
             if index_template and "export " in index_template:

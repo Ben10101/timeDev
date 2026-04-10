@@ -2,6 +2,14 @@ function escapeTemplate(value) {
   return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+function normalizeSharedUiImportPath(content) {
+  return String(content || '')
+    .replace(/packages\/ui\/src\/index(?=['"])/g, 'packages/ui/src/index.tsx')
+    .replace(/packages\/ui\/src\/index(?:\.tsx)?\/api\/client/g, 'packages/ui/src/api/client')
+    .replace(/packages\/ui\/src\/index(?:\.tsx)?\/apiClient/g, 'packages/ui/src/api/client')
+    .replace(/packages\/ui\/src\/index(?:\.tsx)?\/api-client/g, 'packages/ui/src/api/client');
+}
+
 function humanizeSelectOptionLabel(value) {
   const normalized = String(value || '').trim().toLowerCase();
   const directMap = {
@@ -985,6 +993,83 @@ export function buildModernFrontendFeatureFiles(task, technicalSpec, { sharedImp
   const summaryMeta = isSettingsLayout
     ? "isLoading ? 'Atualizando' : items.length ? 'Configuracao salva' : 'Sem alteracoes'"
     : "isLoading ? 'Atualizando' : items.length ? `${items.length} registro(s)` : 'Nenhum registro'";
+  const renderedAutonomousPageTemplate = autonomousPageTemplate
+    ? normalizeSharedUiImportPath(renderAutonomousPageTemplate(autonomousPageTemplate, {
+        sharedImportPath,
+        uiImportPath,
+        requestContractName: technicalSpec.shared.requestContractName,
+        responseContractName: technicalSpec.shared.responseContractName,
+        listContractName: technicalSpec.shared.listContractName,
+        entityName,
+        pageComponentName: technicalSpec.frontend.pageComponentName,
+        queryKeyName,
+        schemaName,
+        formValuesType,
+        routeBase: technicalSpec.backend.routeBase,
+        submitLabel: technicalSpec.domain.submitLabel,
+        successMessage: technicalSpec.domain.successMessage,
+      }))
+    : '';
+  const hasHealthyAutonomousPageTemplate =
+    renderedAutonomousPageTemplate &&
+    (renderedAutonomousPageTemplate.includes('packages/ui/src/index.tsx') || renderedAutonomousPageTemplate.includes('/packages/ui/src/index.tsx')) &&
+    renderedAutonomousPageTemplate.includes('FieldGroup') &&
+    renderedAutonomousPageTemplate.includes('PrimaryButton') &&
+    renderedAutonomousPageTemplate.includes("register('") &&
+    fields.every((field) => renderedAutonomousPageTemplate.includes(field.name));
+  const renderedAutonomousServiceTemplate = autonomousServiceTemplate
+    ? normalizeSharedUiImportPath(renderAutonomousPageTemplate(autonomousServiceTemplate, {
+        sharedImportPath,
+        uiImportPath,
+        requestContractName: technicalSpec.shared.requestContractName,
+        responseContractName: technicalSpec.shared.responseContractName,
+        listContractName: technicalSpec.shared.listContractName,
+        entityName,
+        pageComponentName: technicalSpec.frontend.pageComponentName,
+        queryKeyName,
+        schemaName,
+        formValuesType,
+        routeBase: technicalSpec.backend.routeBase,
+        submitLabel: technicalSpec.domain.submitLabel,
+        successMessage: technicalSpec.domain.successMessage,
+      }))
+    : '';
+  const hasHealthyAutonomousServiceTemplate =
+    renderedAutonomousServiceTemplate &&
+    !renderedAutonomousServiceTemplate.includes("import axios from 'axios'") &&
+    !renderedAutonomousServiceTemplate.includes('import axios from "axios"') &&
+    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index/api/client') &&
+    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index.tsx/api/client') &&
+    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index/apiClient') &&
+    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index.tsx/apiClient') &&
+    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index/api-client') &&
+    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index.tsx/api-client') &&
+    !renderedAutonomousServiceTemplate.includes("from './types'") &&
+    renderedAutonomousServiceTemplate.includes(`export const ${queryKeyName}`) &&
+    renderedAutonomousServiceTemplate.includes(`export async function fetch${entityName}Items`) &&
+    renderedAutonomousServiceTemplate.includes(`export async function create${entityName}`);
+  const renderedAutonomousIndexTemplate = autonomousIndexTemplate
+    ? renderAutonomousPageTemplate(autonomousIndexTemplate, {
+        sharedImportPath,
+        uiImportPath,
+        requestContractName: technicalSpec.shared.requestContractName,
+        responseContractName: technicalSpec.shared.responseContractName,
+        listContractName: technicalSpec.shared.listContractName,
+        entityName,
+        pageComponentName: technicalSpec.frontend.pageComponentName,
+        queryKeyName,
+        schemaName,
+        formValuesType,
+        routeBase: technicalSpec.backend.routeBase,
+        submitLabel: technicalSpec.domain.submitLabel,
+        successMessage: technicalSpec.domain.successMessage,
+      })
+    : '';
+  const hasHealthyAutonomousIndexTemplate =
+    renderedAutonomousIndexTemplate &&
+    !renderedAutonomousIndexTemplate.includes("from './types'") &&
+    !renderedAutonomousIndexTemplate.includes('Service, use') &&
+    renderedAutonomousIndexTemplate.includes("from './page'");
 
   const genericPageContent = `import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -1093,22 +1178,8 @@ ${emptyState}
 }
 `;
 
-  const pageContent = autonomousPageTemplate
-    ? renderAutonomousPageTemplate(autonomousPageTemplate, {
-        sharedImportPath,
-        uiImportPath,
-        requestContractName: technicalSpec.shared.requestContractName,
-        responseContractName: technicalSpec.shared.responseContractName,
-        listContractName: technicalSpec.shared.listContractName,
-        entityName,
-        pageComponentName: technicalSpec.frontend.pageComponentName,
-        queryKeyName,
-        schemaName,
-        formValuesType,
-        routeBase: technicalSpec.backend.routeBase,
-        submitLabel: technicalSpec.domain.submitLabel,
-        successMessage: technicalSpec.domain.successMessage,
-      })
+  const pageContent = normalizeSharedUiImportPath(hasHealthyAutonomousPageTemplate
+    ? renderedAutonomousPageTemplate
     : technicalSpec.featureKey === 'visit-operational-responsibles'
       ? buildVisitOperationalResponsiblesPage(technicalSpec, {
           sharedImportPath,
@@ -1123,9 +1194,9 @@ ${emptyState}
             uiImportPath,
             schemaName,
             formValuesType,
-            queryKeyName,
-          })
-      : genericPageContent;
+          queryKeyName,
+        })
+      : genericPageContent);
 
   return [
     {
@@ -1135,23 +1206,9 @@ ${emptyState}
     },
     {
       relativePath: `${technicalSpec.frontend.featurePath}/service.ts`,
-      content: autonomousServiceTemplate
-        ? renderAutonomousPageTemplate(autonomousServiceTemplate, {
-            sharedImportPath,
-            uiImportPath,
-            requestContractName: technicalSpec.shared.requestContractName,
-            responseContractName: technicalSpec.shared.responseContractName,
-            listContractName: technicalSpec.shared.listContractName,
-            entityName,
-            pageComponentName: technicalSpec.frontend.pageComponentName,
-            queryKeyName,
-            schemaName,
-            formValuesType,
-            routeBase: technicalSpec.backend.routeBase,
-            submitLabel: technicalSpec.domain.submitLabel,
-            successMessage: technicalSpec.domain.successMessage,
-          })
-        : `import type { ${technicalSpec.shared.listContractName}, ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nexport const ${queryKeyName} = ['${escapeTemplate(technicalSpec.featureKey)}'];\n\nexport async function fetch${entityName}Items(): Promise<${technicalSpec.shared.responseContractName}[]> {\n  const response = await fetch('${technicalSpec.backend.routeBase}');\n  if (!response.ok) {\n    throw new Error('Falha ao carregar registros da feature.');\n  }\n  const data: ${technicalSpec.shared.listContractName} = await response.json();\n  return data.items || [];\n}\n\nexport async function create${entityName}(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n  const response = await fetch('${technicalSpec.backend.routeBase}', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(input),\n  });\n\n  if (!response.ok) {\n    const error = await response.json().catch(() => ({ message: 'Falha ao criar registro.' }));\n    throw new Error(error.message || 'Falha ao criar registro.');\n  }\n\n  return response.json();\n}\n`,
+      content: normalizeSharedUiImportPath(hasHealthyAutonomousServiceTemplate
+        ? renderedAutonomousServiceTemplate
+        : `import type { ${technicalSpec.shared.listContractName}, ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nexport const ${queryKeyName} = ['${escapeTemplate(technicalSpec.featureKey)}'];\n\nexport async function fetch${entityName}Items(): Promise<${technicalSpec.shared.responseContractName}[]> {\n  const response = await fetch('${technicalSpec.backend.routeBase}');\n  if (!response.ok) {\n    throw new Error('Falha ao carregar registros da feature.');\n  }\n  const data: ${technicalSpec.shared.listContractName} = await response.json();\n  return data.items || [];\n}\n\nexport async function create${entityName}(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n  const response = await fetch('${technicalSpec.backend.routeBase}', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(input),\n  });\n\n  if (!response.ok) {\n    const error = await response.json().catch(() => ({ message: 'Falha ao criar registro.' }));\n    throw new Error(error.message || 'Falha ao criar registro.');\n  }\n\n  return response.json();\n}\n`),
       fileType: 'ts',
     },
     {
@@ -1161,22 +1218,8 @@ ${emptyState}
     },
     {
       relativePath: `${technicalSpec.frontend.featurePath}/index.ts`,
-      content: autonomousIndexTemplate
-        ? renderAutonomousPageTemplate(autonomousIndexTemplate, {
-            sharedImportPath,
-            uiImportPath,
-            requestContractName: technicalSpec.shared.requestContractName,
-            responseContractName: technicalSpec.shared.responseContractName,
-            listContractName: technicalSpec.shared.listContractName,
-            entityName,
-            pageComponentName: technicalSpec.frontend.pageComponentName,
-            queryKeyName,
-            schemaName,
-            formValuesType,
-            routeBase: technicalSpec.backend.routeBase,
-            submitLabel: technicalSpec.domain.submitLabel,
-            successMessage: technicalSpec.domain.successMessage,
-          })
+      content: hasHealthyAutonomousIndexTemplate
+        ? renderedAutonomousIndexTemplate
         : `export { ${technicalSpec.frontend.pageComponentName} } from './page';\nexport { fetch${entityName}Items } from './service';\n`,
       fileType: 'ts',
     },
