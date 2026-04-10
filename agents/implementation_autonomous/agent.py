@@ -787,11 +787,13 @@ REGRAS
 - Use `CURRENT IMPLEMENTATION CONTEXT` como base da iteracao: se ja houver arquivos materializados, evolua esses arquivos em vez de reinventar a feature do zero.
 - Em repair, trate `CURRENT IMPLEMENTATION CONTEXT.files` como a versao atual da solucao. Corrija em cima dela e preserve o que ja estiver bom.
 - Se houver REPAIR CONTEXT, trate-o como prioridade alta: corrija os findings diretamente na solucao proposta, sem resetar a feature para um molde generico.
+- Se `REPAIR CONTEXT.debugDiagnosis` vier preenchido, trate `rootCause`, `suggestedFix` e `affectedFiles` como a melhor pista tecnica sobre onde agir primeiro.
 - Preserve a autoria e a estrutura da solucao quando os erros forem locais; reconstrua apenas o que os findings realmente exigirem.
 - Se `REPAIR CONTEXT.executionFocus.focusFiles` vier preenchido, concentre a maior parte das mudancas nesses arquivos.
 - Trate `REPAIR CONTEXT.executionFocus.preserveFiles` como arquivos a preservar. Nao reescreva esses arquivos sem necessidade clara causada pelos findings.
 - Se `REPAIR CONTEXT.executionFocus.writeSet.mode` for `local_patch`, faca uma correcao pequena e cirurgica em vez de recompor a feature inteira.
 - Se `REPAIR CONTEXT.executionFocus.primaryFailureSurface` ou `REPAIR CONTEXT.repairScope` apontarem so para frontend ou so para backend, evite mudar a outra camada.
+- Se `CONTRATO DE AUTONOMIA.structuralFreedomHints` trouxer `avoidLayoutSignatures`, evite repetir essas assinaturas de layout. Se trouxer `preferredArchetypes`, use isso como guia estrutural na composicao do frontend.
 - Responda APENAS com JSON valido.
 - Se optar por gerar templates, use placeholders controlados como:
   - `__PRISMA_MODEL_ID__`

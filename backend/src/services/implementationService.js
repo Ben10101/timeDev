@@ -12,7 +12,7 @@ import { materializeFullstackTemplate, materializeFullstackTemplateSubset } from
 import { buildModernFrontendFeatureFiles } from './implementationFrontendGenerator.js';
 import { buildRuntimeAiEnvForUser } from './aiSettingsService.js';
 import { createGenerationIR, validateGenerationIR } from './generationSpecService.js';
-import { getProjectArchitectureStatus } from './projectDataService.js';
+import { getProjectArchitectureStatus, listProjectTasks } from './projectDataService.js';
 import { runSingleAgent, runImplementationPipeline } from './orchestratorService.js';
 import { buildPatternHints, resolveUiArchetype } from './uiArchetypeService.js';
 import { resolveProjectShell } from './frontendShellRegistry.js';
@@ -20,6 +20,7 @@ import {
   buildAutonomousImplementationContract,
   resolveImplementationExecutionMode,
 } from './implementationAutonomyService.js';
+import { invokeDebugAgent } from './implementationAiService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
@@ -995,6 +996,7 @@ function inferRepairExecutionFocus(repairContext = {}, currentImplementationCont
   const registry = buildAutonomousCurrentFileRegistry(currentImplementationContext);
   const findings = [...(repairContext.findings || []), ...(repairContext.specialistFindings || [])];
   const validationFailures = repairContext.validationFailures || [];
+  const debugDiagnosis = repairContext.debugDiagnosis || null;
   const focusEntries = new Map();
   let matchedExactFile = false;
 
@@ -1038,6 +1040,30 @@ function inferRepairExecutionFocus(repairContext = {}, currentImplementationCont
     }
     if (normalizedSignal.includes('apps/api/')) {
       addLayerEntries('backend', item.code || 'backend_review');
+    }
+  }
+
+  for (const affectedFile of debugDiagnosis?.affectedFiles || []) {
+    const exactMatches = registry.filter((entry) => signalMatchesRegistryPath(affectedFile, entry.relativePath));
+
+    if (exactMatches.length) {
+      matchedExactFile = true;
+      exactMatches.forEach((entry) => addFocusEntry(entry, debugDiagnosis.rootCause || 'debug_diagnosis'));
+      continue;
+    }
+
+    const normalizedSignal = String(affectedFile || '').replace(/\\/g, '/').toLowerCase();
+    if (normalizedSignal.includes('apps/web/')) {
+      addLayerEntries('frontend', debugDiagnosis.rootCause || 'debug_diagnosis_frontend');
+    }
+    if (normalizedSignal.includes('apps/api/')) {
+      addLayerEntries('backend', debugDiagnosis.rootCause || 'debug_diagnosis_backend');
+    }
+    if (normalizedSignal.includes('packages/shared/')) {
+      addLayerEntries('shared', debugDiagnosis.rootCause || 'debug_diagnosis_shared');
+    }
+    if (normalizedSignal.includes('prisma/')) {
+      addLayerEntries('database', debugDiagnosis.rootCause || 'debug_diagnosis_database');
     }
   }
 
@@ -1134,11 +1160,52 @@ function compactRepairContext(repairContext, currentImplementationContext = null
         }
       : null,
     executionFocus,
+    debugDiagnosis: repairContext.debugDiagnosis
+      ? {
+          rootCause: repairContext.debugDiagnosis.rootCause || null,
+          suggestedFix: truncateText(repairContext.debugDiagnosis.suggestedFix, 220),
+          affectedFiles: Array.isArray(repairContext.debugDiagnosis.affectedFiles)
+            ? repairContext.debugDiagnosis.affectedFiles.slice(0, 6)
+            : [],
+          source: repairContext.debugDiagnosis.source || null,
+        }
+      : null,
+    enforcementDirective: repairContext.enforcementDirective
+      ? {
+          reason: repairContext.enforcementDirective.reason || null,
+          nextRepairStyle: repairContext.enforcementDirective.nextRepairStyle || null,
+          nextExecutor: repairContext.enforcementDirective.nextExecutor || null,
+          triggeredBy: repairContext.enforcementDirective.triggeredBy || null,
+        }
+      : null,
+    adaptiveDirective: repairContext.adaptiveDirective
+      ? {
+          source: repairContext.adaptiveDirective.source || null,
+          reason: repairContext.adaptiveDirective.reason || null,
+          nextRepairStyle: repairContext.adaptiveDirective.nextRepairStyle || null,
+          nextExecutor: repairContext.adaptiveDirective.nextExecutor || null,
+          confidence: repairContext.adaptiveDirective.confidence || null,
+          stats: repairContext.adaptiveDirective.stats || null,
+        }
+      : null,
+    repairLearning: repairContext.repairLearning
+      ? {
+          totalSamples: repairContext.repairLearning.totalSamples ?? 0,
+          relevantSamples: repairContext.repairLearning.relevantSamples ?? 0,
+          defaultExecutor: repairContext.repairLearning.defaultExecutor || null,
+          recentProjectBehavior: repairContext.repairLearning.recentProjectBehavior || null,
+          relevantBehavior: repairContext.repairLearning.relevantBehavior || null,
+          executorPerformance: Array.isArray(repairContext.repairLearning.executorPerformance)
+            ? repairContext.repairLearning.executorPerformance.slice(0, 4)
+            : [],
+        }
+      : null,
     findings: (repairContext.findings || []).slice(0, 4).map((item) => ({
       code: item.code,
       severity: item.severity,
       filePath: item.filePath,
       message: truncateText(item.message, 160),
+      suggestedFix: item.suggestedFix ? truncateText(item.suggestedFix, 180) : null,
     })),
     specialistFindings: (repairContext.specialistFindings || []).slice(0, 4).map((item) => ({
       code: item.code,
@@ -1162,6 +1229,274 @@ function formatValidationFailures(summary) {
       scriptName: report.scriptName,
       errorMessage: truncateText(report.errorMessage || report.stderr || report.stdout || 'Falha sem detalhes.'),
     }));
+}
+
+function resolveRepairEnforcementDirective(repairContext, repairScopeAssessment) {
+  const mode = repairScopeAssessment?.mode || repairContext?.executionFocus?.writeSet?.mode || 'unknown';
+  const status = repairScopeAssessment?.status || 'unscoped';
+
+  if (mode === 'local_patch' && ['expanded', 'partial'].includes(status)) {
+    return {
+      triggeredBy: 'write_set_violation',
+      reason: `O repair prometeu local_patch, mas tocou arquivos fora do write set (${status}).`,
+      nextRepairStyle: 'reconstructive',
+      nextExecutor: 'implementation_autonomous_agent',
+    };
+  }
+
+  return null;
+}
+
+function inferFailureSurfaceFromRootCause(rootCause = '') {
+  const normalized = String(rootCause || '').toLowerCase();
+
+  if (!normalized) return 'unknown';
+  if (normalized.includes('prisma') || normalized.includes('schema')) return 'database';
+  if (normalized.includes('frontend') || normalized.includes('route_registration')) return 'frontend';
+  if (normalized.includes('api_route') || normalized.includes('backend')) return 'backend';
+  return 'unknown';
+}
+
+function resolveRepairExecutorByFailureSignature(repairContext = {}) {
+  const rootCause = String(repairContext?.debugDiagnosis?.rootCause || '').toLowerCase();
+  const primaryFailureSurface = String(repairContext?.executionFocus?.primaryFailureSurface || '').toLowerCase();
+
+  if (
+    rootCause.includes('prisma') ||
+    rootCause.includes('schema') ||
+    rootCause === 'missing_prisma_client_dependency'
+  ) {
+    return 'sub_agent_pipeline';
+  }
+
+  if (
+    rootCause.includes('frontend') ||
+    rootCause.includes('route_registration') && primaryFailureSurface === 'frontend' ||
+    primaryFailureSurface === 'frontend'
+  ) {
+    return 'frontend_agent';
+  }
+
+  if (
+    rootCause.includes('api_route') ||
+    rootCause.includes('backend') ||
+    primaryFailureSurface === 'backend'
+  ) {
+    return 'backend_agent';
+  }
+
+  return 'implementation_autonomous_agent';
+}
+
+async function loadRecentRepairLearningSignals(projectId, repairContext, currentImplementationId = null) {
+  if (!projectId) return null;
+
+  const recentImplementations = await prisma.taskImplementation.findMany({
+    where: {
+      ...(currentImplementationId ? { id: { not: currentImplementationId } } : {}),
+      task: {
+        projectId,
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: 30,
+    select: {
+      id: true,
+      status: true,
+      updatedAt: true,
+    },
+  });
+
+  if (!recentImplementations.length) {
+    return {
+      totalSamples: 0,
+      relevantSamples: 0,
+      defaultExecutor: resolveRepairExecutorByFailureSignature(repairContext),
+      recentProjectBehavior: null,
+      relevantBehavior: null,
+      executorPerformance: [],
+    };
+  }
+
+  const implementationIds = recentImplementations.map((item) => item.id);
+  const repairArtifacts = await prisma.taskArtifact.findMany({
+    where: {
+      taskImplementationId: { in: implementationIds },
+      artifactScope: 'implementation',
+      isCurrent: true,
+      OR: [
+        { title: { startsWith: 'Implementation Repair Scope Assessment - ' } },
+        { title: { startsWith: 'Implementation Repair Enforcement - ' } },
+        { title: { startsWith: 'Implementation Debug Diagnosis - ' } },
+        { title: { startsWith: 'Implementation Repair Draft - ' } },
+        { title: { startsWith: 'Autonomous Implementation Repair Draft - ' } },
+      ],
+    },
+    select: {
+      taskImplementationId: true,
+      title: true,
+      content: true,
+      createdByAgentName: true,
+    },
+  });
+
+  const artifactsByImplementation = repairArtifacts.reduce((acc, artifact) => {
+    const current = acc.get(artifact.taskImplementationId) || {};
+    if (artifact.title.startsWith('Implementation Repair Scope Assessment - ')) {
+      current.scopeAssessment = parseJsonArtifactContent(artifact)?.scopeAssessment || null;
+    }
+    if (artifact.title.startsWith('Implementation Repair Enforcement - ')) {
+      current.enforcement = parseJsonArtifactContent(artifact)?.enforcementDirective || null;
+    }
+    if (artifact.title.startsWith('Implementation Debug Diagnosis - ')) {
+      current.debugDiagnosis = parseJsonArtifactContent(artifact)?.diagnosis || null;
+    }
+    if (
+      artifact.title.startsWith('Implementation Repair Draft - ') ||
+      artifact.title.startsWith('Autonomous Implementation Repair Draft - ')
+    ) {
+      current.executor = artifact.createdByAgentName || null;
+    }
+    acc.set(artifact.taskImplementationId, current);
+    return acc;
+  }, new Map());
+
+  const targetRootCause = String(repairContext?.debugDiagnosis?.rootCause || '').trim();
+  const targetSurface = String(repairContext?.executionFocus?.primaryFailureSurface || '').trim() || inferFailureSurfaceFromRootCause(targetRootCause);
+  const defaultExecutor = resolveRepairExecutorByFailureSignature(repairContext);
+
+  const events = recentImplementations
+    .map((implementation) => {
+      const artifacts = artifactsByImplementation.get(implementation.id) || {};
+      const rootCause = artifacts.debugDiagnosis?.rootCause || null;
+      const failureSurface = inferFailureSurfaceFromRootCause(rootCause);
+      const writeSetStatus = artifacts.scopeAssessment?.status || 'unknown';
+      const executor = artifacts.executor || 'implementation_autonomous_agent';
+      return {
+        implementationId: implementation.id,
+        status: implementation.status,
+        executor,
+        rootCause,
+        failureSurface,
+        writeSetStatus,
+        escalated: Boolean(artifacts.enforcement),
+        success: implementation.status === 'integrated',
+        localSuccess: implementation.status === 'integrated' && writeSetStatus === 'compliant',
+      };
+    })
+    .filter((item) => item.rootCause || item.writeSetStatus !== 'unknown');
+
+  const relevantEvents = events.filter((item) => {
+    if (targetRootCause && item.rootCause === targetRootCause) return true;
+    if (targetSurface && targetSurface !== 'unknown' && item.failureSurface === targetSurface) return true;
+    return false;
+  });
+
+  const summarizeEventSet = (items) => ({
+    samples: items.length,
+    compliantRatePercent: items.length ? Math.round((items.filter((item) => item.writeSetStatus === 'compliant').length / items.length) * 100) : null,
+    expandedRatePercent: items.length ? Math.round((items.filter((item) => item.writeSetStatus === 'expanded').length / items.length) * 100) : null,
+    escalatedRatePercent: items.length ? Math.round((items.filter((item) => item.escalated).length / items.length) * 100) : null,
+    localSuccessRatePercent: items.length ? Math.round((items.filter((item) => item.localSuccess).length / items.length) * 100) : null,
+  });
+
+  const executorPerformance = Object.values(
+    relevantEvents.reduce((acc, item) => {
+      const current = acc[item.executor] || {
+        executor: item.executor,
+        samples: 0,
+        compliant: 0,
+        localSuccess: 0,
+        escalated: 0,
+      };
+      current.samples += 1;
+      current.compliant += item.writeSetStatus === 'compliant' ? 1 : 0;
+      current.localSuccess += item.localSuccess ? 1 : 0;
+      current.escalated += item.escalated ? 1 : 0;
+      acc[item.executor] = current;
+      return acc;
+    }, {})
+  )
+    .map((item) => ({
+      ...item,
+      compliantRatePercent: item.samples ? Math.round((item.compliant / item.samples) * 100) : 0,
+      localSuccessRatePercent: item.samples ? Math.round((item.localSuccess / item.samples) * 100) : 0,
+      escalatedRatePercent: item.samples ? Math.round((item.escalated / item.samples) * 100) : 0,
+    }))
+    .sort((left, right) => {
+      if (right.localSuccessRatePercent !== left.localSuccessRatePercent) {
+        return right.localSuccessRatePercent - left.localSuccessRatePercent;
+      }
+      return right.samples - left.samples;
+    });
+
+  return {
+    totalSamples: events.length,
+    relevantSamples: relevantEvents.length,
+    defaultExecutor,
+    recentProjectBehavior: summarizeEventSet(events),
+    relevantBehavior: summarizeEventSet(relevantEvents),
+    executorPerformance,
+  };
+}
+
+function resolveAdaptiveRepairDirective(repairContext, learningSignals = null) {
+  if (!learningSignals) return null;
+
+  const mode = repairContext?.executionFocus?.writeSet?.mode || 'unknown';
+  const defaultExecutor = learningSignals.defaultExecutor || resolveRepairExecutorByFailureSignature(repairContext);
+  const relevantBehavior = learningSignals.relevantBehavior || {};
+  const recentProjectBehavior = learningSignals.recentProjectBehavior || {};
+  const bestExecutor = learningSignals.executorPerformance?.find((item) => item.samples >= 2) || null;
+
+  const directive = {
+    source: 'adaptive_learning',
+    reason: null,
+    nextRepairStyle: null,
+    nextExecutor: null,
+    confidence: null,
+    stats: {
+      relevantSamples: learningSignals.relevantSamples || 0,
+      projectSamples: learningSignals.totalSamples || 0,
+      relevantCompliantRatePercent: relevantBehavior.compliantRatePercent ?? null,
+      relevantExpandedRatePercent: relevantBehavior.expandedRatePercent ?? null,
+      relevantLocalSuccessRatePercent: relevantBehavior.localSuccessRatePercent ?? null,
+      projectCompliantRatePercent: recentProjectBehavior.compliantRatePercent ?? null,
+      projectEscalatedRatePercent: recentProjectBehavior.escalatedRatePercent ?? null,
+    },
+  };
+
+  if (
+    mode === 'local_patch' &&
+    (
+      (learningSignals.relevantSamples >= 2 && (relevantBehavior.expandedRatePercent || 0) >= 50) ||
+      (learningSignals.totalSamples >= 4 && (recentProjectBehavior.compliantRatePercent || 0) <= 35)
+    )
+  ) {
+    directive.nextRepairStyle = 'reconstructive';
+    directive.reason = 'O historico recente mostra baixa aderencia para patch local nesta categoria.';
+    directive.confidence = learningSignals.relevantSamples >= 2 ? 'high' : 'medium';
+  }
+
+  if (
+    bestExecutor &&
+    bestExecutor.executor !== defaultExecutor &&
+    bestExecutor.localSuccessRatePercent >= 60 &&
+    bestExecutor.samples >= 2
+  ) {
+    const defaultExecutorStats = learningSignals.executorPerformance?.find((item) => item.executor === defaultExecutor) || null;
+    const defaultSuccessRate = defaultExecutorStats?.localSuccessRatePercent ?? 0;
+
+    if (bestExecutor.localSuccessRatePercent >= defaultSuccessRate + 20 || !defaultExecutorStats) {
+      directive.nextExecutor = bestExecutor.executor;
+      directive.reason = directive.reason
+        ? `${directive.reason} Executor historicamente melhor encontrado para esta categoria.`
+        : 'Historico recente aponta um executor mais eficaz para esta categoria de erro.';
+      directive.confidence = directive.confidence || 'medium';
+    }
+  }
+
+  return directive.nextExecutor || directive.nextRepairStyle ? directive : null;
 }
 
 function normalizeSemanticText(value = '') {
@@ -1624,6 +1959,46 @@ async function buildImplementationBenchmarkSummary(implementation, technicalSpec
   };
 }
 
+function buildRepairTelemetrySummary({
+  executionStateArtifact,
+  repairScopeAssessmentArtifact,
+  repairEnforcementArtifact,
+  debugDiagnosisArtifact,
+  repairLearningArtifact,
+} = {}) {
+  const executionState = parseJsonArtifactContent(executionStateArtifact);
+  const scopeAssessment = parseJsonArtifactContent(repairScopeAssessmentArtifact);
+  const enforcement = parseJsonArtifactContent(repairEnforcementArtifact);
+  const debugDiagnosis = parseJsonArtifactContent(debugDiagnosisArtifact);
+  const repairLearning = parseJsonArtifactContent(repairLearningArtifact);
+
+  const scope = scopeAssessment?.scopeAssessment || executionState?.repairScopeAssessment || null;
+  const directive = enforcement?.enforcementDirective || executionState?.enforcementDirective || null;
+  const diagnosis = debugDiagnosis?.diagnosis || executionState?.debugDiagnosis || null;
+  const adaptiveDirective = repairLearning?.adaptiveDirective || executionState?.adaptiveDirective || null;
+
+  return {
+    writeSetStatus: scope?.status || 'unknown',
+    writeSetMode: scope?.mode || 'unknown',
+    adherencePercent: scope?.adherencePercent ?? null,
+    outsideWriteSetCount: Array.isArray(scope?.outsideWriteSet) ? scope.outsideWriteSet.length : 0,
+    outsideWriteSet: Array.isArray(scope?.outsideWriteSet) ? scope.outsideWriteSet.slice(0, 5) : [],
+    escalated: Boolean(directive),
+    nextRepairStyle: directive?.nextRepairStyle || null,
+    nextExecutor: directive?.nextExecutor || null,
+    enforcementReason: directive?.reason || null,
+    enforcementTriggeredBy: directive?.triggeredBy || null,
+    rootCause: diagnosis?.rootCause || null,
+    suggestedFix: diagnosis?.suggestedFix || null,
+    affectedFiles: Array.isArray(diagnosis?.affectedFiles) ? diagnosis.affectedFiles.slice(0, 5) : [],
+    adaptiveExecutor: adaptiveDirective?.nextExecutor || null,
+    adaptiveRepairStyle: adaptiveDirective?.nextRepairStyle || null,
+    adaptiveReason: adaptiveDirective?.reason || null,
+    adaptiveConfidence: adaptiveDirective?.confidence || null,
+    learningSamples: repairLearning?.repairLearning?.relevantSamples ?? null,
+  };
+}
+
 function resolveRepairStyle({ technicalSpec, findings, specialistFindings, validationFailures }) {
   const materialization = technicalSpec?.autonomousMaterialization || {};
   const generationSource =
@@ -1657,7 +2032,7 @@ function resolveRepairStyle({ technicalSpec, findings, specialistFindings, valid
   return 'reconstructive';
 }
 
-function buildRepairContext({ reviewReport, specialistReviewReport, validationSummary, attemptNumber, technicalSpec }) {
+async function buildRepairContext({ reviewReport, specialistReviewReport, validationSummary, attemptNumber, technicalSpec, projectId, forcedDirective = null }) {
   const findings = (reviewReport?.findings || []).slice(0, 10).map((finding) => ({
     code: finding.code,
     severity: finding.severity,
@@ -1671,8 +2046,78 @@ function buildRepairContext({ reviewReport, specialistReviewReport, validationSu
     message: finding.message,
   }));
   const validationFailures = formatValidationFailures(validationSummary);
+  let debugDiagnosis = null;
 
-  return {
+  const shouldInvokeDebugAgent =
+    validationSummary?.status === 'failed' ||
+    validationSummary?.buildStatus === 'failed' ||
+    validationSummary?.testStatus === 'failed' ||
+    validationSummary?.lintStatus === 'failed';
+
+  if (shouldInvokeDebugAgent) {
+    try {
+      console.log(`[Self-Healing] Analisando falhas com DebugAgent...`);
+      const debugReport = await invokeDebugAgent({
+        project_id: projectId,
+        idea: technicalSpec?.featureKey || 'repair_validation_failure',
+        objective: technicalSpec?.implementationObjective?.primaryGoal || technicalSpec?.summary || 'Diagnosticar falha de validacao da implementacao.',
+        validation_summary: validationSummary,
+        error_logs: JSON.stringify(validationSummary, null, 2),
+        current_implementation_context: {
+          featureKey: technicalSpec?.featureKey || null,
+          frontend: {
+            featurePath: technicalSpec?.frontend?.featurePath || null,
+            route: technicalSpec?.frontend?.suggestedRoute || null,
+          },
+          backend: {
+            modulePath: technicalSpec?.backend?.modulePath || null,
+            routeBase: technicalSpec?.backend?.routeBase || null,
+          },
+          shared: {
+            contractPath: technicalSpec?.shared?.contractPath || null,
+          },
+        },
+        file_context: {
+          frontendFiles: technicalSpec?.frontend?.files || [],
+          backendFiles: technicalSpec?.backend?.files || [],
+          sharedFiles: technicalSpec?.shared?.files || [],
+          databaseFiles: technicalSpec?.database?.files || [],
+        },
+      });
+
+      if (debugReport && typeof debugReport === 'object') {
+        debugDiagnosis = {
+          diagnostic: debugReport.diagnostic || null,
+          rootCause: debugReport.rootCause || null,
+          suggestedFix: debugReport.suggestedFix || null,
+          affectedFiles: Array.isArray(debugReport.affectedFiles) ? debugReport.affectedFiles : [],
+          source: debugReport.source || 'debug_agent',
+          findings: Array.isArray(debugReport.findings) ? debugReport.findings : [],
+        };
+      }
+
+      if (debugReport?.findings?.length) {
+        console.log(`[Self-Healing] DebugAgent encontrou ${debugReport.findings.length} causas raiz.`);
+        findings.push(
+          ...debugReport.findings
+            .slice(0, 6)
+            .map((finding) => ({
+              code: finding.code || 'debug_agent_finding',
+              severity: finding.severity || 'critical',
+              filePath: finding.filePath || '',
+              message: finding.message || finding.suggestedFix || debugReport.diagnostic || 'Falha de validacao detectada pelo debug_agent.',
+              source: 'debug_agent',
+              suggestedFix: finding.suggestedFix || debugReport.suggestedFix || null,
+            }))
+        );
+      }
+    } catch (err) {
+      console.error('[Self-Healing] Falha ao invocar DebugAgent:', err.message);
+    }
+  }
+
+  const repairScope = inferRepairScope({ findings, specialistFindings, validationFailures });
+  const baseContext = {
     attemptNumber,
     reviewStatus: reviewReport?.summary?.status || 'unknown',
     reviewScore: reviewReport?.summary?.score ?? null,
@@ -1689,9 +2134,21 @@ function buildRepairContext({ reviewReport, specialistReviewReport, validationSu
       'unknown',
     materialization:
       technicalSpec?.autonomousMaterialization || null,
-    repairStyle: resolveRepairStyle({ technicalSpec, findings, specialistFindings, validationFailures }),
-    repairScope: inferRepairScope({ findings, specialistFindings, validationFailures }),
+    debugDiagnosis,
+    repairScope,
+    enforcementDirective: forcedDirective || null,
   };
+
+  const currentImplementationContext = buildAutonomousCurrentImplementationContext(technicalSpec);
+  baseContext.executionFocus = inferRepairExecutionFocus(baseContext, currentImplementationContext);
+  baseContext.repairLearning = await loadRecentRepairLearningSignals(projectId, baseContext);
+  baseContext.adaptiveDirective = resolveAdaptiveRepairDirective(baseContext, baseContext.repairLearning);
+  baseContext.repairStyle =
+    forcedDirective?.nextRepairStyle ||
+    baseContext.adaptiveDirective?.nextRepairStyle ||
+    resolveRepairStyle({ technicalSpec, findings, specialistFindings, validationFailures });
+
+  return baseContext;
 }
 
 function inferRepairScope({ findings = [], specialistFindings = [], validationFailures = [] }) {
@@ -1893,8 +2350,47 @@ function buildImplementationQualitySummary({ task, implementation, reviewArtifac
   const semanticScore = specialistReviewContent?.summary?.semanticScore ?? Math.max(0, 100 - semanticFindings.length * 25);
   const traceability = buildTraceabilitySummary(task, implementation, technicalSpecContent, expectedDomain, implementedDomain);
   const autonomousGeneration = buildAutonomousGenerationSummary(technicalSpecContent);
+  const executionStateContent = parseJsonArtifactContent(
+    implementation?.executionStateArtifact ||
+    implementation?.currentExecutionStateArtifact ||
+    null
+  );
+  const scopeAssessmentContent = parseJsonArtifactContent(
+    implementation?.repairScopeAssessmentArtifact ||
+    implementation?.currentRepairScopeAssessmentArtifact ||
+    null
+  );
+  const enforcementContent = parseJsonArtifactContent(
+    implementation?.repairEnforcementArtifact ||
+    implementation?.currentRepairEnforcementArtifact ||
+    null
+  );
   const findingsByLane = summarizeFindingsByLane(findings);
   const specialistFindingsByLane = summarizeFindingsByLane(specialistFindings);
+  const repairBehavior = {
+    writeSetStatus: scopeAssessmentContent?.scopeAssessment?.status || executionStateContent?.repairScopeAssessment?.status || 'unknown',
+    writeSetMode: scopeAssessmentContent?.scopeAssessment?.mode || executionStateContent?.repairScopeAssessment?.mode || 'unknown',
+    adherencePercent:
+      scopeAssessmentContent?.scopeAssessment?.adherencePercent ??
+      executionStateContent?.repairScopeAssessment?.adherencePercent ??
+      null,
+    outsideWriteSetCount:
+      scopeAssessmentContent?.scopeAssessment?.outsideWriteSet?.length ??
+      executionStateContent?.repairScopeAssessment?.outsideWriteSet?.length ??
+      0,
+    escalated: Boolean(
+      enforcementContent?.enforcementDirective ||
+      executionStateContent?.enforcementDirective
+    ),
+    nextRepairStyle:
+      enforcementContent?.enforcementDirective?.nextRepairStyle ||
+      executionStateContent?.enforcementDirective?.nextRepairStyle ||
+      null,
+    nextExecutor:
+      enforcementContent?.enforcementDirective?.nextExecutor ||
+      executionStateContent?.enforcementDirective?.nextExecutor ||
+      null,
+  };
   const premiumScore = Math.round(
     [
       score,
@@ -1905,6 +2401,8 @@ function buildImplementationQualitySummary({ task, implementation, reviewArtifac
       specialistReviewContent?.summary?.architectureScore ?? null,
       validationScore,
       traceability.traceabilityScore,
+      repairBehavior.adherencePercent,
+      repairBehavior.escalated ? 40 : 100,
     ]
       .filter((value) => value !== null && value !== undefined)
       .reduce((sum, value, _index, values) => sum + Number(value) / values.length, 0)
@@ -1923,6 +2421,7 @@ function buildImplementationQualitySummary({ task, implementation, reviewArtifac
     domainAligned: expectedDomain ? expectedDomain === implementedDomain : null,
     traceability,
     autonomousGeneration,
+    repairBehavior,
     verdict: reviewContent?.summary?.verdict || null,
     buildStatus: buildContent?.status || implementation?.buildStatus || 'unknown',
     testStatus: testContent?.status || implementation?.testStatus || 'unknown',
@@ -1955,6 +2454,7 @@ function classifyImplementationRisk({ generatedFiles = [], technicalSpec, qualit
   const highFindings = Number(qualitySummary?.findingsBySeverity?.high || 0);
   const validationFailed = qualitySummary?.buildStatus !== 'completed' || qualitySummary?.testStatus !== 'completed' || qualitySummary?.lintStatus !== 'completed';
   const traceabilityScore = Number(qualitySummary?.traceability?.traceabilityScore || 0);
+  const repairBehavior = qualitySummary?.repairBehavior || {};
 
   let score = 0;
   if (touchesDatabase) score += 3;
@@ -1967,6 +2467,9 @@ function classifyImplementationRisk({ generatedFiles = [], technicalSpec, qualit
   score += repairAttempts > 0 ? Math.min(3, repairAttempts) : 0;
   if (validationFailed) score += 3;
   if (traceabilityScore > 0 && traceabilityScore < 70) score += 2;
+  if (repairBehavior.writeSetStatus === 'expanded') score += 2;
+  if (repairBehavior.writeSetStatus === 'partial') score += 3;
+  if (repairBehavior.escalated) score += 2;
 
   const level = score >= 10 ? 'high' : score >= 5 ? 'medium' : 'low';
 
@@ -1984,6 +2487,8 @@ function classifyImplementationRisk({ generatedFiles = [], technicalSpec, qualit
       highFindings,
       validationFailed,
       traceabilityScore,
+      repairWriteSetStatus: repairBehavior.writeSetStatus || 'unknown',
+      repairEscalated: Boolean(repairBehavior.escalated),
     },
   };
 }
@@ -2105,6 +2610,9 @@ function buildImplementationDiffReview({ task, implementation, technicalSpec, qu
       specialistScore: qualitySummary?.specialistScore ?? null,
       validationScore: qualitySummary?.validationScore ?? null,
       traceabilityScore: qualitySummary?.traceability?.traceabilityScore ?? null,
+      repairWriteSetStatus: qualitySummary?.repairBehavior?.writeSetStatus || 'unknown',
+      repairAdherencePercent: qualitySummary?.repairBehavior?.adherencePercent ?? null,
+      repairEscalated: Boolean(qualitySummary?.repairBehavior?.escalated),
       repairAttempts,
       laneRisks,
       laneRecommendations,
@@ -2784,6 +3292,103 @@ async function runSubAgentImplementationPipeline(task, technicalSpec, implementa
   return runImplementationPipeline(payload, { envOverrides });
 }
 
+function buildSchemaAgentSeedFromTechnicalSpec(technicalSpec = {}) {
+  return {
+    entityName: technicalSpec?.entityName || technicalSpec?.database?.modelName || 'GeneratedItem',
+    prismaFields: Array.isArray(technicalSpec?.database?.fields)
+      ? technicalSpec.database.fields.map((field) => ({
+          name: field.name,
+          type: field.prismaType || field.tsType || 'String',
+          required: field.required !== false,
+          default: field.defaultValue ?? null,
+        }))
+      : [],
+    contracts: {
+      request: technicalSpec?.shared?.requestContractName || null,
+      response: technicalSpec?.shared?.responseContractName || null,
+      list: technicalSpec?.shared?.listContractName || null,
+    },
+    domainSummary: technicalSpec?.summary || null,
+  };
+}
+
+function resolveRepairExecutor(repairContext = {}) {
+  return (
+    repairContext?.adaptiveDirective?.nextExecutor ||
+    resolveRepairExecutorByFailureSignature(repairContext)
+  );
+}
+
+async function runFrontendRepairAgent(task, technicalSpec, implementationManifest, userUuid = null, repairContext = null) {
+  const currentImplementationContext = buildAutonomousCurrentImplementationContext(technicalSpec);
+  const payload = {
+    project_id: task.project?.uuid,
+    task_uuid: task.uuid,
+    idea: task.title,
+    technical_spec: technicalSpec,
+    frontend_spec: technicalSpec?.frontend || {},
+    schema_output: buildSchemaAgentSeedFromTechnicalSpec(technicalSpec),
+    current_implementation_context: currentImplementationContext,
+    repair_context: compactRepairContext(repairContext, currentImplementationContext),
+  };
+  const envOverrides = userUuid
+    ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'frontend_agent' })
+    : {};
+  const draft = await runSingleAgent('frontend_agent', payload, { envOverrides });
+  if (!draft || typeof draft !== 'object') return null;
+  return {
+    frontend: {
+      ...draft,
+      fileSources: {
+        pageTsxTemplate: 'llm_primary',
+        serviceTsTemplate: 'llm_primary',
+        indexTsTemplate: 'llm_primary',
+      },
+    },
+    generationSource: 'frontend_agent_repair',
+    materialization: {
+      generationSource: 'frontend_agent_repair',
+      llmFileCount: 3,
+      fallbackFileCount: 0,
+    },
+  };
+}
+
+async function runBackendRepairAgent(task, technicalSpec, implementationManifest, userUuid = null, repairContext = null) {
+  const currentImplementationContext = buildAutonomousCurrentImplementationContext(technicalSpec);
+  const payload = {
+    project_id: task.project?.uuid,
+    task_uuid: task.uuid,
+    idea: task.title,
+    technical_spec: technicalSpec,
+    backend_spec: technicalSpec?.backend || {},
+    schema_output: buildSchemaAgentSeedFromTechnicalSpec(technicalSpec),
+    current_implementation_context: currentImplementationContext,
+    repair_context: compactRepairContext(repairContext, currentImplementationContext),
+  };
+  const envOverrides = userUuid
+    ? await buildRuntimeAiEnvForUser(userUuid, { agentName: 'backend_agent' })
+    : {};
+  const draft = await runSingleAgent('backend_agent', payload, { envOverrides });
+  if (!draft || typeof draft !== 'object') return null;
+  return {
+    backend: {
+      ...draft,
+      fileSources: {
+        serviceTsTemplate: 'llm_primary',
+        routerTsTemplate: 'llm_primary',
+        indexTsTemplate: 'llm_primary',
+      },
+    },
+    generationSource: 'backend_agent_repair',
+    materialization: {
+      generationSource: 'backend_agent_repair',
+      llmFileCount: 3,
+      fallbackFileCount: 0,
+    },
+  };
+}
+
 async function runAutonomousImplementationAgent(task, technicalSpec, implementationManifest, userUuid = null, repairContext = null) {
   if (implementationManifest?.execution?.mode !== 'autonomous') {
     return null;
@@ -2814,6 +3419,26 @@ async function runAutonomousImplementationAgent(task, technicalSpec, implementat
     : {};
 
   return runSingleAgent('implementation_autonomous_agent', payload, { envOverrides });
+}
+
+async function runRepairExecutionAgent(task, technicalSpec, implementationManifest, userUuid = null, repairContext = null) {
+  const executor = repairContext?.enforcementDirective?.nextExecutor || resolveRepairExecutor(repairContext);
+
+  if (executor === 'sub_agent_pipeline') {
+    return runSubAgentImplementationPipeline(task, technicalSpec, implementationManifest, userUuid, repairContext);
+  }
+
+  if (executor === 'frontend_agent') {
+    const frontendDraft = await runFrontendRepairAgent(task, technicalSpec, implementationManifest, userUuid, repairContext);
+    if (frontendDraft) return frontendDraft;
+  }
+
+  if (executor === 'backend_agent') {
+    const backendDraft = await runBackendRepairAgent(task, technicalSpec, implementationManifest, userUuid, repairContext);
+    if (backendDraft) return backendDraft;
+  }
+
+  return runAutonomousImplementationAgent(task, technicalSpec, implementationManifest, userUuid, repairContext);
 }
 
 function buildAutonomousCurrentImplementationContext(technicalSpec = {}) {
@@ -6076,13 +6701,13 @@ const renderAutonomousTemplate = (template) =>
   const createStatusValue = hasDecisionAction ? `'draft'` : `'active'`;
   const createUpdatedAtField = hasTimelineRead || hasEvidenceIngest ? `\n      updatedAt: new Date().toISOString(),` : '';
   const routerActivityBody = hasTimelineRead
-    ? `\n${technicalSpec.backend.routerName}.get('/activity', (_req, res) => {\n  res.json(${technicalSpec.backend.serviceInstanceName}.activity());\n});\n`
+    ? `\n${technicalSpec.backend.routerName}.get('/activity', async (_req, res) => {\n  try {\n    const data = await ${technicalSpec.backend.serviceInstanceName}.activity();\n    res.json(data);\n  } catch (error) {\n    res.status(500).json({ message: 'Falha ao buscar atividade recente.' });\n  }\n});\n`
     : '';
   const routerDecisionBody = hasDecisionAction
-    ? `\n${technicalSpec.backend.routerName}.post('/:id/review', (req, res) => {\n  try {\n    const decision = String(req.body?.decision || 'approved') === 'rejected' ? 'rejected' : 'approved';\n    const reviewed = ${technicalSpec.backend.serviceInstanceName}.review(req.params.id, decision, String(req.body?.reviewerNote || ''));\n    res.json(reviewed);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao revisar registro.' });\n  }\n});\n`
+    ? `\n${technicalSpec.backend.routerName}.post('/:id/review', async (req, res) => {\n  try {\n    const decision = String(req.body?.decision || 'approved') === 'rejected' ? 'rejected' : 'approved';\n    const reviewed = await ${technicalSpec.backend.serviceInstanceName}.review(req.params.id, decision, String(req.body?.reviewerNote || ''));\n    res.json(reviewed);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao revisar registro.' });\n  }\n});\n`
     : '';
   const routerAttachmentBody = hasEvidenceIngest
-    ? `\n${technicalSpec.backend.routerName}.post('/:id/attachments', (req, res) => {\n  try {\n    const attached = ${technicalSpec.backend.serviceInstanceName}.attach(req.params.id, String(req.body?.attachmentName || 'Arquivo enviado'));\n    res.status(201).json(attached);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao anexar evidencia.' });\n  }\n});\n`
+    ? `\n${technicalSpec.backend.routerName}.post('/:id/attachments', async (req, res) => {\n  try {\n    const attached = await ${technicalSpec.backend.serviceInstanceName}.attach(req.params.id, String(req.body?.attachmentName || 'Arquivo enviado'));\n    res.status(201).json(attached);\n  } catch (error) {\n    res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao anexar evidencia.' });\n  }\n});\n`
     : '';
   const readmeOperationSummary = Object.entries(operationMap)
     .map(([name, mode]) => `- \`${name}\`: ${mode}`)
@@ -6101,7 +6726,7 @@ const renderAutonomousTemplate = (template) =>
       relativePath: `${technicalSpec.backend.modulePath}/service.ts`,
       content: autonomousBackendServiceTemplate
         ? renderAutonomousTemplate(autonomousBackendServiceTemplate)
-        : `import { PrismaClient } from '@prisma/client';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nconst prisma = new PrismaClient();\n\n${validateInputFunction}/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n${listImplementation}  async create(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n    const item = await prisma['${prismaModelIdVar}'].create({\n      data: {\n${responseFieldAssignments}\n        status: ${createStatusValue},\n      }\n    });\n    return item as unknown as ${technicalSpec.shared.responseContractName};\n  }\n\n${reviewMethod}${attachMethod}${activityMethod}}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\n`,
+        : `import { PrismaClient } from '@prisma/client';\nimport type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nconst prisma = new PrismaClient();\n\n${validateInputFunction}/**\n${businessRulesComment}\n */\nexport class ${technicalSpec.backend.serviceName} {\n${listImplementation}  async create(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n    const existingRecords = await prisma['${prismaModelIdVar}'].findMany({ orderBy: { createdAt: 'desc' } });\n${validateInputFunction ? `    validateInput(input, existingRecords as ${technicalSpec.shared.responseContractName}[]);\n` : ''}    const item = await prisma['${prismaModelIdVar}'].create({\n      data: {\n${responseFieldAssignments}\n        status: ${createStatusValue},${createUpdatedAtField}\n      }\n    });\n    return item as unknown as ${technicalSpec.shared.responseContractName};\n  }\n\n${reviewMethod}${attachMethod}${activityMethod}}\n\nexport const ${technicalSpec.backend.serviceInstanceName} = new ${technicalSpec.backend.serviceName}();\n`,
       fileType: 'ts',
     },
     {
@@ -6906,7 +7531,7 @@ function buildSyntheticTaskFromSpec(technicalSpec) {
 
 async function ensureValidationScripts(generatedAppRoot) {
   const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Conclua esta etapa/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\nconst hasPremiumShellSignals =\n  appContent.includes('AppFrame') &&\n  appContent.includes('AppHeader') &&\n  appContent.includes('SidebarNav') &&\n  appContent.includes('SurfaceCard') &&\n  appContent.includes('const routes = [');\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !hasPremiumShellSignals) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de navegacao estruturada entre as features.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem textos genericos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluido sem problemas.');\n`;
-  const testContent = `import { access, readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatorio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nasync function listFeatureDirs() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nasync function listDirectories(relativePath) {\n  try {\n    const entries = await readdir(path.join(root, relativePath), { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nconst requiredFiles = [\n  'apps/api/src/server.ts',\n  'apps/web/src/App.tsx',\n  'prisma/schema.prisma',\n];\n\nfor (const file of requiredFiles) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\nconst featureDirs = await listFeatureDirs();\nconst apiModuleDirs = await listDirectories('apps/api/src/modules');\nconst contractFiles = await readdir(path.join(root, 'packages', 'shared', 'src', 'contracts')).catch(() => []);\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nfor (const featureDir of featureDirs) {\n  const pagePath = \`apps/web/src/features/\${featureDir}/page.tsx\`;\n  const servicePath = \`apps/web/src/features/\${featureDir}/service.ts\`;\n  const apiRouterPath = \`apps/api/src/modules/\${featureDir}/router.ts\`;\n  const apiServicePath = \`apps/api/src/modules/\${featureDir}/service.ts\`;\n  const contractPath = \`packages/shared/src/contracts/\${featureDir}.ts\`;\n  await assertFile(pagePath);\n  await assertFile(servicePath);\n  await assertFile(apiRouterPath);\n  await assertFile(apiServicePath);\n  await assertFile(contractPath);\n\n  const pageContent = await readSafe(pagePath);\n  const routerContent = await readSafe(apiRouterPath);\n  const backendServiceContent = await readSafe(apiServicePath);\n  const contractContent = await readSafe(contractPath);\n  const importsSharedUi =\n    pageContent.includes('packages/ui/src/index.tsx') ||\n    pageContent.includes('/packages/ui/src/index.tsx');\n  if (!importsSharedUi) {\n    throw new Error(\`Feature \${featureDir} nao esta usando o design system compartilhado.\`);\n  }\n  if (!routerContent.includes(\".get('/',\") || !routerContent.includes(\".post('/',\")) {\n    throw new Error(\`Modulo \${featureDir} sem rotas GET/POST basicas.\`);\n  }\n  if (!backendServiceContent.includes('buildSeedRecordsFromTask')) {\n    throw new Error(\`Modulo \${featureDir} sem seeds basicos para validacao incremental.\`);\n  }\n  if (!/Request\\s*\\{/.test(contractContent) || !/Response\\s*\\{/.test(contractContent) || !/ListResponse\\s*\\{/.test(contractContent)) {\n    throw new Error(\`Contrato \${featureDir} sem Request/Response/ListResponse completos.\`);\n  }\n  const expectedModelName = contractContent.match(/export interface ([A-Za-z0-9]+)Request/)?.[1]?.replace(/Request$/, '');\n  if (expectedModelName && !schemaContent.includes(\`model \${expectedModelName} {\`)) {\n    throw new Error(\`Schema Prisma sem model esperado para \${featureDir}: \${expectedModelName}.\`);\n  }\n}\n\nconst frontendRoutes = [...appContent.matchAll(/path:\\s*'([^']+)'/g)].map((match) => match[1]);\nconst apiRoutes = [...serverContent.matchAll(/app\\.use\\('([^']+)'/g)].map((match) => match[1]);\n\nif (featureDirs.length && frontendRoutes.length < featureDirs.length) {\n  throw new Error('O frontend nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length && apiRoutes.length < featureDirs.length) {\n  throw new Error('A API nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length !== apiModuleDirs.length) {\n  throw new Error('Quantidade de features web difere da quantidade de modulos da API.');\n}\n\nif (featureDirs.length !== contractFiles.filter((file) => String(file).endsWith('.ts')).length) {\n  throw new Error('Quantidade de contratos compartilhados difere das features geradas.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nif (!/createdAt\\s+DateTime/.test(schemaContent) || !/updatedAt\\s+DateTime/.test(schemaContent)) {\n  throw new Error('Schema Prisma sem trilha minima de datas nas models geradas.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluidos com sucesso.');\n`;
+  const testContent = `import { access, readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatorio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nasync function listFeatureDirs() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nasync function listDirectories(relativePath) {\n  try {\n    const entries = await readdir(path.join(root, relativePath), { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nconst requiredFiles = [\n  'apps/api/src/server.ts',\n  'apps/web/src/App.tsx',\n  'prisma/schema.prisma',\n];\n\nfor (const file of requiredFiles) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\nconst featureDirs = await listFeatureDirs();\nconst apiModuleDirs = await listDirectories('apps/api/src/modules');\nconst contractFiles = await readdir(path.join(root, 'packages', 'shared', 'src', 'contracts')).catch(() => []);\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nfor (const featureDir of featureDirs) {\n  const pagePath = \`apps/web/src/features/\${featureDir}/page.tsx\`;\n  const servicePath = \`apps/web/src/features/\${featureDir}/service.ts\`;\n  const apiRouterPath = \`apps/api/src/modules/\${featureDir}/router.ts\`;\n  const apiServicePath = \`apps/api/src/modules/\${featureDir}/service.ts\`;\n  const contractPath = \`packages/shared/src/contracts/\${featureDir}.ts\`;\n  await assertFile(pagePath);\n  await assertFile(servicePath);\n  await assertFile(apiRouterPath);\n  await assertFile(apiServicePath);\n  await assertFile(contractPath);\n\n  const pageContent = await readSafe(pagePath);\n  const routerContent = await readSafe(apiRouterPath);\n  const backendServiceContent = await readSafe(apiServicePath);\n  const contractContent = await readSafe(contractPath);\n  const importsSharedUi =\n    pageContent.includes('packages/ui/src/index.tsx') ||\n    pageContent.includes('/packages/ui/src/index.tsx');\n  if (!importsSharedUi) {\n    throw new Error(\`Feature \${featureDir} nao esta usando o design system compartilhado.\`);\n  }\n  if (!routerContent.includes(\".get('/',\") || !routerContent.includes(\".post('/',\")) {\n    throw new Error(\`Modulo \${featureDir} sem rotas GET/POST basicas.\`);\n  }\n  if (!backendServiceContent.includes(\"from '@prisma/client'\") || !backendServiceContent.includes('const prisma = new PrismaClient()')) {\n    throw new Error(\`Modulo \${featureDir} nao esta usando Prisma Client no service.\`);\n  }\n  if (/const\\s+records\\s*=\\s*\\[\\]/.test(backendServiceContent)) {\n    throw new Error(\`Modulo \${featureDir} ainda contem armazenamento em memoria e precisa persistir com Prisma.\`);\n  }\n  if (!/Request\\s*\\{/.test(contractContent) || !/Response\\s*\\{/.test(contractContent) || !/ListResponse\\s*\\{/.test(contractContent)) {\n    throw new Error(\`Contrato \${featureDir} sem Request/Response/ListResponse completos.\`);\n  }\n  const expectedModelName = contractContent.match(/export interface ([A-Za-z0-9]+)Request/)?.[1]?.replace(/Request$/, '');\n  if (expectedModelName && !schemaContent.includes(\`model \${expectedModelName} {\`)) {\n    throw new Error(\`Schema Prisma sem model esperado para \${featureDir}: \${expectedModelName}.\`);\n  }\n}\n\nconst frontendRoutes = [...appContent.matchAll(/path:\\s*'([^']+)'/g)].map((match) => match[1]);\nconst apiRoutes = [...serverContent.matchAll(/app\\.use\\('([^']+)'/g)].map((match) => match[1]);\n\nif (featureDirs.length && frontendRoutes.length < featureDirs.length) {\n  throw new Error('O frontend nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length && apiRoutes.length < featureDirs.length) {\n  throw new Error('A API nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length !== apiModuleDirs.length) {\n  throw new Error('Quantidade de features web difere da quantidade de modulos da API.');\n}\n\nif (featureDirs.length !== contractFiles.filter((file) => String(file).endsWith('.ts')).length) {\n  throw new Error('Quantidade de contratos compartilhados difere das features geradas.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nif (!/createdAt\\s+DateTime/.test(schemaContent) || !/updatedAt\\s+DateTime/.test(schemaContent)) {\n  throw new Error('Schema Prisma sem trilha minima de datas nas models geradas.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluidos com sucesso.');\n`;
 
   return [
     {
@@ -8048,12 +8673,188 @@ async function createRepairAttemptArtifact(task, implementation, technicalSpec, 
         implementationId: String(implementation.id),
         featureKey: technicalSpec.featureKey,
         generatedAt: new Date().toISOString(),
-        repairContext: compactRepairContext(repairContext),
+        repairContext: compactRepairContext(
+          repairContext,
+          buildAutonomousCurrentImplementationContext(technicalSpec)
+        ),
       },
       null,
       2
     ),
     'implementation_repairer',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation.id,
+    }
+  );
+}
+
+async function createDebugDiagnosisArtifact(task, implementation, technicalSpec, repairContext) {
+  if (!repairContext?.debugDiagnosis) {
+    return null;
+  }
+
+  return createCurrentArtifact(
+    task.id,
+    `Implementation Debug Diagnosis - ${task.title}`,
+    JSON.stringify(
+      {
+        version: 1,
+        taskUuid: task.uuid,
+        implementationId: String(implementation.id),
+        featureKey: technicalSpec.featureKey,
+        generatedAt: new Date().toISOString(),
+        diagnosis: repairContext.debugDiagnosis,
+        executionFocus: compactRepairContext(
+          repairContext,
+          buildAutonomousCurrentImplementationContext(technicalSpec)
+        )?.executionFocus || null,
+      },
+      null,
+      2
+    ),
+    'debug_agent',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation.id,
+    }
+  );
+}
+
+async function createRepairLearningArtifact(task, implementation, technicalSpec, repairContext) {
+  if (!repairContext?.adaptiveDirective && !repairContext?.repairLearning) {
+    return null;
+  }
+
+  return createCurrentArtifact(
+    task.id,
+    `Implementation Repair Learning - ${task.title}`,
+    JSON.stringify(
+      {
+        version: 1,
+        taskUuid: task.uuid,
+        implementationId: String(implementation.id),
+        featureKey: technicalSpec.featureKey,
+        generatedAt: new Date().toISOString(),
+        adaptiveDirective: repairContext.adaptiveDirective || null,
+        repairLearning: compactRepairContext(
+          repairContext,
+          buildAutonomousCurrentImplementationContext(technicalSpec)
+        )?.repairLearning || null,
+      },
+      null,
+      2
+    ),
+    'implementation_orchestrator',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation.id,
+    }
+  );
+}
+
+function assessRepairWriteSetCompliance(repairContext, touchedFiles = []) {
+  const executionFocus = repairContext?.executionFocus || compactRepairContext(repairContext)?.executionFocus || null;
+  const normalizedTouched = touchedFiles
+    .map((file) => String(file?.relativePath || file?.filePath || '').replace(/\\/g, '/'))
+    .filter(Boolean);
+
+  const expectedFocusFiles = Array.isArray(executionFocus?.focusFiles)
+    ? executionFocus.focusFiles.map((item) => String(item.relativePath || '').replace(/\\/g, '/')).filter(Boolean)
+    : [];
+  const allowedFileKeys = Array.isArray(executionFocus?.writeSet?.fileKeys) ? executionFocus.writeSet.fileKeys : [];
+
+  if (!expectedFocusFiles.length) {
+    return {
+      status: 'unscoped',
+      mode: executionFocus?.writeSet?.mode || 'unknown',
+      expectedFocusFiles,
+      allowedFileKeys,
+      touchedFiles: normalizedTouched,
+      outsideWriteSet: [],
+      adherencePercent: null,
+    };
+  }
+
+  const expectedSet = new Set(expectedFocusFiles);
+  const touchedSet = new Set(normalizedTouched);
+  const insideWriteSet = normalizedTouched.filter((file) => expectedSet.has(file));
+  const outsideWriteSet = normalizedTouched.filter((file) => !expectedSet.has(file));
+  const adherencePercent = normalizedTouched.length
+    ? Math.round((insideWriteSet.length / normalizedTouched.length) * 100)
+    : 0;
+
+  const status = !outsideWriteSet.length
+    ? 'compliant'
+    : executionFocus?.writeSet?.mode === 'local_patch'
+      ? 'expanded'
+      : 'partial';
+
+  return {
+    status,
+    mode: executionFocus?.writeSet?.mode || 'unknown',
+    expectedFocusFiles,
+    allowedFileKeys,
+    touchedFiles: normalizedTouched,
+    insideWriteSet,
+    outsideWriteSet,
+    adherencePercent,
+  };
+}
+
+async function createRepairScopeAssessmentArtifact(task, implementation, technicalSpec, repairContext, scopeAssessment) {
+  return createCurrentArtifact(
+    task.id,
+    `Implementation Repair Scope Assessment - ${task.title}`,
+    JSON.stringify(
+      {
+        version: 1,
+        taskUuid: task.uuid,
+        implementationId: String(implementation.id),
+        featureKey: technicalSpec.featureKey,
+        generatedAt: new Date().toISOString(),
+        executor: resolveRepairExecutor(
+          compactRepairContext(repairContext, buildAutonomousCurrentImplementationContext(technicalSpec))
+        ),
+        scopeAssessment,
+      },
+      null,
+      2
+    ),
+    'implementation_orchestrator',
+    {
+      artifactScope: 'implementation',
+      taskImplementationId: implementation.id,
+    }
+  );
+}
+
+async function createRepairEnforcementArtifact(task, implementation, technicalSpec, repairContext, enforcementDirective, scopeAssessment) {
+  if (!enforcementDirective) {
+    return null;
+  }
+
+  return createCurrentArtifact(
+    task.id,
+    `Implementation Repair Enforcement - ${task.title}`,
+    JSON.stringify(
+      {
+        version: 1,
+        taskUuid: task.uuid,
+        implementationId: String(implementation.id),
+        featureKey: technicalSpec.featureKey,
+        generatedAt: new Date().toISOString(),
+        enforcementDirective,
+        scopeAssessment,
+        executionFocus: compactRepairContext(
+          repairContext,
+          buildAutonomousCurrentImplementationContext(technicalSpec)
+        )?.executionFocus || null,
+      },
+      null,
+      2
+    ),
+    'implementation_orchestrator',
     {
       artifactScope: 'implementation',
       taskImplementationId: implementation.id,
@@ -8849,7 +9650,8 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
         const failedLane = backendQuickValidation.status !== 'completed' ? 'backend' : 'frontend';
         const failedReport = failedLane === 'backend' ? backendQuickValidation : frontendQuickValidation;
         const failedScript = failedReport?.scriptName || (failedLane === 'backend' ? 'build:api' : 'build:web');
-        throw new Error(`A implementacao incremental do ${failedLane} falhou em ${failedScript}.`);
+        // Nivel Antigravity: Nao paramos mais aqui. Deixamos o ciclo de qualidade capturar e o DebugAgent agir.
+        console.warn(`[Self-Healing] Quick validation falhou em ${failedLane}/${failedScript}. Proceeding to repair cycle.`);
       }
 
       await persistImplementationExecutionState(task, implementation, {
@@ -8885,6 +9687,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
       technicalSpec,
       generatedApp,
     });
+    let forcedRepairDirective = null;
 
     for (let attemptIndex = 1; attemptIndex <= maxRepairAttempts; attemptIndex += 1) {
       const cyclePassed =
@@ -8896,14 +9699,18 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
         break;
       }
 
-      const repairContext = buildRepairContext({
+      const repairContext = await buildRepairContext({
         reviewReport: cycleResult.reviewReport,
         specialistReviewReport: cycleResult.specialistReviewReport,
         validationSummary: cycleResult.validationSuite.summary,
         attemptNumber: attemptIndex,
         technicalSpec,
+        projectId: task.projectId,
+        forcedDirective: forcedRepairDirective,
       });
 
+      await createDebugDiagnosisArtifact(task, implementation, technicalSpec, repairContext);
+      await createRepairLearningArtifact(task, implementation, technicalSpec, repairContext);
       await createRepairAttemptArtifact(task, implementation, technicalSpec, repairContext);
       repairAttempts.push(repairContext);
 
@@ -8918,6 +9725,10 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
           .slice(0, 3)
           .map((item) => `${item.severity}: ${item.message}`)),
           `Estilo: ${repairContext.repairStyle || 'iterative'}`,
+          `Executor: ${resolveRepairExecutor(compactRepairContext(repairContext, buildAutonomousCurrentImplementationContext(technicalSpec)))}`,
+          repairContext.adaptiveDirective?.reason
+            ? `Aprendizado: ${repairContext.adaptiveDirective.reason}`
+            : 'Aprendizado: sem ajuste adaptativo.',
           `Escopo: ${(repairContext.repairScope?.workstreamIds || []).join(', ') || 'persistence_and_docs'}`,
         ],
         repairScope: repairContext.repairScope || null,
@@ -8927,7 +9738,10 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
       });
 
       if (implementationManifest?.execution?.mode === 'autonomous' && repairContext.repairStyle === 'iterative') {
-        const autonomousRepairDraft = await runAutonomousImplementationAgent(
+        const repairExecutor = resolveRepairExecutor(
+          compactRepairContext(repairContext, buildAutonomousCurrentImplementationContext(technicalSpec))
+        );
+        const autonomousRepairDraft = await runRepairExecutionAgent(
           task,
           technicalSpec,
           implementationManifest,
@@ -8939,9 +9753,9 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
           implementationManifest = buildImplementationManifest(task, technicalSpec);
           await createCurrentArtifact(
             task.id,
-            `Autonomous Implementation Repair Draft - ${task.title}`,
+            `Implementation Repair Draft - ${task.title}`,
             JSON.stringify(autonomousRepairDraft, null, 2),
-            'implementation_autonomous_agent',
+            repairExecutor,
             {
               taskImplementationId: implementation.id,
               artifactScope: 'implementation',
@@ -8966,15 +9780,47 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
       const repairWorkstreamIds = repairContext.repairScope?.workstreamIds?.length
         ? repairContext.repairScope.workstreamIds
         : ['persistence_and_docs'];
+      const repairedFiles = await materializeImplementationFiles({
+        task,
+        implementation,
+        technicalSpec,
+        generatedApp,
+        workstreamIds: repairWorkstreamIds,
+      });
+      const repairScopeAssessment = assessRepairWriteSetCompliance(repairContext, repairedFiles);
+      const nextRepairDirective = resolveRepairEnforcementDirective(repairContext, repairScopeAssessment);
+      await createRepairScopeAssessmentArtifact(task, implementation, technicalSpec, repairContext, repairScopeAssessment);
+      await createRepairEnforcementArtifact(task, implementation, technicalSpec, repairContext, nextRepairDirective, repairScopeAssessment);
+      await persistImplementationExecutionState(task, implementation, {
+        phase: 'repair',
+        phaseLabel: 'Reparo incremental',
+        progressPercent: Math.min(94, 72 + attemptIndex * 8),
+        status: 'in_progress',
+        headline: `Reparo ${attemptIndex}/${maxRepairAttempts} materializado e avaliado.`,
+        notes: [
+          `Executor: ${resolveRepairExecutor(compactRepairContext(repairContext, buildAutonomousCurrentImplementationContext(technicalSpec)))}`,
+          `Write set: ${repairScopeAssessment.status}`,
+          repairScopeAssessment.adherencePercent == null
+            ? 'Aderencia: n/a'
+            : `Aderencia: ${repairScopeAssessment.adherencePercent}%`,
+          nextRepairDirective
+            ? `Escalada: ${nextRepairDirective.nextRepairStyle} via ${nextRepairDirective.nextExecutor}`
+            : 'Sem escalada de repair.',
+          repairScopeAssessment.outsideWriteSet.length
+            ? `Fora do escopo: ${repairScopeAssessment.outsideWriteSet.slice(0, 3).join(', ')}`
+            : 'Sem arquivos fora do escopo esperado.',
+        ],
+        repairScope: repairContext.repairScope || null,
+        repairStyle: repairContext.repairStyle || null,
+        generationSource: repairContext.generationSource || null,
+        repairScopeAssessment,
+        enforcementDirective: nextRepairDirective,
+        ...getWorkstreamExecutionState(implementationPlanContent, 'integration_and_validation'),
+      });
+      forcedRepairDirective = nextRepairDirective;
       generatedFiles = [
         ...generatedFiles.filter((file) => !repairWorkstreamIds.includes(file.workstreamId)),
-        ...(await materializeImplementationFiles({
-          task,
-          implementation,
-          technicalSpec,
-          generatedApp,
-          workstreamIds: repairWorkstreamIds,
-        })),
+        ...repairedFiles,
       ];
       cycleResult = await executeImplementationQualityCycle({
         task,
@@ -9033,7 +9879,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
           cycleResult.validationSuite.summary.lintStatus === 'completed'
             ? 'completed'
             : 'failed',
-        summary: `Integracao aplicada com arquivos reais:\n${createdPaths}\n\nReview score: ${cycleResult.reviewReport.summary.score}\nUX score: ${cycleResult.reviewReport.summary.uxScore}\nConsistency score: ${cycleResult.reviewReport.summary.consistencyScore}\nSpecialist score: ${cycleResult.specialistReviewReport.summary.score}\nSpecialist architecture score: ${cycleResult.specialistReviewReport.summary.architectureScore}\nValidation score: ${cycleResult.validationSuite.summary.validationScore}\nReview status: ${cycleResult.reviewReport.summary.status}\nSpecialist status: ${cycleResult.specialistReviewReport.summary.status}\nValidation status: ${cycleResult.validationSuite.summary.status}\nLint: ${cycleResult.validationSuite.summary.lintStatus}\nTest: ${cycleResult.validationSuite.summary.testStatus}\nBuild: ${cycleResult.validationSuite.summary.buildStatus}\nRepair attempts: ${repairAttempts.length}`,
+        summary: `Integracao aplicada com arquivos reais:\n${createdPaths}\n\nReview score: ${cycleResult.reviewReport.summary.score}\nUX score: ${cycleResult.reviewReport.summary.uxScore}\nConsistency score: ${cycleResult.reviewReport.summary.consistencyScore}\nSpecialist score: ${cycleResult.specialistReviewReport.summary.score}\nSpecialist architecture score: ${cycleResult.specialistReviewReport.summary.architectureScore}\nValidation score: ${cycleResult.validationSuite.summary.validationScore}\nReview status: ${cycleResult.reviewReport.summary.status}\nSpecialist status: ${cycleResult.specialistReviewReport.summary.status}\nValidation status: ${cycleResult.validationSuite.summary.status}\nLint: ${cycleResult.validationSuite.summary.lintStatus}\nTest: ${cycleResult.validationSuite.summary.testStatus}\nBuild: ${cycleResult.validationSuite.summary.buildStatus}\nRepair attempts: ${repairAttempts.length}\nRepair write set: ${qualitySummary.repairBehavior?.writeSetStatus || 'unknown'}\nRepair adherence: ${qualitySummary.repairBehavior?.adherencePercent ?? 'n/a'}\nRepair escalated: ${qualitySummary.repairBehavior?.escalated ? 'yes' : 'no'}`,
       },
     });
 
@@ -9042,7 +9888,7 @@ export async function runTaskImplementation(taskUuid, userUuid = null, options =
       data: {
         status: finalSucceeded ? 'completed' : 'failed',
         finishedAt: new Date(),
-        logSummary: `Integracao incremental aplicada para ${task.uuid} | validation=${cycleResult.validationSuite.summary.status} | repairAttempts=${repairAttempts.length}`,
+        logSummary: `Integracao incremental aplicada para ${task.uuid} | validation=${cycleResult.validationSuite.summary.status} | repairAttempts=${repairAttempts.length} | writeSet=${qualitySummary.repairBehavior?.writeSetStatus || 'unknown'} | escalated=${qualitySummary.repairBehavior?.escalated ? 'yes' : 'no'}`,
       },
     });
   } catch (error) {
@@ -9176,6 +10022,46 @@ export async function getTaskImplementationStatus(taskUuid) {
     orderBy: { createdAt: 'desc' },
   });
 
+  const repairScopeAssessmentArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      title: `Implementation Repair Scope Assessment - ${task.title}`,
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const repairEnforcementArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      title: `Implementation Repair Enforcement - ${task.title}`,
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const debugDiagnosisArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      title: `Implementation Debug Diagnosis - ${task.title}`,
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const repairLearningArtifact = await prisma.taskArtifact.findFirst({
+    where: {
+      taskId: task.id,
+      title: `Implementation Repair Learning - ${task.title}`,
+      artifactScope: 'implementation',
+      isCurrent: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
   const diffReviewArtifact = await prisma.taskArtifact.findFirst({
     where: {
       taskId: task.id,
@@ -9218,7 +10104,12 @@ export async function getTaskImplementationStatus(taskUuid) {
 
   const qualitySummary = buildImplementationQualitySummary({
     task,
-    implementation,
+    implementation: {
+      ...implementation,
+      currentExecutionStateArtifact: executionStateArtifact,
+      currentRepairScopeAssessmentArtifact: repairScopeAssessmentArtifact,
+      currentRepairEnforcementArtifact: repairEnforcementArtifact,
+    },
     reviewArtifact,
     specialistReviewArtifact,
     buildReportArtifact,
@@ -9230,6 +10121,13 @@ export async function getTaskImplementationStatus(taskUuid) {
     parseJsonArtifactContent(implementation.technicalSpecArtifact),
     qualitySummary
   );
+  const repairTelemetry = buildRepairTelemetrySummary({
+    executionStateArtifact,
+    repairScopeAssessmentArtifact,
+    repairEnforcementArtifact,
+    debugDiagnosisArtifact,
+    repairLearningArtifact,
+  });
 
   return {
     ...implementation,
@@ -9239,6 +10137,10 @@ export async function getTaskImplementationStatus(taskUuid) {
     strategyArtifact,
     impactArtifact,
     executionStateArtifact,
+    repairScopeAssessmentArtifact,
+    repairEnforcementArtifact,
+    debugDiagnosisArtifact,
+    repairLearningArtifact,
     diffReviewArtifact,
     buildReportArtifact,
     testReportArtifact,
@@ -9248,6 +10150,82 @@ export async function getTaskImplementationStatus(taskUuid) {
       benchmark: benchmarkSummary,
     },
     autonomySummary: qualitySummary.autonomousGeneration,
+    repairTelemetry,
+  };
+}
+
+export async function getProjectImplementationOverview(projectUuid, userUuid = null) {
+  const tasks = await listProjectTasks(projectUuid, {}, userUuid);
+  const implementationStatuses = await Promise.all(
+    tasks.map((task) =>
+      getTaskImplementationStatus(task.uuid).catch(() => null)
+    )
+  );
+
+  const implementations = implementationStatuses.filter(Boolean);
+  const repairEnabled = implementations.filter((item) => item?.repairTelemetry);
+  const numericAdherence = repairEnabled
+    .map((item) => Number(item.repairTelemetry?.adherencePercent))
+    .filter((value) => Number.isFinite(value));
+
+  const statusCounts = implementations.reduce((acc, implementation) => {
+    const key = implementation.status || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const writeSetCounts = repairEnabled.reduce((acc, implementation) => {
+    const key = implementation.repairTelemetry?.writeSetStatus || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const rootCauseCounts = repairEnabled.reduce((acc, implementation) => {
+    const key = implementation.repairTelemetry?.rootCause || null;
+    if (!key) return acc;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const executorCounts = repairEnabled.reduce((acc, implementation) => {
+    const key = implementation.repairTelemetry?.nextExecutor || 'unspecified';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const withEscalation = repairEnabled.filter((item) => item.repairTelemetry?.escalated).length;
+  const compliantCount = writeSetCounts.compliant || 0;
+  const expandedCount = writeSetCounts.expanded || 0;
+  const partialCount = writeSetCounts.partial || 0;
+  const unscopedCount = writeSetCounts.unscoped || 0;
+  const averageAdherencePercent =
+    numericAdherence.length > 0
+      ? Math.round(numericAdherence.reduce((sum, value) => sum + value, 0) / numericAdherence.length)
+      : null;
+
+  return {
+    projectUuid,
+    totalTasks: tasks.length,
+    totalImplementations: implementations.length,
+    tasksWithRepairTelemetry: repairEnabled.length,
+    statusCounts,
+    repairSummary: {
+      compliantCount,
+      expandedCount,
+      partialCount,
+      unscopedCount,
+      escalatedCount: withEscalation,
+      averageAdherencePercent,
+      localRepairRatePercent: repairEnabled.length ? Math.round((compliantCount / repairEnabled.length) * 100) : null,
+      escalatedRatePercent: repairEnabled.length ? Math.round((withEscalation / repairEnabled.length) * 100) : null,
+    },
+    topRootCauses: Object.entries(rootCauseCounts)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 5)
+      .map(([rootCause, count]) => ({ rootCause, count })),
+    executorMix: Object.entries(executorCounts)
+      .sort((left, right) => right[1] - left[1])
+      .map(([executor, count]) => ({ executor, count })),
   };
 }
 

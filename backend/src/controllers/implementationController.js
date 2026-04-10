@@ -1,6 +1,7 @@
 import {
   bootstrapGeneratedApp,
   getGeneratedAppByProjectUuid,
+  getProjectImplementationOverview,
   getTaskImplementationStatus,
   listGeneratedAppFiles,
   planTaskImplementation,
@@ -30,6 +31,16 @@ export async function getGeneratedAppController(req, res, next) {
     }
 
     res.json(serializeBigInts(generatedApp));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getProjectImplementationOverviewController(req, res, next) {
+  try {
+    await assertProjectAccess(req.params.projectUuid, req.authUser.uuid);
+    const overview = await getProjectImplementationOverview(req.params.projectUuid, req.authUser.uuid);
+    res.json(serializeBigInts(overview));
   } catch (error) {
     next(error);
   }

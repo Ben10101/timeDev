@@ -71,6 +71,24 @@ function countDriftFlags(frequencies, driftFlags = []) {
   }
 }
 
+function normalizeRepairTelemetryArtifacts(artifacts = {}) {
+  const executionState = artifacts.executionState || null;
+  const scopeAssessment = artifacts.repairScopeAssessment || executionState?.repairScopeAssessment || null;
+  const enforcement = artifacts.repairEnforcement || null;
+  const diagnosis = artifacts.debugDiagnosis?.diagnosis || artifacts.debugDiagnosis || null;
+
+  return {
+    writeSetStatus: scopeAssessment?.status || 'unknown',
+    adherencePercent:
+      scopeAssessment?.adherencePercent !== undefined && scopeAssessment?.adherencePercent !== null
+        ? Number(scopeAssessment.adherencePercent)
+        : null,
+    escalated: Boolean(enforcement?.enforcementDirective),
+    rootCause: diagnosis?.rootCause || null,
+    nextExecutor: enforcement?.enforcementDirective?.nextExecutor || null,
+  };
+}
+
 export async function getOperationalHealth() {
   let database = 'degraded';
   try {
@@ -516,6 +534,9 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
           OR: [
             { title: { startsWith: 'Implementation Diff Review - ' } },
             { title: { startsWith: 'Implementation Execution State - ' } },
+            { title: { startsWith: 'Implementation Repair Scope Assessment - ' } },
+            { title: { startsWith: 'Implementation Repair Enforcement - ' } },
+            { title: { startsWith: 'Implementation Debug Diagnosis - ' } },
           ],
         },
         select: {
@@ -533,6 +554,15 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
     }
     if (artifact.title.startsWith('Implementation Execution State - ')) {
       current.executionState = parseJsonContent(artifact.content);
+    }
+    if (artifact.title.startsWith('Implementation Repair Scope Assessment - ')) {
+      current.repairScopeAssessment = parseJsonContent(artifact.content)?.scopeAssessment || null;
+    }
+    if (artifact.title.startsWith('Implementation Repair Enforcement - ')) {
+      current.repairEnforcement = parseJsonContent(artifact.content);
+    }
+    if (artifact.title.startsWith('Implementation Debug Diagnosis - ')) {
+      current.debugDiagnosis = parseJsonContent(artifact.content);
     }
     acc.set(artifact.taskImplementationId, current);
     return acc;
@@ -603,6 +633,52 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
         .slice(0, 3),
     };
   });
+
+  const repairSnapshots = taskImplementations
+    .map((implementation) => {
+      const artifacts = implementationArtifactsById.get(implementation.id) || {};
+      return normalizeRepairTelemetryArtifacts(artifacts);
+    })
+    .filter((item) => item.writeSetStatus !== 'unknown' || item.rootCause || item.nextExecutor);
+
+  const rootCauseCounts = repairSnapshots.reduce((acc, item) => {
+    if (!item.rootCause) return acc;
+    acc[item.rootCause] = (acc[item.rootCause] || 0) + 1;
+    return acc;
+  }, {});
+
+  const executorCounts = repairSnapshots.reduce((acc, item) => {
+    if (!item.nextExecutor) return acc;
+    acc[item.nextExecutor] = (acc[item.nextExecutor] || 0) + 1;
+    return acc;
+  }, {});
+
+  const complianceCounts = repairSnapshots.reduce((acc, item) => {
+    const key = item.writeSetStatus || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const repairAdherenceValues = repairSnapshots
+    .map((item) => item.adherencePercent)
+    .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)));
+
+  const repairGovernance = {
+    totalImplementationsObserved: taskImplementations.length,
+    repairsObserved: repairSnapshots.length,
+    localRepairRatePercent: percent(complianceCounts.compliant || 0, repairSnapshots.length),
+    escalatedRatePercent: percent(repairSnapshots.filter((item) => item.escalated).length, repairSnapshots.length),
+    averageAdherencePercent: averageNullable(repairAdherenceValues),
+    complianceCounts,
+    topRootCauses: Object.entries(rootCauseCounts)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 5)
+      .map(([rootCause, count]) => ({ rootCause, count })),
+    executorMix: Object.entries(executorCounts)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 5)
+      .map(([executor, count]) => ({ executor, count })),
+  };
 
   return {
     summary: {
@@ -769,6 +845,10 @@ export async function getAuditTrail(userUuid, { projectUuid = null, limit = 40 }
 }
 
 export async function getGovernanceOverview(userUuid, { projectUuid = null } = {}) {
+  const lookbackDays = 7;
+  const repairsFromDate = new Date();
+  repairsFromDate.setDate(repairsFromDate.getDate() - (lookbackDays - 1));
+  repairsFromDate.setHours(0, 0, 0, 0);
   const auditTrail = await readRecentAuditEntries({
     userUuid,
     projectUuid,
@@ -812,6 +892,77 @@ export async function getGovernanceOverview(userUuid, { projectUuid = null } = {
 
   const uniqueUsers = new Set(auditTrail.map((entry) => entry.userUuid).filter(Boolean)).size;
 
+  const repairArtifacts = await prisma.taskArtifact.findMany({
+    where: {
+      artifactScope: 'implementation',
+      createdAt: { gte: repairsFromDate },
+      task: {
+        project: {
+          workspace: {
+            ownerUser: {
+              uuid: userUuid,
+            },
+          },
+          ...(projectUuid ? { uuid: projectUuid } : {}),
+        },
+      },
+      OR: [
+        { title: { startsWith: 'Implementation Repair Scope Assessment - ' } },
+        { title: { startsWith: 'Implementation Repair Enforcement - ' } },
+      ],
+    },
+    select: {
+      taskImplementationId: true,
+      title: true,
+      content: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const repairBuckets = new Map();
+  for (let offset = 0; offset < lookbackDays; offset += 1) {
+    const current = new Date(repairsFromDate);
+    current.setDate(repairsFromDate.getDate() + offset);
+    const key = current.toISOString().slice(0, 10);
+    repairBuckets.set(key, {
+      date: key,
+      repairs: 0,
+      compliant: 0,
+      escalated: 0,
+    });
+  }
+
+  const repairGroups = repairArtifacts.reduce((acc, artifact) => {
+    const key = `${artifact.taskImplementationId}:${new Date(artifact.createdAt).toISOString().slice(0, 19)}`;
+    const current = acc.get(key) || {
+      createdAt: artifact.createdAt,
+      scopeAssessment: null,
+      enforcement: null,
+    };
+    if (artifact.title.startsWith('Implementation Repair Scope Assessment - ')) {
+      current.scopeAssessment = parseJsonContent(artifact.content)?.scopeAssessment || null;
+    }
+    if (artifact.title.startsWith('Implementation Repair Enforcement - ')) {
+      current.enforcement = parseJsonContent(artifact.content) || null;
+    }
+    acc.set(key, current);
+    return acc;
+  }, new Map());
+
+  for (const repairEvent of repairGroups.values()) {
+    const bucketKey = new Date(repairEvent.createdAt).toISOString().slice(0, 10);
+    const bucket = repairBuckets.get(bucketKey);
+    if (!bucket) continue;
+    bucket.repairs += 1;
+    if (repairEvent.scopeAssessment?.status === 'compliant') {
+      bucket.compliant += 1;
+    }
+    if (repairEvent.enforcement?.enforcementDirective) {
+      bucket.escalated += 1;
+    }
+  }
+
   return {
     summary: {
       totalEvents: auditTrail.length,
@@ -823,6 +974,14 @@ export async function getGovernanceOverview(userUuid, { projectUuid = null } = {
     failureHotspots,
     latencyHotspots,
     recentEvents: auditTrail.slice(0, 10),
+    repairGovernance: {
+      ...repairGovernance,
+      trend: Array.from(repairBuckets.values()).map((bucket) => ({
+        ...bucket,
+        localRatePercent: percent(bucket.compliant, bucket.repairs),
+        escalatedRatePercent: percent(bucket.escalated, bucket.repairs),
+      })),
+    },
   };
 }
 

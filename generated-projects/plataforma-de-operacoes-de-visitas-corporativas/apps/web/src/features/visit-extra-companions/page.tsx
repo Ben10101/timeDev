@@ -33,8 +33,8 @@ export function VisitExtraCompanionsPage() {
  <span style={{ fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', color: tokens.color.muted, fontWeight: 800 }}>
  Acompanhantes extras
  </span>
- <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.05, letterSpacing: '-0.03em', color: '#0f172a' }}>Adicione acompanhantes extras</h1>
- <p style={{ margin: 0, color: tokens.color.mutedStrong, maxWidth: 760, lineHeight: 1.65 }}>Inclua acompanhantes adicionais em visitas aprovadas sem reiniciar todo o fluxo de aprovacao.</p>
+ <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.05, letterSpacing: '-0.03em', color: '#0f172a' }}>Inclua acompanhantes extras na visita</h1>
+ <p style={{ margin: 0, color: tokens.color.mutedStrong, maxWidth: 760, lineHeight: 1.65 }}>Adicione consultores e acompanhantes em visitas ja aprovadas sem reiniciar todo o fluxo de liberacao.</p>
  </header>
  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 420px) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
  <SurfaceCard title='Vincular acompanhante' description='Associe rapidamente o acompanhante a uma visita aprovada.'>

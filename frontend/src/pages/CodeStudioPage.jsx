@@ -21,6 +21,7 @@ import {
   getApiErrorMessage,
   getGeneratedApp,
   getProjectArchitectureStatus,
+  getProjectImplementationOverview,
   getTaskImplementationStatus,
   listProjects,
   listProjectTasks,
@@ -73,6 +74,44 @@ function RiskBadge({ value }) {
           : 'risco n/a';
 
   return <span className={`dashboard-badge ${tone}`}>{label}</span>;
+}
+
+function RepairScopeBadge({ value }) {
+  const normalized = String(value || 'unknown');
+  const tone =
+    normalized === 'compliant'
+      ?'bg-emerald-50 text-emerald-700'
+      : normalized === 'expanded'
+        ?'bg-amber-50 text-amber-700'
+        : normalized === 'partial'
+          ?'bg-rose-50 text-rose-700'
+          : 'bg-slate-100 text-slate-600';
+
+  const label =
+    normalized === 'compliant'
+      ?'repair local'
+      : normalized === 'expanded'
+        ?'escopo ampliado'
+        : normalized === 'partial'
+          ?'aderencia parcial'
+          : 'sem escopo';
+
+  return <span className={`dashboard-badge ${tone}`}>{label}</span>;
+}
+
+function formatRepairExecutor(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return 'n/a';
+
+  const labels = {
+    implementation_autonomous_agent: 'autonomous',
+    frontend_agent: 'frontend',
+    backend_agent: 'backend',
+    schema_agent: 'schema',
+    sub_agent_pipeline: 'sub-agent pipeline',
+  };
+
+  return labels[normalized] || normalized;
 }
 
 function downloadMarkdownFile(filename, content) {
@@ -341,6 +380,7 @@ export default function CodeStudioPage() {
   const [tasks, setTasks] = useState([]);
   const [architectureStatus, setArchitectureStatus] = useState(null);
   const [generatedApp, setGeneratedApp] = useState(null);
+  const [implementationOverview, setImplementationOverview] = useState(null);
   const [implementationMap, setImplementationMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [runningTaskUuid, setRunningTaskUuid] = useState(null);
@@ -368,6 +408,7 @@ export default function CodeStudioPage() {
       setTasks([]);
       setArchitectureStatus(null);
       setGeneratedApp(null);
+      setImplementationOverview(null);
       setImplementationMap({});
       setLoading(false);
     }
@@ -403,13 +444,15 @@ export default function CodeStudioPage() {
     setError(null);
 
     try {
-      const [taskList, nextArchitectureStatus] = await Promise.all([
+      const [taskList, nextArchitectureStatus, nextImplementationOverview] = await Promise.all([
         listProjectTasks(projectUuid),
         getProjectArchitectureStatus(projectUuid),
+        getProjectImplementationOverview(projectUuid),
       ]);
 
       setTasks(taskList);
       setArchitectureStatus(nextArchitectureStatus);
+      setImplementationOverview(nextImplementationOverview);
 
       try {
         const app = await getGeneratedApp(projectUuid);
@@ -607,6 +650,7 @@ export default function CodeStudioPage() {
   const selectedTraceability = selectedQualitySummary?.traceability || null;
   const selectedBenchmark = selectedQualitySummary?.benchmark || null;
   const selectedFindingsBySeverity = selectedQualitySummary?.findingsBySeverity || null;
+  const selectedRepairTelemetry = selectedImplementation?.repairTelemetry || null;
   const nextStep = getCodeStudioNextStep({
     selectedProject,
     architectureStatus,
@@ -696,6 +740,34 @@ export default function CodeStudioPage() {
                 <p><strong>Planos técnicos:</strong> {plannedTasks.length}</p>
                 <p><strong>Integradas:</strong> {integratedTasks.length}</p>
               </div>
+              {implementationOverview && (
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Repair do projeto</p>
+                  <div className="mt-3 space-y-2">
+                    <p><strong>Local:</strong> {implementationOverview.repairSummary?.localRepairRatePercent ?? 'n/a'}%</p>
+                    <p><strong>Escalado:</strong> {implementationOverview.repairSummary?.escalatedRatePercent ?? 'n/a'}%</p>
+                    <p><strong>Aderencia media:</strong> {implementationOverview.repairSummary?.averageAdherencePercent ?? 'n/a'}%</p>
+                    <p><strong>Implementacoes com telemetria:</strong> {implementationOverview.tasksWithRepairTelemetry ?? 0}</p>
+                  </div>
+                  {implementationOverview.topRootCauses?.length ?(
+                    <div className="mt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Causa mais frequente</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {implementationOverview.topRootCauses[0].rootCause}
+                      </p>
+                    </div>
+                  ) : null}
+                  {implementationOverview.executorMix?.length ?(
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {implementationOverview.executorMix.slice(0, 3).map((item) => (
+                        <span key={`executor-${item.executor}`} className="dashboard-badge bg-slate-100 text-slate-700">
+                          {formatRepairExecutor(item.executor)} {item.count}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
           </section>
 
@@ -1054,6 +1126,7 @@ export default function CodeStudioPage() {
                 const implementation = implementationMap[task.uuid] || null;
                 const isSelected = selectedTaskUuid === task.uuid;
                 const hasTechnicalPlan = Boolean(implementation?.technicalSpecArtifact || implementation?.implementationPlanArtifact);
+                const repairTelemetry = implementation?.repairTelemetry || null;
 
                 return (
                   <div
@@ -1114,6 +1187,28 @@ export default function CodeStudioPage() {
                         <strong>Bloqueios:</strong> {blockers.length ?`${blockers.length} antes desta` : 'Nenhum'}
                       </div>
                     </div>
+
+                    {repairTelemetry && (
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Repair</span>
+                          <RepairScopeBadge value={repairTelemetry.writeSetStatus} />
+                          {repairTelemetry.escalated ?(
+                            <span className="dashboard-badge bg-amber-50 text-amber-700">escalado</span>
+                          ) : null}
+                          {typeof repairTelemetry.adherencePercent === 'number' ?(
+                            <span className="dashboard-badge bg-slate-100 text-slate-700">
+                              {repairTelemetry.adherencePercent}% aderencia
+                            </span>
+                          ) : null}
+                        </div>
+                        {repairTelemetry.rootCause ?(
+                          <p className="mt-3 text-sm leading-6 text-slate-600">
+                            <strong className="text-slate-900">Causa raiz:</strong> {repairTelemetry.rootCause}
+                          </p>
+                        ) : null}
+                      </div>
+                    )}
 
                     {!!blockers.length && (
                       <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -1395,6 +1490,81 @@ export default function CodeStudioPage() {
                           ))}
                           {!selectedExecutionState.completedWorkstreams?.length && <div>Nenhum workstream concluído ainda.</div>}
                         </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {selectedRepairTelemetry && (
+              <div className="px-6 pb-6">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Repair automatico</p>
+                      <p className="mt-2 text-lg font-semibold text-slate-900">
+                        {selectedRepairTelemetry.rootCause || 'Sem causa raiz consolidada'}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        {selectedRepairTelemetry.suggestedFix || 'A esteira ainda nao registrou uma sugestao de correcao para esta rodada.'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <RepairScopeBadge value={selectedRepairTelemetry.writeSetStatus} />
+                      {selectedRepairTelemetry.escalated ?(
+                        <span className="dashboard-badge bg-amber-50 text-amber-700">escalado</span>
+                      ) : (
+                        <span className="dashboard-badge bg-emerald-50 text-emerald-700">sem escalada</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                    <div className="rounded-lg bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Leitura do repair</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <p><strong>Write set:</strong> {selectedRepairTelemetry.writeSetMode || 'n/a'}</p>
+                        <p><strong>Aderencia:</strong> {selectedRepairTelemetry.adherencePercent ?? 'n/a'}%</p>
+                        <p><strong>Fora do escopo:</strong> {selectedRepairTelemetry.outsideWriteSetCount ?? 0}</p>
+                        <p><strong>Proxima estrategia:</strong> {selectedRepairTelemetry.nextRepairStyle || 'n/a'}</p>
+                        <p><strong>Proximo executor:</strong> {formatRepairExecutor(selectedRepairTelemetry.nextExecutor)}</p>
+                        <p><strong>Executor adaptativo:</strong> {formatRepairExecutor(selectedRepairTelemetry.adaptiveExecutor)}</p>
+                        <p><strong>Estilo adaptativo:</strong> {selectedRepairTelemetry.adaptiveRepairStyle || 'n/a'}</p>
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Politica aplicada</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <p><strong>Motivo:</strong> {selectedRepairTelemetry.enforcementReason || 'sem enforcement'}</p>
+                        <p><strong>Disparado por:</strong> {selectedRepairTelemetry.enforcementTriggeredBy || 'n/a'}</p>
+                        <p><strong>Aprendizado:</strong> {selectedRepairTelemetry.adaptiveReason || 'sem ajuste adaptativo'}</p>
+                        <p><strong>Confianca:</strong> {selectedRepairTelemetry.adaptiveConfidence || 'n/a'}</p>
+                        <p><strong>Amostras:</strong> {selectedRepairTelemetry.learningSamples ?? 'n/a'}</p>
+                      </div>
+                      {!!selectedRepairTelemetry.affectedFiles?.length && (
+                        <div className="mt-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Arquivos foco</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {selectedRepairTelemetry.affectedFiles.slice(0, 6).map((file) => (
+                              <span key={`affected-${file}`} className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">
+                                {file}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {!!selectedRepairTelemetry.outsideWriteSet?.length && (
+                    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-800">Arquivos fora do write set</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {selectedRepairTelemetry.outsideWriteSet.slice(0, 8).map((file) => (
+                          <span key={`outside-${file}`} className="rounded-full bg-white px-3 py-1 text-xs text-amber-900">
+                            {file}
+                          </span>
+                        ))}
                       </div>
                     </div>
                   )}

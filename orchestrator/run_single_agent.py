@@ -14,6 +14,10 @@ from agents.developer.agent_new import Developer as NewDeveloper
 from agents.developer_backend.agent import DeveloperBackend
 from agents.developer_frontend.agent import DeveloperFrontend
 from agents.qa_engineer.agent import QAEngineer
+from agents.debug_agent.agent import DebugAgent
+from agents.schema_agent.agent import SchemaAgent
+from agents.backend_agent.agent import BackendAgent
+from agents.frontend_agent.agent import FrontendAgent
 from orchestrator.projectBuilder import ProjectBuilder
 
 def main():
@@ -107,6 +111,18 @@ def main():
             )
             result = {"project_path": project_path}
             
+        elif agent_name == "DebugAgent" or agent_name == "debug_agent":
+            agent = DebugAgent(project_id)
+            result = agent.process(payload)
+        elif agent_name == "schema_agent":
+            agent = SchemaAgent(project_id)
+            result = agent.process(payload)
+        elif agent_name == "backend_agent":
+            agent = BackendAgent(project_id)
+            result = agent.process(payload)
+        elif agent_name == "frontend_agent":
+            agent = FrontendAgent(project_id)
+            result = agent.process(payload)
         else:
             raise ValueError(f"Agente desconhecido: {agent_name}")
 

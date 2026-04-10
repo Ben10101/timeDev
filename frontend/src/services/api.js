@@ -344,6 +344,11 @@ export const getGeneratedApp = async (projectUuid) => {
   return response.data
 }
 
+export const getProjectImplementationOverview = async (projectUuid) => {
+  const response = await apiClient.get(`/projects/${projectUuid}/implementation/overview`)
+  return response.data
+}
+
 export const runTaskImplementation = async (taskUuid, payload = {}) => {
   const response = await apiClient.post(`/tasks/${taskUuid}/implementation/run`, payload)
   return response.data
@@ -421,6 +426,7 @@ export default {
   createProject,
   generateProjectBacklog,
   getProjectArchitectureStatus,
+  getProjectImplementationOverview,
   generateProjectArchitecture,
   createTask,
   runTaskRequirements,

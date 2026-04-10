@@ -69,8 +69,11 @@ for (const featureDir of featureDirs) {
   if (!routerContent.includes(".get('/',") || !routerContent.includes(".post('/',")) {
     throw new Error(`Modulo ${featureDir} sem rotas GET/POST basicas.`);
   }
-  if (!backendServiceContent.includes('buildSeedRecordsFromTask')) {
-    throw new Error(`Modulo ${featureDir} sem seeds basicos para validacao incremental.`);
+  if (!backendServiceContent.includes("from '@prisma/client'") || !backendServiceContent.includes('const prisma = new PrismaClient()')) {
+    throw new Error(`Modulo ${featureDir} nao esta usando Prisma Client no service.`);
+  }
+  if (/const\s+records\s*=\s*\[\]/.test(backendServiceContent)) {
+    throw new Error(`Modulo ${featureDir} ainda contem armazenamento em memoria e precisa persistir com Prisma.`);
   }
   if (!/Request\s*\{/.test(contractContent) || !/Response\s*\{/.test(contractContent) || !/ListResponse\s*\{/.test(contractContent)) {
     throw new Error(`Contrato ${featureDir} sem Request/Response/ListResponse completos.`);

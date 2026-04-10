@@ -94,6 +94,21 @@ function InsightCard({ label, value, hint }) {
   );
 }
 
+function formatExecutorLabel(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return 'n/a';
+
+  const labels = {
+    implementation_autonomous_agent: 'autonomous',
+    frontend_agent: 'frontend',
+    backend_agent: 'backend',
+    schema_agent: 'schema',
+    sub_agent_pipeline: 'sub-agent pipeline',
+  };
+
+  return labels[normalized] || normalized;
+}
+
 function EmptyPanel({ title, subtitle }) {
   return (
     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5">
@@ -176,6 +191,7 @@ export default function GovernancePage() {
   );
   const topFailingAgents = operations?.reliability?.topFailingAgents || [];
   const summary = operations?.summary || {};
+  const repairGovernance = governance?.repairGovernance || null;
   const actionItems = useMemo(() => {
     const items = [];
 
@@ -338,6 +354,85 @@ export default function GovernancePage() {
             tone="slate"
           />
         </div>
+
+        {repairGovernance ?(
+          <motion.section {...fade(0.06)} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Governanca do repair</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Qualidade do auto-reparo da esteira</h2>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+                  Veja se os repairs continuam locais, quando escalam e quais causas raiz estao se repetindo no portfolio.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <InsightCard
+                  label="Repair local"
+                  value={`${repairGovernance.localRepairRatePercent ?? 0}%`}
+                  hint={`${repairGovernance.complianceCounts?.compliant || 0} compliant`}
+                />
+                <InsightCard
+                  label="Escalado"
+                  value={`${repairGovernance.escalatedRatePercent ?? 0}%`}
+                  hint={`${repairGovernance.repairsObserved || 0} repairs observados`}
+                />
+                <InsightCard
+                  label="Aderencia media"
+                  value={`${repairGovernance.averageAdherencePercent ?? 0}%`}
+                  hint={`${repairGovernance.totalImplementationsObserved || 0} implementacoes lidas`}
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 xl:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Causas mais frequentes</p>
+                <div className="mt-4 space-y-3">
+                  {repairGovernance.topRootCauses?.length ?(
+                    repairGovernance.topRootCauses.map((item) => (
+                      <div key={`root-${item.rootCause}`} className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
+                        <strong className="text-slate-900">{item.rootCause}</strong>
+                        <span className="ml-2 text-slate-500">{item.count}x</span>
+                      </div>
+                    ))
+                  ) : (
+                    <EmptyPanel title="Sem causa recorrente consolidada" subtitle="A telemetria ainda nao agrupou uma causa raiz dominante." />
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Mix de executores</p>
+                <div className="mt-4 space-y-3">
+                  {repairGovernance.executorMix?.length ?(
+                    repairGovernance.executorMix.map((item) => (
+                      <div key={`executor-${item.executor}`} className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
+                        <span className="font-semibold text-slate-900">{formatExecutorLabel(item.executor)}</span>
+                        <span className="dashboard-badge bg-slate-100 text-slate-700">{item.count}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <EmptyPanel title="Sem executor dominante" subtitle="Ainda nao existe volume suficiente para consolidar o mix de executores." />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tendencia recente</p>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {(repairGovernance.trend || []).slice(-4).map((item) => (
+                  <div key={`repair-trend-${item.date}`} className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">{item.date}</p>
+                    <p className="mt-2 font-semibold text-slate-900">{item.repairs} repairs</p>
+                    <p className="mt-1 text-slate-500">local {item.localRatePercent}%</p>
+                    <p className="text-slate-500">escalado {item.escalatedRatePercent}%</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.section>
+        ) : null}
 
         <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <motion.section {...fade(0.08)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
