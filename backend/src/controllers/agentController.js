@@ -14,6 +14,7 @@ import {
   updateTask,
 } from '../services/projectDataService.js';
 import { createAgentRunLifecycle } from '../utils/agentRunLifecycle.js';
+import { assertArtifactCompleteness as assertSharedArtifactCompleteness } from '../utils/artifactQuality.js';
 import { serializeBigInts } from '../utils/serialize.js';
 import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
 
@@ -224,6 +225,7 @@ export async function runAgentController(req, res) {
     runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
 
     const result = await runSingleAgent(agent, payloadWithRuntime, { envOverrides });
+    assertSharedArtifactCompleteness(agent, typeof result === 'string' ? result : JSON.stringify(result, null, 2));
     const finalized = await runLifecycle.finalizeSuccess({
       result,
       usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
@@ -322,7 +324,7 @@ export async function runRequirementsForTaskController(req, res) {
     runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
     const result = await runSingleAgent('requirements_analyst', payloadWithRuntime, { envOverrides });
     const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-    assertArtifactCompleteness('requirements_analyst', content);
+    assertSharedArtifactCompleteness('requirements_analyst', content);
 
     const finalized = await runLifecycle.finalizeSuccess({
       result,
@@ -467,7 +469,7 @@ export async function runQaForTaskController(req, res) {
     runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
     const result = await runSingleAgent('qa_engineer', payloadWithRuntime, { envOverrides });
     const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-    assertArtifactCompleteness('qa_engineer', content);
+    assertSharedArtifactCompleteness('qa_engineer', content);
 
     const finalized = await runLifecycle.finalizeSuccess({
       result,

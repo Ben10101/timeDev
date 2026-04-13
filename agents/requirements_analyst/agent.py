@@ -34,6 +34,19 @@ class RequirementsAnalyst:
         "Criterios de Aceite (BDD)",
     ]
 
+    SECTION_ALIASES = {
+        "User Story Refinada": ["User Story Refinada", "User Story"],
+        "Requisitos Funcionais": ["Requisitos Funcionais", "RFs", "Requisitos"],
+        "Fluxo Principal": ["Fluxo Principal", "Fluxo"],
+        "Fluxos Alternativos": ["Fluxos Alternativos", "Alternativas"],
+        "Fluxos de Excecao": ["Fluxos de Excecao", "Excecoes"],
+        "Regras de Negocio": ["Regras de Negocio", "Regras"],
+        "Estados da Interface e Feedback": ["Estados da Interface e Feedback", "Estados", "Feedback"],
+        "Validacoes e Dados": ["Validacoes e Dados", "Validacoes", "Dados"],
+        "Permissoes e Auditoria": ["Permissoes e Auditoria", "Permissoes", "Auditoria"],
+        "Criterios de Aceite (BDD)": ["Criterios de Aceite (BDD)", "Criterios de Aceite", "BDD"],
+    }
+
     SECTION_KEYS = {
         "user story refinada": "User Story Refinada",
         "requisitos funcionais": "Requisitos Funcionais",
@@ -411,6 +424,23 @@ REGRAS CRITICAS:
 - Se um detalhe nao estiver sustentado pela User Story ou pelo contexto curto, trate como lacuna
 - Seja direto, tecnico e implementavel
 - Elimine qualquer ambiguidade
+- O documento final deve ser implementavel sem interpretacao generica em fluxo principal, validacoes, regras e criterios de aceite
+- Cada secao obrigatoria precisa ter densidade real; uma linha generica nao basta para campos centrais, permissao ou auditoria
+- Se houver campo central da feature, descreva pelo menos formato base, obrigatoriedade e regra minima implementavel
+- Em Validacoes e Dados, detalhe formato, obrigatoriedade, limites, valores controlados e consistencia com o contexto
+- Em Permissoes e Auditoria, diga quem executa, quem visualiza, quem aprova quando aplicavel e o que deve ficar rastreado
+- Em Criterios de Aceite (BDD), cubra caminho feliz, falha de validacao e edge case relevante quando houver evidencia suficiente
+- Use exatamente os titulos de secao abaixo, sem variacoes, abreviacoes ou sinônimos:
+  - ## User Story Refinada
+  - ## Requisitos Funcionais
+  - ## Fluxo Principal
+  - ## Fluxos Alternativos
+  - ## Fluxos de Excecao
+  - ## Regras de Negocio
+  - ## Estados da Interface e Feedback
+  - ## Validacoes e Dados
+  - ## Permissoes e Auditoria
+  - ## Criterios de Aceite (BDD)
 
 ---
 
@@ -464,6 +494,8 @@ COMO LIDAR COM INFORMACAO FALTANTE:
 - Para stories de criacao/registro, descreva a confirmacao do cadastro e os dados salvos, mas nao transforme consequencias de workflow em nucleo do requisito.
 - Se a story for do tipo "view", nao invente comandos de cadastro, aprovacao, alteracao ou processamento.
 - Se a story for do tipo "approval", nao invente campos de criacao pertencentes a etapas anteriores.
+- Em Fluxos Alternativos, prefira cancelamento ou correcao de dados com impacto real no fluxo; evite bullets genéricos como "limpar campos" sem comportamento adicional.
+- Em Saídas, privilegie a confirmação da criacao do evento e so destaque identificador quando ele for efetivamente parte da historia ou do criterio de aceite.
 
 DECISOES PADRAO CONSERVADORAS:
 - Se a historia citar "contato" sem detalhar, feche como "e-mail ou telefone".
@@ -568,13 +600,15 @@ DIRETRIZES FINAIS:
         sections = {}
         text = (content or "").strip()
         for title in self.SECTION_TITLES:
-            pattern = re.compile(
-                rf"^##\s+{re.escape(title)}\s*$([\s\S]*?)(?=^##\s+|\Z)",
-                re.IGNORECASE | re.MULTILINE,
-            )
-            match = pattern.search(text)
-            if match:
-                sections[title] = match.group(1).strip()
+            for alias in self.SECTION_ALIASES.get(title, [title]):
+                pattern = re.compile(
+                    rf"^##\s+{re.escape(alias)}\s*$([\s\S]*?)(?=^##\s+|\Z)",
+                    re.IGNORECASE | re.MULTILINE,
+                )
+                match = pattern.search(text)
+                if match:
+                    sections[title] = match.group(1).strip()
+                    break
         premissas_pattern = re.compile(
             r"^##\s+Premissas e Pontos a Validar\s*$([\s\S]*?)(?=^##\s+|\Z)",
             re.IGNORECASE | re.MULTILINE,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -19,8 +19,8 @@ const NAV_SECTIONS = [
   {
     label: 'Workspace',
     items: [
-      { label: 'Visão geral', hint: 'Portfólio multi-projetos', to: '/workspace', icon: LayoutGrid },
-      { label: 'Equipe', hint: 'Pessoas e papéis', to: '/workspace/team', icon: User },
+      { label: 'Visão geral', hint: 'Portfólio multi-projetos', to: '/workspace', icon: LayoutGrid, exact: true },
+      { label: 'Equipe', hint: 'Pessoas e papéis', to: '/workspace/team', icon: User, exact: true },
     ],
   },
   {
@@ -49,27 +49,38 @@ const QUICK_NAV_ITEMS = NAV_SECTIONS.flatMap((section) =>
 
 function NavItem({ item }) {
   const location = useLocation();
-  const active = `${location.pathname}${location.search}`.startsWith(item.to);
+  const currentPath = location.pathname;
+  const currentLocation = `${location.pathname}${location.search}`;
+  const active =
+    item.exact
+      ? currentPath === item.to
+      : currentPath === item.to || currentPath.startsWith(`${item.to}/`) || currentLocation.startsWith(`${item.to}?`);
   const Icon = item.icon;
 
   return (
     <Link
       to={item.to}
-      className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
+      className={`group flex items-start gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
         active
           ? 'bg-[#102a72] text-white shadow-sm shadow-[#102a72]/30'
           : 'text-slate-400 hover:bg-white/5 hover:text-white'
       }`}
     >
       <Icon
-        className={`h-4 w-4 shrink-0 transition-colors ${
+        className={`mt-0.5 h-4 w-4 shrink-0 transition-colors ${
           active ? 'text-blue-300' : 'text-slate-500 group-hover:text-slate-300'
         }`}
         strokeWidth={2}
       />
-      <span className="flex-1">{item.label}</span>
-      {item.hint ? <span className="hidden text-[10px] text-slate-500 xl:block">{item.hint}</span> : null}
-      {active && <ChevronRight className="h-3.5 w-3.5 text-blue-300/60" />}
+      <div className="min-w-0 flex-1">
+        <span className="block whitespace-normal leading-5">{item.label}</span>
+        {item.hint ? (
+          <span className="mt-0.5 block whitespace-normal text-[10px] leading-4 text-slate-500">
+            {item.hint}
+          </span>
+        ) : null}
+      </div>
+      {active && <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-300/60" />}
     </Link>
   );
 }
@@ -139,7 +150,7 @@ export default function AppShell({
 
   return (
     <div className="flex min-h-screen overflow-x-hidden bg-slate-50 font-sans text-slate-900 antialiased">
-      <aside className="fixed inset-y-0 left-0 z-40 flex w-60 flex-col bg-[#0A1128] text-white">
+      <aside className="fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-[#0A1128] text-white">
         <div className="flex h-16 items-center gap-3 border-b border-white/[0.07] px-5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#102a72] shadow-lg shadow-[#102a72]/40">
             <Compass className="h-4 w-4 text-blue-300" strokeWidth={2.5} />
@@ -185,7 +196,7 @@ export default function AppShell({
         </div>
       </aside>
 
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col pl-60">
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col pl-64">
         <header className="sticky top-0 z-30 flex h-16 min-w-0 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -299,3 +310,4 @@ export default function AppShell({
     </div>
   );
 }
+

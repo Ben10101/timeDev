@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { PencilLine } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import ConfirmDialog from '../components/ConfirmDialog';
-import BacklogKanban from './BacklogKanban';
+import ProjectTaskBoard from '../components/ProjectTaskBoard';
 import {
   approveProjectArchitecture,
   generateProjectArchitecture,
@@ -697,9 +697,9 @@ export default function ProjectOverviewPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Etapa 3</p>
-                <h3 className="mt-2 text-xl font-bold text-slate-900">Kanban do projeto</h3>
+                <h3 className="mt-2 text-xl font-bold text-slate-900">Board do projeto</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                  Aqui você refina e acompanha as tasks dentro do contexto deste projeto, sem sair da visão operacional.
+                  Aqui você acompanha as tasks dentro do contexto deste projeto, com as raias operacionais do fluxo atual.
                 </p>
               </div>
               <span className="rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600">
@@ -712,14 +712,9 @@ export default function ProjectOverviewPage() {
             {loading ? (
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">Carregando overview...</div>
             ) : (
-              <BacklogKanban
-                backlogMarkdown=""
-                projectId={projectUuid}
-                stageName="requirements"
-                title="Kanban do projeto"
-                subtitle="Use este quadro para refinar as tasks do projeto no contexto correto, sem separar o trabalho da visão do projeto."
-                agentColumnTitle="Analista de Requisitos do Projeto"
-                contextLabel="projeto"
+              <ProjectTaskBoard
+                projectUuid={projectUuid}
+                tasks={tasks}
               />
             )}
           </div>

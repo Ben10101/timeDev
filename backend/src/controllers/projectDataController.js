@@ -34,6 +34,7 @@ import { runSingleAgent } from '../services/orchestratorService.js';
 import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
 import { bootstrapGeneratedApp } from '../services/implementationService.js';
 import { createAgentRunLifecycle } from '../utils/agentRunLifecycle.js';
+import { assertArtifactCompleteness } from '../utils/artifactQuality.js';
 import { serializeBigInts } from '../utils/serialize.js';
 import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
 import { inferProjectTemplateKey } from '../templates/projects/index.js';
@@ -660,6 +661,7 @@ export async function generateProjectArchitectureController(req, res, next) {
     agentRun = await createAgentRunStart(projectUuid, 'architect', payloadWithRuntime);
     runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
     const result = await runSingleAgent('architect', payloadWithRuntime, { envOverrides });
+    assertArtifactCompleteness('architect', typeof result === 'string' ? result : JSON.stringify(result, null, 2));
 
     const finalized = await runLifecycle.finalizeSuccess({
       result,

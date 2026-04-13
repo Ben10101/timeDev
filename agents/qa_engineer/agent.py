@@ -44,6 +44,31 @@ class QAEngineer:
         normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
         return text, normalized
 
+    def _section_aliases(self, title):
+        aliases = {
+            "Estrategia de testes": ["estrategia de testes", "estrategia de teste", "estrategia"],
+            "Dados de teste": ["dados de teste", "dados testes"],
+            "Riscos e metricas": ["riscos e metricas", "riscos e sinais", "riscos", "riscos e metricas operacionais"],
+            "Qualidade nao funcional": [
+                "qualidade nao funcional",
+                "qualidade nao funcional e operacao",
+                "qualidade operacional",
+                "nfr",
+            ],
+            "Rastreabilidade dos Criterios de Aceite": [
+                "rastreabilidade dos criterios de aceite",
+                "rastreabilidade de criterios de aceite",
+                "rastreabilidade criterios de aceite",
+                "rastreabilidade de criterios aceite",
+                "traceabilidade dos criterios de aceite",
+            ],
+            "Smoke Minimo da Feature": ["smoke minimo da feature", "smoke minimo", "smoke da feature", "smoke feature"],
+            "Cenarios de teste": ["cenarios de teste", "cenarios"],
+            "Casos de teste funcionais": ["casos de teste funcionais", "casos funcionais", "casos de teste"],
+            "Usabilidade e acessibilidade": ["usabilidade e acessibilidade", "usabilidade", "acessibilidade"],
+        }
+        return aliases.get(title, [title])
+
     def _summarize_requirements(self, code_structure):
         text = (code_structure or "").strip()
         if not text:
@@ -234,16 +259,34 @@ class QAEngineer:
             flags=re.IGNORECASE,
         )
         text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(
+            r"(?:\n\s*FIM_DO_PLANO_DE_TESTES\s*){2,}$",
+            "\n\nFIM_DO_PLANO_DE_TESTES",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\n\s*FIM_DO_PLANO_DE_TESTES\s*$",
+            "\n\nFIM_DO_PLANO_DE_TESTES",
+            text,
+            flags=re.IGNORECASE,
+        )
         return text.strip()
 
     def _extract_section(self, content, title):
         text, normalized_content = self._normalize_text(content)
         _, normalized_title = self._normalize_text(title)
-        pattern = re.compile(
-            rf"^##\s+{re.escape(normalized_title)}\s*$([\s\S]*?)(?=^##\s+|\Z)",
-            re.IGNORECASE | re.MULTILINE,
-        )
-        match = pattern.search(normalized_content)
+        aliases = self._section_aliases(title)
+        match = None
+        for alias in aliases:
+            _, normalized_alias = self._normalize_text(alias)
+            pattern = re.compile(
+                rf"^##\s+{re.escape(normalized_alias)}\s*$([\s\S]*?)(?=^##\s+|\Z)",
+                re.IGNORECASE | re.MULTILINE,
+            )
+            match = pattern.search(normalized_content)
+            if match:
+                break
         if not match:
             return ""
 
@@ -255,7 +298,7 @@ class QAEngineer:
         original_sections = re.split(r"(?=^##\s+)", text, flags=re.MULTILINE)
         for section in original_sections:
             _, normalized_section = self._normalize_text(section)
-            if normalized_section.startswith(f"## {normalized_title}"):
+            if any(normalized_section.startswith(f"## {self._normalize_text(alias)[1]}") for alias in aliases):
                 original_body = re.sub(r"^##\s+.+?$", "", section, count=1, flags=re.MULTILINE).strip()
                 return original_body
 
@@ -296,6 +339,14 @@ class QAEngineer:
         if not text:
             return []
         return [line.strip("- ").strip() for line in text.splitlines() if line.strip()]
+
+    def _compact_phrase(self, value, *, max_words=14):
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        text = re.sub(r"(?i)^(dado|quando|entao|então|cenario \d+:|cenário \d+:)\s*", "", text)
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        return " ".join(words[:max_words]).rstrip(" ,;:.")
 
     def _extract_requirement_signals(self, requirement_summary, requirement_spec=None):
         spec = self._parse_requirement_spec(requirement_spec)
@@ -445,8 +496,10 @@ class QAEngineer:
         secondary_field = fields[1] if len(fields) > 1 else "campo complementar"
         rule_lines = self._coerce_lines(spec.get("businessRules"))
         acceptance_lines = self._coerce_lines(spec.get("acceptanceCriteria"))
-        first_rule = rule_lines[0] if rule_lines else "regras de negocio aplicaveis"
-        first_acceptance = acceptance_lines[0] if acceptance_lines else "confirmacao exibida ao usuario"
+        first_rule = self._compact_phrase(rule_lines[0]) if rule_lines else "regras de negocio aplicaveis"
+        first_acceptance = (
+            self._compact_phrase(acceptance_lines[0]) if acceptance_lines else "confirmacao exibida ao usuario"
+        )
         return "\n".join(
             [
                 "1. CT-01",
@@ -460,6 +513,28 @@ class QAEngineer:
                 "3. CT-03",
                 "Acao: simular falha operacional durante a confirmacao, como indisponibilidade temporaria da API ou erro de validacao no backend.",
                 "Resultado esperado: erro tratado sem travar a interface, sem dado inconsistente persistido e com sinal operacional registravel.",
+            ]
+        ).strip()
+
+    def _synthesize_traceability_lines(self, idea, requirement_summary, requirement_spec=None):
+        spec = self._parse_requirement_spec(requirement_spec)
+        acceptance_lines = self._coerce_lines(spec.get("acceptanceCriteria"))
+        rules_lines = self._coerce_lines(spec.get("businessRules"))
+        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+
+        primary_subject = fields[0] if fields else "campo principal"
+        secondary_subject = fields[1] if len(fields) > 1 else primary_subject
+        first_acceptance = acceptance_lines[0] if acceptance_lines else "confirmacao do fluxo principal"
+        first_rule = rules_lines[0] if rules_lines else "regra principal da historia"
+
+        return "\n".join(
+            [
+                f"- CA-01 -> Cenarios 1, 2 e 3; Casos CT-01 e CT-02; Smoke: validar {primary_subject} no fluxo principal.",
+                f"- CA-02 -> Cenarios 4, 5 e 6; Casos CT-02 e CT-03; Smoke: bloquear {primary_subject} invalido sem persistencia parcial.",
+                f"- CA-03 -> Cenarios 7 e 8; Casos CT-01 e CT-03; Smoke: confirmar o efeito observavel de {secondary_subject} apos a acao.",
+                f"- CA-04 -> Cenarios 9 e 10; Casos CT-03; Smoke: manter resiliencia e rastreabilidade apos falha no fluxo principal.",
+                f"- CA-05 -> Regra: {first_rule}; cobertura associada aos cenarios e casos acima.",
+                f"- CA-06 -> Aceite: {first_acceptance}; deve aparecer no smoke e nos casos funcionais.",
             ]
         ).strip()
 
@@ -496,6 +571,21 @@ class QAEngineer:
         expected_count = sum(1 for line in functional_case_lines if line.lower().startswith("resultado esperado:"))
         if action_count < 3 or expected_count < 3:
             sections["Casos de teste funcionais"] = self._synthesize_functional_cases(idea, requirement_summary, requirement_spec)
+
+        traceability_body = sections.get("Rastreabilidade dos Criterios de Aceite", "")
+        traceability_lines = self._normalize_section_lines(traceability_body)
+        traceability_count = len([
+            line
+            for line in traceability_lines
+            if re.search(r"\bca[\s\-]*0*\d+\b", line, re.IGNORECASE)
+            or re.search(r"\bcriterio(?:s)? de aceite\b", line, re.IGNORECASE)
+        ])
+        if traceability_count < 3 or "ponto a validar" in traceability_body.lower():
+            sections["Rastreabilidade dos Criterios de Aceite"] = self._synthesize_traceability_lines(
+                idea,
+                requirement_summary,
+                requirement_spec,
+            )
 
         smoke_body = sections.get("Smoke Minimo da Feature", "")
         smoke_lines = [line for line in self._normalize_section_lines(smoke_body) if re.match(r"^\s*[-*]", line)]
@@ -561,6 +651,10 @@ Regras gerais:
 {base_context}
 
 Gere APENAS estas secoes em Markdown:
+Use exatamente estes titulos de secao, sem variações:
+- ## Estrategia de testes
+- ## Dados de teste
+- ## Riscos e metricas
 
 ## Estrategia de testes
 Inclua testes unitarios, integracao, API, UI e E2E em no maximo 6 bullets.
@@ -580,6 +674,7 @@ Liste apenas riscos criticos, impacto e sinais operacionais de acompanhamento em
 - Nao use metricas genericas como "acompanhar falhas" sem dizer falhas de que.
 - Nunca use "sinal: nenhum". Todo risco listado deve ter pelo menos um sinal observavel.
 - Gere pelo menos 2 riscos realmente distintos entre validacao, persistencia, UX operacional, observabilidade e resiliencia.
+- Inclua pelo menos 1 risco de validacao e 1 risco de resiliencia ou operacao.
 """
                 planning_result = self._generate_block(
                     planning_prompt,
@@ -599,6 +694,9 @@ Liste apenas riscos criticos, impacto e sinais operacionais de acompanhamento em
 {base_context}
 
 Gere APENAS estas secoes em Markdown:
+Use exatamente estes titulos de secao, sem variações:
+- ## Cenarios de teste
+- ## Casos de teste funcionais
 
 ## Cenarios de teste
 Gere exatamente 10 itens numerados e variados:
@@ -610,28 +708,40 @@ Gere exatamente 10 itens numerados e variados:
 - Evite expressoes temporais fortes como "no exato momento", "imediatamente" ou equivalentes sem base no requisito.
 - Cada item deve cobrir um comportamento diferente; nao repita cinco variacoes do mesmo submit com outra frase.
 - Cenario de Limite deve usar fronteira real de tamanho, formato ou valor maximo/minimo aceito. Nao use campo vazio, dado nulo ou ausencia de preenchimento como limite.
+- Os 10 itens precisam ficar equilibrados entre Caminho Feliz, Excecao, Limite e Resiliencia.
+- Cada item precisa ser verificavel na pratica, com entrada e saida observaveis.
+- Pelo menos 1 item de resiliencia deve citar comportamento apos falha, nao apenas repeticao de fluxo.
 
 ## Casos de teste funcionais
 Gere pelo menos 3 casos numerados.
 Para cada caso, use explicitamente as linhas:
 - Acao:
 - Resultado esperado:
+- Cada caso deve poder ser rastreado para um criterio de aceite concreto.
+- Use exatamente o titulo "## Casos de teste funcionais" para esta secao.
 """
                 functional_result = self._generate_block(
                     functional_prompt,
                     qa_model,
                     num_predict=os.getenv("QA_BLOCK_FUNCTIONAL_NUM_PREDICT", "620"),
                 )
-                for title in ["Cenarios de teste", "Casos de teste funcionais"]:
-                    body = self._extract_section(functional_result, title)
-                    if not body:
-                        raise RuntimeError(f"Bloco funcional sem secao {title}.")
-                    sections[title] = body
+                scenarios_body = self._extract_section(functional_result, "Cenarios de teste")
+                if not scenarios_body:
+                    scenarios_body = "\n".join(self._synthesize_scenarios(idea, requirement_summary, requirement_spec))
+                sections["Cenarios de teste"] = scenarios_body
+
+                functional_cases_body = self._extract_section(functional_result, "Casos de teste funcionais")
+                if not functional_cases_body:
+                    functional_cases_body = self._synthesize_functional_cases(idea, requirement_summary, requirement_spec)
+                sections["Casos de teste funcionais"] = functional_cases_body
 
                 traceability_prompt = f"""
 {base_context}
 
 Gere APENAS estas secoes em Markdown:
+Use exatamente estes titulos de secao, sem variações:
+- ## Rastreabilidade dos Criterios de Aceite
+- ## Smoke Minimo da Feature
 
 ## Rastreabilidade dos Criterios de Aceite
 - Liste entre 3 e 6 bullets no formato:
@@ -639,28 +749,37 @@ Gere APENAS estas secoes em Markdown:
 - Faça a ponte entre criterios de aceite, regras de negocio e testes planejados.
 - Se o requisito estiver fechado, nao use "Ponto a validar".
 - Prefira ligar cada CA a verificacao concreta de UI, API, persistencia ou validacao.
+- Se faltar criterio claro, escreva o gap de forma objetiva, sem inventar cobertura.
 
 ## Smoke Minimo da Feature
 - Liste entre 3 e 5 verificacoes minimas de smoke que provam o fluxo principal.
 - Cubra o essencial de UI/API/fluxo quando aplicavel.
 - Se alguma camada nao se aplicar, escreva "Nao se aplica" na linha correspondente.
 - Cada linha deve ser verificavel em execucao, nao apenas descritiva.
+- Ao menos uma verificacao precisa comprovar persistencia real ou efeito observavel depois da acao principal.
 """
                 traceability_result = self._generate_block(
                     traceability_prompt,
                     qa_model,
                     num_predict=os.getenv("QA_BLOCK_TRACEABILITY_NUM_PREDICT", "360"),
                 )
-                for title in ["Rastreabilidade dos Criterios de Aceite", "Smoke Minimo da Feature"]:
-                    body = self._extract_section(traceability_result, title)
-                    if not body:
-                        raise RuntimeError(f"Bloco de rastreabilidade sem secao {title}.")
-                    sections[title] = body
+                traceability_body = self._extract_section(traceability_result, "Rastreabilidade dos Criterios de Aceite")
+                if not traceability_body:
+                    traceability_body = self._synthesize_traceability_lines(idea, requirement_summary, requirement_spec)
+                sections["Rastreabilidade dos Criterios de Aceite"] = traceability_body
+
+                smoke_body = self._extract_section(traceability_result, "Smoke Minimo da Feature")
+                if not smoke_body:
+                    smoke_body = "\n".join(self._synthesize_smoke_lines(idea, requirement_summary, requirement_spec))
+                sections["Smoke Minimo da Feature"] = smoke_body
 
                 quality_prompt = f"""
 {base_context}
 
 Gere APENAS estas secoes em Markdown:
+Use exatamente estes titulos de secao, sem variações:
+- ## Qualidade nao funcional
+- ## Usabilidade e acessibilidade
 
 ## Qualidade nao funcional
 Liste exatamente 4 bullets, um para cada topico abaixo, usando explicitamente estas palavras no inicio de cada bullet:
@@ -672,6 +791,7 @@ Liste exatamente 4 bullets, um para cada topico abaixo, usando explicitamente es
 - Nenhum bullet pode ficar vazio.
 - Se algo nao estiver explicito, escreva de forma neutra como verificacao operacional, sem inventar comportamento de produto.
 - Nao use numeros ou metas fechadas sem fonte no requisito.
+- Cada bullet precisa mencionar um sinal pratico de verificacao, mesmo que simples.
 
 ## Usabilidade e acessibilidade
 Liste checks objetivos cobrindo heuristicas de Nielsen, leis de UX e WCAG em no maximo 4 bullets.

@@ -448,6 +448,11 @@ REGRAS GERAIS
 - Mantenha consistencia de linguagem e stack em todo o documento: se o backend for Node/Nest, exemplos de pastas, arquivos, tipos e classes devem ser TypeScript, nunca Java/.java.
 - Nao deixe exemplos ou blocos truncados; se incluir payload/exemplo, feche-o completamente.
 - Nao misture frameworks de backend ou runtime no mesmo documento. Escolha uma linha principal e sustente-a ate o fim.
+- Cada secao obrigatoria precisa ter densidade real: nao aceite texto genérico de uma linha para Operacao, Riscos, Deploy, Seguranca ou Contratos.
+- Em Observabilidade e Operacao, inclua pelo menos logs, metricas/sinais, alerta ou acompanhamento e estrategia de recovery.
+- Em Riscos Tecnicos e Trade-offs, inclua pelo menos 3 riscos distintos com impacto e mitigacao.
+- Em Sequencia Recomendada de Implementacao, entregue pelo menos 3 passos ordenados.
+- Em Contratos e Integracoes, descreva contratos concretos, mesmo que simples, em vez de apenas citar "API" ou "integracao".
 """
 
         retry_count = max(1, int(os.getenv("ARCHITECT_MAX_RETRIES", "2")))
@@ -555,6 +560,8 @@ Gere APENAS estas secoes em Markdown:
 
 ## Observabilidade e Operacao
 Cubra logs, metricas, alertas, suporte operacional e recovery.
+- Entregue no minimo 3 bullets.
+- Cite pelo menos 1 sinal de observabilidade, 1 ponto de alerta e 1 acao de recovery.
 
 REGRAS ESPECIFICAS
 - Mantenha observabilidade proporcional ao MVP: logs estruturados, healthcheck, poucos indicadores operacionais.
@@ -572,11 +579,15 @@ REGRAS ESPECIFICAS
 - Cubra autenticacao, autorizacao, protecao de dados e auditoria de forma pragmatica para o MVP.
 - Nao assuma SSO corporativo, Azure AD, Keycloak, WAF enterprise ou requisitos bancarios sem base explicita.
 - Prefira JWT + roles + hashing de senha + trilha de auditoria simples.
+- Entregue pelo menos 3 bullets e nao deixe seguranca como frase de apoio apenas.
 
 ## Riscos Tecnicos e Trade-offs
+- Liste pelo menos 3 riscos com impacto e mitigacao.
+- Inclua trade-off real entre simplicidade, custo, operacao ou evolucao futura.
 
 ## Sequencia Recomendada de Implementacao
 - Separar claramente MVP agora vs evolucao futura.
+- Entregue no minimo 3 passos curtos, na ordem em que o time deveria implementar.
 """
                 operations_result = self._generate_block(
                     operations_prompt,

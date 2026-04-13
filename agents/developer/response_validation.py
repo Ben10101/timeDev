@@ -223,6 +223,23 @@ def validate_requirements_output(result):
     if not _section_has_content_or_na(validations_section):
         return False, "Validacoes e dados sem detalhe suficiente."
 
+    validations_body = validations_section.group(1).strip() if validations_section else ""
+    permissions_body = permissions_section.group(1).strip() if permissions_section else ""
+
+    if validations_body and not re.search(
+        r"(formato|obrigator|limite|valor controlado|consist|tipo|tamanho|regex|ponto a validar|nao se aplica)",
+        validations_body,
+        re.IGNORECASE,
+    ):
+        return False, "Validacoes e dados sem detalhes operacionais suficientes."
+
+    if permissions_body and not re.search(
+        r"(execut|aprova|visualiz|edit|audit|trilha|nao se aplica)",
+        permissions_body,
+        re.IGNORECASE,
+    ):
+        return False, "Permissoes e auditoria sem detalhes operacionais suficientes."
+
     if not _section_has_content_or_na(permissions_section):
         return False, "Permissoes e auditoria sem detalhe suficiente."
 
@@ -363,34 +380,122 @@ def validate_requirements_output(result):
 
 def validate_qa_output(result):
     text, normalized = _normalize_text(result)
-    required_sections = [
-        "estrategia de testes",
-        "dados de teste",
-        "riscos e metricas",
-        "qualidade nao funcional",
-        "rastreabilidade dos criterios de aceite",
-        "smoke minimo da feature",
-        "cenarios de teste",
-        "casos de teste funcionais",
-        "usabilidade e acessibilidade",
-    ]
+    section_aliases = {
+        "Estrategia de testes": [
+            "estrategia de testes",
+            "estrategia de teste",
+            "estrategia",
+        ],
+        "Dados de teste": [
+            "dados de teste",
+            "dados testes",
+        ],
+        "Riscos e metricas": [
+            "riscos e metricas",
+            "riscos e sinais",
+            "riscos e metricas operacionais",
+            "riscos",
+        ],
+        "Qualidade nao funcional": [
+            "qualidade nao funcional",
+            "qualidade nao funcional e operacao",
+            "qualidade nao funcional / operacao",
+            "qualidade operacional",
+            "nfr",
+        ],
+        "Rastreabilidade dos Criterios de Aceite": [
+            "rastreabilidade dos criterios de aceite",
+            "rastreabilidade de criterios de aceite",
+            "rastreabilidade criterios de aceite",
+            "rastreabilidade dos criterios aceite",
+            "rastreabilidade de criterios aceite",
+            "traceabilidade dos criterios de aceite",
+        ],
+        "Smoke Minimo da Feature": [
+            "smoke minimo da feature",
+            "smoke minimo",
+            "smoke da feature",
+            "smoke feature",
+        ],
+        "Cenarios de teste": [
+            "cenarios de teste",
+            "cenarios",
+        ],
+        "Casos de teste funcionais": [
+            "casos de teste funcionais",
+            "casos funcionais",
+            "casos de teste",
+        ],
+        "Usabilidade e acessibilidade": [
+            "usabilidade e acessibilidade",
+            "usabilidade",
+            "acessibilidade",
+        ],
+    }
 
-    missing = [section for section in required_sections if section not in normalized]
+    def _is_heading_line(line, aliases):
+        stripped = line.strip()
+        if not stripped:
+            return None
+
+        match = re.match(r"^#{1,6}\s+(.+?)\s*$", stripped)
+        if not match:
+            return None
+
+        title = match.group(1).strip()
+        for alias in aliases:
+            if title == alias:
+                return alias
+            if title.startswith(f"{alias} "):
+                return alias
+            if title.startswith(f"{alias}:"):
+                return alias
+            if title.startswith(f"{alias} -"):
+                return alias
+            if title.startswith(f"{alias} /"):
+                return alias
+        return None
+
+    def _parse_sections(source):
+        sections = {}
+        current_name = None
+        current_lines = []
+
+        for raw_line in source.splitlines():
+            matched_name = None
+            for canonical_name, aliases in section_aliases.items():
+                if _is_heading_line(raw_line, aliases):
+                    matched_name = canonical_name
+                    break
+
+            if matched_name:
+                if current_name and current_name not in sections:
+                    sections[current_name] = "\n".join(current_lines).strip()
+                current_name = matched_name
+                current_lines = []
+                continue
+
+            if current_name:
+                current_lines.append(raw_line)
+
+        if current_name and current_name not in sections:
+            sections[current_name] = "\n".join(current_lines).strip()
+
+        for canonical_name, aliases in section_aliases.items():
+            if canonical_name in sections:
+                continue
+            for alias in aliases:
+                heading_pattern = re.compile(rf"^#+\s+{re.escape(alias)}(?:\s*[:\-/].*)?$", re.IGNORECASE | re.MULTILINE)
+                if heading_pattern.search(source):
+                    sections[canonical_name] = ""
+                    break
+
+        return sections
+
+    sections_by_name = _parse_sections(normalized)
+    missing = [name for name in section_aliases if not sections_by_name.get(name, "").strip()]
     if missing:
         return False, f"Secoes ausentes: {', '.join(missing)}"
-
-    def extract_section_body(source, start_marker, next_markers):
-        start_index = source.find(start_marker)
-        if start_index == -1:
-            return ""
-
-        start_index += len(start_marker)
-        end_index = len(source)
-        for marker in next_markers:
-            marker_index = source.find(marker, start_index)
-            if marker_index != -1:
-                end_index = min(end_index, marker_index)
-        return source[start_index:end_index]
 
     def count_numbered_items(section_text):
         return len(
@@ -405,31 +510,11 @@ def validate_qa_output(result):
     exception_match = re.search(r"excecao(.+?)(?:limite|resiliencia|casos de teste funcionais|$)", normalized, re.DOTALL)
     limit_match = re.search(r"limite(.+?)(?:resiliencia|casos de teste funcionais|$)", normalized, re.DOTALL)
     resilience_match = re.search(r"resiliencia(.+?)(?:casos de teste funcionais|$)", normalized, re.DOTALL)
-    functional_cases_section = extract_section_body(
-        normalized,
-        "casos de teste funcionais",
-        ["usabilidade e acessibilidade", "fim_do_plano_de_testes"],
-    )
-    traceability_section = extract_section_body(
-        normalized,
-        "rastreabilidade dos criterios de aceite",
-        ["smoke minimo da feature", "qualidade nao funcional", "cenarios de teste"],
-    )
-    smoke_section = extract_section_body(
-        normalized,
-        "smoke minimo da feature",
-        ["qualidade nao funcional", "cenarios de teste", "casos de teste funcionais"],
-    )
-    scenarios_section = extract_section_body(
-        normalized,
-        "cenarios de teste",
-        ["casos de teste funcionais", "usabilidade e acessibilidade"],
-    )
-    non_functional_section = extract_section_body(
-        normalized,
-        "qualidade nao funcional",
-        ["cenarios de teste", "casos de teste funcionais"],
-    )
+    functional_cases_section = sections_by_name.get("Casos de teste funcionais", "")
+    traceability_section = sections_by_name.get("Rastreabilidade dos Criterios de Aceite", "")
+    smoke_section = sections_by_name.get("Smoke Minimo da Feature", "")
+    scenarios_section = sections_by_name.get("Cenarios de teste", "")
+    non_functional_section = sections_by_name.get("Qualidade nao funcional", "")
     cases_match = re.search(r"ct\s*0*1", functional_cases_section)
 
     happy_count = len(re.findall(r"(?:^|\n)\s*(?:[-*]\s+)?(?:[1-5]\.|\d+\.)", happy_match.group(1))) if happy_match else 0
@@ -483,11 +568,7 @@ def validate_qa_output(result):
     if re.search(r"acompanhar\s+falhas\b", non_functional_section) or re.search(r"acompanhar\s+falhas\b", normalized):
         return False, "Metricas genericas demais."
 
-    risks_section = extract_section_body(
-        normalized,
-        "riscos e metricas",
-        ["qualidade nao funcional", "rastreabilidade dos criterios de aceite", "smoke minimo da feature"],
-    )
+    risks_section = sections_by_name.get("Riscos e metricas", "")
     if re.search(r"sinal:\s*nenhum", risks_section):
         return False, "Riscos sem sinal operacional verificavel."
 
@@ -495,18 +576,14 @@ def validate_qa_output(result):
     if risk_count < 2:
         return False, "Menos de 2 riscos distintos."
 
-    traceability_count = len(re.findall(r"(?:^|\n)\s*[-*]\s*ca-\d+", traceability_section, re.IGNORECASE))
+    traceability_count = len(re.findall(r"(?:^|\n)\s*[-*]\s*ca[\s\-]*0*\d+\b", traceability_section, re.IGNORECASE))
     if traceability_count < 2 and "ponto a validar" not in traceability_section:
         return False, "Rastreabilidade dos criterios de aceite insuficiente."
 
     if "ponto a validar" in traceability_section:
         return False, "Rastreabilidade ainda depende de ponto a validar."
 
-    test_data_section = extract_section_body(
-        normalized,
-        "dados de teste",
-        ["riscos e metricas", "qualidade nao funcional", "rastreabilidade dos criterios de aceite"],
-    )
+    test_data_section = sections_by_name.get("Dados de teste", "")
     if re.search(r"ponto a verificar", test_data_section) or re.search(r"ponto a validar", test_data_section):
         return False, "Dados de teste ainda abrem lacunas em vez de provar o requisito."
 
@@ -635,6 +712,17 @@ def validate_backlog_output(result):
     if epics_count > 6:
         return False, "Epicos recomendados em excesso."
 
+    for section_name, section_match in [("capacidades", capabilities_section), ("epicos", epics_section)]:
+        if section_match:
+            bullet_lines = [
+                re.sub(r"^\s*[-*]\s+", "", line).strip()
+                for line in section_match.group(1).splitlines()
+                if re.search(r"^\s*[-*]\s+", line)
+            ]
+            short_lines = [line for line in bullet_lines if len(line.split()) < 3]
+            if short_lines:
+                return False, f"{section_name.capitalize()} do produto com itens curtos ou genericos demais."
+
     release_text = release_section.group(1) if release_section else ""
     release_items = parse_bullets_from_section(release_text)
     release_joined = " ".join(release_items)
@@ -643,6 +731,10 @@ def validate_backlog_output(result):
 
     if len(release_items) < 3:
         return False, "Fatias de release insuficientes."
+
+    release_bodies = [item.lower() for item in release_items]
+    if any(not re.search(r"\b(foco|depois|posterior|nao agora|fase seguinte)\b", item) for item in release_bodies):
+        return False, "Fatias de release sem foco e diferimento suficiente."
 
     mvp_line = next((item for item in release_items if "mvp" in item.lower()), "")
     if not re.search(r"\b(fundacao|espinha|fluxo principal|primeira versao|base)\b", mvp_line, re.IGNORECASE):

@@ -141,6 +141,8 @@ class ProjectManager:
 - A segunda linha deve ser uma descricao curta e util, com contexto, regra, excecao ou expectativa importante.
 - A descricao nao deve repetir o titulo; ela deve acrescentar informacao nova para produto, arquitetura ou QA.
 - Mantenha a descricao objetiva, com 1 ou 2 frases.
+- A historia precisa apontar uma acao de produto real, nao uma frase abstrata sobre processo interno.
+- Quando houver campo, estado, permissão ou excecao, mencione isso na descricao.
 """.strip()
 
     def _compose_story_block(self, index, title, description):
@@ -1937,6 +1939,9 @@ REGRAS GERAIS
 - Pense primeiro na estrutura do backlog antes de escrever historias.
 - Use linguagem de produto clara, especifica e executavel.
 - Cubra fundacao, operacao, gestao e governanca.
+- Nao aceite historias genéricas como "visualizar dados" ou "gerenciar fluxo" sem objeto, contexto ou efeito observavel.
+- Prefira historias com ator, acao, objeto e efeito de negocio claros.
+- Se a ideia for ampla, transforme em backlog com cobrancas concretas e nao em frases conceituais.
 """
 
         story_generation_base = f"""
@@ -1957,6 +1962,8 @@ REGRAS GERAIS
 - Cada story deve vir em um bloco com titulo e descricao curta.
 {self._story_block_format_rules()}
 - Mantenha o backlog entre {min_stories} e {max_stories} historias.
+- Cada story deve cobrir uma acao verificavel de negocio e nao apenas uma intencao abstrata.
+- Distribua o backlog para que haja historias de fundacao, operacao, visibilidade e governanca.
 """
 
         for _attempt in range(1, retry_count + 1):
