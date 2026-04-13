@@ -17,6 +17,8 @@ import {
   Users,
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { getProjectStatusConfirmationMessage, getProjectStatusMeta } from '../utils/projectStatus';
 import {
   bootstrapGeneratedApp,
   createProject,
@@ -27,6 +29,7 @@ import {
   getProjectArchitectureStatus,
   listProjects,
   listProjectTasks,
+  updateProjectStatus,
   runTaskImplementation,
   runTaskQa,
   runTaskRequirements,
@@ -446,6 +449,8 @@ export default function ProjectsPage() {
   const [projectSearch, setProjectSearch] = useState('');
   const [projectForm, setProjectForm] = useState(EMPTY_PROJECT);
   const [taskForm, setTaskForm] = useState(EMPTY_TASK);
+  const [statusDialog, setStatusDialog] = useState({ open: false, project: null, nextStatus: null });
+  const [statusUpdatingProjectUuid, setStatusUpdatingProjectUuid] = useState(null);
 
   const activeProject = projects.find((project) => project.uuid === activeProjectUuid) || null;
   const roadmap = activeProject?.intakeConfig?.roadmap || null;
@@ -541,6 +546,31 @@ export default function ProjectsPage() {
       if (!options.silent) {
         setError(getApiErrorMessage(loadError, 'Não foi possível carregar o status da arquitetura do projeto.'));
       }
+    }
+  }
+
+  function openProjectStatusDialog(project, nextStatus) {
+    setStatusDialog({ open: true, project, nextStatus });
+  }
+
+  async function confirmProjectStatusUpdate() {
+    if (!statusDialog.project || !statusDialog.nextStatus) return;
+
+    setStatusUpdatingProjectUuid(statusDialog.project.uuid);
+    setError(null);
+
+    try {
+      await updateProjectStatus(statusDialog.project.uuid, statusDialog.nextStatus);
+      await loadProjects(activeProjectUuid, { silent: true });
+      if (activeProjectUuid) {
+        await loadTasks(activeProjectUuid, { silent: true });
+        await loadArchitectureStatus(activeProjectUuid, { silent: true });
+      }
+      setStatusDialog({ open: false, project: null, nextStatus: null });
+    } catch (statusError) {
+      setError(getApiErrorMessage(statusError, 'Não foi possível atualizar o status do projeto.'));
+    } finally {
+      setStatusUpdatingProjectUuid(null);
     }
   }
 
@@ -769,7 +799,8 @@ export default function ProjectsPage() {
   }
 
   return (
-    <AppShell
+    <>
+      <AppShell
       eyebrow="Operação por Projeto"
       title="Board Operacional"
       description="Gerencie briefing, backlog, requisitos, QA e arquitetura dentro do contexto certo de cada projeto."
@@ -834,30 +865,14 @@ export default function ProjectsPage() {
                 <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
                   <AnimatePresence mode="popLayout">
                     {filteredProjects.map((project) => (
-                      <motion.button
+                      <ProjectListItem
                         key={project.uuid}
-                        layout
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        onClick={() => navigate(`/projects?project=${project.uuid}`)}
-                        className={`w-full rounded-xl border px-4 py-4 text-left transition ${
-                          project.uuid === activeProjectUuid
-                            ?'border-[#102a72]/20 bg-[#102a72]/5 shadow-sm'
-                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <h4 className="text-sm font-semibold text-slate-900">{project.name}</h4>
-                            <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">
-                              {project.description || 'Workspace pronto para backlog, refinamento, QA e geração técnica.'}
-                            </p>
-                          </div>
-                          <span className="dashboard-badge bg-slate-100 text-slate-600">
-                            {project._count?.tasks || 0}
-                          </span>
-                        </div>
-                      </motion.button>
+                        project={project}
+                        activeProjectUuid={activeProjectUuid}
+                        statusUpdatingProjectUuid={statusUpdatingProjectUuid}
+                        onOpenProject={(projectUuid) => navigate(`/projects?project=${projectUuid}`)}
+                        onOpenStatusDialog={openProjectStatusDialog}
+                      />
                     ))}
                   </AnimatePresence>
 
@@ -1193,6 +1208,72 @@ export default function ProjectsPage() {
           </div>
         </div>
       </div>
-    </AppShell>
+      </AppShell>
+      <ConfirmDialog
+        open={statusDialog.open}
+        title={`Atualizar status de ${statusDialog.project?.name || 'projeto'}`}
+        description={
+          statusDialog.project ? getProjectStatusConfirmationMessage(statusDialog.project.name, statusDialog.nextStatus) : ''
+        }
+        confirmLabel="Confirmar"
+        cancelLabel="Cancelar"
+        intent={statusDialog.nextStatus === 'archived' ? 'warning' : 'primary'}
+        loading={Boolean(statusUpdatingProjectUuid)}
+        onConfirm={confirmProjectStatusUpdate}
+        onClose={() => setStatusDialog({ open: false, project: null, nextStatus: null })}
+      />
+    </>
+  );
+}
+
+function ProjectListItem({
+  project,
+  activeProjectUuid,
+  statusUpdatingProjectUuid,
+  onOpenProject,
+  onOpenStatusDialog,
+}) {
+  const statusMeta = getProjectStatusMeta(project.status);
+  const isActive = project.uuid === activeProjectUuid;
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, x: -10 }}
+      animate={{ opacity: 1, x: 0 }}
+      className={`w-full rounded-xl border px-4 py-4 transition ${
+        isActive ? 'border-[#102a72]/20 bg-[#102a72]/5 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <button type="button" onClick={() => onOpenProject(project.uuid)} className="min-w-0 flex-1 text-left">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-semibold text-slate-900">{project.name}</h4>
+            <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${statusMeta.tone}`}>
+              {statusMeta.label}
+            </span>
+          </div>
+          <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">
+            {project.description || 'Workspace pronto para backlog, refinamento, QA e geração técnica.'}
+          </p>
+        </button>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <span className="dashboard-badge bg-slate-100 text-slate-600">{project._count?.tasks || 0}</span>
+          {statusMeta.nextStatus ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenStatusDialog(project, statusMeta.nextStatus);
+              }}
+              disabled={statusUpdatingProjectUuid === project.uuid}
+              className="dashboard-button-secondary px-3 py-2 text-xs"
+            >
+              {statusUpdatingProjectUuid === project.uuid ? 'Atualizando...' : statusMeta.action}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </motion.div>
   );
 }

@@ -9,17 +9,17 @@ const contracts = [
   {
     label: 'HomePage',
     file: 'HomePage.jsx',
-    includes: ['AppShell', 'Readiness', 'Governanca', 'Alertas ativos'],
+    includes: ['Aligna', 'Fluxo principal', 'Pacote principal do Aligna', 'Critérios de Aceite', 'Alertas de Ambiguidade'],
   },
   {
     label: 'CodeStudioPage',
     file: 'CodeStudioPage.jsx',
-    includes: ['AppShell', 'Readiness premium', 'Alertas ativos', 'Historico operacional'],
+    includes: ['Code Studio', 'Workspace de entrega', 'Acompanhamento no produto', 'Painel operacional da esteira'],
   },
   {
     label: 'ProjectsPage',
     file: 'ProjectsPage.jsx',
-    includes: ['Arquitetura', 'Operacional'],
+    includes: ['Board Operacional', 'Catálogo de projetos', 'Abrir Code Studio'],
   },
 ];
 

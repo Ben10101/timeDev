@@ -12,6 +12,7 @@ import authRoutes from './routes/authRoutes.js';
 import observabilityRoutes from './routes/observabilityRoutes.js';
 import alignmentRoutes from './routes/alignmentRoutes.js';
 import { recoverStaleAgentRuns } from './services/agentRunRecoveryService.js';
+import { recoverStaleGeneratedAppRuns } from './services/generatedAppRunRecoveryService.js';
 import { attachAuthUser } from './middleware/authMiddleware.js';
 import { apiAuditLogger } from './middleware/auditMiddleware.js';
 import { apiRateLimiter, applySecurityHeaders, attachRequestContext } from './middleware/securityMiddleware.js';
@@ -36,6 +37,23 @@ function getRequiredAuthSecret() {
     throw new Error('AUTH_ACCESS_SECRET ou JWT_SECRET precisa estar configurado antes de iniciar o backend.');
   }
   return secret;
+}
+
+function getRequiredDatabaseUrl() {
+  if (!DATABASE_URL.trim()) {
+    throw new Error('DATABASE_URL precisa estar configurada antes de iniciar o backend.');
+  }
+
+  try {
+    const parsed = new URL(DATABASE_URL);
+    if (!parsed.protocol || !parsed.hostname) {
+      throw new Error('DATABASE_URL invalida.');
+    }
+  } catch {
+    throw new Error('DATABASE_URL invalida.');
+  }
+
+  return DATABASE_URL;
 }
 
 function resolveTrustProxySetting() {
@@ -63,19 +81,39 @@ function getSafeDatabaseLabel() {
   }
 }
 
+function parseOriginList(value, label) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((origin) => {
+      try {
+        return new URL(origin).origin;
+      } catch {
+        throw new Error(`${label} contem uma origem invalida: ${origin}`);
+      }
+    });
+}
+
 function buildAllowedOrigins() {
   const defaults = ['http://localhost:5173', 'http://127.0.0.1:5173'];
-  const configured = [process.env.FRONTEND_ORIGIN, process.env.VITE_FRONTEND_URL]
-    .filter(Boolean)
-    .map((value) => value.trim());
+  const configured = [
+    ...parseOriginList(process.env.FRONTEND_ORIGIN, 'FRONTEND_ORIGIN'),
+    ...parseOriginList(process.env.VITE_FRONTEND_URL, 'VITE_FRONTEND_URL'),
+  ];
 
   return [...new Set([...defaults, ...configured])];
+}
+
+function validateRuntimeConfiguration() {
+  getRequiredAuthSecret();
+  getRequiredDatabaseUrl();
 }
 
 const allowedOrigins = buildAllowedOrigins();
 const isProduction = process.env.NODE_ENV === 'production';
 
-getRequiredAuthSecret();
+validateRuntimeConfiguration();
 app.set('trust proxy', resolveTrustProxySetting());
 app.use(applySecurityHeaders);
 app.use(attachRequestContext);
@@ -132,6 +170,9 @@ async function startServer() {
     const recoveryResult = await recoverStaleAgentRuns({
       maxAgeSeconds: recoveryWindowSeconds,
     });
+    const generatedRunRecoveryResult = await recoverStaleGeneratedAppRuns({
+      maxAgeSeconds: recoveryWindowSeconds,
+    });
 
     if (recoveryResult.recoveredCount > 0) {
       logWarn('backend_startup_recovered_runs', {
@@ -139,21 +180,39 @@ async function startServer() {
         recoveryWindowSeconds,
       });
     }
+    if (generatedRunRecoveryResult.recoveredCount > 0) {
+      logWarn('backend_startup_recovered_generated_runs', {
+        recoveredCount: generatedRunRecoveryResult.recoveredCount,
+        recoveryWindowSeconds,
+      });
+    }
 
     recoveryIntervalHandle = setInterval(async () => {
       try {
-        const result = await recoverStaleAgentRuns({
-          maxAgeSeconds: recoveryWindowSeconds,
-          reason: 'Execucao marcada como falha por watchdog de recuperacao do backend.',
-        });
+        const [result, generatedResult] = await Promise.all([
+          recoverStaleAgentRuns({
+            maxAgeSeconds: recoveryWindowSeconds,
+            reason: 'Execucao marcada como falha por watchdog de recuperacao do backend.',
+          }),
+          recoverStaleGeneratedAppRuns({
+            maxAgeSeconds: recoveryWindowSeconds,
+            reason: 'Execucao marcada como falha por watchdog de recuperacao do backend.',
+          }),
+        ]);
         if (result.recoveredCount > 0) {
           logWarn('agent_run_watchdog_recovered_runs', {
             recoveredCount: result.recoveredCount,
             recoveryWindowSeconds,
           });
         }
+        if (generatedResult.recoveredCount > 0) {
+          logWarn('generated_app_run_watchdog_recovered_runs', {
+            recoveredCount: generatedResult.recoveredCount,
+            recoveryWindowSeconds,
+          });
+        }
       } catch (error) {
-        logError('agent_run_watchdog_failed', {
+        logError('run_watchdog_failed', {
           recoveryWindowSeconds,
           error,
         });
@@ -164,6 +223,7 @@ async function startServer() {
       databaseTarget: getSafeDatabaseLabel(),
       error,
     });
+    return;
   }
 
   app.listen(PORT, () => {

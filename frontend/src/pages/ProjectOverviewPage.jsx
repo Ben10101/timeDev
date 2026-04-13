@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import AppShell from '../components/AppShell';
+import ConfirmDialog from '../components/ConfirmDialog';
 import {
   approveProjectArchitecture,
   generateProjectArchitecture,
@@ -9,8 +10,10 @@ import {
   getProject,
   getProjectArchitectureStatus,
   listProjectTasks,
+  updateProjectStatus,
 } from '../services/api';
 import { exportProjectDocumentationPdf } from '../utils/projectDocumentationExport';
+import { getProjectStatusConfirmationMessage, getProjectStatusWorkflow } from '../utils/projectStatus';
 
 const STORY_SHORTCUT_EXAMPLES = [
   {
@@ -58,6 +61,8 @@ export default function ProjectOverviewPage() {
   const [generatingArchitecture, setGeneratingArchitecture] = useState(false);
   const [approvingArchitecture, setApprovingArchitecture] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [statusDialog, setStatusDialog] = useState({ open: false, nextStatus: null });
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
   const [form, setForm] = useState({
@@ -81,6 +86,7 @@ export default function ProjectOverviewPage() {
   const shortcutReady = ideaLength >= 40;
   const riskCount = project?.intakeConfig?.riskRegister?.risks?.length || 0;
   const impedimentCount = project?.intakeConfig?.riskRegister?.impediments?.length || 0;
+  const projectStatusMeta = useMemo(() => getProjectStatusWorkflow(project?.status || 'draft'), [project?.status]);
   const projectJourney = useMemo(() => {
     if (!tasks.length) {
       return {
@@ -281,87 +287,139 @@ export default function ProjectOverviewPage() {
     }
   }
 
-  return (
-    <AppShell
-      eyebrow="Visão do Projeto"
-      title={project?.name || 'Projeto'}
-      description="Descreva a iniciativa, gere user stories com o PM Agent e siga para o board com as tasks prontas."
-      actions={
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <button onClick={() => navigate('/projects')} className="dashboard-button-secondary w-full sm:w-auto">
-            Voltar para projetos
-          </button>
-          <button
-            type="button"
-            onClick={handleExportPdf}
-            disabled={loading || exportingPdf || (architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved)}
-            className="dashboard-button-secondary w-full sm:w-auto"
-            title={architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved ?'A exportação final depende da aprovação humana da arquitetura.' : undefined}
-          >
-            {exportingPdf ?'Preparando PDF...' : 'Exportar PDF'}
-          </button>
-          <button
-            type={projectJourney.ctaType}
-            onClick={projectJourney.ctaType === 'button' ? projectJourney.ctaAction : undefined}
-            disabled={projectJourney.ctaDisabled}
-            className="dashboard-button-primary w-full sm:w-auto"
-          >
-            {projectJourney.ctaLabel}
-          </button>
-        </div>
-      }
-      sidebar={
-        <>
-          <section className="dashboard-panel">
-            <div className="dashboard-panel-header">
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Saude do projeto</p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 p-4">
-              {[
-                [groupedStats.total, 'Tasks'],
-                [groupedStats.backlog, 'Backlog'],
-                [groupedStats.qa, 'Em QA'],
-                [groupedStats.done, 'Concluídas'],
-              ].map(([value, label]) => (
-                <div key={label} className="rounded-xl border border-slate-200 bg-white p-4">
-                  <div className="text-2xl font-semibold text-slate-900">{value}</div>
-                  <div className="mt-1 text-xs text-slate-500">{label}</div>
-                </div>
-              ))}
-            </div>
-          </section>
+  async function handleProjectStatusChange(nextStatus) {
+    if (!project?.uuid) return;
 
-          <section className={`rounded-2xl border p-5 shadow-sm ${projectJourney.tone}`}>
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em]">Próxima ação</p>
-            <p className="mt-3 text-base font-semibold text-slate-900">{projectJourney.title}</p>
-            <p className="mt-2 text-sm leading-7 text-slate-600">{projectJourney.message}</p>
-            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Etapa atual: {projectJourney.stage}
-            </p>
-            <div className="mt-4 flex flex-col gap-3">
-              <button
-                type={projectJourney.ctaType}
-                onClick={projectJourney.ctaType === 'button' ? projectJourney.ctaAction : undefined}
-                disabled={projectJourney.ctaDisabled}
-                className="dashboard-button-secondary w-full bg-white/80"
-              >
-                {projectJourney.ctaLabel}
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate(`/projects/${projectUuid}/planning`)}
-                className="dashboard-button-secondary w-full bg-white/70"
-              >
-                Abrir planejamento
-              </button>
-            </div>
-            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              {riskCount} riscos · {impedimentCount} impedimentos
-            </p>
-          </section>
-        </>
-      }
-    >
+    setUpdatingStatus(true);
+    setError(null);
+    setSuccessMessage('');
+
+    try {
+      const updatedProject = await updateProjectStatus(project.uuid, nextStatus);
+      setProject(updatedProject);
+      setSuccessMessage(
+        nextStatus === 'archived'
+          ? 'Projeto arquivado com sucesso.'
+          : nextStatus === 'on_hold'
+            ? 'Projeto colocado em pausa.'
+            : 'Projeto reativado com sucesso.'
+      );
+    } catch (statusError) {
+      setError(getApiErrorMessage(statusError, 'Não foi possível atualizar o status do projeto.'));
+    } finally {
+      setUpdatingStatus(false);
+    }
+  }
+
+  function requestProjectStatusChange(nextStatus) {
+    setStatusDialog({ open: true, nextStatus });
+  }
+
+  return (
+    <>
+      <AppShell
+        eyebrow="Visão do Projeto"
+        title={project?.name || 'Projeto'}
+        description="Descreva a iniciativa, gere user stories com o PM Agent e siga para o board com as tasks prontas."
+        actions={
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <button onClick={() => navigate('/projects')} className="dashboard-button-secondary w-full sm:w-auto">
+              Voltar para projetos
+            </button>
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={loading || exportingPdf || (architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved)}
+              className="dashboard-button-secondary w-full sm:w-auto"
+              title={
+                architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved
+                  ? 'A exportação final depende da aprovação humana da arquitetura.'
+                  : undefined
+              }
+            >
+              {exportingPdf ? 'Preparando PDF...' : 'Exportar PDF'}
+            </button>
+            <button
+              type={projectJourney.ctaType}
+              onClick={projectJourney.ctaType === 'button' ? projectJourney.ctaAction : undefined}
+              disabled={projectJourney.ctaDisabled}
+              className="dashboard-button-primary w-full sm:w-auto"
+            >
+              {projectJourney.ctaLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => requestProjectStatusChange(projectStatusMeta.primaryTarget)}
+              disabled={loading || updatingStatus}
+              className="dashboard-button-secondary w-full sm:w-auto"
+            >
+              {updatingStatus ? 'Atualizando...' : projectStatusMeta.primaryAction}
+            </button>
+          </div>
+        }
+        sidebar={
+          <>
+            <section className="dashboard-panel">
+              <div className="dashboard-panel-header">
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Saude do projeto</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 p-4">
+                {[
+                  [groupedStats.total, 'Tasks'],
+                  [groupedStats.backlog, 'Backlog'],
+                  [groupedStats.qa, 'Em QA'],
+                  [groupedStats.done, 'Concluídas'],
+                ].map(([value, label]) => (
+                  <div key={label} className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="text-2xl font-semibold text-slate-900">{value}</div>
+                    <div className="mt-1 text-xs text-slate-500">{label}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className={`rounded-2xl border p-5 shadow-sm ${projectJourney.tone}`}>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em]">Próxima ação</p>
+              <p className="mt-3 text-base font-semibold text-slate-900">{projectJourney.title}</p>
+              <p className="mt-2 text-sm leading-7 text-slate-600">{projectJourney.message}</p>
+              <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Etapa atual: {projectJourney.stage}
+              </p>
+              <div className={`mt-4 inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${projectStatusMeta.tone}`}>
+                Status do projeto: {projectStatusMeta.label}
+              </div>
+              <div className="mt-4 flex flex-col gap-3">
+                <button
+                  type={projectJourney.ctaType}
+                  onClick={projectJourney.ctaType === 'button' ? projectJourney.ctaAction : undefined}
+                  disabled={projectJourney.ctaDisabled}
+                  className="dashboard-button-secondary w-full bg-white/80"
+                >
+                  {projectJourney.ctaLabel}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/projects/${projectUuid}/planning`)}
+                  className="dashboard-button-secondary w-full bg-white/70"
+                >
+                  Abrir planejamento
+                </button>
+                <button
+                  type="button"
+                  onClick={() => requestProjectStatusChange(projectStatusMeta.primaryTarget)}
+                  disabled={loading || updatingStatus}
+                  className="dashboard-button-secondary w-full bg-white/70"
+                >
+                  {updatingStatus ? 'Atualizando...' : projectStatusMeta.primaryAction}
+                </button>
+              </div>
+              <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                {riskCount} riscos · {impedimentCount} impedimentos
+              </p>
+            </section>
+          </>
+        }
+      >
       <section className="space-y-6">
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
         {successMessage && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{successMessage}</div>}
@@ -378,6 +436,9 @@ export default function ProjectOverviewPage() {
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 {tasks.length} tasks · {groupedStats.done} concluídas · {architectureStatus?.hasArchitecture ?'arquitetura gerada' : 'arquitetura pendente'}
               </p>
+              <div className={`mt-4 inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${projectStatusMeta.tone}`}>
+                Status do projeto: {projectStatusMeta.label}
+              </div>
             </div>
           </div>
         </section>
@@ -678,7 +739,29 @@ export default function ProjectOverviewPage() {
           </div>
         </section>
       </section>
-    </AppShell>
+      </AppShell>
+      <ConfirmDialog
+        open={statusDialog.open}
+        title="Confirmar alteração de status"
+        description={
+          statusDialog.nextStatus
+            ? getProjectStatusConfirmationMessage(project?.name || 'projeto', statusDialog.nextStatus)
+            : ''
+        }
+        confirmLabel="Confirmar"
+        cancelLabel="Cancelar"
+        intent={statusDialog.nextStatus === 'archived' ? 'warning' : 'primary'}
+        loading={updatingStatus}
+        onConfirm={() => {
+          const nextStatus = statusDialog.nextStatus;
+          setStatusDialog({ open: false, nextStatus: null });
+          if (nextStatus) {
+            handleProjectStatusChange(nextStatus);
+          }
+        }}
+        onClose={() => setStatusDialog({ open: false, nextStatus: null })}
+      />
+    </>
   );
 }
 

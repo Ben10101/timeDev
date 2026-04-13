@@ -74,6 +74,143 @@ def _normalize_shared_ui_imports(template_source):
     )
 
 
+def _contains_any(text, candidates):
+    source = str(text or "")
+    return any(candidate in source for candidate in candidates)
+
+
+def _validate_frontend_page_template(template_source):
+    text = str(template_source or "").strip()
+    reasons = []
+    if not text:
+        reasons.append("missing_page_template")
+        return reasons
+    if not _contains_any(text, ["export default function", "export function "]):
+        reasons.append("page_missing_component_export")
+    if not _contains_any(text, ["productMode=", "uiIntent=", "layoutVariant=", "pageArchetype=", "fallbackPattern="]):
+        reasons.append("page_missing_explicit_shell_contract")
+    if "Object.keys(initialForm)" in text:
+        reasons.append("page_uses_generic_form_loop")
+    if _contains_any(text, ["Campo principal da feature gerada", "Informe o valor principal", "Conclua esta etapa"]):
+        reasons.append("page_contains_generic_fallback_copy")
+    if not _contains_any(text, ["FieldGroup", "PrimaryButton", "SurfaceCard", "__UI_IMPORT_PATH__", "packages/ui/src/index"]):
+        reasons.append("page_missing_shared_ui_usage")
+    if not _contains_any(text, ["useForm", "<FieldGroup", "<SurfaceCard"]):
+        reasons.append("page_missing_concrete_form_or_layout")
+    return reasons
+
+
+def _validate_frontend_service_template(template_source):
+    text = str(template_source or "").strip()
+    reasons = []
+    if not text:
+        reasons.append("missing_frontend_service_template")
+        return reasons
+    if "export " not in text:
+        reasons.append("frontend_service_missing_export")
+    if not _contains_any(text, ["fetch(", "await fetch("]):
+        reasons.append("frontend_service_missing_fetch_call")
+    if not _contains_any(text, ["__QUERY_KEY_NAME__", "queryKey", "queryKey:"]):
+        reasons.append("frontend_service_missing_query_key")
+    return reasons
+
+
+def _validate_frontend_index_template(template_source):
+    text = str(template_source or "").strip()
+    reasons = []
+    if not text:
+        reasons.append("missing_frontend_index_template")
+        return reasons
+    if "export " not in text:
+        reasons.append("frontend_index_missing_export")
+    return reasons
+
+
+def _validate_backend_service_template(template_source):
+    text = str(template_source or "").strip()
+    reasons = []
+    if not text:
+        reasons.append("missing_backend_service_template")
+        return reasons
+    if not _contains_any(text, ["PrismaClient", "@prisma/client"]):
+        reasons.append("backend_service_missing_prisma_client")
+    if "export class" not in text:
+        reasons.append("backend_service_missing_class_export")
+    if "findMany(" not in text:
+        reasons.append("backend_service_missing_find_many")
+    if ".create({" not in text:
+        reasons.append("backend_service_missing_create")
+    if "const records = []" in text:
+        reasons.append("backend_service_uses_memory_storage")
+    return reasons
+
+
+def _validate_backend_router_template(template_source):
+    text = str(template_source or "").strip()
+    reasons = []
+    if not text:
+        reasons.append("missing_backend_router_template")
+        return reasons
+    if not _contains_any(text, ["Router()", "express.Router("]):
+        reasons.append("backend_router_missing_router_instance")
+    if ".get(" not in text or ".post(" not in text:
+        reasons.append("backend_router_missing_crud_routes")
+    if not _contains_any(text, ["from './service'", 'from "./service"']):
+        reasons.append("backend_router_missing_service_import")
+    return reasons
+
+
+def _validate_backend_index_template(template_source):
+    text = str(template_source or "").strip()
+    reasons = []
+    if not text:
+        reasons.append("missing_backend_index_template")
+        return reasons
+    if "export " not in text:
+        reasons.append("backend_index_missing_export")
+    return reasons
+
+
+def _drop_invalid_templates(frontend, backend):
+    frontend_rejections = {}
+    backend_rejections = {}
+
+    page_reasons = _validate_frontend_page_template(frontend.get("pageTsxTemplate"))
+    if page_reasons:
+        frontend["pageTsxTemplate"] = ""
+        frontend_rejections["pageTsxTemplate"] = page_reasons
+
+    service_reasons = _validate_frontend_service_template(frontend.get("serviceTsTemplate"))
+    if service_reasons:
+        frontend["serviceTsTemplate"] = ""
+        frontend_rejections["serviceTsTemplate"] = service_reasons
+
+    index_reasons = _validate_frontend_index_template(frontend.get("indexTsTemplate"))
+    if index_reasons:
+        frontend["indexTsTemplate"] = ""
+        frontend_rejections["indexTsTemplate"] = index_reasons
+
+    backend_service_reasons = _validate_backend_service_template(backend.get("serviceTsTemplate"))
+    if backend_service_reasons:
+        backend["serviceTsTemplate"] = ""
+        backend_rejections["serviceTsTemplate"] = backend_service_reasons
+
+    router_reasons = _validate_backend_router_template(backend.get("routerTsTemplate"))
+    if router_reasons:
+        backend["routerTsTemplate"] = ""
+        backend_rejections["routerTsTemplate"] = router_reasons
+
+    backend_index_reasons = _validate_backend_index_template(backend.get("indexTsTemplate"))
+    if backend_index_reasons:
+        backend["indexTsTemplate"] = ""
+        backend_rejections["indexTsTemplate"] = backend_index_reasons
+
+    return {
+        "frontend": frontend_rejections,
+        "backend": backend_rejections,
+    }
+
+
 def _escape_ts(value):
     return str(value or "").replace("\\", "\\\\").replace("'", "\\'")
 
@@ -668,6 +805,7 @@ def _ensure_materialized_templates(result, payload):
     materialized = result or _fallback_frontend(payload)
     frontend = materialized.get("frontend") or {}
     backend = materialized.get("backend") or {}
+    rejection_reasons = _drop_invalid_templates(frontend, backend)
 
     if not frontend.get("pageTsxTemplate"):
         frontend["pageTsxTemplate"] = _default_frontend_page_template(payload)
@@ -695,7 +833,11 @@ def _ensure_materialized_templates(result, payload):
         "llmFileCount": materialization["llmFileCount"],
         "fallbackFileCount": materialization["fallbackFileCount"],
         "variationProfile": feature_mode,
+        "rejectionReasons": rejection_reasons,
+        "rejectionCount": sum(len(items) for group in rejection_reasons.values() for items in group.values()),
     }
+    frontend["rejectionReasons"] = rejection_reasons["frontend"]
+    backend["rejectionReasons"] = rejection_reasons["backend"]
     materialized["generationSource"] = materialization["generationSource"]
     materialized["variationProfile"] = feature_mode
     materialized["compositionSignature"] = f"{feature_mode}:{frontend.get('layoutVariant') or 'default'}:{frontend.get('pageArchetype') or 'general'}"

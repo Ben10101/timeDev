@@ -20,6 +20,8 @@ import {
   bootstrapGeneratedApp,
   getApiErrorMessage,
   getGeneratedApp,
+  getAiOperationsOverview,
+  getOperationalHealth,
   getProjectArchitectureStatus,
   getProjectImplementationOverview,
   getTaskImplementationStatus,
@@ -99,6 +101,68 @@ function RepairScopeBadge({ value }) {
   return <span className={`dashboard-badge ${tone}`}>{label}</span>;
 }
 
+function LayerFocusBadge({ value }) {
+  const normalized = String(value || 'unknown');
+  const tone =
+    normalized === 'frontend' || normalized === 'specialist'
+      ?'bg-amber-50 text-amber-700'
+      : normalized === 'backend'
+        ?'bg-blue-50 text-[#102a72]'
+        : normalized === 'schema' || normalized === 'infra da esteira'
+          ?'bg-rose-50 text-rose-700'
+        : normalized === 'repair'
+          ?'bg-rose-50 text-rose-700'
+          : normalized === 'stable'
+            ?'bg-emerald-50 text-emerald-700'
+            : 'bg-slate-100 text-slate-600';
+
+  return <span className={`dashboard-badge ${tone}`}>{normalized}</span>;
+}
+
+function GenerationSourceBadge({ value }) {
+  const normalized = String(value || 'unknown');
+  const tone =
+    normalized === 'llm_primary'
+      ?'bg-emerald-50 text-emerald-700'
+      : normalized === 'llm_primary_with_fallback'
+        ?'bg-amber-50 text-amber-700'
+        : normalized === 'fallback_full'
+          ?'bg-rose-50 text-rose-700'
+          : 'bg-slate-100 text-slate-600';
+
+  return <span className={`dashboard-badge ${tone}`}>{normalized}</span>;
+}
+
+function StudioStatCard({ label, value, description, className = '' }) {
+  return (
+    <div className={`rounded-2xl border border-slate-200 bg-slate-50 p-4 ${className}`}>
+      <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">{label}</p>
+      <p className="mt-2 text-2xl font-bold text-slate-900">{value}</p>
+      {description ? <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p> : null}
+    </div>
+  );
+}
+
+function ProjectPickCard({ project, selected, onSelect }) {
+  return (
+    <button
+      onClick={() => onSelect(project.uuid)}
+      className={`rounded-xl border p-5 text-left transition ${
+        selected ? 'border-[#102a72]/30 bg-[#102a72]/5' : 'border-slate-200 bg-white hover:border-slate-300'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-base font-semibold text-slate-900">{project.name}</h3>
+        <FolderGit2 className="h-4 w-4 text-slate-400" />
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-500">{project.description || 'Sem descrição consolidada.'}</p>
+      <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+        {selected ? 'Projeto aberto no studio' : 'Clique para abrir o contexto técnico'}
+      </p>
+    </button>
+  );
+}
+
 function formatRepairExecutor(value) {
   const normalized = String(value || '').trim();
   if (!normalized) return 'n/a';
@@ -113,6 +177,44 @@ function formatRepairExecutor(value) {
 
   return labels[normalized] || normalized;
 }
+
+function formatAgentName(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return 'n/a';
+
+  const labels = {
+    implementation_autonomous_agent: 'Autonomous',
+    frontend_agent: 'Frontend',
+    backend_agent: 'Backend',
+    schema_agent: 'Schema',
+    debug_agent: 'Debug',
+    project_manager: 'PM',
+    requirements_analyst: 'Requirements',
+    architect: 'Architect',
+  };
+
+  return labels[normalized] || normalized;
+}
+
+function formatTrendDelta(value) {
+  if (!Number.isFinite(Number(value))) return 'n/a';
+  const numeric = Number(value);
+  const sign = numeric > 0 ? '+' : '';
+  return `${sign}${numeric} pp`;
+}
+
+const TRACKING_ITEMS = [
+  {
+    title: 'Reduzir fallback e repair nas execucoes bem-sucedidas',
+    status: 'em observacao',
+    detail: 'Acompanhar fallback_full, repair e write set em janelas comparaveis.',
+  },
+  {
+    title: 'Reduzir reprovacoes de specialist em historias tecnicamente verdes',
+    status: 'em observacao',
+    detail: 'Separar reprovação semantica real de ruído de template ou copy.',
+  },
+];
 
 function downloadMarkdownFile(filename, content) {
   const blob = new Blob([content || ''], { type: 'text/markdown;charset=utf-8' });
@@ -381,6 +483,8 @@ export default function CodeStudioPage() {
   const [architectureStatus, setArchitectureStatus] = useState(null);
   const [generatedApp, setGeneratedApp] = useState(null);
   const [implementationOverview, setImplementationOverview] = useState(null);
+  const [operationsOverview, setOperationsOverview] = useState(null);
+  const [health, setHealth] = useState(null);
   const [implementationMap, setImplementationMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [runningTaskUuid, setRunningTaskUuid] = useState(null);
@@ -409,6 +513,8 @@ export default function CodeStudioPage() {
       setArchitectureStatus(null);
       setGeneratedApp(null);
       setImplementationOverview(null);
+      setOperationsOverview(null);
+      setHealth(null);
       setImplementationMap({});
       setLoading(false);
     }
@@ -444,15 +550,19 @@ export default function CodeStudioPage() {
     setError(null);
 
     try {
-      const [taskList, nextArchitectureStatus, nextImplementationOverview] = await Promise.all([
+      const [taskList, nextArchitectureStatus, nextImplementationOverview, nextHealth, nextOperationsOverview] = await Promise.all([
         listProjectTasks(projectUuid),
         getProjectArchitectureStatus(projectUuid),
         getProjectImplementationOverview(projectUuid),
+        getOperationalHealth().catch(() => null),
+        getAiOperationsOverview().catch(() => null),
       ]);
 
       setTasks(taskList);
       setArchitectureStatus(nextArchitectureStatus);
       setImplementationOverview(nextImplementationOverview);
+      setHealth(nextHealth);
+      setOperationsOverview(nextOperationsOverview);
 
       try {
         const app = await getGeneratedApp(projectUuid);
@@ -717,22 +827,15 @@ export default function CodeStudioPage() {
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Contexto tecnico</p>
             </div>
             <div className="grid gap-3 p-4">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">App base</p>
-                <p className="mt-2 font-semibold text-slate-900">{generatedApp?.status || 'Ainda não gerado'}</p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  {generatedApp?.rootPath || 'Será criado quando a arquitetura ou a implementação rodar.'}
-                </p>
-              </div>
+              <StudioStatCard
+                label="App base"
+                value={generatedApp?.status || 'Ainda não gerado'}
+                description={generatedApp?.rootPath || 'Será criado quando a arquitetura ou a implementação rodar.'}
+                className="bg-slate-50"
+              />
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.22em]">Prontas agora</p>
-                  <p className="mt-2 text-lg font-semibold">{executionReadyTasks.length}</p>
-                </div>
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.22em]">Com bloqueio</p>
-                  <p className="mt-2 text-lg font-semibold">{blockedReadyTasks.length}</p>
-                </div>
+                <StudioStatCard label="Prontas agora" value={executionReadyTasks.length} className="border-emerald-200 bg-emerald-50 text-emerald-900" />
+                <StudioStatCard label="Com bloqueio" value={blockedReadyTasks.length} className="border-amber-200 bg-amber-50 text-amber-900" />
               </div>
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
                 <p><strong>Arquitetura:</strong> {architectureStateLabel}</p>
@@ -742,21 +845,41 @@ export default function CodeStudioPage() {
               </div>
               {implementationOverview && (
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Repair do projeto</p>
-                  <div className="mt-3 space-y-2">
-                    <p><strong>Local:</strong> {implementationOverview.repairSummary?.localRepairRatePercent ?? 'n/a'}%</p>
-                    <p><strong>Escalado:</strong> {implementationOverview.repairSummary?.escalatedRatePercent ?? 'n/a'}%</p>
-                    <p><strong>Aderencia media:</strong> {implementationOverview.repairSummary?.averageAdherencePercent ?? 'n/a'}%</p>
-                    <p><strong>Implementacoes com telemetria:</strong> {implementationOverview.tasksWithRepairTelemetry ?? 0}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Foco operacional</p>
+                    <LayerFocusBadge value={implementationOverview.operationalFocus?.dominantLayer} />
                   </div>
-                  {implementationOverview.topRootCauses?.length ?(
-                    <div className="mt-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Causa mais frequente</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">
-                        {implementationOverview.topRootCauses[0].rootCause}
-                      </p>
+                  <div className="mt-3 space-y-2">
+                    <p className="font-semibold text-slate-900">
+                      {implementationOverview.operationalFocus?.headline || 'Sem gargalo consolidado'}
+                    </p>
+                    <p><strong>Issue:</strong> {implementationOverview.operationalFocus?.dominantIssue || 'n/a'}</p>
+                    <p><strong>Teste falhou:</strong> {implementationOverview.operationalFocus?.latestFailure?.evidenceLabel || 'n/a'}</p>
+                    <p><strong>Camada:</strong> {implementationOverview.operationalFocus?.latestFailure?.layer || implementationOverview.operationalFocus?.dominantLayer || 'n/a'}</p>
+                    <p><strong>Primeiro arquivo:</strong> {implementationOverview.operationalFocus?.latestFailure?.firstFileToInspect || 'n/a'}</p>
+                    <p><strong>Próximo passo:</strong> {implementationOverview.operationalFocus?.nextStep || 'n/a'}</p>
+                    <p><strong>Specialist médio:</strong> {implementationOverview.specialistSummary?.averageSpecialistScore ?? 'n/a'}</p>
+                    <p><strong>Autonomia média:</strong> {implementationOverview.autonomySummary?.averageAutonomyPercent ?? 'n/a'}%</p>
+                    <p><strong>Aderencia repair:</strong> {implementationOverview.repairSummary?.averageAdherencePercent ?? 'n/a'}%</p>
+                  </div>
+                  {implementationOverview.operationalFocus?.latestFailure?.evidenceMessage ? (
+                    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-700">Ultima falha</p>
+                      <p className="mt-2 leading-6">{implementationOverview.operationalFocus.latestFailure.evidenceMessage}</p>
                     </div>
                   ) : null}
+                  {!!implementationOverview.operationalFocus?.focusFiles?.length && (
+                    <div className="mt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Arquivos foco</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {implementationOverview.operationalFocus.focusFiles.slice(0, 4).map((file) => (
+                          <span key={`focus-${file}`} className="dashboard-badge bg-slate-100 text-slate-700">
+                            {file}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {implementationOverview.executorMix?.length ?(
                     <div className="mt-4 flex flex-wrap gap-2">
                       {implementationOverview.executorMix.slice(0, 3).map((item) => (
@@ -809,32 +932,253 @@ export default function CodeStudioPage() {
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-1">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Arquitetura</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">
-                  {architectureStateLabel}
-                </p>
+              <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-1">
+              <StudioStatCard label="Arquitetura" value={architectureStateLabel} />
+              <StudioStatCard label="Stories prontas" value={readyTasks.length} />
+              <StudioStatCard label="Prontas agora" value={executionReadyTasks.length} />
+              <StudioStatCard label="Com bloqueios" value={blockedReadyTasks.length} />
+              <StudioStatCard label="Integradas" value={integratedTasks.length} />
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Stories prontas</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{readyTasks.length}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Prontas agora</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{executionReadyTasks.length}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Com bloqueios</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{blockedReadyTasks.length}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Integradas</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{integratedTasks.length}</p>
-              </div>
-            </div>
           </div>
         </section>
+
+        {(health || operationsOverview || implementationOverview) && (
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Acompanhamento no produto</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Estado visivel da esteira</h2>
+              </div>
+            </div>
+            <div className="grid gap-4 p-6 xl:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Health geral</p>
+                <p className="mt-3 text-lg font-semibold text-slate-900">{health?.status || 'n/a'}</p>
+                <p className="mt-2 text-sm text-slate-600">Banco {health?.database || 'n/a'} · {health?.environment || 'n/a'}</p>
+                <p className="mt-4 text-sm text-slate-700">Runs recentes: {health?.runtime?.failureRunsLast24h ?? 0} falhas · {health?.runtime?.staleRunningRuns ?? 0} travadas</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gargalo atual</p>
+                <p className="mt-3 text-lg font-semibold text-slate-900">
+                  {implementationOverview?.operationalFocus?.headline || 'Sem gargalo consolidado'}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  {implementationOverview?.operationalFocus?.nextStep || 'Acompanhe a proxima rodada para ampliar a amostra.'}
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <LayerFocusBadge value={implementationOverview?.operationalFocus?.dominantLayer} />
+                  <span className="dashboard-badge bg-slate-100 text-slate-700">
+                    {implementationOverview?.repairSummary?.localRepairRatePercent ?? 0}% local
+                  </span>
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 xl:col-span-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Status por agente</p>
+                  <span className="dashboard-badge bg-slate-100 text-slate-700">
+                    {operationsOverview?.summary?.failedRunsLast24h ?? 0} falhas 24h
+                  </span>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {(operationsOverview?.reliability?.topFailingAgents || operationsOverview?.byAgent || []).slice(0, 4).map((agent) => (
+                    <div key={`agent-${agent.agentName}`} className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
+                      <div className="flex items-center justify-between gap-2">
+                        <strong className="text-slate-900">{formatAgentName(agent.agentName)}</strong>
+                        <span className="dashboard-badge bg-slate-100 text-slate-700">{agent.failureRatePercent ?? agent.failureRate ?? 0}%</span>
+                      </div>
+                      <p className="mt-2 text-slate-600">
+                        {agent.started ?? 0} runs · {agent.completed ?? agent.completedRuns ?? 0} concluídas · {agent.failed ?? 0} falhas
+                      </p>
+                    </div>
+                  ))}
+                  {!((operationsOverview?.reliability?.topFailingAgents || operationsOverview?.byAgent || []).length) && (
+                    <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-600">
+                      Ainda não há volume suficiente para consolidar o status por agente.
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Tendência recente</p>
+                <div className="mt-4 space-y-3 text-sm text-slate-700">
+                  <p><strong>Janela:</strong> {implementationOverview.trendSummary?.windowSize ?? 'n/a'} implementacoes</p>
+                  <p>
+                    <strong>Fallback full:</strong> {implementationOverview.trendSummary?.recent?.fallbackFullRatePercent ?? 'n/a'}%
+                    {' '}
+                    {formatTrendDelta(implementationOverview.trendSummary?.deltas?.fallbackFullRatePercent)}
+                  </p>
+                  <p>
+                    <strong>Specialist alerta:</strong> {implementationOverview.trendSummary?.recent?.specialistAttentionRatePercent ?? 'n/a'}%
+                    {' '}
+                    {formatTrendDelta(implementationOverview.trendSummary?.deltas?.specialistAttentionRatePercent)}
+                  </p>
+                  <p>
+                    <strong>Repair local:</strong> {implementationOverview.trendSummary?.recent?.localRepairRatePercent ?? 'n/a'}%
+                    {' '}
+                    {formatTrendDelta(implementationOverview.trendSummary?.deltas?.localRepairRatePercent)}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="px-6 pb-6">
+              <div className="rounded-xl border border-slate-200 bg-white p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Plano restante</p>
+                    <h3 className="mt-2 text-lg font-bold text-slate-900">Pendências em observação</h3>
+                  </div>
+                  <span className="dashboard-badge bg-slate-100 text-slate-700">{TRACKING_ITEMS.length} itens</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  O acompanhamento principal já vive na tela; este bloco só mantém as frentes que ainda precisam de tendência observável.
+                </p>
+                <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                  {TRACKING_ITEMS.map((item) => (
+                    <div key={item.title} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-sm font-semibold text-slate-900">{item.title}</p>
+                        <span className="dashboard-badge bg-amber-50 text-amber-700">{item.status}</span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">{item.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {implementationOverview && (
+          <section className="dashboard-panel">
+            <div className="dashboard-panel-header">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Entrega guiada</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Painel operacional da esteira</h2>
+              </div>
+            </div>
+            <div className="grid gap-4 p-6 xl:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 xl:col-span-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gargalo dominante</p>
+                  <LayerFocusBadge value={implementationOverview.operationalFocus?.dominantLayer} />
+                </div>
+                <p className="mt-3 text-lg font-semibold text-slate-900">
+                  {implementationOverview.operationalFocus?.headline || 'Sem gargalo consolidado'}
+                </p>
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  {implementationOverview.operationalFocus?.dominantIssue || 'Sem resumo operacional da ultima falha.'}
+                </p>
+                <div className="mt-4 rounded-lg bg-white px-4 py-3 text-sm text-slate-700">
+                  <strong>Próximo passo recomendado:</strong> {implementationOverview.operationalFocus?.nextStep || 'n/a'}
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Teste que falhou</p>
+                    <p className="mt-2 font-semibold text-slate-900">
+                      {implementationOverview.operationalFocus?.latestFailure?.evidenceLabel || 'n/a'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Camada</p>
+                    <p className="mt-2 font-semibold text-slate-900">
+                      {implementationOverview.operationalFocus?.latestFailure?.layer || implementationOverview.operationalFocus?.dominantLayer || 'n/a'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Abrir primeiro</p>
+                    <p className="mt-2 font-semibold text-slate-900">
+                      {implementationOverview.operationalFocus?.latestFailure?.firstFileToInspect || implementationOverview.operationalFocus?.focusFiles?.[0] || 'n/a'}
+                    </p>
+                  </div>
+                </div>
+                {implementationOverview.operationalFocus?.latestFailure?.evidenceMessage ? (
+                  <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-700">Evidência</p>
+                    <p className="mt-2 leading-6">{implementationOverview.operationalFocus.latestFailure.evidenceMessage}</p>
+                  </div>
+                ) : null}
+                {!!implementationOverview.operationalFocus?.focusFiles?.length && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {implementationOverview.operationalFocus.focusFiles.map((file) => (
+                      <span key={`operational-focus-${file}`} className="rounded-full bg-white px-3 py-1 text-xs text-slate-700">
+                        {file}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Autonomia</p>
+                <div className="mt-4 space-y-3 text-sm text-slate-700">
+                  <p><strong>Média:</strong> {implementationOverview.autonomySummary?.averageAutonomyPercent ?? 'n/a'}%</p>
+                  <p><strong>LLM primário:</strong> {implementationOverview.autonomySummary?.llmPrimaryCount ?? 0}</p>
+                  <p><strong>Híbrido:</strong> {implementationOverview.autonomySummary?.hybridCount ?? 0}</p>
+                  <p><strong>Fallback full:</strong> {implementationOverview.autonomySummary?.fallbackFullCount ?? 0}</p>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {(implementationOverview.generationSourceMix || []).slice(0, 3).map((item) => (
+                    <div key={`generation-mix-${item.generationSource}`} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
+                      <GenerationSourceBadge value={item.generationSource} />
+                      <strong>{item.count}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Specialist e repair</p>
+                <div className="mt-4 space-y-3 text-sm text-slate-700">
+                  <p><strong>Score specialist:</strong> {implementationOverview.specialistSummary?.averageSpecialistScore ?? 'n/a'}</p>
+                  <p><strong>Approved:</strong> {implementationOverview.specialistSummary?.approvedCount ?? 0}</p>
+                  <p><strong>Needs attention:</strong> {implementationOverview.specialistSummary?.needsAttentionCount ?? 0}</p>
+                  <p><strong>Aderência repair:</strong> {implementationOverview.repairSummary?.averageAdherencePercent ?? 'n/a'}%</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 px-6 pb-6 xl:grid-cols-3">
+              <div className="rounded-xl border border-slate-200 bg-white p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Top specialist codes</p>
+                <div className="mt-4 space-y-2 text-sm text-slate-700">
+                  {(implementationOverview.topSpecialistCodes || []).slice(0, 5).map((item) => (
+                    <div key={`top-specialist-${item.code}`} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                      <span>{item.code}</span>
+                      <strong>{item.count}x</strong>
+                    </div>
+                  ))}
+                  {!implementationOverview.topSpecialistCodes?.length && <div>Nenhum code dominante registrado.</div>}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Top autonomous rejections</p>
+                <div className="mt-4 space-y-2 text-sm text-slate-700">
+                  {(implementationOverview.topAutonomousRejections || []).slice(0, 5).map((item) => (
+                    <div key={`top-rejection-${item.reason}`} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                      <span>{item.reason}</span>
+                      <strong>{item.count}x</strong>
+                    </div>
+                  ))}
+                  {!implementationOverview.topAutonomousRejections?.length && <div>Nenhuma rejeição dominante registrada.</div>}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Top root causes</p>
+                <div className="mt-4 space-y-2 text-sm text-slate-700">
+                  {(implementationOverview.topRootCauses || []).slice(0, 5).map((item) => (
+                    <div key={`top-root-${item.rootCause}`} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                      <span>{item.rootCause}</span>
+                      <strong>{item.count}x</strong>
+                    </div>
+                  ))}
+                  {!implementationOverview.topRootCauses?.length && <div>Nenhuma causa raiz dominante registrada.</div>}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
 
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
@@ -865,29 +1209,17 @@ export default function CodeStudioPage() {
 
           <div className="grid gap-4 p-6 md:grid-cols-2 xl:grid-cols-3">
             {filteredProjects.map((project) => (
-              <button
+              <ProjectPickCard
                 key={project.uuid}
-                onClick={() => {
+                project={project}
+                selected={project.uuid === selectedProjectUuid}
+                onSelect={(projectUuid) => {
                   const nextParams = new URLSearchParams(searchParams);
-                  nextParams.set('project', project.uuid);
+                  nextParams.set('project', projectUuid);
                   nextParams.delete('task');
                   setSearchParams(nextParams);
                 }}
-                className={`rounded-xl border p-5 text-left transition ${
-                  project.uuid === selectedProjectUuid
-                    ?'border-[#102a72]/30 bg-[#102a72]/5'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-base font-semibold text-slate-900">{project.name}</h3>
-                  <FolderGit2 className="h-4 w-4 text-slate-400" />
-                </div>
-                <p className="mt-3 text-sm leading-6 text-slate-500">{project.description || 'Sem descrição consolidada.'}</p>
-                <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  {project.uuid === selectedProjectUuid ?'Projeto aberto no studio' : 'Clique para abrir o contexto técnico'}
-                </p>
-              </button>
+              />
             ))}
             {!filteredProjects.length && (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500 md:col-span-2 xl:col-span-3">
@@ -1209,6 +1541,22 @@ export default function CodeStudioPage() {
                         ) : null}
                       </div>
                     )}
+
+                    {implementation?.qualitySummary || implementation?.autonomySummary ?(
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Qualidade atual</span>
+                          <GenerationSourceBadge value={implementation?.autonomySummary?.generationSource || implementation?.qualitySummary?.autonomousGeneration?.generationSource} />
+                          <StatusBadge value={implementation?.qualitySummary?.specialistReviewStatus} />
+                        </div>
+                        <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+                          <p><strong>Specialist:</strong> {implementation?.qualitySummary?.specialistScore ?? 'n/a'}</p>
+                          <p><strong>Validation:</strong> {implementation?.qualitySummary?.validationScore ?? 'n/a'}</p>
+                          <p><strong>Build:</strong> {implementation?.qualitySummary?.buildStatus || 'n/a'}</p>
+                          <p><strong>Test:</strong> {implementation?.qualitySummary?.testStatus || 'n/a'}</p>
+                        </div>
+                      </div>
+                    ) : null}
 
                     {!!blockers.length && (
                       <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -1827,3 +2175,5 @@ export default function CodeStudioPage() {
     </AppShell>
   );
 }
+
+

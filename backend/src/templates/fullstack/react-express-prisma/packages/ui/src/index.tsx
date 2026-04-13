@@ -1,5 +1,11 @@
 ﻿import React from 'react'
 import type { CSSProperties, ReactNode } from 'react'
+import {
+  buildSectionSet as buildWorkbenchSectionSet,
+  getWorkbenchVisualTokens as getWorkbenchVisualTokensShared,
+  hasSection as hasWorkbenchSection,
+  resolveWorkbenchComposition as resolveWorkbenchCompositionShared,
+} from './workbenchComposition'
 
 export const tokens = {
   color: {
@@ -248,346 +254,214 @@ export function StudioHome({
   )
 }
 
-function getFeatureModeProfile(productMode: string) {
-  const profiles: Record<string, Record<string, unknown>> = {
-    'governance-console': {
-      heroDark: true,
-      metricDark: true,
-      reversePanels: false,
-      bodyColumns: 'minmax(380px, 0.92fr) minmax(0, 1.08fr)',
-      searchLabel: 'Localizar perfil, regra ou escopo',
-      tableLabels: ['Perfil', 'Escopo', 'Atualizacao'],
-      asideTitle: 'Governanca ativa',
-      asideTone: 'Controle claro para acesso, risco e decis?o.',
-      highlightVariant: 'pills',
-      recordsVariant: 'policy-grid',
-      formVariant: 'console',
-    },
-    'self-service-settings': {
-      heroDark: false,
-      metricDark: false,
-      reversePanels: false,
-      bodyColumns: 'minmax(360px, 0.98fr) minmax(300px, 0.82fr)',
-      searchLabel: 'Buscar ajuste ou preferencia',
-      tableLabels: ['Ajuste', 'Estado', 'Atualizacao'],
-      asideTitle: 'Resumo atual',
-      asideTone: 'Ajustes simples, com leitura clara do que esta ativo agora.',
-      highlightVariant: 'soft-list',
-      recordsVariant: 'summary',
-      formVariant: 'settings',
-    },
-    'evidence-workbench': {
-      heroDark: false,
-      metricDark: false,
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.12fr) minmax(360px, 0.88fr)',
-      searchLabel: 'Localizar comprovante, link ou referencia',
-      tableLabels: ['Documento', 'Status', 'Envio'],
-      asideTitle: 'Contexto do caso',
-      asideTone: 'Organize evidencias com foco em triagem e rapidez de analise.',
-      highlightVariant: 'chips',
-      recordsVariant: 'evidence',
-      formVariant: 'workbench',
-    },
-    'manager-cockpit': {
-      heroDark: true,
-      metricDark: true,
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.14fr) minmax(360px, 0.86fr)',
-      searchLabel: 'Filtrar indicador ou recorte',
-      tableLabels: ['Indicador', 'Estado', 'Atualizacao'],
-      asideTitle: 'Leitura executiva',
-      asideTone: 'A tela precisa apoiar decis?o, comparacao e visao consolidada.',
-      highlightVariant: 'cards',
-      recordsVariant: 'insights',
-      formVariant: 'support',
-    },
-    'review-workbench': {
-      heroDark: true,
-      metricDark: false,
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.08fr) minmax(360px, 0.92fr)',
-      searchLabel: 'Buscar item para revisar',
-      tableLabels: ['Item', 'Decisao', 'Atualizacao'],
-      asideTitle: 'Fila de revisao',
-      asideTone: 'Mantenha a fila clara para aprovar, ajustar e seguir rapido.',
-      highlightVariant: 'cards',
-      recordsVariant: 'queue',
-      formVariant: 'support',
-    },
-    'onboarding-flow': {
-      heroDark: false,
-      metricDark: false,
-      reversePanels: false,
-      bodyColumns: 'minmax(360px, 0.95fr) minmax(320px, 0.85fr)',
-      searchLabel: 'Ver proximas etapas',
-      tableLabels: ['Etapa', 'Status', 'Atualizacao'],
-      asideTitle: 'Proxima etapa',
-      asideTone: 'Avance pela jornada mantendo contexto e baixo atrito.',
-      highlightVariant: 'steps',
-      recordsVariant: 'steps',
-      formVariant: 'settings',
-    },
-    'immersive-workspace': {
-      heroDark: true,
-      metricDark: false,
-      reversePanels: false,
-      bodyColumns: 'minmax(0, 1fr)',
-      searchLabel: 'Filtrar atividade atual',
-      tableLabels: ['Item', 'Estado', 'Atualizacao'],
-      asideTitle: 'Foco principal',
-      asideTone: 'Menos painel e mais concentracao na tarefa central.',
-      highlightVariant: 'cards',
-      recordsVariant: 'focus',
-      formVariant: 'workbench',
-    },
-  }
-
-  return {
-    heroDark: false,
-    metricDark: false,
-    reversePanels: false,
-    bodyColumns: 'minmax(340px, 420px) minmax(0, 1fr)',
-    searchLabel: 'Pesquisar...',
-    tableLabels: ['Registro', 'Status', 'Atualizacao'],
-    asideTitle: 'Operacao viva',
-    asideTone: 'Acompanhe o contexto principal desta area sem perder clareza.',
-    highlightVariant: 'cards',
-    recordsVariant: 'table',
-    formVariant: 'panel',
-    ...(profiles[productMode] || {}),
-  }
-}
-
-function getLayoutVariantOverrides(layoutVariant: string) {
-  const overrides: Record<string, Record<string, unknown>> = {
-    'balanced-split': {},
-    'hero-metrics': {
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.14fr) minmax(360px, 0.86fr)',
-      highlightVariant: 'cards',
-      recordsVariant: 'insights',
-    },
-    'queue-first': {
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.08fr) minmax(360px, 0.92fr)',
-      highlightVariant: 'cards',
-      recordsVariant: 'queue',
-    },
-    'queue-priority': {
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.08fr) minmax(360px, 0.92fr)',
-      highlightVariant: 'cards',
-      recordsVariant: 'queue',
-    },
-    'evidence-split': {
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.12fr) minmax(360px, 0.88fr)',
-      highlightVariant: 'chips',
-      recordsVariant: 'evidence',
-    },
-    'guided-stack': {
-      reversePanels: false,
-      bodyColumns: 'minmax(0, 1fr)',
-      highlightVariant: 'steps',
-      recordsVariant: 'steps',
-    },
-    'calm-settings': {
-      settingsColumns: 'minmax(0, 1.08fr) minmax(320px, 0.92fr)',
-      settingsReverse: false,
-      settingsHighlightTitle: 'Boas praticas',
-    },
-    'summary-first': {
-      settingsColumns: 'minmax(320px, 0.9fr) minmax(0, 1.1fr)',
-      settingsReverse: true,
-      settingsHighlightTitle: 'Leituras rapidas',
-    },
-    'checklist-settings': {
-      settingsColumns: 'minmax(320px, 0.88fr) minmax(0, 1.12fr)',
-      settingsReverse: true,
-      settingsHighlightTitle: 'Checklist de governanca',
-    },
-  }
-
-  return overrides[layoutVariant] || overrides['balanced-split']
-}
-
-function getArchetypeOverrides(pageArchetype: string, fallbackPattern: string, patternHints: string[] = []) {
-  const joinedHints = patternHints.join(' ')
-  const overrides: Record<string, Record<string, unknown>> = {
-    'executive-dashboard': {
-      heroDark: true,
-      metricDark: true,
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.16fr) minmax(360px, 0.84fr)',
-      highlightVariant: 'cards',
-      recordsVariant: 'insights',
-      asideTitle: 'Painel em foco',
-      asideTone: 'Compare sinais, enxergue gargalos e tome decis?o com contexto logo no primeiro olhar.',
-      searchLabel: 'Filtrar indicador, fila ou recorte',
-      tableLabels: ['Indicador', 'Status', 'Leitura'],
-    },
-    'operations-queue': {
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.12fr) minmax(360px, 0.88fr)',
-      highlightVariant: 'cards',
-      recordsVariant: 'queue',
-      asideTitle: 'Fila operacional',
-      asideTone: 'Deixe prioridade, dono e proximo passo visiveis para a fila continuar fluindo.',
-      searchLabel: 'Buscar item por prioridade, dono ou fila',
-      tableLabels: ['Item', 'Prioridade', 'Atualizacao'],
-    },
-    'review-queue': {
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.1fr) minmax(360px, 0.9fr)',
-      highlightVariant: 'cards',
-      recordsVariant: 'queue',
-      asideTitle: 'Decisao em andamento',
-      asideTone: 'Mostre o que precisa de parecer agora e preserve contexto para revisar rapido.',
-      searchLabel: 'Buscar item para revisar',
-      tableLabels: ['Item', 'Decisao', 'Atualizacao'],
-    },
-    'approval-flow': {
-      reversePanels: false,
-      bodyColumns: 'minmax(0, 1fr)',
-      highlightVariant: 'steps',
-      recordsVariant: 'steps',
-      asideTitle: 'Fluxo de aprovacao',
-      asideTone: 'Deixe criterios, etapas e checkpoints explicitos para reduzir fric??o na decis?o.',
-    },
-    'evidence-workbench': {
-      reversePanels: true,
-      bodyColumns: 'minmax(0, 1.12fr) minmax(360px, 0.88fr)',
-      highlightVariant: 'chips',
-      recordsVariant: 'evidence',
-      asideTitle: 'Mesa de evidencias',
-      asideTone: 'Organize anexos, contexto e comprovacoes com leitura rapida para quem investiga o caso.',
-      searchLabel: 'Buscar comprovante, arquivo ou referencia',
-      tableLabels: ['Evidencia', 'Status', 'Envio'],
-    },
-    'settings-console': {
-      settingsColumns: 'minmax(320px, 0.88fr) minmax(0, 1.12fr)',
-      settingsReverse: true,
-      settingsHighlightTitle: 'Leituras de governanca',
-    },
-    'intake-form': {
-      highlightVariant: 'soft-list',
-      recordsVariant: 'summary',
-      asideTitle: 'Contexto do cadastro',
-      asideTone: 'Ajude quem preenche a enviar a informacao certa de primeira, sem ruido operacional.',
-    },
-    'record-management': {
-      highlightVariant: 'cards',
-      recordsVariant: 'table',
-      asideTitle: 'Gestao em foco',
-      asideTone: 'Combine cadastro, leitura e acompanhamento sem perder clareza sobre o estado atual.',
-    },
-  }
-
-  const patternOverrides: Record<string, Record<string, unknown>> = {
-    'vercel-analytics': {
-      heroDark: true,
-      metricDark: true,
-      highlightVariant: 'cards',
-      recordsVariant: 'insights',
-    },
-    'linear-queue': {
-      reversePanels: true,
-      highlightVariant: 'cards',
-      recordsVariant: 'queue',
-    },
-    'stripe-settings': {
-      settingsColumns: 'minmax(320px, 0.9fr) minmax(0, 1.1fr)',
-      settingsReverse: true,
-      settingsHighlightTitle: 'Resumo rapido',
-    },
-    'github-review': {
-      highlightVariant: 'steps',
-      recordsVariant: 'steps',
-      reversePanels: false,
-      bodyColumns: 'minmax(0, 1fr)',
-    },
-    'notion-evidence': {
-      highlightVariant: 'chips',
-      recordsVariant: 'evidence',
-      reversePanels: true,
-    },
-  }
-
-  return {
-    ...(overrides[pageArchetype] || {}),
-    ...(patternOverrides[fallbackPattern] || {}),
-    ...(joinedHints.includes('priority-visible') ? { searchLabel: 'Buscar por prioridade, dono ou estado' } : {}),
-    ...(joinedHints.includes('decision-focused') ? { highlightVariant: 'steps', recordsVariant: 'steps' } : {}),
-    ...(joinedHints.includes('summary-before-secondary-actions')
-      ? { settingsColumns: 'minmax(320px, 0.9fr) minmax(0, 1.1fr)', settingsReverse: true }
-      : {}),
-    ...(joinedHints.includes('workflow-guided') && pageArchetype !== 'approval-flow'
-      ? { asideTone: 'A tela deve mostrar claramente o proximo passo para a operacao continuar andando.' }
-      : {}),
-  }
-}
-
-function buildSectionSet(sections: string[] = [], fallback: string[] = []) {
-  return new Set((Array.isArray(sections) && sections.length ? sections : fallback).filter(Boolean))
-}
-
-function hasSection(sectionSet: Set<string>, section: string) {
-  return sectionSet.has(section)
-}
-
 type ComponentMap = {
   recordsLead?: string | null
   activity?: string | null
   summary?: string | null
   highlights?: string | null
+  intentSignal?: string | null
 }
 
-function getUiIntentProfile(uiIntent: string) {
-  const profiles: Record<string, Record<string, string>> = {
-    configure: {
-      badge: 'Ajuste principal',
-      summaryTitle: 'Estado da configuracao',
-      summaryTone: 'Ajuste preferencia, confira o estado atual e siga com clareza.',
-    },
-    attach: {
-      badge: 'Captura principal',
-      summaryTitle: 'Contexto do envio',
-      summaryTone: 'Anexe arquivos com contexto suficiente para facilitar a leitura do caso.',
-    },
-    review: {
-      badge: 'Decisao principal',
-      summaryTitle: 'Fila em foco',
-      summaryTone: 'Veja o que precisa de decis?o agora e mantenha a fila sob controle.',
-    },
-    monitor: {
-      badge: 'Leitura principal',
-      summaryTitle: 'Visao executiva',
-      summaryTone: 'Consolide sinais, compare recortes e acompanhe o que merece atencao.',
-    },
-    create: {
-      badge: 'Cadastro principal',
-      summaryTitle: 'Contexto do registro',
-      summaryTone: 'Registre com contexto suficiente para que o item ja nasca util.',
-    },
-    update: {
-      badge: 'Atualizacao principal',
-      summaryTitle: 'Resumo atual',
-      summaryTone: 'Atualize o que importa e mantenha clareza sobre o estado atual.',
-    },
-    list: {
-      badge: 'Consulta principal',
-      summaryTitle: 'Leitura atual',
-      summaryTone: 'Filtre, encontre e avance rapidamente sobre o que precisa de atencao.',
-    },
+type ScreenSpec = {
+  screenTemplate?: string
+  productMode?: string
+  uiIntent?: string
+  layoutVariant?: string
+  pageArchetype?: string
+  fallbackPattern?: string
+  patternHints?: string[]
+  sections?: string[]
+  componentMap?: ComponentMap
+  intentSignal?: 'visible' | 'hidden'
+  layoutFlow?: string
+}
+
+function renderLeadBlock({
+  blockType,
+  highlights,
+  heroDark,
+  accentColor,
+  visuals,
+}: {
+  blockType: string
+  highlights: string[]
+  heroDark: boolean
+  accentColor: string
+  visuals: ReturnType<typeof getWorkbenchVisualTokensShared>
+}) {
+  if (blockType === 'pills') {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {highlights.map((item) => (
+          <span
+            key={item}
+            style={{
+              padding: '8px 11px',
+              borderRadius: tokens.radius.pill,
+              background: `${heroDark ? 'rgba(255,255,255,0.14)' : '#ffffff'}`,
+              border: `1px solid ${accentColor}22`,
+              color: tokens.color.shell,
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    )
   }
 
-  return {
-    badge: 'Fluxo principal',
-    summaryTitle: 'Resumo da tela',
-    summaryTone: 'Entenda rapidamente o que esta pagina ajuda a concluir.',
-    ...(profiles[uiIntent] || {}),
+  if (blockType === 'soft-list') {
+    return (
+      <div style={{ display: 'grid', gap: 10 }}>
+        {highlights.map((item) => (
+          <div
+            key={item}
+            style={{
+              padding: '12px 14px',
+              borderRadius: 14,
+              background: visuals.leadBackground,
+              border: `1px solid ${tokens.color.border}`,
+              color: tokens.color.mutedStrong,
+              lineHeight: 1.6,
+            }}
+          >
+            {item}
+          </div>
+        ))}
+      </div>
+    )
   }
+
+  if (blockType === 'chips') {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        {highlights.map((item) => (
+          <span
+            key={item}
+            style={{
+              padding: '10px 12px',
+              borderRadius: 14,
+              background: `${accentColor}10`,
+              border: `1px dashed ${accentColor}55`,
+              color: tokens.color.shell,
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  if (blockType === 'steps') {
+    return (
+      <div style={{ display: 'grid', gap: 10 }}>
+        {highlights.map((item, index) => (
+          <div key={item} style={{ display: 'grid', gridTemplateColumns: '28px 1fr', gap: 12, alignItems: 'start' }}>
+            <div
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                background: `${accentColor}15`,
+                color: accentColor,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 800,
+                fontSize: 12,
+              }}
+            >
+              {index + 1}
+            </div>
+            <div style={{ paddingTop: 4, color: tokens.color.mutedStrong, lineHeight: 1.6 }}>{item}</div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+      {highlights.map((item) => (
+        <div
+          key={item}
+          style={{
+            padding: '14px 16px',
+            borderRadius: 16,
+            border: `1px solid ${tokens.color.border}`,
+            background: `${accentColor}10`,
+            boxShadow: tokens.shadow.panel,
+            color: tokens.color.mutedStrong,
+            lineHeight: 1.65,
+          }}
+        >
+          {item}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function renderRecordsLeadBlock({
+  blockType,
+  tableLabels,
+  highlights,
+  accentColor,
+}: {
+  blockType: string
+  tableLabels: string[]
+  highlights: string[]
+  accentColor: string
+}) {
+  if (blockType === 'summary') {
+    return <SettingsSnapshot items={highlights.slice(0, 2)} />
+  }
+
+  if (blockType === 'policy-grid') {
+    return (
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+        {tableLabels.slice(0, 2).map((label) => (
+          <div
+            key={String(label)}
+            style={{
+              padding: '12px 14px',
+              borderRadius: 14,
+              background: `${accentColor}08`,
+              border: `1px solid ${tokens.color.border}`,
+            }}
+          >
+            <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              {String(label)}
+            </div>
+            <div style={{ marginTop: 6, color: tokens.color.shell, fontWeight: 700 }}>Em definicao</div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (blockType === 'evidence') {
+    return <EvidenceRail accentColor={accentColor} />
+  }
+
+  if (blockType === 'insights') {
+    return <InsightStrip labels={tableLabels.map((label) => String(label))} />
+  }
+
+  if (blockType === 'queue') {
+    return <ReviewQueuePreview />
+  }
+
+  if (blockType === 'steps') {
+    return <ApprovalStepsPreview accentColor={accentColor} />
+  }
+
+  return null
 }
 
 function IntentSignal({
@@ -903,58 +777,17 @@ export function FeaturePage({
   )
 }
 
-function getWorkbenchVisualTokens(productMode: string, accentColor: string) {
-  const presets: Record<string, Record<string, string>> = {
-    'governance-console': {
-      heroBackground: 'linear-gradient(135deg, #1f274d 0%, #2d396d 100%)',
-      canvasBackground: 'linear-gradient(180deg, rgba(22,34,66,0.04) 0%, rgba(255,255,255,0.42) 100%)',
-      formBackground: '#f7f9ff',
-      recordsBackground: '#ffffff',
-      leadBackground: '#eef3ff',
-    },
-    'self-service-settings': {
-      heroBackground: 'linear-gradient(135deg, #ffffff 0%, #f5f8ff 100%)',
-      canvasBackground: 'linear-gradient(180deg, rgba(36,81,183,0.05) 0%, rgba(255,255,255,0.4) 100%)',
-      formBackground: '#ffffff',
-      recordsBackground: '#fbfcff',
-      leadBackground: '#f3f7ff',
-    },
-    'evidence-workbench': {
-      heroBackground: 'linear-gradient(135deg, #f4fffb 0%, #ffffff 54%, #edf8ff 100%)',
-      canvasBackground: 'linear-gradient(180deg, rgba(15,118,110,0.06) 0%, rgba(255,255,255,0.42) 100%)',
-      formBackground: '#f7fffd',
-      recordsBackground: '#fcfffe',
-      leadBackground: '#edf8f6',
-    },
-    'manager-cockpit': {
-      heroBackground: 'linear-gradient(135deg, #1f2447 0%, #2d3d77 62%, #1f5ba8 100%)',
-      canvasBackground: 'linear-gradient(180deg, rgba(36,81,183,0.08) 0%, rgba(255,255,255,0.4) 100%)',
-      formBackground: '#f8faff',
-      recordsBackground: '#ffffff',
-      leadBackground: '#eef4ff',
-    },
-  }
-  return (
-    presets[productMode] || {
-      heroBackground: `linear-gradient(135deg, ${accentColor}12 0%, #ffffff 54%, #f5f8ff 100%)`,
-      canvasBackground: 'linear-gradient(180deg, rgba(36,81,183,0.05) 0%, rgba(255,255,255,0.4) 100%)',
-      formBackground: '#ffffff',
-      recordsBackground: '#ffffff',
-      leadBackground: '#f5f8ff',
-    }
-  )
-}
-
 export function FeatureWorkbench({
   accent = 'teal',
   productMode = 'structured-workspace',
   uiIntent = 'custom',
-  layoutVariant = 'balanced-split',
-  pageArchetype = 'record-management',
-  fallbackPattern = 'stripe-records',
+  layoutVariant = '',
+  pageArchetype = '',
+  fallbackPattern = '',
   patternHints = [],
   sections = [],
   componentMap = {},
+  screenSpec = {},
   eyebrow,
   title,
   description,
@@ -977,6 +810,7 @@ export function FeatureWorkbench({
   patternHints?: string[]
   sections?: string[]
   componentMap?: ComponentMap
+  screenSpec?: ScreenSpec
   eyebrow: string
   title: string
   description: string
@@ -998,185 +832,71 @@ export function FeatureWorkbench({
   }
 
   const accentColor = accentMap[accent] || accentMap.teal
-  const modeProfile = getFeatureModeProfile(productMode)
-  const layoutOverrides = getLayoutVariantOverrides(layoutVariant)
-  const archetypeOverrides = getArchetypeOverrides(pageArchetype, fallbackPattern, patternHints)
-  const heroDark = Boolean(archetypeOverrides.heroDark ?? modeProfile.heroDark)
-  const metricDark = Boolean(archetypeOverrides.metricDark ?? modeProfile.metricDark)
-  const reversePanels = Boolean(archetypeOverrides.reversePanels ?? layoutOverrides.reversePanels ?? modeProfile.reversePanels)
-  const bodyColumns = String(archetypeOverrides.bodyColumns || layoutOverrides.bodyColumns || modeProfile.bodyColumns || 'minmax(340px, 420px) minmax(0, 1fr)')
-  const searchLabel = String(archetypeOverrides.searchLabel || modeProfile.searchLabel || 'Pesquisar...')
-  const tableLabels = Array.isArray(archetypeOverrides.tableLabels)
-    ? archetypeOverrides.tableLabels
-    : Array.isArray(modeProfile.tableLabels)
-      ? modeProfile.tableLabels
-      : ['Registro', 'Status', 'Atualizacao']
-  const asideTitle = String(archetypeOverrides.asideTitle || modeProfile.asideTitle || 'Operacao viva')
-  const asideTone = String(archetypeOverrides.asideTone || modeProfile.asideTone || 'Acompanhe o contexto principal desta area sem perder clareza.')
-  const intentProfile = getUiIntentProfile(uiIntent)
-  const highlightVariant = String(archetypeOverrides.highlightVariant || layoutOverrides.highlightVariant || modeProfile.highlightVariant || 'cards')
-  const recordsVariant = String(archetypeOverrides.recordsVariant || layoutOverrides.recordsVariant || modeProfile.recordsVariant || 'table')
-  const formVariant = String(modeProfile.formVariant || 'panel')
-  const visuals = getWorkbenchVisualTokens(productMode, accentColor)
-  const sectionSet = buildSectionSet(sections, ['hero', 'form', 'records'])
-  const showHero = hasSection(sectionSet, 'hero')
-  const showMetrics = hasSection(sectionSet, 'metrics') && Boolean(metrics?.length)
-  const showIntentSignal = hasSection(sectionSet, 'summary') || hasSection(sectionSet, 'hero')
-  const showFilters = hasSection(sectionSet, 'filters')
-  const showForm = hasSection(sectionSet, 'form')
-  const showRecords = hasSection(sectionSet, 'records') || hasSection(sectionSet, 'list') || hasSection(sectionSet, 'queue')
-  const showActivity = hasSection(sectionSet, 'activity')
-  const effectiveRecordsVariant = componentMap.recordsLead === 'approvalSteps'
-    ? 'steps'
-    : componentMap.recordsLead === 'queueRail'
-      ? 'queue'
-      : componentMap.recordsLead === 'evidenceRail'
-        ? 'evidence'
-        : componentMap.recordsLead === 'insightStrip'
-          ? 'insights'
-          : hasSection(sectionSet, 'steps')
-    ? 'steps'
-    : hasSection(sectionSet, 'queue')
-      ? 'queue'
-      : hasSection(sectionSet, 'metrics')
-        ? 'insights'
-        : hasSection(sectionSet, 'summary') && recordsVariant === 'table'
-          ? 'summary'
-          : recordsVariant
-
-  const highlightNode =
-    highlightVariant === 'pills' ? (
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {highlights.map((item) => (
-          <span
-            key={item}
-            style={{
-              padding: '8px 11px',
-              borderRadius: tokens.radius.pill,
-              background: `${heroDark ? 'rgba(255,255,255,0.14)' : '#ffffff'}`,
-              border: `1px solid ${accentColor}22`,
-              color: tokens.color.shell,
-              fontWeight: 700,
-              fontSize: 12,
-            }}
-          >
-            {item}
-          </span>
-        ))}
-      </div>
-    ) : highlightVariant === 'soft-list' ? (
-      <div style={{ display: 'grid', gap: 10 }}>
-        {highlights.map((item) => (
-          <div
-            key={item}
-            style={{
-              padding: '12px 14px',
-              borderRadius: 14,
-              background: visuals.leadBackground,
-              border: `1px solid ${tokens.color.border}`,
-              color: tokens.color.mutedStrong,
-              lineHeight: 1.6,
-            }}
-          >
-            {item}
-          </div>
-        ))}
-      </div>
-    ) : highlightVariant === 'chips' ? (
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-        {highlights.map((item) => (
-          <span
-            key={item}
-            style={{
-              padding: '10px 12px',
-              borderRadius: 14,
-              background: `${accentColor}10`,
-              border: `1px dashed ${accentColor}55`,
-              color: tokens.color.shell,
-              fontWeight: 700,
-              fontSize: 12,
-            }}
-          >
-            {item}
-          </span>
-        ))}
-      </div>
-    ) : highlightVariant === 'steps' ? (
-      <div style={{ display: 'grid', gap: 10 }}>
-        {highlights.map((item, index) => (
-          <div key={item} style={{ display: 'grid', gridTemplateColumns: '28px 1fr', gap: 12, alignItems: 'start' }}>
-            <div
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                background: `${accentColor}15`,
-                color: accentColor,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontWeight: 800,
-                fontSize: 12,
-              }}
-            >
-              {index + 1}
-            </div>
-            <div style={{ paddingTop: 4, color: tokens.color.mutedStrong, lineHeight: 1.6 }}>{item}</div>
-          </div>
-        ))}
-      </div>
-    ) : (
-      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-        {highlights.map((item) => (
-          <div
-            key={item}
-            style={{
-              padding: '14px 16px',
-              borderRadius: 16,
-              border: `1px solid ${tokens.color.border}`,
-              background: `${accentColor}10`,
-              boxShadow: tokens.shadow.panel,
-              color: tokens.color.mutedStrong,
-              lineHeight: 1.65,
-            }}
-          >
-            {item}
-          </div>
-        ))}
-      </div>
-    )
-
-  const recordsLeadNode =
-    effectiveRecordsVariant === 'summary' ? (
-      <SettingsSnapshot items={highlights.slice(0, 2)} />
-    ) : effectiveRecordsVariant === 'policy-grid' ? (
-      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
-        {tableLabels.slice(0, 2).map((label) => (
-          <div
-            key={String(label)}
-            style={{
-              padding: '12px 14px',
-              borderRadius: 14,
-              background: visuals.leadBackground,
-              border: `1px solid ${tokens.color.border}`,
-            }}
-          >
-            <div style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              {String(label)}
-            </div>
-            <div style={{ marginTop: 6, color: tokens.color.shell, fontWeight: 700 }}>Em definicao</div>
-          </div>
-        ))}
-      </div>
-    ) : effectiveRecordsVariant === 'evidence' ? (
-      <EvidenceRail accentColor={accentColor} />
-    ) : effectiveRecordsVariant === 'insights' ? (
-      <InsightStrip labels={tableLabels.map((label) => String(label))} />
-    ) : effectiveRecordsVariant === 'queue' ? (
-      <ReviewQueuePreview />
-    ) : effectiveRecordsVariant === 'steps' ? (
-      <ApprovalStepsPreview accentColor={accentColor} />
-    ) : null
+  const composition = resolveWorkbenchCompositionShared({
+    productMode,
+    pageArchetype,
+    fallbackPattern,
+    layoutVariant,
+    uiIntent,
+    patternHints,
+    screenSpec,
+  })
+  const surfaceBlueprint = composition.surfaceBlueprint
+  const heroDark = surfaceBlueprint.hero.dark
+  const metricDark = surfaceBlueprint.hero.metricDark
+  const reversePanels = surfaceBlueprint.layout.panelOrder[0] === 'records'
+  const bodyColumns = surfaceBlueprint.layout.bodyColumns
+  const searchLabel = surfaceBlueprint.labels.search
+  const tableLabels = surfaceBlueprint.labels.table
+  const asideTitle = surfaceBlueprint.hero.asideTitle
+  const asideTone = surfaceBlueprint.hero.asideTone
+  const intentProfile = surfaceBlueprint.hero.intent
+  const leadBlockType = surfaceBlueprint.blocks.lead
+  const recordBlockType = surfaceBlueprint.blocks.records
+  const formVariant = surfaceBlueprint.blocks.form
+  const visuals = getWorkbenchVisualTokensShared(composition.resolvedProductMode || productMode, accentColor)
+  const resolvedSections = composition.resolvedSections
+  const resolvedComponentMap = composition.resolvedComponentMap
+  const sectionSet = buildWorkbenchSectionSet(resolvedSections, composition.sectionBlocks)
+  const showHero = hasWorkbenchSection(sectionSet, 'hero')
+  const showMetrics = hasWorkbenchSection(sectionSet, 'metrics') && Boolean(metrics?.length)
+  const showIntentSignal = resolvedComponentMap.intentSignal === 'visible' || screenSpec.intentSignal === 'visible'
+  const showFilters = hasWorkbenchSection(sectionSet, 'filters')
+  const showForm = hasWorkbenchSection(sectionSet, 'form')
+  const showRecords = hasWorkbenchSection(sectionSet, 'records') || hasWorkbenchSection(sectionSet, 'list') || hasWorkbenchSection(sectionSet, 'queue')
+  const showActivity = hasWorkbenchSection(sectionSet, 'activity')
+  const leadBlock = resolvedComponentMap.highlights === 'none' ? 'cards' : leadBlockType
+  const recordBlock =
+    resolvedComponentMap.recordsLead === 'approvalSteps'
+      ? 'steps'
+      : resolvedComponentMap.recordsLead === 'queueRail'
+        ? 'queue'
+        : resolvedComponentMap.recordsLead === 'evidenceRail'
+          ? 'evidence'
+          : resolvedComponentMap.recordsLead === 'insightStrip'
+            ? 'insights'
+              : hasWorkbenchSection(sectionSet, 'steps')
+              ? 'steps'
+                : hasWorkbenchSection(sectionSet, 'queue')
+                ? 'queue'
+                  : hasWorkbenchSection(sectionSet, 'metrics')
+                  ? 'insights'
+                    : hasWorkbenchSection(sectionSet, 'summary') && recordBlockType === 'table'
+                    ? 'summary'
+                    : recordBlockType
+  const highlightNode = renderLeadBlock({
+    blockType: leadBlock,
+    highlights,
+    heroDark,
+    accentColor,
+    visuals,
+  })
+  const recordsLeadNode = renderRecordsLeadBlock({
+    blockType: recordBlock,
+    tableLabels,
+    highlights,
+    accentColor,
+  })
 
   const formPanel = (
     <SurfaceCard title={formTitle} description={formDescription} background={visuals.formBackground}>
@@ -1193,10 +913,10 @@ export function FeatureWorkbench({
         >
           <strong style={{ color: formVariant === 'console' ? '#f8fafc' : tokens.color.shell, fontSize: 15 }}>{asideTitle}</strong>
           <p style={{ margin: 0, color: formVariant === 'console' ? 'rgba(248,250,252,0.76)' : tokens.color.mutedStrong, lineHeight: 1.7 }}>{asideTone}</p>
-          {highlightVariant === 'pills' || highlightVariant === 'chips' ? highlightNode : null}
+          {leadBlock === 'pills' || leadBlock === 'chips' ? highlightNode : null}
         </div>
         {form}
-        {showActivity || componentMap.activity === 'activityTimeline' ? <ActivityTimeline /> : null}
+        {showActivity || resolvedComponentMap.activity === 'activityTimeline' ? <ActivityTimeline /> : null}
       </div>
     </SurfaceCard>
   )
@@ -1205,7 +925,7 @@ export function FeatureWorkbench({
     <SurfaceCard title={listTitle} description={listDescription} meta={listMeta} background={visuals.recordsBackground}>
       <div style={{ display: 'grid', gap: 14 }}>
         {recordsLeadNode}
-        {showFilters && effectiveRecordsVariant !== 'summary' && effectiveRecordsVariant !== 'steps' ? (
+        {showFilters && recordBlock !== 'summary' && recordBlock !== 'steps' ? (
           <div
             style={{
               display: 'flex',
@@ -1221,7 +941,7 @@ export function FeatureWorkbench({
             <span style={{ color: tokens.color.mutedStrong }}>{searchLabel}</span>
           </div>
         ) : null}
-        {showFilters && effectiveRecordsVariant !== 'summary' && effectiveRecordsVariant !== 'steps' ? (
+        {showFilters && recordBlock !== 'summary' && recordBlock !== 'steps' ? (
           <div
             style={{
               display: 'grid',
@@ -1303,7 +1023,7 @@ export function FeatureWorkbench({
 
       {showForm || showRecords ? (
         <>
-          {highlightVariant === 'pills' || highlightVariant === 'chips' ? null : highlightNode}
+          {leadBlock === 'pills' || leadBlock === 'chips' ? null : highlightNode}
           <div style={{ display: 'grid', gap: 18, gridTemplateColumns: bodyColumns, padding: 6, borderRadius: 28, background: visuals.canvasBackground }}>
             {showRecords && showForm ? (
               <>
@@ -1332,6 +1052,7 @@ export function SettingsWorkbench({
   patternHints = [],
   sections = [],
   componentMap = {},
+  screenSpec = {},
   eyebrow,
   title,
   description,
@@ -1354,6 +1075,7 @@ export function SettingsWorkbench({
   patternHints?: string[]
   sections?: string[]
   componentMap?: ComponentMap
+  screenSpec?: ScreenSpec
   eyebrow: string
   title: string
   description: string
@@ -1375,20 +1097,29 @@ export function SettingsWorkbench({
   }
 
   const accentColor = accentMap[accent] || accentMap.teal
-  const intentProfile = getUiIntentProfile(uiIntent)
-  const modeProfile = getFeatureModeProfile(productMode)
-  const layoutOverrides = getLayoutVariantOverrides(layoutVariant)
-  const archetypeOverrides = getArchetypeOverrides(pageArchetype, fallbackPattern, patternHints)
-  const asideTone = String(modeProfile.asideTone || 'Ajustes simples e claros para manter o controle do que esta ativo.')
+  const composition = resolveWorkbenchCompositionShared({
+    productMode,
+    pageArchetype,
+    fallbackPattern,
+    layoutVariant,
+    uiIntent,
+    patternHints,
+    screenSpec,
+  })
+  const surfaceBlueprint = composition.surfaceBlueprint
+  const intentProfile = surfaceBlueprint.hero.intent
+  const asideTone = String(surfaceBlueprint.hero.asideTone || 'Ajustes simples e claros para manter o controle do que esta ativo.')
   const summaryItems = (summaryHighlights?.length ? summaryHighlights : highlights).slice(0, 3)
-  const visuals = getWorkbenchVisualTokens(productMode, accentColor)
-  const settingsColumns = String(archetypeOverrides.settingsColumns || layoutOverrides.settingsColumns || 'minmax(0, 1.08fr) minmax(320px, 0.92fr)')
-  const settingsReverse = Boolean(archetypeOverrides.settingsReverse ?? layoutOverrides.settingsReverse)
-  const settingsHighlightTitle = String(archetypeOverrides.settingsHighlightTitle || layoutOverrides.settingsHighlightTitle || 'Boas praticas')
-  const sectionSet = buildSectionSet(sections, ['hero', 'form', 'summary'])
-  const showHero = hasSection(sectionSet, 'hero')
-  const showSummary = hasSection(sectionSet, 'summary')
-  const showActivity = hasSection(sectionSet, 'activity')
+  const visuals = getWorkbenchVisualTokensShared(composition.resolvedProductMode || productMode, accentColor)
+  const settingsColumns = surfaceBlueprint.layout.settingsColumns
+  const settingsReverse = surfaceBlueprint.layout.settingsReverse
+  const settingsHighlightTitle = surfaceBlueprint.labels.settingsHighlightTitle
+  const resolvedSections = composition.resolvedSections
+  const resolvedComponentMap = composition.resolvedComponentMap
+  const sectionSet = buildWorkbenchSectionSet(resolvedSections, composition.sectionBlocks)
+  const showHero = hasWorkbenchSection(sectionSet, 'hero')
+  const showSummary = hasWorkbenchSection(sectionSet, 'summary')
+  const showActivity = hasWorkbenchSection(sectionSet, 'activity')
   const formPanel = (
     <SurfaceCard title={formTitle} description={formDescription} background={visuals.formBackground}>
       <div style={{ display: 'grid', gap: 16 }}>
@@ -1411,7 +1142,7 @@ export function SettingsWorkbench({
   )
   const summaryPanel = (
     <div style={{ display: 'grid', gap: 16 }}>
-          {showSummary || componentMap.summary === 'settingsSnapshot' ? (
+          {showSummary || resolvedComponentMap.summary === 'settingsSnapshot' ? (
             <SurfaceCard title={summaryTitle} description={summaryDescription} meta={summaryMeta} background={visuals.recordsBackground}>
           <div style={{ display: 'grid', gap: 14 }}>
             <SettingsSnapshot items={summaryItems} />
@@ -1440,7 +1171,7 @@ export function SettingsWorkbench({
           </div>
         </SurfaceCard>
       ) : null}
-          {showActivity || componentMap.activity === 'activityTimeline' ? (
+          {showActivity || resolvedComponentMap.activity === 'activityTimeline' ? (
             <SurfaceCard title="Atividade recente" description="Sinais recentes para acompanhar o impacto dessas configuracoes." background={visuals.recordsBackground}>
               <ActivityTimeline />
             </SurfaceCard>
@@ -1661,13 +1392,7 @@ type FeatureWorkbenchProps = Parameters<typeof FeatureWorkbench>[0]
 type SettingsWorkbenchProps = Parameters<typeof SettingsWorkbench>[0]
 
 export function OperationsWorkspace(props: FeatureWorkbenchProps) {
-  return (
-    <FeatureWorkbench
-      layoutVariant={props.layoutVariant || 'balanced-split'}
-      pageArchetype={props.pageArchetype || 'operations-queue'}
-      {...props}
-    />
-  )
+  return <FeatureWorkbench {...props} />
 }
 
 export function ExecutiveCockpit(props: FeatureWorkbenchProps) {

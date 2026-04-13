@@ -48,6 +48,9 @@ REGRAS ARQUITETURAIS:
    - Request: {contracts.get('request')}
    - Response: {contracts.get('response')}
    - List: {contracts.get('list')}
+5. SHELL EXPLICITO: Declare explicitamente `productMode`, `uiIntent` e `layoutVariant` na pagina.
+6. EXPERIENCIA FINAL: Prefira shells compartilhados como `OperationsWorkspace`, `PlannerWorkbench`, `ExecutiveCockpit` ou `SettingsConsole` quando a tela pedir contexto operacional.
+7. COPY DE PRODUTO: Nao use textos genericos como "Salvar", "Enviar", "Concluir operacao", "Atividade recente", "Feedback imediato em caso de sucesso ou erro" ou placeholders de template.
 
 CONTEUDO:
 - ENTIDADE: {entity_name}

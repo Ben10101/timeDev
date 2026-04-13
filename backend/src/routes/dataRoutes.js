@@ -23,6 +23,7 @@ import {
   removeProjectMemberController,
   updateProjectMemberController,
   updateProjectBriefController,
+  updateProjectStatusController,
   updateTaskController,
 } from '../controllers/projectDataController.js';
 
@@ -36,6 +37,7 @@ router.get('/projects', listProjectsController);
 router.post('/projects', createProjectController);
 router.get('/projects/:projectUuid', getProjectController);
 router.patch('/projects/:projectUuid/brief', updateProjectBriefController);
+router.patch('/projects/:projectUuid/status', updateProjectStatusController);
 router.post('/projects/:projectUuid/members', addProjectMemberController);
 router.patch('/projects/:projectUuid/members/:memberUuid', updateProjectMemberController);
 router.delete('/projects/:projectUuid/members/:memberUuid', removeProjectMemberController);

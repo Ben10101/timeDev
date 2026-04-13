@@ -103,6 +103,23 @@ def _validation_rule(field):
     return rules
 
 
+def _normalize_expectation_items(value, max_items=8):
+    if isinstance(value, dict):
+        items = []
+        for key in ("scenarios", "functionalCases", "cases", "assertions", "checks"):
+            candidate = value.get(key)
+            if isinstance(candidate, list):
+                items.extend(candidate)
+        if items:
+            return [str(item).strip() for item in items if str(item or "").strip()][:max_items]
+        return [str(item).strip() for item in value.values() if str(item or "").strip()][:max_items]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or "").strip()][:max_items]
+    if str(value or "").strip():
+        return [str(value).strip()]
+    return []
+
+
 def _build_default_backend_templates(payload):
     schema_output = payload.get("schema_output") or {}
     backend_spec = payload.get("backend_spec") or {}
@@ -205,23 +222,52 @@ export {{ {service_instance_name} }} from './service';
     }
 
 
-def _is_healthy_backend_result(result):
+def _is_healthy_backend_result(result, payload=None):
     if not isinstance(result, dict):
         return False
     service = _clean_code(result.get("serviceTsTemplate"))
     router = _clean_code(result.get("routerTsTemplate"))
     index_file = _clean_code(result.get("indexTsTemplate"))
-    return (
-        "from '@prisma/client'" in service and
-        "const prisma = new PrismaClient()" in service and
-        "async list()" in service and
-        "async create(" in service and
-        "const records" not in service and
-        ".get('/'," in router and
-        ".post('/'," in router and
-        "from './service'" in router and
-        "from './router'" in index_file
-    )
+    schema_output = (payload or {}).get("schema_output") or {}
+    backend_spec = (payload or {}).get("backend_spec") or {}
+    contracts = schema_output.get("contracts") or {}
+    entity_name = schema_output.get("entityName") or "GeneratedItem"
+    prisma_model_id = backend_spec.get("prismaModelId") or _camel_case(entity_name)
+    service_name = backend_spec.get("serviceName") or f"{entity_name}Service"
+    service_instance_name = backend_spec.get("serviceInstanceName") or f"{entity_name}ServiceInstance"
+    router_name = backend_spec.get("routerName") or f"{entity_name}Router"
+
+    if not service or not router or not index_file:
+        return False
+
+    checks = [
+        "from '@prisma/client'" in service,
+        "const prisma = new PrismaClient()" in service,
+        f"export class {service_name}" in service,
+        f"export const {service_instance_name} = new {service_name}()" in service,
+        prisma_model_id in service,
+        "async list()" in service,
+        "return { items:" in service,
+        "async create(" in service,
+        ".create({" in service,
+        "const records" not in service,
+        ".get('/'," in router,
+        ".post('/'," in router,
+        "Router()" in router,
+        "req.body" in router,
+        "res.status(201).json(created)" in router,
+        "from './service'" in router,
+        f"export {{ {router_name} }} from './router'" in index_file,
+        f"export {{ {service_instance_name} }} from './service'" in index_file,
+    ]
+
+    if contracts.get("request"):
+        checks.append(contracts["request"] in service)
+        checks.append(contracts["request"] in router)
+    if contracts.get("response"):
+        checks.append(contracts["response"] in service)
+
+    return all(checks)
 
 
 class BackendAgent:
@@ -239,6 +285,7 @@ class BackendAgent:
         route_base = backend_spec.get("routeBase") or f"/api/v1/{str(entity_name).lower()}s"
         operation_map = backend_spec.get("operationMap") or {}
         test_expectations = backend_spec.get("testExpectations") or payload.get("test_expectations") or []
+        normalized_test_expectations = _normalize_expectation_items(test_expectations)
 
         repair_context = payload.get("repair_context")
         repair_block = ""
@@ -262,13 +309,15 @@ REGRAS OBRIGATORIAS:
    - POST `{route_base}` retornando `201`
 6. O router deve importar o service local e o index deve apenas reexportar router e service.
 7. Priorize comportamento confiavel e tipagem forte sobre sofisticacao desnecessaria.
+8. O service precisa retornar lista tipada como `{{ items: ... }}` e o router precisa transformar `req.body` em request contratual antes de chamar o service.
+9. Se existir expectativa de teste ou smoke, ela precisa aparecer refletida na estrutura do codigo, nao apenas citada no texto.
 
 CONTEXTO:
 - ENTIDADE: {entity_name}
 - CAMPOS: {_compact_json(prisma_fields)}
 - ROUTE BASE: {route_base}
 - OPERACOES: {_compact_json(operation_map)}
-- EXPECTATIVAS DE TESTE/SMOKE: {_compact_json(test_expectations, 1600)}
+- EXPECTATIVAS DE TESTE/SMOKE: {_compact_json(normalized_test_expectations, 1600)}
 
 PRODUCAO:
 Gere `serviceTsTemplate`, `routerTsTemplate` e `indexTsTemplate` completos e prontos para materializacao.{repair_block}
@@ -306,7 +355,7 @@ RESPONDA APENAS UM JSON NO FORMATO:
 
             parsed = extract_json_from_text(raw)
             normalized = self._normalize_result(parsed)
-            if _is_healthy_backend_result(normalized):
+            if _is_healthy_backend_result(normalized, payload):
                 return normalized
             return _build_default_backend_templates(payload)
         except Exception:

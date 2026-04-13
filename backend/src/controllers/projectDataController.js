@@ -26,6 +26,7 @@ import {
   removeProjectMember,
   updateProjectBrief,
   updateProjectMemberRole,
+  updateProjectStatus,
   updateTask,
 } from '../services/projectDataService.js';
 import { runSingleAgent } from '../services/orchestratorService.js';
@@ -275,6 +276,21 @@ export async function updateProjectBriefController(req, res, next) {
       intakeConfig,
     });
 
+    res.json(serializeBigInts(project));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateProjectStatusController(req, res, next) {
+  try {
+    const { status } = req.body || {};
+
+    if (!status?.trim()) {
+      return res.status(400).json({ message: 'status e obrigatorio.' });
+    }
+
+    const project = await updateProjectStatus(req.params.projectUuid, status, req.authUser.uuid);
     res.json(serializeBigInts(project));
   } catch (error) {
     next(error);

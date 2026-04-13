@@ -1,6 +1,20 @@
 ﻿import axios from 'axios'
 
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+function normalizeApiBaseUrl(rawUrl) {
+  const fallback = 'http://localhost:3001/api'
+  const value = String(rawUrl || '').trim()
+  if (!value) return fallback
+
+  const normalized = value.replace(/\/+$/, '')
+  if (normalized.endsWith('/api')) {
+    return normalized
+  }
+
+  return `${normalized}/api`
+}
+
+export const API_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL)
+export const API_ORIGIN = API_URL.replace(/\/api$/, '')
 
 let accessToken = null
 let refreshPromise = null
@@ -48,6 +62,10 @@ export function clearApiAccessToken() {
 export function getApiErrorMessage(error, fallback = 'Não foi possível concluir a solicitação.') {
   const status = error?.response?.status
   const data = error?.response?.data
+
+  if (error?.code === 'ERR_NETWORK' || error?.message === 'Network Error') {
+    return 'Não foi possível conectar ao backend. Verifique se a API está ativa e se a URL configurada está correta.'
+  }
 
   if (typeof data?.message === 'string' && data.message.trim()) {
     return data.message
@@ -189,7 +207,7 @@ export async function testAiProvider(payload) {
 }
 
 export async function getOperationalHealth() {
-  const response = await axios.get(API_URL.replace(/\/api$/, '') + '/health', { withCredentials: true })
+  const response = await axios.get(`${API_ORIGIN}/health`, { withCredentials: true })
   return response.data
 }
 
@@ -241,6 +259,11 @@ export const generateProject = async (idea) => {
 
 export const bootstrapWorkspace = async (payload) => {
   const response = await apiClient.post('/bootstrap', payload)
+  return response.data
+}
+
+export const updateProjectStatus = async (projectUuid, status) => {
+  const response = await apiClient.patch(`/projects/${projectUuid}/status`, { status })
   return response.data
 }
 

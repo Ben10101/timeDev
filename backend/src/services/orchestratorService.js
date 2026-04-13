@@ -32,11 +32,25 @@ function getAgentTimeoutMs() {
   return DEFAULT_AGENT_TIMEOUT_MS;
 }
 
+function assertObjectPayload(payload, label) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(`${label} precisa ser um objeto JSON valido.`);
+  }
+}
+
 /**
  * Executa o pipeline completo de geração de projetos (funcionalidade antiga).
  */
 export function orchestrateProject(projectId, idea) {
   return new Promise((resolve, reject) => {
+    if (!projectId || !String(projectId).trim()) {
+      return reject(new Error('projectId é obrigatório para executar o orchestrator.'));
+    }
+
+    if (!idea || !String(idea).trim()) {
+      return reject(new Error('idea é obrigatória para executar o orchestrator.'));
+    }
+
     const orchestratorPath = path.join(__dirname, '..', '..', '..', 'orchestrator', 'factory.py');
     const pythonCmd = getPythonCmd();
     const pythonProcess = spawn(pythonCmd, [...PYTHON_ARGS_PREFIX, orchestratorPath, projectId, idea], {
@@ -74,6 +88,12 @@ export function orchestrateProject(projectId, idea) {
  */
 export function runSingleAgent(agent, payload, options = {}) {
   return new Promise((resolve, reject) => {
+    try {
+      assertObjectPayload(payload, `Payload do agente ${agent}`);
+    } catch (error) {
+      return reject(error);
+    }
+
     const agentRunnerPath = path.join(__dirname, '..', '..', '..', 'orchestrator', 'run_single_agent.py');
     const pythonCmd = getPythonCmd();
     const timeoutMs = getAgentTimeoutMs();
@@ -177,6 +197,12 @@ export function runSingleAgent(agent, payload, options = {}) {
  */
 export function runImplementationPipeline(payload, options = {}) {
   return new Promise((resolve, reject) => {
+    try {
+      assertObjectPayload(payload, 'Payload do pipeline de implementacao');
+    } catch (error) {
+      return reject(error);
+    }
+
     const pipelineRunnerPath = path.join(__dirname, '..', '..', '..', 'orchestrator', 'run_implementation_pipeline.py');
     const pythonCmd = getPythonCmd();
     const timeoutMs = getAgentTimeoutMs();
@@ -252,4 +278,3 @@ export function runImplementationPipeline(payload, options = {}) {
     pythonProcess.stdin.end();
   });
 }
-

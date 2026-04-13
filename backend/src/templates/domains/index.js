@@ -2,9 +2,16 @@ import { DOMAIN_TEMPLATE_CATALOG } from './catalog.js';
 import { resolveInterfaceExamples } from './interfaceExamples.js';
 
 export function resolveDomainTemplate(domainKey, fallback = {}) {
-  const template = DOMAIN_TEMPLATE_CATALOG[domainKey];
+  const structuredDomainKey = fallback?.structured?.classification?.domain;
+  const resolvedDomainKey =
+    DOMAIN_TEMPLATE_CATALOG[domainKey]
+      ? domainKey
+      : structuredDomainKey && DOMAIN_TEMPLATE_CATALOG[structuredDomainKey]
+        ? structuredDomainKey
+        : domainKey;
+  const template = DOMAIN_TEMPLATE_CATALOG[resolvedDomainKey];
   const exampleData = resolveInterfaceExamples(
-    domainKey,
+    resolvedDomainKey,
     template?.productMode || fallback.frontend?.productMode || 'structured-workspace',
     template?.screenTemplate || fallback.frontend?.screenTemplate || 'crud'
   );

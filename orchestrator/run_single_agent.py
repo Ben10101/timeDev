@@ -18,6 +18,7 @@ from agents.debug_agent.agent import DebugAgent
 from agents.schema_agent.agent import SchemaAgent
 from agents.backend_agent.agent import BackendAgent
 from agents.frontend_agent.agent import FrontendAgent
+from agents.ui_ux_specialist.agent import UiUxSpecialist
 from orchestrator.projectBuilder import ProjectBuilder
 
 def main():
@@ -122,6 +123,9 @@ def main():
             result = agent.process(payload)
         elif agent_name == "frontend_agent":
             agent = FrontendAgent(project_id)
+            result = agent.process(payload)
+        elif agent_name == "ui_ux_specialist":
+            agent = UiUxSpecialist(project_id)
             result = agent.process(payload)
         else:
             raise ValueError(f"Agente desconhecido: {agent_name}")

@@ -10,6 +10,26 @@ function normalizeSharedUiImportPath(content) {
     .replace(/packages\/ui\/src\/index(?:\.tsx)?\/api-client/g, 'packages/ui/src/api/client');
 }
 
+function normalizeLegacyShellContent(content) {
+  return String(content || '')
+    .replace(/\bAppShell\b/g, 'AppFrame')
+    .replace(/\bFeaturePage\b/g, 'OperationsWorkspace')
+    .replace(/\bFeatureWorkbench\b/g, 'OperationsWorkspace')
+    .replace(/\bSettingsWorkbench\b/g, 'SettingsConsole')
+    .replace(/\bBasicShell\b/g, 'AppFrame');
+}
+
+function hasLegacyShellConflict(content) {
+  const text = String(content || '');
+  if (!text.trim()) return false;
+  if (text.includes('Frontend base gerado pela AI Software Factory')) return true;
+  if (text.includes('Bem-vindo ao projeto') || text.includes('Carregando dados da feature')) return true;
+  if (text.includes('AppShell') || text.includes('BasicShell')) return true;
+  if (text.includes('FeaturePage') || text.includes('FeatureWorkbench') || text.includes('SettingsWorkbench')) return true;
+  if (!text.includes('productMode=') || !text.includes('pageArchetype=') || !text.includes('fallbackPattern=')) return true;
+  return false;
+}
+
 function humanizeSelectOptionLabel(value) {
   const normalized = String(value || '').trim().toLowerCase();
   const directMap = {
@@ -162,7 +182,7 @@ function buildLoadingState(componentMap = {}) {
   }
 
   return `        <div style={{ padding: '18px 16px', borderRadius: 14, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
-          <p style={{ margin: 0, color: '#64748b', lineHeight: 1.7 }}>Carregando dados da feature...</p>
+          <p style={{ margin: 0, color: '#64748b', lineHeight: 1.7 }}>Carregando registros desta tela...</p>
         </div>`;
 }
 
@@ -575,6 +595,222 @@ export function ${technicalSpec.frontend.pageComponentName}() {
         </section>
       </div>
     </section>
+  );
+}
+`;
+}
+
+function buildVisitOperationalResponsiblesShellPage(technicalSpec, {
+  sharedImportPath,
+  uiImportPath,
+  schemaName,
+  formValuesType,
+  queryKeyName,
+}) {
+  const screenSpec = technicalSpec.frontend?.screenSpec || technicalSpec.generationIR?.frontend?.screenSpec || {};
+  const shellProductMode = screenSpec.productMode || technicalSpec.frontend?.productMode || 'operations-registry';
+  const shellUiIntent = screenSpec.uiIntent || technicalSpec.frontend?.uiIntent || 'register';
+  const shellLayoutVariant = screenSpec.layoutVariant || technicalSpec.frontend?.layoutVariant || 'balanced-split';
+  const shellPageArchetype = screenSpec.pageArchetype || technicalSpec.frontend?.pageArchetype || 'record-management';
+  const shellFallbackPattern = screenSpec.fallbackPattern || technicalSpec.frontend?.fallbackPattern || 'stripe-records';
+  const shellPatternHints =
+    Array.isArray(screenSpec.patternHints) && screenSpec.patternHints.length
+      ? screenSpec.patternHints
+      : ['crud', 'records', 'workflow-guided'];
+  const shellSections =
+    Array.isArray(screenSpec.sections) && screenSpec.sections.length
+      ? screenSpec.sections
+      : ['hero', 'form', 'records'];
+  const shellComponentMap =
+    screenSpec.componentMap && typeof screenSpec.componentMap === 'object'
+      ? screenSpec.componentMap
+      : {};
+
+  return `import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
+import type { ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';
+import { OperationsWorkspace, FieldGroup, PrimaryButton, inputStyle } from '${uiImportPath}';
+import { ${schemaName}, type ${formValuesType} } from './schema';
+import { ${queryKeyName}, create${technicalSpec.entityName}, fetch${technicalSpec.entityName}Items } from './service';
+
+const initialForm: ${formValuesType} = {
+  responsibleName: '',
+  contact: '',
+  supportType: 'tecnico',
+};
+
+const supportCatalog = {
+  tecnico: { label: 'Tecnico', tone: '#0f766e', soft: '#dcfce7' },
+  logistica: { label: 'Logistica', tone: '#b45309', soft: '#fef3c7' },
+  seguranca: { label: 'Seguranca', tone: '#1d4ed8', soft: '#dbeafe' },
+  apoio: { label: 'Apoio', tone: '#7c3aed', soft: '#ede9fe' },
+} as const;
+
+function formatCreatedAt(value?: string) {
+  if (!value) return 'Agora';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Agora';
+  return parsed.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function normalizeSupportType(value?: string) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized in supportCatalog ? (normalized as keyof typeof supportCatalog) : 'apoio';
+}
+
+function formatContactChannel(value?: string) {
+  return String(value || '').includes('@') ? 'E-mail' : 'Telefone';
+}
+
+export function ${technicalSpec.frontend.pageComponentName}() {
+  const queryClient = useQueryClient();
+  const { data: items = [], isLoading } = useQuery<${technicalSpec.shared.responseContractName}[]>({
+    queryKey: ${queryKeyName},
+    queryFn: fetch${technicalSpec.entityName}Items,
+  });
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<${formValuesType}>({
+    resolver: zodResolver(${schemaName}),
+    defaultValues: initialForm,
+  });
+  const mutation = useMutation({
+    mutationFn: (input: ${technicalSpec.shared.requestContractName}) => create${technicalSpec.entityName}(input),
+    onSuccess: (created) => {
+      queryClient.setQueryData<${technicalSpec.shared.responseContractName}[]>(${queryKeyName}, (current = []) => [created, ...current]);
+      reset(initialForm);
+    },
+  });
+
+  const groupedItems = (['seguranca', 'logistica', 'tecnico', 'apoio'] as const).map((type) => ({
+    type,
+    meta: supportCatalog[type],
+    items: items.filter((item) => normalizeSupportType(item.supportType) === type),
+  }));
+
+  return (
+    <OperationsWorkspace
+        accent="teal"
+        productMode="${escapeTemplate(shellProductMode)}"
+        uiIntent="${escapeTemplate(shellUiIntent)}"
+        layoutVariant="${escapeTemplate(shellLayoutVariant)}"
+        pageArchetype="${escapeTemplate(shellPageArchetype)}"
+        fallbackPattern="${escapeTemplate(shellFallbackPattern)}"
+        patternHints={${JSON.stringify(shellPatternHints.slice(0, 6))}}
+        sections={${JSON.stringify(shellSections.slice(0, 8))}}
+        componentMap={${JSON.stringify(shellComponentMap)}}
+        screenSpec={{
+          screenTemplate: "crud",
+          productMode: "${escapeTemplate(shellProductMode)}",
+          uiIntent: "${escapeTemplate(shellUiIntent)}",
+          layoutVariant: "${escapeTemplate(shellLayoutVariant)}",
+          pageArchetype: "${escapeTemplate(shellPageArchetype)}",
+          fallbackPattern: "${escapeTemplate(shellFallbackPattern)}",
+          patternHints: ${JSON.stringify(shellPatternHints.slice(0, 6))},
+          sections: ${JSON.stringify(shellSections.slice(0, 8))},
+          componentMap: ${JSON.stringify(shellComponentMap)},
+        }}
+      eyebrow="Operacao de visitas"
+      title="Responsaveis operacionais"
+      description="Cadastre os contatos que apoiam a visita para facilitar o acionamento por tipo de suporte durante a operacao."
+      highlights={[]}
+      formTitle="Novo responsavel"
+      formDescription="Nome, contato e tipo de suporte para que a recepcao acione a pessoa certa sem ambiguidade."
+      form={
+        <form
+          onSubmit={handleSubmit((values) =>
+            mutation.mutateAsync({
+              responsibleName: values.responsibleName,
+              contact: values.contact,
+              supportType: values.supportType,
+            })
+          )}
+          style={{ display: 'grid', gap: 18 }}
+        >
+          <FieldGroup label="Nome" hint="Identificacao principal para a recepcao.">
+            <input {...register('responsibleName')} type="text" placeholder="Joao Silva" style={inputStyle()} />
+            {errors.responsibleName ? <small style={{ color: '#b91c1c' }}>{errors.responsibleName.message}</small> : null}
+          </FieldGroup>
+          <FieldGroup label="Contato" hint="E-mail ou telefone com DDD.">
+            <input {...register('contact')} type="text" placeholder="joao@empresa.com" style={inputStyle()} />
+            {errors.contact ? <small style={{ color: '#b91c1c' }}>{errors.contact.message}</small> : null}
+          </FieldGroup>
+          <FieldGroup label="Tipo de suporte" hint="Categoria principal de apoio.">
+            <select {...register('supportType')} style={inputStyle()}>
+              <option value="tecnico">Tecnico</option>
+              <option value="logistica">Logistica</option>
+              <option value="seguranca">Seguranca</option>
+              <option value="apoio">Apoio</option>
+            </select>
+            {errors.supportType ? <small style={{ color: '#b91c1c' }}>{errors.supportType.message}</small> : null}
+          </FieldGroup>
+          <PrimaryButton type="submit" accent="teal">
+            {isSubmitting || mutation.isPending ? 'Salvando...' : 'Cadastrar responsavel'}
+          </PrimaryButton>
+          {mutation.isSuccess && mutation.data ? <p style={{ margin: 0, color: '#047857', fontWeight: 600 }}>"Cadastro concluido."</p> : null}
+          {mutation.error ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{mutation.error instanceof Error ? mutation.error.message : 'Falha ao enviar formulario.'}</p> : null}
+        </form>
+      }
+      listTitle="Responsaveis operacionais"
+      listDescription="A lista mostra quem apoiar por tipo de suporte para manter a visita acionavel em tempo real."
+      listMeta={isLoading ? 'Atualizando' : items.length ? items.length + ' registro(s)' : 'Sem registros'}
+    >
+      <div style={{ display: 'grid', gap: 10 }}>
+        {isLoading ? (
+          <div style={{ padding: '18px 16px', borderRadius: 14, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+            <p style={{ margin: 0, color: '#64748b', lineHeight: 1.7 }}>Carregando registros desta tela...</p>
+          </div>
+        ) : items.length ? (
+          <div style={{ display: 'grid' }}>
+            {groupedItems.flatMap((group) =>
+              group.items.map((item, index) => (
+                <article
+                  key={item.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1.3fr 1fr 120px 120px 120px',
+                    gap: 12,
+                    padding: '14px 16px',
+                    borderRadius: 14,
+                    background: index % 2 === 0 ? '#ffffff' : '#fbfcfe',
+                    border: '1px solid #d9deea',
+                    marginBottom: 10,
+                    alignItems: 'center',
+                  }}
+                >
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    <strong style={{ color: '#1f2a44', fontSize: 15 }}>{item.responsibleName}</strong>
+                    <span style={{ color: '#64748b', fontSize: 11, fontFamily: '"Consolas", "SFMono-Regular", monospace' }}>
+                      ID {item.id.slice(0, 8)}
+                    </span>
+                  </div>
+                  <span style={{ color: '#475569', fontSize: 13 }}>{item.contact}</span>
+                  <span style={{ width: 'fit-content', padding: '6px 10px', borderRadius: 999, background: group.meta.soft, color: group.meta.tone, fontSize: 12, fontWeight: 700 }}>
+                    {group.meta.label}
+                  </span>
+                  <span style={{ color: '#64748b', fontSize: 12 }}>
+                    {formatContactChannel(item.contact)}
+                  </span>
+                  <span style={{ color: '#64748b', fontSize: 12 }}>
+                    {formatCreatedAt(item.createdAt)}
+                  </span>
+                </article>
+              ))
+            )}
+          </div>
+        ) : (
+          <div style={{ padding: 28, borderRadius: 16, background: '#f8fafc', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
+            <p style={{ margin: 0, color: '#64748b', lineHeight: 1.7 }}>
+              Nenhum responsavel operacional cadastrado ainda. O primeiro registro deve aparecer aqui assim que o envio for concluido.
+            </p>
+          </div>
+        )}
+      </div>
+    </OperationsWorkspace>
   );
 }
 `;
@@ -1010,13 +1246,19 @@ export function buildModernFrontendFeatureFiles(task, technicalSpec, { sharedImp
         successMessage: technicalSpec.domain.successMessage,
       }))
     : '';
+  const normalizedAutonomousPageTemplate = normalizeLegacyShellContent(renderedAutonomousPageTemplate);
   const hasHealthyAutonomousPageTemplate =
-    renderedAutonomousPageTemplate &&
-    (renderedAutonomousPageTemplate.includes('packages/ui/src/index.tsx') || renderedAutonomousPageTemplate.includes('/packages/ui/src/index.tsx')) &&
-    renderedAutonomousPageTemplate.includes('FieldGroup') &&
-    renderedAutonomousPageTemplate.includes('PrimaryButton') &&
-    renderedAutonomousPageTemplate.includes("register('") &&
-    fields.every((field) => renderedAutonomousPageTemplate.includes(field.name));
+    normalizedAutonomousPageTemplate &&
+    !hasLegacyShellConflict(normalizedAutonomousPageTemplate) &&
+    (normalizedAutonomousPageTemplate.includes('packages/ui/src/index.tsx') || normalizedAutonomousPageTemplate.includes('/packages/ui/src/index.tsx')) &&
+    normalizedAutonomousPageTemplate.includes('FieldGroup') &&
+    normalizedAutonomousPageTemplate.includes('PrimaryButton') &&
+    normalizedAutonomousPageTemplate.includes('pageArchetype=') &&
+    normalizedAutonomousPageTemplate.includes('fallbackPattern=') &&
+    normalizedAutonomousPageTemplate.includes('productMode=') &&
+    normalizedAutonomousPageTemplate.includes('uiIntent=') &&
+    normalizedAutonomousPageTemplate.includes("register('") &&
+    fields.every((field) => normalizedAutonomousPageTemplate.includes(field.name));
   const renderedAutonomousServiceTemplate = autonomousServiceTemplate
     ? normalizeSharedUiImportPath(renderAutonomousPageTemplate(autonomousServiceTemplate, {
         sharedImportPath,
@@ -1034,20 +1276,22 @@ export function buildModernFrontendFeatureFiles(task, technicalSpec, { sharedImp
         successMessage: technicalSpec.domain.successMessage,
       }))
     : '';
+  const normalizedAutonomousServiceTemplate = normalizeLegacyShellContent(renderedAutonomousServiceTemplate);
   const hasHealthyAutonomousServiceTemplate =
-    renderedAutonomousServiceTemplate &&
-    !renderedAutonomousServiceTemplate.includes("import axios from 'axios'") &&
-    !renderedAutonomousServiceTemplate.includes('import axios from "axios"') &&
-    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index/api/client') &&
-    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index.tsx/api/client') &&
-    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index/apiClient') &&
-    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index.tsx/apiClient') &&
-    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index/api-client') &&
-    !renderedAutonomousServiceTemplate.includes('packages/ui/src/index.tsx/api-client') &&
-    !renderedAutonomousServiceTemplate.includes("from './types'") &&
-    renderedAutonomousServiceTemplate.includes(`export const ${queryKeyName}`) &&
-    renderedAutonomousServiceTemplate.includes(`export async function fetch${entityName}Items`) &&
-    renderedAutonomousServiceTemplate.includes(`export async function create${entityName}`);
+    normalizedAutonomousServiceTemplate &&
+    !hasLegacyShellConflict(normalizedAutonomousServiceTemplate) &&
+    !normalizedAutonomousServiceTemplate.includes("import axios from 'axios'") &&
+    !normalizedAutonomousServiceTemplate.includes('import axios from "axios"') &&
+    !normalizedAutonomousServiceTemplate.includes('packages/ui/src/index/api/client') &&
+    !normalizedAutonomousServiceTemplate.includes('packages/ui/src/index.tsx/api/client') &&
+    !normalizedAutonomousServiceTemplate.includes('packages/ui/src/index/apiClient') &&
+    !normalizedAutonomousServiceTemplate.includes('packages/ui/src/index.tsx/apiClient') &&
+    !normalizedAutonomousServiceTemplate.includes('packages/ui/src/index/api-client') &&
+    !normalizedAutonomousServiceTemplate.includes('packages/ui/src/index.tsx/api-client') &&
+    !normalizedAutonomousServiceTemplate.includes("from './types'") &&
+    normalizedAutonomousServiceTemplate.includes(`export const ${queryKeyName}`) &&
+    normalizedAutonomousServiceTemplate.includes(`export async function fetch${entityName}Items`) &&
+    normalizedAutonomousServiceTemplate.includes(`export async function create${entityName}`);
   const renderedAutonomousIndexTemplate = autonomousIndexTemplate
     ? renderAutonomousPageTemplate(autonomousIndexTemplate, {
         sharedImportPath,
@@ -1065,11 +1309,13 @@ export function buildModernFrontendFeatureFiles(task, technicalSpec, { sharedImp
         successMessage: technicalSpec.domain.successMessage,
       })
     : '';
+  const normalizedAutonomousIndexTemplate = normalizeLegacyShellContent(renderedAutonomousIndexTemplate);
   const hasHealthyAutonomousIndexTemplate =
-    renderedAutonomousIndexTemplate &&
-    !renderedAutonomousIndexTemplate.includes("from './types'") &&
-    !renderedAutonomousIndexTemplate.includes('Service, use') &&
-    renderedAutonomousIndexTemplate.includes("from './page'");
+    normalizedAutonomousIndexTemplate &&
+    !hasLegacyShellConflict(normalizedAutonomousIndexTemplate) &&
+    !normalizedAutonomousIndexTemplate.includes("from './types'") &&
+    !normalizedAutonomousIndexTemplate.includes('Service, use') &&
+    normalizedAutonomousIndexTemplate.includes("from './page'");
 
   const genericPageContent = `import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -1157,8 +1403,8 @@ ${inputBlocks}
           {mutation.error ? <p style={{ margin: 0, color: '#b91c1c', fontWeight: 600 }}>{mutation.error instanceof Error ? mutation.error.message : 'Falha ao enviar formulario.'}</p> : null}
         </form>
       }
-      ${isSettingsLayout ? 'summaryTitle' : 'listTitle'}="${escapeTemplate(technicalSpec.frontend.recordsTitle || domainTemplate?.recordsTitle || 'Registros ativos')}"
-      ${isSettingsLayout ? 'summaryDescription' : 'listDescription'}="${escapeTemplate(technicalSpec.frontend.recordsEmptyState || domainTemplate?.recordsEmptyState || 'Acompanhe os registros desta area.')}"
+      ${isSettingsLayout ? 'summaryTitle' : 'listTitle'}="${escapeTemplate(technicalSpec.frontend.recordsTitle || domainTemplate?.recordsTitle || 'Registros recentes')}"
+      ${isSettingsLayout ? 'summaryDescription' : 'listDescription'}="${escapeTemplate(technicalSpec.frontend.recordsEmptyState || domainTemplate?.recordsEmptyState || 'Acompanhe os registros criados nesta tela.')}"
       ${isSettingsLayout ? 'summaryMeta' : 'listMeta'}={${summaryMeta}}
       ${isSettingsLayout ? `summaryHighlights={${highlights}}` : ''}
     >
@@ -1179,14 +1425,14 @@ ${emptyState}
 `;
 
   const pageContent = normalizeSharedUiImportPath(hasHealthyAutonomousPageTemplate
-    ? renderedAutonomousPageTemplate
+    ? normalizedAutonomousPageTemplate
     : technicalSpec.featureKey === 'visit-operational-responsibles'
-      ? buildVisitOperationalResponsiblesPage(technicalSpec, {
-          sharedImportPath,
-          uiImportPath,
-          schemaName,
-          formValuesType,
-          queryKeyName,
+        ? buildVisitOperationalResponsiblesShellPage(technicalSpec, {
+            sharedImportPath,
+            uiImportPath,
+            schemaName,
+            formValuesType,
+            queryKeyName,
         })
       : technicalSpec.featureKey === 'visit-recurring-history'
         ? buildVisitRecurringHistoryPage(technicalSpec, {
@@ -1207,7 +1453,7 @@ ${emptyState}
     {
       relativePath: `${technicalSpec.frontend.featurePath}/service.ts`,
       content: normalizeSharedUiImportPath(hasHealthyAutonomousServiceTemplate
-        ? renderedAutonomousServiceTemplate
+        ? normalizedAutonomousServiceTemplate
         : `import type { ${technicalSpec.shared.listContractName}, ${technicalSpec.shared.requestContractName}, ${technicalSpec.shared.responseContractName} } from '${sharedImportPath}';\n\nexport const ${queryKeyName} = ['${escapeTemplate(technicalSpec.featureKey)}'];\n\nexport async function fetch${entityName}Items(): Promise<${technicalSpec.shared.responseContractName}[]> {\n  const response = await fetch('${technicalSpec.backend.routeBase}');\n  if (!response.ok) {\n    throw new Error('Falha ao carregar registros da feature.');\n  }\n  const data: ${technicalSpec.shared.listContractName} = await response.json();\n  return data.items || [];\n}\n\nexport async function create${entityName}(input: ${technicalSpec.shared.requestContractName}): Promise<${technicalSpec.shared.responseContractName}> {\n  const response = await fetch('${technicalSpec.backend.routeBase}', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(input),\n  });\n\n  if (!response.ok) {\n    const error = await response.json().catch(() => ({ message: 'Falha ao criar registro.' }));\n    throw new Error(error.message || 'Falha ao criar registro.');\n  }\n\n  return response.json();\n}\n`),
       fileType: 'ts',
     },
@@ -1219,7 +1465,7 @@ ${emptyState}
     {
       relativePath: `${technicalSpec.frontend.featurePath}/index.ts`,
       content: hasHealthyAutonomousIndexTemplate
-        ? renderedAutonomousIndexTemplate
+        ? normalizedAutonomousIndexTemplate
         : `export { ${technicalSpec.frontend.pageComponentName} } from './page';\nexport { fetch${entityName}Items } from './service';\n`,
       fileType: 'ts',
     },

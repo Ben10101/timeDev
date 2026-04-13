@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, FolderKanban, LayoutGrid } from 'lucide-react';
 import AppShell from '../components/AppShell';
-import { getApiErrorMessage, listAllTasks, listProjects } from '../services/api';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { getApiErrorMessage, listAllTasks, listProjects, updateProjectStatus } from '../services/api';
+import { getProjectStatusConfirmationMessage, getProjectStatusMeta } from '../utils/projectStatus';
 
 function MetricCard({ label, value, hint, icon: Icon, tone = 'slate' }) {
   const tones = {
@@ -27,7 +29,8 @@ function MetricCard({ label, value, hint, icon: Icon, tone = 'slate' }) {
   );
 }
 
-function ProjectCard({ project, summary, onOpen }) {
+function ProjectCard({ project, summary, onOpen, onRequestStatusChange }) {
+  const statusMeta = getProjectStatusMeta(project?.status);
   const roadmap = project?.intakeConfig?.roadmap || null;
   const risks = project?.intakeConfig?.riskRegister?.risks?.length || 0;
   const impediments = project?.intakeConfig?.riskRegister?.impediments?.length || 0;
@@ -41,9 +44,14 @@ function ProjectCard({ project, summary, onOpen }) {
           <h3 className="mt-2 text-xl font-bold text-slate-900">{project.name}</h3>
           <p className="mt-2 text-sm leading-6 text-slate-600 line-clamp-3">{project.description || 'Sem descrição consolidada.'}</p>
         </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-          {summary.totalTasks} tasks
-        </span>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusMeta.tone}`}>
+            {statusMeta.label}
+          </span>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+            {summary.totalTasks} tasks
+          </span>
+        </div>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -84,6 +92,11 @@ function ProjectCard({ project, summary, onOpen }) {
       </div>
 
       <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+        {statusMeta.nextStatus ? (
+          <button onClick={() => onRequestStatusChange(project, statusMeta.nextStatus)} className="dashboard-button-secondary w-full sm:w-auto">
+            {statusMeta.action}
+          </button>
+        ) : null}
         <button onClick={() => onOpen(`/projects/${project.uuid}`)} className="dashboard-button-secondary w-full sm:w-auto">
           Visão geral
         </button>
@@ -104,6 +117,8 @@ export default function WorkspacePage() {
   const [error, setError] = useState(null);
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [statusDialog, setStatusDialog] = useState({ open: false, project: null, nextStatus: null });
+  const [statusUpdatingProjectUuid, setStatusUpdatingProjectUuid] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -174,8 +189,30 @@ export default function WorkspacePage() {
     };
   }, [navigate, projects.length]);
 
+  function openStatusDialog(project, nextStatus) {
+    setStatusDialog({ open: true, project, nextStatus });
+  }
+
+  async function confirmStatusUpdate() {
+    if (!statusDialog.project || !statusDialog.nextStatus) return;
+
+    setStatusUpdatingProjectUuid(statusDialog.project.uuid);
+    setError(null);
+
+    try {
+      await updateProjectStatus(statusDialog.project.uuid, statusDialog.nextStatus);
+      await Promise.all([listProjects().then(setProjects), listAllTasks().then(setTasks)]);
+      setStatusDialog({ open: false, project: null, nextStatus: null });
+    } catch (statusError) {
+      setError(getApiErrorMessage(statusError, 'Não foi possível atualizar o status do projeto.'));
+    } finally {
+      setStatusUpdatingProjectUuid(null);
+    }
+  }
+
   return (
-    <AppShell
+    <>
+      <AppShell
       eyebrow="Workspace"
       title="Workspace Multi-Projetos"
       description="Visão consolidada do portfólio, com leitura rápida da saúde, do planejamento e da execução de cada projeto."
@@ -270,6 +307,7 @@ export default function WorkspacePage() {
                   project={project}
                   summary={projectSummaries.get(project.uuid) || { totalTasks: 0, backlog: 0, active: 0, done: 0, blocked: 0, qa: 0 }}
                   onOpen={(to) => navigate(to)}
+                  onRequestStatusChange={openStatusDialog}
                 />
               ))
             ) : (
@@ -319,6 +357,23 @@ export default function WorkspacePage() {
           </div>
         </section>
       </section>
-    </AppShell>
+      </AppShell>
+      <ConfirmDialog
+        open={statusDialog.open}
+        title={`Atualizar status de ${statusDialog.project?.name || 'projeto'}`}
+        description={
+          statusDialog.project
+            ? getProjectStatusConfirmationMessage(statusDialog.project.name, statusDialog.nextStatus)
+            : ''
+        }
+        confirmLabel="Confirmar"
+        cancelLabel="Cancelar"
+        intent={statusDialog.nextStatus === 'archived' ? 'warning' : 'primary'}
+        loading={Boolean(statusUpdatingProjectUuid)}
+        onConfirm={confirmStatusUpdate}
+        onClose={() => setStatusDialog({ open: false, project: null, nextStatus: null })}
+      />
+    </>
   );
 }
+

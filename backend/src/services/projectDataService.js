@@ -951,6 +951,38 @@ export async function updateProjectBrief(projectUuid, input = {}) {
   return project;
 }
 
+const allowedProjectStatuses = new Set(['draft', 'active', 'on_hold', 'completed', 'archived']);
+
+export async function updateProjectStatus(projectUuid, nextStatus, actorUserUuid) {
+  const resolvedStatus = String(nextStatus || '').trim();
+  if (!allowedProjectStatuses.has(resolvedStatus)) {
+    throw new Error('Status de projeto invalido.');
+  }
+
+  await assertProjectPermission(projectUuid, actorUserUuid, 'manager');
+  const currentProject = await prisma.project.findUnique({
+    where: { uuid: projectUuid },
+    select: { uuid: true, status: true, name: true },
+  });
+
+  if (!currentProject) {
+    throw new Error('Projeto nao encontrado.');
+  }
+
+  if (currentProject.status === resolvedStatus) {
+    return getProjectByUuid(projectUuid, actorUserUuid);
+  }
+
+  await prisma.project.update({
+    where: { uuid: projectUuid },
+    data: {
+      status: resolvedStatus,
+    },
+  });
+
+  return getProjectByUuid(projectUuid, actorUserUuid);
+}
+
 export async function addProjectMember(projectUuid, { email, projectRole = 'editor' }, actorUserUuid) {
   const access = await assertProjectPermission(projectUuid, actorUserUuid, 'manager');
   const normalizedEmail = String(email || '').trim().toLowerCase();

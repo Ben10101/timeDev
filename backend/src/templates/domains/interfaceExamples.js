@@ -76,6 +76,40 @@ export function resolveInterfaceExamples(domainKey, productMode = 'structured-wo
       ],
       reviewSignals: ['contexto operacional', 'acionamento rapido', 'evitar cadastro generico'],
     },
+    'visit-intake': {
+      settingsSummaryItems: [
+        'A recepcao abre a visita com nome, objetivo, data prevista e contexto inicial em uma unica leitura.',
+        'A tela precisa parecer o inicio de uma visita real, com proximo passo evidente para o time.',
+        'O formulario nao deve soar como cadastro generico nem como tarefa administrativa abstrata.',
+      ],
+      summaryStateTitle: 'Visita pronta para triagem',
+      summaryStateEmpty: 'Nenhuma visita iniciada ainda. Registre a primeira para acompanhar o fluxo principal.',
+      summaryMetaIdle: 'Aguardando abertura',
+      summaryMetaReady: 'Triagem operacional ativa',
+      seedRequests: [
+        {
+          visitName: 'Recepcao Comercial A-12',
+          visitObjective: 'Alinhamento comercial e visita tecnica',
+          scheduledDate: '2026-04-20',
+        },
+        {
+          visitName: 'Visita de Fornecedor B-03',
+          visitObjective: 'Reuniao de validacao operacional',
+          scheduledDate: '2026-04-22',
+        },
+      ],
+      promptExamples: [
+        'Tela de abertura de visita com foco em triagem, contexto inicial e proximo passo da recepcao.',
+        'Fluxo operacional de visita com copy especifica, sem cair em linguagem de cadastro generico.',
+      ],
+      sectionLabels: ['Dados da visita', 'Contexto inicial', 'Proximos passos'],
+      ctaLabels: ['Criar visita', 'Salvar abertura', 'Registrar contexto'],
+      emptyStates: [
+        'Nenhuma visita iniciada ainda.',
+        'Assim que a primeira visita for aberta, ela aparecera aqui com contexto suficiente para a recepcao seguir.',
+      ],
+      reviewSignals: ['abertura de visita', 'triagem da recepcao', 'evitar copy generica'],
+    },
     'visit-recurring-history': {
       settingsSummaryItems: [
         'O anfitriao encontra rapidamente visitas anteriores do cliente para evitar retrabalho.',

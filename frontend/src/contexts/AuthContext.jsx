@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import {
   API_URL,
   clearApiAccessToken,
+  getApiErrorMessage,
   getMe,
   loginAuth,
   logoutAuth,
@@ -228,24 +229,32 @@ export function AuthProvider({ children }) {
       isAuthenticated: Boolean(session?.user),
       loading,
       async login(payload) {
-        const result = await loginAuth(payload)
-        setSession({
-          user: result.user,
-          workspace: result.workspace,
-          accessToken: result.accessToken,
-        })
-        persistBootstrapContext(result)
-        return result
+        try {
+          const result = await loginAuth(payload)
+          setSession({
+            user: result.user,
+            workspace: result.workspace,
+            accessToken: result.accessToken,
+          })
+          persistBootstrapContext(result)
+          return result
+        } catch (error) {
+          throw new Error(getApiErrorMessage(error, 'Não foi possível entrar.'))
+        }
       },
       async register(payload) {
-        const result = await registerAuth(payload)
-        setSession({
-          user: result.user,
-          workspace: result.workspace,
-          accessToken: result.accessToken,
-        })
-        persistBootstrapContext(result)
-        return result
+        try {
+          const result = await registerAuth(payload)
+          setSession({
+            user: result.user,
+            workspace: result.workspace,
+            accessToken: result.accessToken,
+          })
+          persistBootstrapContext(result)
+          return result
+        } catch (error) {
+          throw new Error(getApiErrorMessage(error, 'Não foi possível criar a conta.'))
+        }
       },
       async refreshMe() {
         const result = await getMe()
