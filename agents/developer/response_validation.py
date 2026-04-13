@@ -85,6 +85,21 @@ def _backlog_story_has_complete_structure(story_block):
     return True
 
 
+def _backlog_story_has_description(story_block):
+    lines = [line.strip() for line in (story_block or "").splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+
+    detail_text = " ".join(lines[1:]).strip()
+    if len(detail_text.split()) < 6:
+        return False
+
+    if re.fullmatch(r"(?:descricao|contexto|detalhe)\s*[:\-]?\s*", detail_text, re.IGNORECASE):
+        return False
+
+    return True
+
+
 def _story_similarity_key(title_line):
     normalized = re.sub(
         r"^\s*(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?",
@@ -558,6 +573,14 @@ def validate_backlog_output(result):
     ]
     if invalid_titles:
         return False, "Existe historia com estrutura incompleta ou aparencia de truncamento."
+
+    story_blocks = _extract_backlog_story_blocks(text)
+    if len(story_blocks) < len(story_lines):
+        return False, "Historias com bloco estrutural incompleto."
+
+    incomplete_blocks = [block for block in story_blocks if not _backlog_story_has_description(block)]
+    if incomplete_blocks:
+        return False, "Historias sem descricao contextual suficiente."
 
     similarity_keys = [_story_similarity_key(title) for title in normalized_story_lines]
     duplicate_count = len(similarity_keys) - len(set(key for key in similarity_keys if key))

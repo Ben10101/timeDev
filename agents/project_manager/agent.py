@@ -134,6 +134,23 @@ class ProjectManager:
     def __init__(self, project_id):
         self.project_id = project_id
 
+    def _story_block_format_rules(self):
+        return """
+- Cada story deve vir em um bloco de 2 linhas.
+- A primeira linha deve ser a user story no formato "US-XX | Como ..., eu quero ..., para ...".
+- A segunda linha deve ser uma descricao curta e util, com contexto, regra, excecao ou expectativa importante.
+- A descricao nao deve repetir o titulo; ela deve acrescentar informacao nova para produto, arquitetura ou QA.
+- Mantenha a descricao objetiva, com 1 ou 2 frases.
+""".strip()
+
+    def _compose_story_block(self, index, title, description):
+        cleaned_title = re.sub(r"\s+", " ", (title or "")).strip()
+        cleaned_description = re.sub(r"\s+", " ", (description or "")).strip()
+        lines = [f"- US-{index:02d} | {cleaned_title}"]
+        if cleaned_description:
+            lines.append(f"  Descricao: {cleaned_description}")
+        return "\n".join(lines).strip()
+
     def _normalize_text(self, value):
         text = (value or "").strip()
         normalized = unicodedata.normalize("NFD", text.lower())
@@ -913,7 +930,8 @@ REGRAS
 - Gere entre {len(missing_lanes)} e {len(missing_lanes) + 2} historias.
 - Cubra SOMENTE os eixos ausentes.
 - Nao repita nem reformule historias ja consolidadas.
-- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Cada historia deve vir em um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -963,7 +981,8 @@ REGRAS
   - acompanhar atualizacao de status
 - Evite integrações, webhooks, exportacoes, IA, ESG, ROI, marketplace, analytics avancado e automacoes sofisticadas.
 - Nao repita nem reformule historias ja consolidadas.
-- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Cada historia deve vir em um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -1007,7 +1026,8 @@ REGRAS
 - Escreva historias claramente fundadoras, de MVP, e evite qualquer sofisticacao desnecessaria.
 - Nao use integracoes, webhooks, exportacoes, IA, ESG, ROI, marketplace, analytics avancado, templates complexos ou automacoes sofisticadas.
 - Nao repita nem reformule historias ja consolidadas.
-- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Cada historia deve vir em um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -1036,16 +1056,149 @@ REGRAS
         summary_article = self._article_for_summary(summary_label)
         entity_prep = self._prep_article_for_entity(entity_article)
         stories = [
-            f"Como {owner_persona}, eu quero criar {entity_article} {entity_label} informando nome, objetivo, data e contexto inicial, para iniciar o fluxo principal de forma estruturada.",
-            f"Como {owner_persona}, eu quero definir o escopo basico {entity_prep} {entity_label} com volume estimado, formato e parametros principais, para dimensionar os recursos iniciais corretamente.",
-            f"Como {finance_persona}, eu quero registrar {baseline_article} {baseline_label} {entity_prep} {entity_label}, para ter uma referencia operacional antes da aprovacao.",
-            f"Como {support_persona}, eu quero cadastrar {supplier_article} {supplier_label} com nome, contato e tipo de suporte, para vincular os recursos essenciais {entity_prep} {entity_label}.",
-            f"Como {support_persona}, eu quero cadastrar a lista inicial de {participant_label}s {entity_prep} {entity_label}, para preparar a operacao sem depender de planilhas.",
-            f"Como {approver_persona}, eu quero aprovar ou reprovar {baseline_article} {baseline_label} {entity_prep} {entity_label} com justificativa, para liberar a execucao com controle minimo.",
-            f"Como {owner_persona}, eu quero visualizar {summary_article} {summary_label}, com escopo, base operacional e status atual, para confirmar se o planejamento inicial esta completo.",
-            f"Como {support_persona}, eu quero atualizar o status {entity_prep} {entity_label} entre rascunho, em planejamento, em aprovacao e aprovado, para acompanhar o andamento operacional do trabalho.",
+            self._compose_story_block(
+                1,
+                f"Como {owner_persona}, eu quero criar {entity_article} {entity_label} informando nome, objetivo, data e contexto inicial, para iniciar o fluxo principal de forma estruturada.",
+                f"Descricao: permite registrar o {entity_label} com os dados essenciais para abrir a operacao e evitar um inicio solto ou incompleto.",
+            ),
+            self._compose_story_block(
+                2,
+                f"Como {owner_persona}, eu quero definir o escopo basico {entity_prep} {entity_label} com volume estimado, formato e parametros principais, para dimensionar os recursos iniciais corretamente.",
+                f"Descricao: deixa claro o tamanho do trabalho e os parametros de partida, ajudando a organizar a primeira versao do fluxo.",
+            ),
+            self._compose_story_block(
+                3,
+                f"Como {finance_persona}, eu quero registrar {baseline_article} {baseline_label} {entity_prep} {entity_label}, para ter uma referencia operacional antes da aprovacao.",
+                f"Descricao: cria a base para validar planejamento, custos ou dados operacionais antes de liberar a execucao.",
+            ),
+            self._compose_story_block(
+                4,
+                f"Como {support_persona}, eu quero cadastrar {supplier_article} {supplier_label} com nome, contato e tipo de suporte, para vincular os recursos essenciais {entity_prep} {entity_label}.",
+                f"Descricao: garante que os recursos centrais fiquem identificados e prontos para uso na operacao inicial.",
+            ),
+            self._compose_story_block(
+                5,
+                f"Como {support_persona}, eu quero cadastrar a lista inicial de {participant_label}s {entity_prep} {entity_label}, para preparar a operacao sem depender de planilhas.",
+                f"Descricao: organiza a entrada de participantes ou envolvidos no processo e evita controles paralelos fora do sistema.",
+            ),
+            self._compose_story_block(
+                6,
+                f"Como {approver_persona}, eu quero aprovar ou reprovar {baseline_article} {baseline_label} {entity_prep} {entity_label} com justificativa, para liberar a execucao com controle minimo.",
+                f"Descricao: registra a decisao de governanca e a justificativa, mantendo rastreabilidade da liberacao.",
+            ),
+            self._compose_story_block(
+                7,
+                f"Como {owner_persona}, eu quero visualizar {summary_article} {summary_label}, com escopo, base operacional e status atual, para confirmar se o planejamento inicial esta completo.",
+                f"Descricao: consolida a leitura executiva da primeira versao e permite conferir se faltou algum detalhe importante.",
+            ),
+            self._compose_story_block(
+                8,
+                f"Como {support_persona}, eu quero atualizar o status {entity_prep} {entity_label} entre rascunho, em planejamento, em aprovacao e aprovado, para acompanhar o andamento operacional do trabalho.",
+                f"Descricao: permite acompanhar a evolucao do trabalho sem perder o contexto do estado atual.",
+            ),
         ]
         return stories
+
+    def _generate_deterministic_support_stories(self, base_context):
+        inferred = self._infer_core_pack_terms(base_context)
+        entity_label = inferred["entity_label"]
+        entity_article = inferred["entity_article"]
+        entity_prep = self._prep_article_for_entity(entity_article)
+        participant_label = inferred["participant_label"]
+        owner_persona = inferred["owner_persona"]
+        finance_persona = inferred["finance_persona"]
+        support_persona = inferred["support_persona"]
+        approver_persona = inferred["approver_persona"]
+
+        return [
+            self._compose_story_block(
+                9,
+                f"Como {owner_persona}, eu quero listar {entity_article} {entity_label}s em uma visao consolidada, para acompanhar o volume de trabalho sem perder contexto.",
+                f"Descricao: oferece uma leitura rapida dos registros de {entity_label} e ajuda a priorizar a operacao do dia.",
+            ),
+            self._compose_story_block(
+                10,
+                f"Como {support_persona}, eu quero consultar os detalhes de cada {entity_label}, para revisar informacoes antes de executar a proxima etapa.",
+                f"Descricao: facilita a conferencia dos dados ja informados e reduz erros durante a continuidade do fluxo.",
+            ),
+            self._compose_story_block(
+                11,
+                f"Como {support_persona}, eu quero atualizar as informacoes principais {entity_prep} {entity_label}, para manter o cadastro coerente com a operacao real.",
+                f"Descricao: permite corrigir dados que mudaram ao longo do processo sem recriar o registro.",
+            ),
+            self._compose_story_block(
+                12,
+                f"Como {approver_persona}, eu quero revisar os itens pendentes {entity_prep} {entity_label}, para decidir com mais clareza antes de liberar a execucao.",
+                f"Descricao: concentra os pontos que aguardam validacao e reduz retrabalho na governanca.",
+            ),
+            self._compose_story_block(
+                13,
+                f"Como {owner_persona}, eu quero acompanhar o historico de mudancas {entity_prep} {entity_label}, para entender quem alterou o que e quando.",
+                f"Descricao: reforca rastreabilidade e ajuda na analise de inconsistencias do fluxo.",
+            ),
+            self._compose_story_block(
+                14,
+                f"Como {support_persona}, eu quero pesquisar {entity_article} {entity_label}s por termo ou referencia, para localizar registros sem depender de planilhas paralelas.",
+                f"Descricao: agiliza a recuperacao de informacoes e melhora a operacao diaria da equipe.",
+            ),
+            self._compose_story_block(
+                15,
+                f"Como {finance_persona}, eu quero registrar observacoes de acompanhamento {entity_prep} {entity_label}, para apoiar a leitura operacional e a tomada de decisao.",
+                f"Descricao: organiza notas de contexto que ajudam a explicar prioridades, riscos ou pendencias.",
+            ),
+            self._compose_story_block(
+                16,
+                f"Como {owner_persona}, eu quero encerrar o fluxo {entity_prep} {entity_label} quando tudo estiver concluido, para manter o backlog limpo e rastreavel.",
+                f"Descricao: indica que a etapa terminou e evita que o registro fique aberto sem necessidade.",
+            ),
+        ]
+
+    def _build_deterministic_backlog(self, idea):
+        compact_briefing = self._compact_briefing(idea)
+        inferred = self._infer_core_pack_terms(compact_briefing)
+        entity_label = inferred["entity_label"]
+        summary_label = inferred["summary_label"]
+
+        overview = (
+            f"Backlog inicial estruturado para organizar o produto em torno de {entity_label}, "
+            f"com foco na primeira versao operacional e na rastreabilidade entre briefing, execucao e governanca."
+        )
+        capabilities = [
+            f"Definir a base operacional de {entity_label}.",
+            f"Registrar e consultar informacoes essenciais do fluxo.",
+            f"Acompanhar status, pendencias e validacoes do trabalho.",
+            f"Consolidar leitura de {summary_label} para decisao rapida.",
+            "Manter governanca e rastreabilidade das mudancas principais.",
+        ]
+        epics = [
+            "Epic 1: Fundacao operacional do produto.",
+            "Epic 2: Operacao principal e acompanhamento do fluxo.",
+            "Epic 3: Gestao e visibilidade do trabalho.",
+            "Epic 4: Governanca, validacao e rastreabilidade.",
+        ]
+        release_slices = [
+            "MVP: foco na espinha dorsal do produto, priorizando cadastro inicial, consulta basica e governanca minima.",
+            "Fase 2: foco em ampliar operacao e visibilidade com apoio de filtros, acompanhamento e edicao controlada.",
+            "Fase 3: foco em evolucao, auditoriabilidade e refinamento da experiencia sem perder estabilidade.",
+        ]
+
+        story_blocks = [
+            *self._generate_fixed_core_pack_stories(compact_briefing),
+            *self._generate_deterministic_support_stories(compact_briefing),
+        ][: self.STORY_RANGE[1]]
+
+        if len(story_blocks) < self.STORY_RANGE[0]:
+            return None
+
+        backlog = self._build_full_backlog_with_structure(
+            overview=overview,
+            capabilities=capabilities,
+            epics=epics,
+            release_slices=release_slices,
+            story_blocks=story_blocks,
+        )
+        is_complete, _ = validate_backlog_output(backlog)
+        return backlog if is_complete else None
 
     def _ensure_core_pack_frontload(self, base_context, story_blocks, *, min_stories, max_stories):
         consolidated = self._dedupe_and_polish_stories(story_blocks, base_context)
@@ -1323,7 +1476,8 @@ REGRAS DE CURADORIA
 - Padronize personas em torno de: colaborador, atendente, gestor e administrador.
 - Nao deixe historias truncadas.
 - Nao deixe nenhuma historia terminar com frase cortada ou titulo generico.
-- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Cada historia deve vir em um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Garanta que as primeiras 8 historias representem o MVP e cubram majoritariamente criacao, configuracao, consulta, aprovacao e acompanhamento do fluxo principal.
 - Empurre para o fim ou remova historias de integracoes, exportacoes, analytics avancado, IA, ESG, marketplace, webhooks e automacoes sofisticadas quando ainda faltarem historias basicas.
 - Nao introduza financeiro, orcamento ou custos quando o briefing nao citar essa dimensao explicitamente.
@@ -1372,7 +1526,8 @@ REGRAS
 - Gere de {needed_count} a {max(needed_count + 2, needed_count)} historias COMPLEMENTARES.
 - Nao repita nem reformule historias ja consolidadas.
 - Foque nos fluxos que ainda costumam faltar em backlog inicial: administracao, governanca, relatorios, notificacoes, operacao e excecoes de negocio.
-- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Cada historia deve vir em um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -1416,7 +1571,8 @@ REGRAS
 - Gere entre {len(missing_signals)} e {len(missing_signals) + 2} historias.
 - Cubra SOMENTE os eixos fundadores que ainda faltam.
 - Nao repita nem reformule historias ja consolidadas.
-- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Cada historia deve vir em um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -1444,7 +1600,8 @@ REGRAS
 - Gere de {target_range[0]} a {target_range[1]} historias.
 - Foque somente no tema desta rodada.
 - {instructions}
-- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Cada historia deve vir em um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -1483,7 +1640,8 @@ REGRAS
 - Nao repita nenhuma historia ja aceita.
 - Foque no que costuma faltar para fechar um backlog inicial completo.
 - Seja direto e especifico.
-- Cada historia deve ser somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Cada historia deve vir em um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -1553,7 +1711,8 @@ Padronize esses titulos como user stories finais e devolva APENAS:
 REGRAS
 - Mantenha o mesmo sentido de cada titulo.
 - Nao crie titulos extras fora da lista.
-- Para cada historia, entregue somente um titulo no formato "Como ..., eu quero ..., para ...".
+- Para cada historia, entregue um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Nao invente escopo fora do briefing.
 """
         result = self._generate_block(
@@ -1795,7 +1954,8 @@ REGRAS GERAIS
 - Nao inclua epicos nem tarefas tecnicas.
 - Use personas especificas e reais.
 - Evite repetir "usuario" de forma generica.
-- Cada story deve ser somente uma user story no formato "Como ..., eu quero ..., para ...".
+- Cada story deve vir em um bloco com titulo e descricao curta.
+{self._story_block_format_rules()}
 - Mantenha o backlog entre {min_stories} e {max_stories} historias.
 """
 
@@ -1928,4 +2088,7 @@ REGRAS GERAIS
         )
 
     def process(self, idea):
+        deterministic_backlog = self._build_deterministic_backlog(idea)
+        if deterministic_backlog:
+            return deterministic_backlog
         return self._generate_multi_block_backlog(idea)

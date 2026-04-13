@@ -78,7 +78,7 @@ export default function AuthPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
 
-  const redirectTo = useMemo(() => location.state?.from || '/workspace', [location.state])
+  const redirectTo = useMemo(() => location.state?.from || '/projects', [location.state])
   const isRegisterRoute = location.pathname.endsWith('/register')
 
   useEffect(() => {
@@ -107,7 +107,7 @@ export default function AuthPage() {
 
     try {
       await register(registerForm)
-      navigate('/workspace', { replace: true })
+      navigate('/projects', { replace: true })
     } catch (submitError) {
       setError(submitError.response?.data?.message || submitError.message || 'Não foi possível criar a conta.')
     } finally {

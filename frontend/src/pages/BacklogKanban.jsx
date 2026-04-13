@@ -275,6 +275,7 @@ export default function BacklogKanban({
   title = 'Kanban de Historias',
   subtitle = 'Arraste uma historia para o agente gerar o artefato correspondente.',
   agentColumnTitle = 'Agente de Requisitos',
+  contextLabel = 'Projeto',
   processingMessage = 'Gerando artefato...',
   promptInstruction = 'Atue como um Analista de Requisitos Senior. Refine esta historia de usuario gerando uma especificacao tecnica detalhada.',
   predecessorStories = EMPTY_ARRAY,
@@ -459,7 +460,7 @@ export default function BacklogKanban({
         <div className="dashboard-panel-header">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Board do Workspace</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Board do {contextLabel}</p>
               <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">{title}</h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">{subtitle}</p>
             </div>

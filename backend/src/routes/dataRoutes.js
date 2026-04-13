@@ -20,6 +20,7 @@ import {
   listProjectsController,
   listProjectTasksController,
   listAllTasksController,
+  deleteProjectController,
   removeProjectMemberController,
   updateProjectMemberController,
   updateProjectBriefController,
@@ -36,6 +37,7 @@ router.get('/workspace/team', getWorkspaceTeamSummaryController);
 router.get('/projects', listProjectsController);
 router.post('/projects', createProjectController);
 router.get('/projects/:projectUuid', getProjectController);
+router.delete('/projects/:projectUuid', deleteProjectController);
 router.patch('/projects/:projectUuid/brief', updateProjectBriefController);
 router.patch('/projects/:projectUuid/status', updateProjectStatusController);
 router.post('/projects/:projectUuid/members', addProjectMemberController);

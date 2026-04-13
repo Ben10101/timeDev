@@ -322,6 +322,11 @@ export const createProject = async (payload) => {
   return response.data
 }
 
+export const deleteProject = async (projectUuid) => {
+  const response = await apiClient.delete(`/projects/${projectUuid}`)
+  return response.data
+}
+
 export const generateProjectBacklog = async (projectUuid, payload) => {
   const response = await apiClient.post(`/projects/${projectUuid}/generate-backlog`, payload)
   return response.data
@@ -444,6 +449,7 @@ export default {
   addProjectMember,
   updateProjectMember,
   removeProjectMember,
+  deleteProject,
   getProjectDocumentationBundle,
   listProjectTasks,
   createProject,

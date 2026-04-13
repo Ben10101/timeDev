@@ -105,7 +105,7 @@ export async function recoverStaleAgentRuns({
       await tx.agentRun.update({
         where: { id: run.id },
         data: {
-          status: 'failed',
+          status: 'stale',
           finishedAt: new Date(),
           errorMessage: reason,
         },
@@ -120,14 +120,14 @@ export async function recoverStaleAgentRuns({
       }
     });
 
-    recordRuntimeEvent('agent_run_recovered', {
+    recordRuntimeEvent('agent_run_stale', {
       agentName: run.agentName,
       runUuid: run.uuid,
       projectId: run.projectId,
       taskId: run.taskId,
       recoveryMode: 'watchdog',
     });
-    logWarn('agent_run_recovered', {
+    logWarn('agent_run_stale', {
       agentName: run.agentName,
       runUuid: run.uuid,
       projectId: run.projectId,
@@ -192,7 +192,7 @@ export async function recoverBlockingAgentRunsForStart({
       await tx.agentRun.update({
         where: { id: run.id },
         data: {
-          status: 'failed',
+          status: 'stale',
           finishedAt: new Date(),
           errorMessage: reason,
         },
@@ -207,14 +207,14 @@ export async function recoverBlockingAgentRunsForStart({
       }
     });
 
-    recordRuntimeEvent('agent_run_recovered', {
+    recordRuntimeEvent('agent_run_stale', {
       agentName: run.agentName,
       runUuid: run.uuid,
       projectId,
       taskId: run.taskId,
       recoveryMode: 'preflight',
     });
-    logWarn('agent_run_recovered', {
+    logWarn('agent_run_stale', {
       agentName: run.agentName,
       runUuid: run.uuid,
       projectId,

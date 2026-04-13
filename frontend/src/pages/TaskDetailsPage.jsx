@@ -324,7 +324,7 @@ export default function TaskDetailsPage() {
       }
     } catch (loadError) {
       if (loadError.response?.status === 404) {
-        navigate(projectUuid ?`/projects?project=${projectUuid}` : '/projects', { replace: true });
+        navigate(projectUuid ?`/projects/${projectUuid}` : '/projects', { replace: true });
         return;
       }
       setError(getApiErrorMessage(loadError, 'Não foi possível carregar a task.'));
@@ -603,10 +603,10 @@ export default function TaskDetailsPage() {
             </button>
           )}
           <button
-            onClick={() => navigate(`/projects?project=${projectUuid}`)}
+            onClick={() => navigate(`/projects/${projectUuid}`)}
             className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 sm:w-auto"
           >
-            Voltar ao board
+            Voltar ao contexto
           </button>
         </div>
       }

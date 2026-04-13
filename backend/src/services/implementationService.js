@@ -1018,6 +1018,7 @@ function buildUiGenerationContext(task, technicalSpec, repairContext = null) {
   const intentDirection = getUiIntentDirection(uiIntent, screenTemplate);
   const reuseHints = buildProjectMemoryReuseHints(technicalSpec.projectMemory, technicalSpec, task.title);
   const generationIR = createGenerationIR({
+    project: task.project,
     technicalSpec: {
       ...technicalSpec,
       frontend: {
@@ -6192,8 +6193,8 @@ async function enrichFrontendWithAi(task, technicalSpec, userUuid = null, repair
     profileSummaryTitle: domainTemplate.profileSummaryTitle,
     profileSummaryDescription: domainTemplate.profileSummaryDescription,
     domainTemplateKey: domainTemplate.templateKey,
-    screenSpec: createGenerationIR({ technicalSpec, domainTemplate, task }).frontend.screenSpec,
-    dataSpec: createGenerationIR({ technicalSpec, domainTemplate, task }).frontend.dataSpec,
+    screenSpec: createGenerationIR({ project: task.project, technicalSpec, domainTemplate, task }).frontend.screenSpec,
+    dataSpec: createGenerationIR({ project: task.project, technicalSpec, domainTemplate, task }).frontend.dataSpec,
   }));
   const uiGenerationContext = buildUiGenerationContext(task, technicalSpec, repairContext);
   const artifactFirstDraft = polishGeneratedUiDraft(

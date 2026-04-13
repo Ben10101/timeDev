@@ -6,6 +6,7 @@ const AuthPage = lazy(() => import('./pages/AuthPage'));
 const ProjectOverviewPage = lazy(() => import('./pages/ProjectOverviewPage'));
 const ProjectPlanningPage = lazy(() => import('./pages/ProjectPlanningPage'));
 const ProjectTeamPage = lazy(() => import('./pages/ProjectTeamPage'));
+const PipelinePage = lazy(() => import('./pages/PipelinePage'));
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
 const WorkspaceTeamPage = lazy(() => import('./pages/WorkspaceTeamPage'));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
@@ -38,7 +39,7 @@ function App() {
               path="/"
               element={
                 <ProtectedRoute>
-                  <Navigate to="/workspace" replace />
+                  <Navigate to="/projects" replace />
                 </ProtectedRoute>
               }
             />
@@ -89,6 +90,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <ProjectTeamPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/projects/:projectUuid/pipeline"
+              element={
+                <ProtectedRoute>
+                  <PipelinePage />
                 </ProtectedRoute>
               }
             />

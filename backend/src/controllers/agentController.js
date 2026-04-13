@@ -13,6 +13,7 @@ import {
   restoreTaskAfterAgentFailure,
   updateTask,
 } from '../services/projectDataService.js';
+import { createAgentRunLifecycle } from '../utils/agentRunLifecycle.js';
 import { serializeBigInts } from '../utils/serialize.js';
 import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
 
@@ -204,6 +205,7 @@ function assertArtifactCompleteness(agentName, content) {
 
 export async function runAgentController(req, res) {
   let agentRun = null;
+  let runLifecycle = null;
   try {
     const { agent, payload } = req.body;
 
@@ -219,13 +221,18 @@ export async function runAgentController(req, res) {
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: agent });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(payload.project_id, agent, payloadWithRuntime);
+    runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
 
     const result = await runSingleAgent(agent, payloadWithRuntime, { envOverrides });
-    await finishAgentRun(agentRun.id, {
-      status: 'completed',
+    const finalized = await runLifecycle.finalizeSuccess({
       result,
       usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
     });
+
+    if (!finalized) {
+      return;
+    }
+
     await persistAgentResult(payload.project_id, agent, payloadWithRuntime, result);
 
     res.status(200).json({
@@ -234,9 +241,20 @@ export async function runAgentController(req, res) {
       data: result,
     });
   } catch (error) {
-    if (agentRun?.id) {
-      await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message });
+    if (runLifecycle?.isFinalized()) {
+      return;
     }
+
+    if (runLifecycle) {
+      await runLifecycle.finalizeFailure({ errorMessage: error.message }).catch(() => null);
+    } else if (agentRun?.id) {
+      await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);
+    }
+
+    if (runLifecycle?.wasAborted()) {
+      return;
+    }
+
     console.error(`[AgentController] Error: ${error.message}`);
     res.status(500).json({ message: 'Erro ao executar o agente de IA', error: error.message });
   }
@@ -245,6 +263,7 @@ export async function runAgentController(req, res) {
 export async function runRequirementsForTaskController(req, res) {
   let agentRun = null;
   let previousTaskState = null;
+  let runLifecycle = null;
 
   try {
     const { taskUuid } = req.params;
@@ -300,15 +319,19 @@ export async function runRequirementsForTaskController(req, res) {
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'requirements_analyst' });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(task.project.uuid, 'requirements_analyst', payloadWithRuntime);
+    runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
     const result = await runSingleAgent('requirements_analyst', payloadWithRuntime, { envOverrides });
     const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
     assertArtifactCompleteness('requirements_analyst', content);
 
-    await finishAgentRun(agentRun.id, {
-      status: 'completed',
+    const finalized = await runLifecycle.finalizeSuccess({
       result,
       usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
     });
+
+    if (!finalized) {
+      return;
+    }
 
     await createRequirementsArtifacts(task.uuid, {
       title: `Requisitos refinados - ${task.title}`,
@@ -330,13 +353,24 @@ export async function runRequirementsForTaskController(req, res) {
       serializeBigInts({
         success: true,
         task: updatedTask,
-        data: result,
-      })
-    );
+      data: result,
+    })
+  );
   } catch (error) {
-    if (agentRun?.id) {
+    if (runLifecycle?.isFinalized()) {
+      return;
+    }
+
+    if (runLifecycle) {
+      await runLifecycle.finalizeFailure({ errorMessage: error.message }).catch(() => null);
+    } else if (agentRun?.id) {
       await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);
     }
+
+    if (runLifecycle?.wasAborted()) {
+      return;
+    }
+
     if (previousTaskState) {
       await restoreTaskAfterAgentFailure(req.params.taskUuid, previousTaskState, {
         changedByUserUuid: req.authUser.uuid,
@@ -352,6 +386,7 @@ export async function runRequirementsForTaskController(req, res) {
 export async function runQaForTaskController(req, res) {
   let agentRun = null;
   let previousTaskState = null;
+  let runLifecycle = null;
 
   try {
     const { taskUuid } = req.params;
@@ -429,15 +464,19 @@ export async function runQaForTaskController(req, res) {
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'qa_engineer' });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(task.project.uuid, 'qa_engineer', payloadWithRuntime);
+    runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
     const result = await runSingleAgent('qa_engineer', payloadWithRuntime, { envOverrides });
     const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
     assertArtifactCompleteness('qa_engineer', content);
 
-    await finishAgentRun(agentRun.id, {
-      status: 'completed',
+    const finalized = await runLifecycle.finalizeSuccess({
       result,
       usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
     });
+
+    if (!finalized) {
+      return;
+    }
 
     await createQaArtifacts(task.uuid, {
       title: `Plano de testes - ${task.title}`,
@@ -459,13 +498,24 @@ export async function runQaForTaskController(req, res) {
       serializeBigInts({
         success: true,
         task: updatedTask,
-        data: result,
-      })
-    );
+      data: result,
+    })
+  );
   } catch (error) {
-    if (agentRun?.id) {
+    if (runLifecycle?.isFinalized()) {
+      return;
+    }
+
+    if (runLifecycle) {
+      await runLifecycle.finalizeFailure({ errorMessage: error.message }).catch(() => null);
+    } else if (agentRun?.id) {
       await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);
     }
+
+    if (runLifecycle?.wasAborted()) {
+      return;
+    }
+
     if (previousTaskState) {
       await restoreTaskAfterAgentFailure(req.params.taskUuid, previousTaskState, {
         changedByUserUuid: req.authUser.uuid,

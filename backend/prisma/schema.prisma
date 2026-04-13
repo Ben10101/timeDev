@@ -88,6 +88,8 @@ enum AgentRunStatus {
   running
   completed
   failed
+  aborted
+  stale
   cancelled
 }
 

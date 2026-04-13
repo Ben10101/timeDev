@@ -1,4 +1,7 @@
 import { randomUUID } from 'crypto';
+import { access, rm } from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { prisma } from '../lib/prisma.js';
 import { recoverBlockingAgentRunsForStart } from './agentRunRecoveryService.js';
 import { estimateTokenCount } from '../utils/aiRunMetrics.js';
@@ -6,6 +9,10 @@ import { DEFAULT_AI_SETTINGS, getAiSettingsForUser } from './aiSettingsService.j
 import { inferProjectTemplateKey, resolveProjectTemplate } from '../templates/projects/index.js';
 import { logInfo, logWarn } from '../utils/logger.js';
 import { recordRuntimeEvent } from './runtimeTelemetryService.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.join(__dirname, '..', '..', '..');
+const GENERATED_PROJECTS_ROOT = path.join(REPO_ROOT, 'generated-projects');
 
 const taskListInclude = {
   assigneeUser: { select: { uuid: true, name: true, email: true } },
@@ -219,6 +226,36 @@ function buildProjectAccessFilter(userUuid) {
 function getProjectRoleRank(role) {
   const index = projectRoleOrder.indexOf(role || 'viewer');
   return index === -1 ? 0 : index;
+}
+
+async function pathExists(targetPath) {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function removeGeneratedProjectRootIfSafe(rootPath, projectUuid) {
+  const resolvedRoot = path.resolve(String(rootPath || '').trim());
+  const generatedProjectsRoot = path.resolve(GENERATED_PROJECTS_ROOT);
+
+  if (
+    !resolvedRoot ||
+    resolvedRoot === generatedProjectsRoot ||
+    !resolvedRoot.startsWith(`${generatedProjectsRoot}${path.sep}`)
+  ) {
+    logWarn({ projectUuid, rootPath: resolvedRoot }, 'Skipping project directory cleanup outside generated-projects root.');
+    return false;
+  }
+
+  if (!(await pathExists(resolvedRoot))) {
+    return false;
+  }
+
+  await rm(resolvedRoot, { recursive: true, force: true });
+  return true;
 }
 
 function buildProjectPermissions(currentUserRole = 'viewer') {
@@ -983,6 +1020,48 @@ export async function updateProjectStatus(projectUuid, nextStatus, actorUserUuid
   return getProjectByUuid(projectUuid, actorUserUuid);
 }
 
+export async function deleteProject(projectUuid, actorUserUuid) {
+  await assertProjectPermission(projectUuid, actorUserUuid, 'owner');
+
+  const project = await prisma.project.findUnique({
+    where: { uuid: projectUuid },
+    select: {
+      id: true,
+      uuid: true,
+      generatedApps: {
+        select: {
+          rootPath: true,
+        },
+      },
+    },
+  });
+
+  if (!project) {
+    throw new Error('Projeto nao encontrado.');
+  }
+
+  await prisma.project.delete({
+    where: { id: project.id },
+  });
+
+  const cleanupResults = await Promise.allSettled(
+    (project.generatedApps || [])
+      .filter((generatedApp) => generatedApp?.rootPath)
+      .map((generatedApp) => removeGeneratedProjectRootIfSafe(generatedApp.rootPath, project.uuid))
+  );
+
+  cleanupResults
+    .filter((result) => result.status === 'rejected')
+    .forEach((result) => {
+      logWarn(
+        { projectUuid: project.uuid, error: result.reason?.message || String(result.reason || '') },
+        'Project generated directory cleanup failed after delete.'
+      );
+    });
+
+  return { deleted: true, projectUuid: project.uuid };
+}
+
 export async function addProjectMember(projectUuid, { email, projectRole = 'editor' }, actorUserUuid) {
   const access = await assertProjectPermission(projectUuid, actorUserUuid, 'manager');
   const normalizedEmail = String(email || '').trim().toLowerCase();
@@ -1585,6 +1664,29 @@ async function ensureSystemWorkspaceAndUser() {
   return result;
 }
 
+function derivePipelineProjectName(idea) {
+  const text = String(idea || '').replace(/\s+/g, ' ').trim();
+  if (!text) return 'Projeto de Pipeline';
+
+  const instructionPatterns = [
+    /^atue como\b/i,
+    /^refine\b/i,
+    /^gere\b/i,
+    /^crie\b/i,
+    /^analise\b/i,
+    /^baseado na historia\b/i,
+    /^baseado na história\b/i,
+    /^historia de usuario\b/i,
+    /^história de usuário\b/i,
+  ];
+
+  if (instructionPatterns.some((pattern) => pattern.test(text))) {
+    return 'Projeto de Pipeline';
+  }
+
+  return text.slice(0, 120);
+}
+
 export async function ensurePipelineProject(projectUuid, idea = 'Pipeline Project', userUuid = null) {
   const existingProject = await prisma.project.findUnique({
     where: { uuid: projectUuid },
@@ -1626,9 +1728,9 @@ export async function ensurePipelineProject(projectUuid, idea = 'Pipeline Projec
   return createProject({
     workspaceUuid: workspace.uuid,
     createdByUuid: user.uuid,
-    name: String(idea || 'Pipeline Project').slice(0, 120),
+    name: derivePipelineProjectName(idea),
     description: 'Projeto criado automaticamente pelo pipeline.',
-    vision: String(idea || 'Pipeline Project'),
+    vision: String(idea || 'Pipeline Project').slice(0, 500),
     status: 'active',
     forcedUuid: projectUuid,
   });
@@ -1656,6 +1758,12 @@ function parseStoryTitle(line) {
   return null;
 }
 
+function normalizeStoryDetailLine(line) {
+  return String(line || '')
+    .replace(/^(?:descricao|contexto|detalhe)\s*[:\-]\s*/i, '')
+    .trim();
+}
+
 function extractStoriesFromBacklog(backlogMarkdown) {
   if (!backlogMarkdown) return [];
 
@@ -1663,6 +1771,23 @@ function extractStoriesFromBacklog(backlogMarkdown) {
     .split('\n')
     .map((line) => parseStoryTitle(line))
     .filter(Boolean);
+}
+
+function extractStorySectionContent(backlogMarkdown) {
+  const sectionTitles = [
+    'Historias de Usuario',
+    'Histórias de Usuário',
+    'User Stories',
+    'User Story',
+    'Stories',
+  ];
+
+  for (const title of sectionTitles) {
+    const section = extractMarkdownSection(backlogMarkdown, title);
+    if (section) return section;
+  }
+
+  return String(backlogMarkdown || '');
 }
 
 function extractStructuredStoriesFromBacklog(sectionContent) {
@@ -1674,9 +1799,14 @@ function extractStructuredStoriesFromBacklog(sectionContent) {
 
   function pushCurrentStory() {
     if (!currentStory?.title) return;
+    const description = currentStory.details
+      .map((item) => normalizeStoryDetailLine(item))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
     stories.push({
       title: currentStory.title.trim(),
-      description: currentStory.details.join('\n').trim() || null,
+      description: description || null,
     });
   }
 
@@ -1704,7 +1834,7 @@ function extractStructuredStoriesFromBacklog(sectionContent) {
     }
 
     if (currentStory) {
-      const cleaned = line.replace(/^[-*]\s+/, '').trim();
+      const cleaned = normalizeStoryDetailLine(line.replace(/^[-*]\s+/, '').trim());
       currentStory.details.push(cleaned);
     }
   }
@@ -1772,7 +1902,7 @@ function extractBacklogItems(backlogMarkdown) {
     return { stories: [] };
   }
 
-  const structuredStories = extractStructuredStoriesFromBacklog(extractMarkdownSection(backlogMarkdown, 'Historias de Usuario'));
+  const structuredStories = extractStructuredStoriesFromBacklog(extractStorySectionContent(backlogMarkdown));
   const stories = structuredStories.length
     ? structuredStories
     : extractStoriesFromBacklog(backlogMarkdown).map((title) => ({ title, description: null }));
@@ -3082,6 +3212,40 @@ export async function finishAgentRun(agentRunId, { status, result, errorMessage,
       errorMessage: errorMessage || null,
     });
     logWarn('agent_run_failed', {
+      agentName: existingRun?.agentName || 'unknown',
+      runUuid: existingRun?.uuid || null,
+      projectId: existingRun?.projectId || null,
+      taskId: existingRun?.taskId || null,
+      durationSeconds,
+      errorMessage: errorMessage || null,
+    });
+  } else if (status === 'aborted') {
+    recordRuntimeEvent('agent_run_aborted', {
+      agentName: existingRun?.agentName || 'unknown',
+      runUuid: existingRun?.uuid || null,
+      projectId: existingRun?.projectId || null,
+      taskId: existingRun?.taskId || null,
+      durationSeconds,
+      errorMessage: errorMessage || null,
+    });
+    logWarn('agent_run_aborted', {
+      agentName: existingRun?.agentName || 'unknown',
+      runUuid: existingRun?.uuid || null,
+      projectId: existingRun?.projectId || null,
+      taskId: existingRun?.taskId || null,
+      durationSeconds,
+      errorMessage: errorMessage || null,
+    });
+  } else if (status === 'stale') {
+    recordRuntimeEvent('agent_run_stale', {
+      agentName: existingRun?.agentName || 'unknown',
+      runUuid: existingRun?.uuid || null,
+      projectId: existingRun?.projectId || null,
+      taskId: existingRun?.taskId || null,
+      durationSeconds,
+      errorMessage: errorMessage || null,
+    });
+    logWarn('agent_run_stale', {
       agentName: existingRun?.agentName || 'unknown',
       runUuid: existingRun?.uuid || null,
       projectId: existingRun?.projectId || null,

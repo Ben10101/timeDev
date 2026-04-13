@@ -193,8 +193,8 @@ export default function ProjectTeamPage() {
           <button onClick={() => navigate(`/projects/${projectUuid}/planning`)} className="dashboard-button-secondary w-full sm:w-auto">
             Planejamento
           </button>
-          <button onClick={() => navigate(`/projects?project=${projectUuid}`)} className="dashboard-button-primary w-full sm:w-auto">
-            Abrir board
+          <button onClick={() => navigate(`/projects/${projectUuid}`)} className="dashboard-button-primary w-full sm:w-auto">
+            Abrir contexto
           </button>
         </div>
       }

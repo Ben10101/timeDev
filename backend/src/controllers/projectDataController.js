@@ -24,6 +24,7 @@ import {
   listAllTasks,
   persistAgentResult,
   removeProjectMember,
+  deleteProject,
   updateProjectBrief,
   updateProjectMemberRole,
   updateProjectStatus,
@@ -32,6 +33,7 @@ import {
 import { runSingleAgent } from '../services/orchestratorService.js';
 import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
 import { bootstrapGeneratedApp } from '../services/implementationService.js';
+import { createAgentRunLifecycle } from '../utils/agentRunLifecycle.js';
 import { serializeBigInts } from '../utils/serialize.js';
 import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
 import { inferProjectTemplateKey } from '../templates/projects/index.js';
@@ -297,6 +299,15 @@ export async function updateProjectStatusController(req, res, next) {
   }
 }
 
+export async function deleteProjectController(req, res, next) {
+  try {
+    const result = await deleteProject(req.params.projectUuid, req.authUser.uuid);
+    res.json(serializeBigInts(result));
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function listProjectTasksController(req, res, next) {
   try {
     const tasks = await listProjectTasks(
@@ -436,6 +447,7 @@ export async function importBacklogTasksController(req, res, next) {
 
 export async function generateProjectBacklogController(req, res, next) {
   let agentRun = null;
+  let runLifecycle = null;
 
   try {
     const { projectUuid } = req.params;
@@ -477,13 +489,17 @@ export async function generateProjectBacklogController(req, res, next) {
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'project_manager' });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(projectUuid, 'project_manager', payloadWithRuntime);
+    runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
     const result = await runSingleAgent('project_manager', payloadWithRuntime, { envOverrides });
 
-    await finishAgentRun(agentRun.id, {
-      status: 'completed',
+    const finalized = await runLifecycle.finalizeSuccess({
       result,
       usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
     });
+
+    if (!finalized) {
+      return;
+    }
 
     await persistAgentResult(projectUuid, 'project_manager', payloadWithRuntime, result);
 
@@ -500,11 +516,21 @@ export async function generateProjectBacklogController(req, res, next) {
       })
     );
   } catch (error) {
-    if (agentRun?.id) {
+    if (runLifecycle?.isFinalized()) {
+      return;
+    }
+
+    if (runLifecycle) {
+      await runLifecycle.finalizeFailure({ errorMessage: error.message }).catch(() => null);
+    } else if (agentRun?.id) {
       await finishAgentRun(agentRun.id, {
         status: 'failed',
         errorMessage: error.message,
       }).catch(() => null);
+    }
+
+    if (runLifecycle?.wasAborted()) {
+      return;
     }
 
     next(error);
@@ -557,6 +583,7 @@ export async function approveProjectArchitectureController(req, res, next) {
 
 export async function generateProjectArchitectureController(req, res, next) {
   let agentRun = null;
+  let runLifecycle = null;
 
   try {
     const { projectUuid } = req.params;
@@ -631,13 +658,17 @@ export async function generateProjectArchitectureController(req, res, next) {
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'architect' });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(projectUuid, 'architect', payloadWithRuntime);
+    runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
     const result = await runSingleAgent('architect', payloadWithRuntime, { envOverrides });
 
-    await finishAgentRun(agentRun.id, {
-      status: 'completed',
+    const finalized = await runLifecycle.finalizeSuccess({
       result,
       usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
     });
+
+    if (!finalized) {
+      return;
+    }
 
     await persistAgentResult(projectUuid, 'architect', payloadWithRuntime, result);
     const generatedApp = await bootstrapGeneratedApp(projectUuid);
@@ -652,11 +683,21 @@ export async function generateProjectArchitectureController(req, res, next) {
       })
     );
   } catch (error) {
-    if (agentRun?.id) {
+    if (runLifecycle?.isFinalized()) {
+      return;
+    }
+
+    if (runLifecycle) {
+      await runLifecycle.finalizeFailure({ errorMessage: error.message }).catch(() => null);
+    } else if (agentRun?.id) {
       await finishAgentRun(agentRun.id, {
         status: 'failed',
         errorMessage: error.message,
       }).catch(() => null);
+    }
+
+    if (runLifecycle?.wasAborted()) {
+      return;
     }
 
     next(error);

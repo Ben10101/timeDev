@@ -1,189 +1,53 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   AlertCircle,
-  CheckCircle2,
-  Ban,
+  Archive,
+  Briefcase,
   Clock,
-  Download,
-  ExternalLink,
-  FileText,
-  Layout,
+  Filter,
   LayoutDashboard,
   Plus,
+  Search,
   Sparkles,
-  TestTube2,
-  Users,
+  Trash2,
 } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { getProjectStatusConfirmationMessage, getProjectStatusMeta } from '../utils/projectStatus';
-import {
-  bootstrapGeneratedApp,
-  createProject,
-  createTask,
-  approveProjectArchitecture,
-  generateProjectArchitecture,
-  getApiErrorMessage,
-  getProjectArchitectureStatus,
-  listProjects,
-  listProjectTasks,
-  updateProjectStatus,
-  runTaskImplementation,
-  runTaskQa,
-  runTaskRequirements,
-} from '../services/api';
-import { exportProjectDocumentationPdf } from '../utils/projectDocumentationExport';
-import { getAgentLabel } from '../utils/agentLabels';
+import { createProject, deleteProject, getApiErrorMessage, listProjects, updateProjectStatus } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
-const BOARD_COLUMNS = [
-  { key: 'backlog', label: 'Backlog', icon: Layout },
-  { key: 'todo', label: 'A Fazer', icon: Clock },
-  { key: 'in_progress', label: 'Em Progresso', icon: Sparkles },
-  { key: 'in_review', label: 'Em Revisão', icon: AlertCircle },
-  { key: 'blocked', label: 'Bloqueado', icon: Ban },
-  { key: 'qa', label: 'Qualidade', icon: TestTube2 },
-  { key: 'done', label: 'Concluído', icon: CheckCircle2 },
+const EMPTY_PROJECT = { name: '', description: '', vision: '' };
+
+const PROJECT_STATUS_FILTERS = [
+  { value: 'all', label: 'Todos os projetos' },
+  { value: 'draft', label: 'Rascunhos' },
+  { value: 'active', label: 'Ativos' },
+  { value: 'on_hold', label: 'Em pausa' },
+  { value: 'completed', label: 'Concluídos' },
+  { value: 'archived', label: 'Arquivados' },
 ];
 
-const EMPTY_PROJECT = { name: '', description: '', vision: '' };
-const EMPTY_TASK = {
-  title: '',
-  description: '',
-  status: 'backlog',
-  priority: 'medium',
-  taskType: 'story',
-  assigneeType: 'agent',
-  assigneeAgentName: 'requirements_analyst',
-};
-
-function formatElapsed(seconds) {
-  if (!seconds) return '0m';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return hours > 0 ?`${hours}h ${minutes}m` : `${minutes}m`;
-}
-
 function formatShortDate(value) {
-  if (!value) return 'Sem prazo';
+  if (!value) return 'Sem data';
   return new Date(value).toLocaleDateString('pt-BR');
 }
 
-function getRiskRegister(project) {
-  return project?.intakeConfig?.riskRegister || null;
-}
-
-function getProjectTimeline(project) {
-  return project?.intakeConfig?.timeline || null;
-}
-
-function getProjectBoardNextStep({
-  activeProject,
-  hasAgentGeneratedStories,
-  architectureStatus,
-  implementationUnlocked,
-  doneCount,
-}) {
-  if (!activeProject) {
-    return {
-      title: 'Escolha um projeto para operar',
-      message: 'Selecione um projeto no catálogo para abrir o board, acompanhar o backlog e destravar a próxima etapa.',
-      primaryAction: 'select',
-      primaryLabel: 'Selecionar projeto',
-      tone: 'slate',
-    };
-  }
-
-  if (!hasAgentGeneratedStories) {
-    return {
-      title: 'O briefing ainda precisa virar stories',
-      message: 'O projeto já tem contexto, mas ainda não entrou no fluxo operacional. Gere as user stories para iniciar o board.',
-      primaryAction: 'stories',
-      primaryLabel: 'Criar user stories',
-      tone: 'blue',
-    };
-  }
-
-  if (architectureStatus?.canGenerateArchitecture && (!architectureStatus?.hasArchitecture || architectureStatus?.architectureNeedsRefresh)) {
-    return {
-      title: architectureStatus?.architectureNeedsRefresh ? 'A arquitetura precisa ser atualizada' : 'A arquitetura já pode ser gerada',
-      message: architectureStatus?.architectureNeedsRefresh
-        ? 'Novos refinamentos alteraram o contexto técnico. Regenere a arquitetura antes de seguir para implementação.'
-        : 'As stories refinadas já destravam o desenho técnico do projeto. Gere a arquitetura para liberar o próximo passo.',
-      primaryAction: 'architecture',
-      primaryLabel: 'Gerar arquitetura',
-      tone: 'amber',
-    };
-  }
-
-  if (architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved) {
-    return {
-      title: 'Falta a aprovação da arquitetura',
-      message: 'O desenho técnico já existe, mas ainda precisa de aprovação humana para liberar a implementação com segurança.',
-      primaryAction: 'approve-architecture',
-      primaryLabel: 'Aprovar arquitetura',
-      tone: 'amber',
-    };
-  }
-
-  if (implementationUnlocked && doneCount > 0) {
-    return {
-      title: 'Já existem stories prontas para código',
-      message: 'O board já tem histórias concluídas e o gate técnico está aberto. Agora o foco é integrar as entregas no projeto gerado.',
-      primaryAction: 'studio',
-      primaryLabel: 'Abrir Code Studio',
-      tone: 'emerald',
-    };
-  }
-
-  return {
-    title: 'Continue movendo o fluxo do board',
-    message: 'Refine, valide e conclua as stories mais importantes para aumentar a prontidão técnica do projeto.',
-    primaryAction: 'overview',
-    primaryLabel: 'Abrir visão do projeto',
-    tone: 'slate',
-  };
-}
-
-function hasCurrentArtifact(task, artifactType) {
-  return (task?.artifacts || []).some((artifact) => artifact.artifactType === artifactType && artifact.isCurrent);
-}
-
-function getLatestStatusHistoryNote(task, toStatus = null) {
-  const history = task?.statusHistory || [];
-  const entry = toStatus ?history.find((item) => item.toStatus === toStatus) : history[0];
-  return entry?.note || '';
-}
-
-function isTaskAgentRunning(task, agentName = null) {
-  const runs = task?.agentRuns || [];
-  if (!runs.length) return false;
-  return runs.some((run) => run.status === 'running' && (!agentName || run.agentName === agentName));
-}
-
-function TextInput({ label, value, onChange, placeholder, icon: Icon }) {
+function TextInput({ label, value, onChange, placeholder }) {
   return (
-    <div className="space-y-2">
-      <label className="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-500">{label}</label>
-      <div className="relative">
-        {Icon && <Icon className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />}
-        <input
-          value={value}
-          onChange={onChange}
-          placeholder={placeholder}
-          className={`dashboard-input ${Icon ?'pl-11' : ''}`}
-        />
-      </div>
-    </div>
+    <label className="block space-y-2">
+      <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-500">{label}</span>
+      <input value={value} onChange={onChange} placeholder={placeholder} className="dashboard-input" />
+    </label>
   );
 }
 
-function TextArea({ label, value, onChange, placeholder, rows = 3 }) {
+function TextArea({ label, value, onChange, placeholder, rows = 4 }) {
   return (
-    <div className="space-y-2">
-      <label className="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-500">{label}</label>
+    <label className="block space-y-2">
+      <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-500">{label}</span>
       <textarea
         value={value}
         onChange={onChange}
@@ -191,244 +55,138 @@ function TextArea({ label, value, onChange, placeholder, rows = 3 }) {
         rows={rows}
         className="dashboard-input resize-none"
       />
+    </label>
+  );
+}
+
+function MetricCard({ label, value, hint, icon: Icon, tone = 'slate' }) {
+  const tones = {
+    blue: 'bg-blue-50 text-[#102a72] border-blue-100',
+    emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+    amber: 'bg-amber-50 text-amber-700 border-amber-100',
+    rose: 'bg-rose-50 text-rose-700 border-rose-100',
+    slate: 'bg-slate-50 text-slate-700 border-slate-200',
+  };
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className={`flex h-11 w-11 items-center justify-center rounded-2xl border ${tones[tone]}`}>
+          <Icon className="h-5 w-5" strokeWidth={2} />
+        </div>
+        <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">{label}</span>
+      </div>
+      <p className="mt-4 text-3xl font-bold tracking-tight text-slate-900">{value}</p>
+      {hint ? <p className="mt-2 text-sm leading-6 text-slate-500">{hint}</p> : null}
     </div>
   );
 }
 
-function exportTaskArtifacts(task) {
-  const artifacts = (task?.artifacts || []).filter((artifact) => artifact.isCurrent);
-  if (!artifacts.length) return;
-
-  const content = [
-    `# ${task.title}`,
-    task.description ?`\n${task.description}` : '',
-    ...artifacts.map(
-      (artifact) =>
-        `\n\n---\n\n## ${artifact.title}\nTipo: ${artifact.artifactType}\nVersao: ${artifact.version}\n\n${artifact.content}`
-    ),
-  ].join('');
-
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${task.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'task'}-artefatos.md`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-function TaskCard({
-  task,
-  onRequirements,
-  onQa,
-  onOpenCodeStudio,
-  onOpenDetail,
-  onExportArtifacts,
-  busy,
-  implementationUnlocked,
-  implementationBlockReason,
+function ProjectCard({
+  project,
+  onOpenProject,
+  onRequestStatusChange,
+  onRequestDelete,
+  busyProjectUuid,
 }) {
-  const hasRequirements = hasCurrentArtifact(task, 'requirements');
-  const hasTestPlan = hasCurrentArtifact(task, 'test_plan');
-  const isDone = task.status === 'done';
-  const isBlocked = task.status === 'blocked';
-  const processingError = task.processingError;
-  const isStory = task.taskType === 'story';
-  const isEpic = task.taskType === 'epic';
-  const requirementsRunning = task.status === 'in_progress' && isTaskAgentRunning(task, 'requirements_analyst');
-  const qaRunning =
-    (task.status === 'qa' || task.status === 'in_progress' || task.status === 'in_review') &&
-    isTaskAgentRunning(task, 'qa_engineer');
-  const canRunRequirements = isStory && !isBlocked && !hasRequirements && !requirementsRunning;
-  const canRunQa = isStory && !isBlocked && hasRequirements && !hasTestPlan && !qaRunning;
-  const canRunImplementation = Boolean(implementationUnlocked);
-
-  const priorityColors = {
-    high: 'bg-rose-50 text-rose-700',
-    medium: 'bg-blue-50 text-[#102a72]',
-    low: 'bg-slate-100 text-slate-600',
-  };
-  const typeLabels = {
-    epic: 'Epic',
-    story: 'Story',
-    task: 'Técnica',
-  };
-  const typeGuidance = {
-    epic: 'Épico de planejamento. Abra os detalhes para ver o desdobramento em stories.',
-    story: 'Story pronta para refinamento e validação.',
-    task: 'Tarefa técnica fora da esteira de requisitos/QA.',
-  };
-  const blockReason = getLatestStatusHistoryNote(task, 'blocked');
-  const taskDescription = task.description || typeGuidance[task.taskType] || 'Sem contexto adicional registrado para esta task.';
-  const primaryTag = isBlocked
-    ?'Bloqueada'
-    : hasTestPlan
-      ?'QA pronto'
-      : hasRequirements
-        ?'Refinada'
-        : 'Briefing';
+  const statusMeta = getProjectStatusMeta(project?.status);
+  const isBusy = busyProjectUuid === project.uuid;
+  const canDeleteProject = project.currentUserRole === 'owner';
 
   return (
-    <motion.div
+    <motion.article
       layout
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.98 }}
-      className="flex flex-col rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:border-slate-300 hover:shadow-md"
+      className="group flex h-full flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-[#102a72]/20 hover:shadow-md"
     >
-      <div className="space-y-4 p-4">
+      <button type="button" onClick={() => onOpenProject(project.uuid)} className="flex flex-1 flex-col text-left">
         <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`dashboard-badge ${priorityColors[task.priority] || priorityColors.medium}`}>
-                {task.priority}
-              </span>
-              <span className={`dashboard-badge ${
-                isBlocked
-                  ?'bg-rose-50 text-rose-700'
-                  : hasTestPlan
-                    ?'bg-emerald-50 text-emerald-700'
-                    : hasRequirements
-                      ?'bg-blue-50 text-[#102a72]'
-                      : 'bg-slate-100 text-slate-600'
-              }`}>
-                {primaryTag}
-              </span>
-              <span className="text-[11px] font-semibold text-slate-400">#{task.uuid?.split('-')[0]}</span>
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#102a72] text-white shadow-sm">
+              <LayoutDashboard className="h-4.5 w-4.5" />
             </div>
-            <h3 className="mt-3 text-sm font-semibold leading-6 text-slate-900">{task.title}</h3>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Projeto</p>
+              <h3 className="mt-2 truncate text-xl font-bold text-slate-900">{project.name}</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-600 line-clamp-3">
+                {project.description || 'Sem descrição consolidada.'}
+              </p>
+            </div>
           </div>
-          <button
-            onClick={() => onOpenDetail(task.uuid)}
-            className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-500 transition hover:bg-[#102a72]/10 hover:text-[#102a72]"
-          >
-            <ExternalLink className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusMeta.tone}`}>
+              {statusMeta.label}
+            </span>
+          </div>
         </div>
 
-        <p className="line-clamp-3 text-sm leading-6 text-slate-500">
-          {taskDescription}
-        </p>
-
-        <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
-          <p>
-            <span className="font-semibold text-slate-500">Responsável:</span> {task.assigneeUser?.name || task.assigneeAgentLabel || getAgentLabel(task.assigneeAgentName, 'Sem responsável')}
-          </p>
-          <p>
-            <span className="font-semibold text-slate-500">Prazo:</span> {formatShortDate(task.dueDate)}
-          </p>
-        </div>
-
-        {isBlocked && (
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Motivo do bloqueio</p>
-            <p className="mt-1 text-sm font-medium text-rose-700">{blockReason || 'Bloqueio sem observação registrada.'}</p>
-          </div>
-        )}
-
-        {processingError && (
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-rose-500">Falha na última execução</p>
-            <p className="mt-1 text-sm font-medium text-rose-700">{processingError.message}</p>
-          </div>
-        )}
-
-        {isDone && !canRunImplementation && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-600">Implementação bloqueada</p>
-            <p className="mt-1 text-sm font-medium text-amber-800">
-              {implementationBlockReason || 'Gere a arquitetura do projeto depois que todas as histórias estiverem refinadas.'}
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Atualizado</p>
+            <p className="mt-2 text-sm font-semibold text-slate-900">
+              {formatShortDate(project.updatedAt || project.createdAt)}
             </p>
           </div>
-        )}
-
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Tipo</p>
-            <p className="mt-1 text-sm font-semibold text-slate-800">{typeLabels[task.taskType] || task.taskType || 'Task'}</p>
-          </div>
-          <div className="rounded-lg bg-slate-50 px-3 py-2 text-right">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Tempo de ciclo</p>
-            <p className="mt-1 text-sm font-semibold text-slate-700">{formatElapsed(task.timing?.cycleTimeSeconds)}</p>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Visão</p>
+            <p className="mt-2 text-sm font-semibold text-slate-900">{project.vision ? 'Presente' : 'Ainda não definida'}</p>
           </div>
         </div>
-      </div>
 
-      <div className="mt-auto flex items-center gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4">
-        {!isDone ?(
-          <>
-            {isStory ?(
-              <>
-                <button
-                  onClick={() => onRequirements(task.uuid)}
-                  disabled={busy || !canRunRequirements}
-                  className="dashboard-button-primary flex-1"
-                  title={
-                    requirementsRunning
-                      ? 'Já existe uma execução de requisitos em andamento para esta task.'
-                      : !canRunRequirements
-                        ? 'A etapa de requisitos já foi concluída.'
-                        : undefined
-                  }
-                >
-                  <FileText className="h-4 w-4" />
-                  {requirementsRunning ?'Executando...' : 'Analisar'}
-                </button>
-                <button
-                  onClick={() => onQa(task.uuid)}
-                  disabled={busy || !canRunQa}
-                  className="dashboard-button-secondary flex-1"
-                  title={
-                    qaRunning
-                      ? 'Já existe uma execução de QA em andamento para esta task.'
-                      : !canRunQa && hasTestPlan
-                        ? 'A etapa de QA já foi concluída.'
-                        : undefined
-                  }
-                >
-                  <TestTube2 className="h-4 w-4" />
-                  {qaRunning ?'Executando...' : 'Validar'}
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={() => onOpenDetail(task.uuid)}
-                  className="dashboard-button-secondary flex-1"
-                >
-                  <FileText className="h-4 w-4" />
-                  Abrir detalhes
-                </button>
-                <div className="flex flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-center text-xs font-medium text-slate-500">
-                  {isEpic ?'Épico de planejamento' : 'Tarefa técnica fora do fluxo de refinamento'}
-                </div>
-              </>
-            )}
-          </>
-        ) : (
-          <>
+        <p className="mt-4 text-sm leading-6 text-slate-500">
+          Clique para abrir o contexto do projeto e seguir para overview, planejamento ou equipe.
+        </p>
+      </button>
+
+      <div className="mt-5 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-500">
+            {project.vision ? 'Com visão' : 'Sem visão'}
+          </span>
+          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-500">
+            {isBusy ? 'Atualizando...' : 'Clique para abrir'}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenProject(project.uuid)}
+            className="dashboard-button-secondary px-3 py-2 text-xs"
+          >
+            Abrir contexto
+          </button>
+          {statusMeta.nextStatus ? (
             <button
-              onClick={() => onOpenCodeStudio(task.uuid)}
-              disabled={busy}
-              className="dashboard-button-primary flex-1"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRequestStatusChange(project, statusMeta.nextStatus);
+              }}
+              disabled={isBusy}
+              className="dashboard-button-secondary px-3 py-2 text-xs"
             >
-              <Sparkles className="h-4 w-4" />
-              Ir para código
+              {isBusy ? 'Atualizando...' : statusMeta.action}
             </button>
+          ) : null}
+          {canDeleteProject ? (
             <button
-              onClick={() => onExportArtifacts(task)}
-              disabled={!task.artifacts?.length}
-              className="dashboard-button-secondary px-3"
-              title="Export bundle"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRequestDelete(project);
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50"
             >
-              <Download className="h-4 w-4" />
+              <Trash2 className="h-3.5 w-3.5" />
+              Excluir
             </button>
-          </>
-        )}
+          ) : null}
+        </div>
       </div>
-    </motion.div>
+    </motion.article>
   );
 }
 
@@ -437,43 +195,21 @@ export default function ProjectsPage() {
   const [searchParams] = useSearchParams();
   const { user, workspace } = useAuth();
   const [projects, setProjects] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [architectureStatus, setArchitectureStatus] = useState(null);
-  const [activeProjectUuid, setActiveProjectUuid] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [generatingArchitecture, setGeneratingArchitecture] = useState(false);
-  const [exportingPdf, setExportingPdf] = useState(false);
   const [error, setError] = useState(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [projectSearch, setProjectSearch] = useState('');
+  const [projectStatusFilter, setProjectStatusFilter] = useState('all');
   const [projectForm, setProjectForm] = useState(EMPTY_PROJECT);
-  const [taskForm, setTaskForm] = useState(EMPTY_TASK);
   const [statusDialog, setStatusDialog] = useState({ open: false, project: null, nextStatus: null });
   const [statusUpdatingProjectUuid, setStatusUpdatingProjectUuid] = useState(null);
-
-  const activeProject = projects.find((project) => project.uuid === activeProjectUuid) || null;
-  const roadmap = activeProject?.intakeConfig?.roadmap || null;
-  const riskRegister = getRiskRegister(activeProject);
-  const projectTimeline = getProjectTimeline(activeProject);
-  const storyTasks = tasks.filter((task) => (task.taskType || 'story') === 'story');
-  const filteredProjects = useMemo(() => {
-    const query = projectSearch.trim().toLowerCase();
-    if (!query) return projects;
-    return projects.filter((project) => {
-      const searchable = `${project.name} ${project.description || ''} ${project.vision || ''}`.toLowerCase();
-      return searchable.includes(query);
-    });
-  }, [projectSearch, projects]);
-  const hasActiveAgentRun = useMemo(
-    () => tasks.some((task) => (task.agentRuns || []).some((run) => run.status === 'running')),
-    [tasks]
-  );
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, project: null });
+  const [deletingProjectUuid, setDeletingProjectUuid] = useState(null);
 
   useEffect(() => {
-    const preferredProjectUuid = searchParams.get('project');
-    loadProjects(preferredProjectUuid);
-  }, [searchParams]);
+    loadProjects();
+  }, []);
 
   useEffect(() => {
     if (searchParams.get('openCreate') === '1') {
@@ -481,76 +217,55 @@ export default function ProjectsPage() {
     }
   }, [searchParams]);
 
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      loadProjects(activeProjectUuid, { silent: true });
-      if (activeProjectUuid) {
-        loadTasks(activeProjectUuid, { silent: true });
-        loadArchitectureStatus(activeProjectUuid, { silent: true });
-      }
-    }, 4000);
-
-    return () => clearInterval(intervalId);
-  }, [activeProjectUuid]);
-
-  useEffect(() => {
-    if (activeProjectUuid) {
-      loadTasks(activeProjectUuid);
-      loadArchitectureStatus(activeProjectUuid, { silent: true });
-    } else {
-      setTasks([]);
-      setArchitectureStatus(null);
-    }
-  }, [activeProjectUuid]);
-
-  useEffect(() => {
-    if (saving && !hasActiveAgentRun) {
-      setSaving(false);
-    }
-  }, [saving, hasActiveAgentRun]);
-
-  async function loadProjects(preferredProjectUuid, options = {}) {
-    if (!options.silent) setLoading(true);
+  async function loadProjects() {
+    setLoading(true);
     setError(null);
 
     try {
       const nextProjects = await listProjects();
       setProjects(nextProjects);
-      const preferredExists = preferredProjectUuid
-        ?nextProjects.some((project) => project.uuid === preferredProjectUuid)
-        : false;
-      setActiveProjectUuid(preferredExists ?preferredProjectUuid : nextProjects[0]?.uuid || null);
     } catch (loadError) {
-      setError(getApiErrorMessage(loadError, 'Não foi possível carregar os projetos.'));
+      setError(getApiErrorMessage(loadError, 'Nao foi possivel carregar os projetos.'));
     } finally {
-      if (!options.silent) setLoading(false);
+      setLoading(false);
     }
   }
 
-  async function loadTasks(projectUuid, options = {}) {
-    try {
-      const nextTasks = await listProjectTasks(projectUuid);
-      setTasks(nextTasks);
-    } catch (loadError) {
-      if (!options.silent) {
-        setError(getApiErrorMessage(loadError, 'Não foi possível carregar as tasks.'));
-      }
-    }
-  }
+  const filteredProjects = useMemo(() => {
+    const query = projectSearch.trim().toLowerCase();
+    return projects.filter((project) => {
+      const searchable = `${project.name} ${project.description || ''} ${project.vision || ''}`.toLowerCase();
+      const matchesQuery = !query || searchable.includes(query);
+      const matchesStatus = projectStatusFilter === 'all' || project.status === projectStatusFilter;
+      return matchesQuery && matchesStatus;
+    });
+  }, [projectSearch, projectStatusFilter, projects]);
 
-  async function loadArchitectureStatus(projectUuid, options = {}) {
-    try {
-      const nextStatus = await getProjectArchitectureStatus(projectUuid);
-      setArchitectureStatus(nextStatus);
-    } catch (loadError) {
-      if (!options.silent) {
-        setError(getApiErrorMessage(loadError, 'Não foi possível carregar o status da arquitetura do projeto.'));
-      }
-    }
+  const projectStats = useMemo(() => {
+    return projects.reduce(
+      (acc, project) => {
+        acc.total += 1;
+        if (project.status === 'active') acc.active += 1;
+        if (project.status === 'draft') acc.draft += 1;
+        if (project.status === 'archived') acc.archived += 1;
+        return acc;
+      },
+      { total: 0, active: 0, draft: 0, archived: 0 }
+    );
+  }, [projects]);
+
+  const canCreateProject = Boolean(workspace?.uuid && user?.uuid);
+
+  function openProject(projectUuid) {
+    navigate(`/projects/${projectUuid}`);
   }
 
   function openProjectStatusDialog(project, nextStatus) {
     setStatusDialog({ open: true, project, nextStatus });
+  }
+
+  function openProjectDeleteDialog(project) {
+    setDeleteDialog({ open: true, project });
   }
 
   async function confirmProjectStatusUpdate() {
@@ -561,43 +276,40 @@ export default function ProjectsPage() {
 
     try {
       await updateProjectStatus(statusDialog.project.uuid, statusDialog.nextStatus);
-      await loadProjects(activeProjectUuid, { silent: true });
-      if (activeProjectUuid) {
-        await loadTasks(activeProjectUuid, { silent: true });
-        await loadArchitectureStatus(activeProjectUuid, { silent: true });
-      }
+      await loadProjects();
       setStatusDialog({ open: false, project: null, nextStatus: null });
     } catch (statusError) {
-      setError(getApiErrorMessage(statusError, 'Não foi possível atualizar o status do projeto.'));
+      setError(getApiErrorMessage(statusError, 'Nao foi possivel atualizar o status do projeto.'));
     } finally {
       setStatusUpdatingProjectUuid(null);
     }
   }
 
-  const groupedColumns = useMemo(
-    () =>
-      BOARD_COLUMNS.map((column) => ({
-        ...column,
-        tasks: storyTasks
-          .filter((task) => task.status === column.key)
-          .slice()
-          .sort((a, b) => {
-            const priorityRank = { high: 0, medium: 1, low: 2 };
-            return (priorityRank[a.priority] ?? 1) - (priorityRank[b.priority] ?? 1);
-          }),
-      })),
-    [storyTasks]
-  );
+  async function confirmProjectDelete() {
+    if (!deleteDialog.project) return;
 
-  const canCreateProject = Boolean(workspace?.uuid && user?.uuid);
-  const canCreateTask = Boolean(activeProjectUuid && user?.uuid);
+    const deletedProjectUuid = deleteDialog.project.uuid;
+    setDeletingProjectUuid(deletedProjectUuid);
+    setError(null);
 
-  async function handleCreateProject(e) {
-    e.preventDefault();
+    try {
+      await deleteProject(deletedProjectUuid);
+      setDeleteDialog({ open: false, project: null });
+      await loadProjects();
+    } catch (deleteError) {
+      setError(getApiErrorMessage(deleteError, 'Nao foi possivel excluir o projeto.'));
+    } finally {
+      setDeletingProjectUuid(null);
+    }
+  }
+
+  async function handleCreateProject(event) {
+    event.preventDefault();
     if (!canCreateProject) return;
 
     setSaving(true);
     setError(null);
+
     try {
       const project = await createProject({
         ...projectForm,
@@ -607,608 +319,208 @@ export default function ProjectsPage() {
       });
       setProjectForm(EMPTY_PROJECT);
       setShowProjectForm(false);
-      await loadProjects(project.uuid);
+      await loadProjects();
       navigate(`/projects/${project.uuid}`);
     } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Não foi possível criar o projeto.'));
+      setError(getApiErrorMessage(submitError, 'Nao foi possivel criar o projeto.'));
     } finally {
       setSaving(false);
     }
-  }
-
-  async function handleCreateTask(e) {
-    e.preventDefault();
-    if (!canCreateTask) return;
-
-    setSaving(true);
-    setError(null);
-    try {
-      await createTask(activeProjectUuid, {
-        ...taskForm,
-        createdByUuid: user.uuid,
-      });
-      setTaskForm(EMPTY_TASK);
-      await loadTasks(activeProjectUuid);
-      await loadArchitectureStatus(activeProjectUuid, { silent: true });
-      await loadProjects(activeProjectUuid, { silent: true });
-    } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Não foi possível criar a task.'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleRunRequirements(taskUuid) {
-    setSaving(true);
-    setError(null);
-    try {
-      await runTaskRequirements(taskUuid, {
-        changedByUserUuid: user?.uuid,
-      });
-      await loadTasks(activeProjectUuid);
-      await loadArchitectureStatus(activeProjectUuid, { silent: true });
-    } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'A analise de requisitos falhou.'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleRunQa(taskUuid) {
-    setSaving(true);
-    setError(null);
-    try {
-      await runTaskQa(taskUuid, {
-        changedByUserUuid: user?.uuid,
-      });
-      await loadTasks(activeProjectUuid);
-      await loadArchitectureStatus(activeProjectUuid, { silent: true });
-    } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'A analise de QA falhou.'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleGenerateCode(taskUuid) {
-    if (!activeProjectUuid) return;
-
-    setSaving(true);
-    setError(null);
-    try {
-      await bootstrapGeneratedApp(activeProjectUuid);
-      await runTaskImplementation(taskUuid);
-      await loadTasks(activeProjectUuid);
-      await loadArchitectureStatus(activeProjectUuid, { silent: true });
-      await loadProjects(activeProjectUuid, { silent: true });
-    } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'A geração de código falhou.'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleGenerateArchitecture() {
-    if (!activeProjectUuid) return;
-
-    setGeneratingArchitecture(true);
-    setError(null);
-    try {
-      await generateProjectArchitecture(activeProjectUuid);
-      await loadArchitectureStatus(activeProjectUuid, { silent: true });
-      await loadProjects(activeProjectUuid, { silent: true });
-    } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Não foi possível gerar a arquitetura do projeto.'));
-    } finally {
-      setGeneratingArchitecture(false);
-    }
-  }
-
-  async function handleApproveArchitecture() {
-    if (!activeProjectUuid) return;
-
-    setSaving(true);
-    setError(null);
-    try {
-      await approveProjectArchitecture(activeProjectUuid);
-      await loadArchitectureStatus(activeProjectUuid, { silent: true });
-      await loadProjects(activeProjectUuid, { silent: true });
-    } catch (approveError) {
-      setError(getApiErrorMessage(approveError, 'Não foi possível aprovar a arquitetura atual.'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleExportPdf() {
-    if (!activeProjectUuid) return;
-    setExportingPdf(true);
-    setError(null);
-    try {
-      await exportProjectDocumentationPdf(activeProjectUuid);
-    } catch (exportError) {
-      setError(getApiErrorMessage(exportError, 'Não foi possível exportar a documentação em PDF.'));
-    } finally {
-      setExportingPdf(false);
-    }
-  }
-
-  function handleOpenCodeStudio(taskUuid) {
-    if (!activeProjectUuid) return;
-    navigate(`/code-studio?project=${activeProjectUuid}&task=${taskUuid}`);
-  }
-
-  const qaCount = storyTasks.filter((task) => hasCurrentArtifact(task, 'test_plan')).length;
-  const doneCount = storyTasks.filter((task) => task.status === 'done').length;
-  const overallProgress = storyTasks.length ?Math.round((doneCount / storyTasks.length) * 100) : 0;
-  const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
-  const implementationBlockReason = architectureStatus?.blockers?.[0] || null;
-  const hasAgentGeneratedStories = storyTasks.some((task) => task.assigneeAgentName === 'requirements_analyst' || task.taskType === 'story');
-  const projectRiskCount = riskRegister?.risks?.length || 0;
-  const projectImpedimentCount = riskRegister?.impediments?.length || 0;
-  const architectureStateLabel = !activeProjectUuid
-    ?'Selecione um projeto'
-    : !architectureStatus?.hasArchitecture
-      ?'Pendente'
-      : architectureStatus?.architectureNeedsRefresh
-        ?'Desatualizada'
-        : architectureStatus?.architectureApproved
-          ?'Aprovada'
-          : 'Pendente de aprovação';
-  const boardNextStep = getProjectBoardNextStep({
-    activeProject,
-    hasAgentGeneratedStories,
-    architectureStatus,
-    implementationUnlocked,
-    doneCount,
-  });
-  const boardToneClasses = {
-    blue: 'border-blue-200 bg-blue-50',
-    amber: 'border-amber-200 bg-amber-50',
-    emerald: 'border-emerald-200 bg-emerald-50',
-    slate: 'border-slate-200 bg-slate-50',
-  };
-
-  function handlePrimaryBoardAction() {
-    if (!activeProjectUuid) {
-      setShowProjectForm(true);
-      return;
-    }
-
-    if (boardNextStep.primaryAction === 'stories' || boardNextStep.primaryAction === 'overview') {
-      navigate(`/projects/${activeProjectUuid}`);
-      return;
-    }
-
-    if (boardNextStep.primaryAction === 'architecture') {
-      handleGenerateArchitecture();
-      return;
-    }
-
-    if (boardNextStep.primaryAction === 'approve-architecture') {
-      handleApproveArchitecture();
-      return;
-    }
-
-    if (boardNextStep.primaryAction === 'studio') {
-      navigate(`/code-studio?project=${activeProjectUuid}`);
-      return;
-    }
-
-    setShowProjectForm(true);
   }
 
   return (
     <>
       <AppShell
-      eyebrow="Operação por Projeto"
-      title="Board Operacional"
-      description="Gerencie briefing, backlog, requisitos, QA e arquitetura dentro do contexto certo de cada projeto."
-    >
-      <div className="min-w-0 overflow-x-hidden flex flex-col gap-8 pb-16">
-        <AnimatePresence>
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, y: -12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <AlertCircle className="h-4 w-4" />
-                  {error}
+        eyebrow="Projetos"
+        title="Projetos criados"
+        description="Veja seus projetos, abra o contexto de cada um e crie novos espacos de trabalho quando precisar."
+        actions={
+          <button onClick={() => setShowProjectForm(true)} className="dashboard-button-primary w-full sm:w-auto">
+            <Plus className="h-4 w-4" />
+            Novo projeto
+          </button>
+        }
+      >
+        <div className="flex min-w-0 flex-col gap-6 pb-16">
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: -12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="h-4 w-4" />
+                    {error}
+                  </div>
+                  <button onClick={() => setError(null)} className="dashboard-button-secondary px-3 py-2 text-xs">
+                    Fechar
+                  </button>
                 </div>
-                <button onClick={() => setError(null)} className="dashboard-button-secondary px-3 py-2 text-xs">
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#102a72]">Portfolio</p>
+                <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">Escolha um projeto e abra seu contexto</h2>
+                <p className="mt-4 text-base leading-8 text-slate-500">
+                  A pagina funciona como vitrine de projetos criados. Clique em um card para entrar no contexto operacional.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <MetricCard label="Projetos" value={projectStats.total} hint="Total no workspace" icon={Briefcase} tone="blue" />
+                <MetricCard label="Ativos" value={projectStats.active} hint="Prontos para operar" icon={Sparkles} tone="emerald" />
+                <MetricCard label="Rascunhos" value={projectStats.draft} hint="Ainda em briefing" icon={Clock} tone="amber" />
+                <MetricCard label="Arquivados" value={projectStats.archived} hint="Historico preservado" icon={Archive} tone="slate" />
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={projectSearch}
+                  onChange={(event) => setProjectSearch(event.target.value)}
+                  placeholder="Buscar projetos..."
+                  className="dashboard-input pl-11"
+                />
+              </div>
+              <div className="relative">
+                <Filter className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <select
+                  value={projectStatusFilter}
+                  onChange={(event) => setProjectStatusFilter(event.target.value)}
+                  className="dashboard-input appearance-none pl-11 pr-10"
+                >
+                  {PROJECT_STATUS_FILTERS.map((filter) => (
+                    <option key={filter.value} value={filter.value}>
+                      {filter.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400">Projetos disponíveis</p>
+                <h3 className="mt-2 text-xl font-bold text-slate-900">{filteredProjects.length} projeto(s) encontrado(s)</h3>
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500 shadow-sm">
+                Carregando projetos...
+              </div>
+            ) : filteredProjects.length ? (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <AnimatePresence mode="popLayout">
+                  {filteredProjects.map((project) => (
+                    <ProjectCard
+                      key={project.uuid}
+                      project={project}
+                      onOpenProject={openProject}
+                      onRequestStatusChange={openProjectStatusDialog}
+                      onRequestDelete={openProjectDeleteDialog}
+                      busyProjectUuid={statusUpdatingProjectUuid || deletingProjectUuid}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
+            ) : (
+              <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
+                <LayoutDashboard className="mx-auto h-10 w-10 text-slate-300" />
+                <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Nenhum projeto encontrado</p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  Ajuste a busca ou crie um novo projeto para começar.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowProjectForm(true)}
+                  className="dashboard-button-primary mx-auto mt-6"
+                >
+                  <Plus className="h-4 w-4" />
+                  Novo projeto
+                </button>
+              </div>
+            )}
+          </section>
+        </div>
+      </AppShell>
+
+      <AnimatePresence>
+        {showProjectForm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm"
+            onClick={() => setShowProjectForm(false)}
+          >
+            <motion.form
+              initial={{ opacity: 0, y: 24, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 24, scale: 0.98 }}
+              transition={{ duration: 0.18 }}
+              onSubmit={handleCreateProject}
+              onClick={(event) => event.stopPropagation()}
+              className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#102a72]">Novo projeto</p>
+                  <h3 className="mt-2 text-2xl font-bold text-slate-900">Criar espaco de trabalho</h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    Use isso para abrir um novo contexto de operacao sem misturar com projetos ja existentes.
+                  </p>
+                </div>
+                <button type="button" onClick={() => setShowProjectForm(false)} className="dashboard-button-secondary px-3 py-2 text-xs">
                   Fechar
                 </button>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
-        <div className="grid min-w-0 items-start gap-8 xl:grid-cols-[280px_minmax(0,1fr)]">
-          <div className="min-w-0 space-y-6">
-            <section className="dashboard-panel">
-              <div className="dashboard-panel-header">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#102a72] text-white">
-                        <LayoutDashboard className="h-4 w-4" />
-                      </div>
-                      <h3 className="text-sm font-bold text-slate-900">Catálogo de projetos</h3>
-                    </div>
-                    <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400">
-                      Projetos disponíveis
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setShowProjectForm(!showProjectForm)}
-                    className={showProjectForm ?'dashboard-button-secondary px-4' : 'dashboard-button-primary px-4'}
-                  >
-                    <Plus className={`h-4 w-4 transition-transform ${showProjectForm ?'rotate-45' : ''}`} />
-                    <span>{showProjectForm ?'Fechar' : 'Novo projeto'}</span>
-                  </button>
-                </div>
+              <div className="mt-6 grid gap-4">
+                <TextInput
+                  label="Nome do projeto"
+                  value={projectForm.name}
+                  onChange={(event) => setProjectForm((prev) => ({ ...prev, name: event.target.value }))}
+                  placeholder="Ex.: Plataforma de EAD"
+                />
+                <TextInput
+                  label="Resumo curto"
+                  value={projectForm.description}
+                  onChange={(event) => setProjectForm((prev) => ({ ...prev, description: event.target.value }))}
+                  placeholder="Uma frase para orientar o time..."
+                />
+                <TextArea
+                  label="Visao do produto"
+                  value={projectForm.vision}
+                  onChange={(event) => setProjectForm((prev) => ({ ...prev, vision: event.target.value }))}
+                  placeholder="Objetivo principal, publico e resultado esperado..."
+                  rows={4}
+                />
               </div>
 
-              <div className="space-y-3 p-4">
-                <div className="mb-3">
-                  <input
-                    value={projectSearch}
-                    onChange={(event) => setProjectSearch(event.target.value)}
-                    placeholder="Buscar projeto..."
-                    className="dashboard-input"
-                  />
-                </div>
-                <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
-                  <AnimatePresence mode="popLayout">
-                    {filteredProjects.map((project) => (
-                      <ProjectListItem
-                        key={project.uuid}
-                        project={project}
-                        activeProjectUuid={activeProjectUuid}
-                        statusUpdatingProjectUuid={statusUpdatingProjectUuid}
-                        onOpenProject={(projectUuid) => navigate(`/projects?project=${projectUuid}`)}
-                        onOpenStatusDialog={openProjectStatusDialog}
-                      />
-                    ))}
-                  </AnimatePresence>
-
-                  {!filteredProjects.length && !loading && (
-                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-12 text-center">
-                      <LayoutDashboard className="mx-auto h-8 w-8 text-slate-300" />
-                      <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-                        Nenhum projeto encontrado
-                      </p>
-                      <p className="mt-2 text-sm leading-6 text-slate-500">
-                        Clique em <span className="font-semibold text-slate-700">Novo projeto</span> ou ajuste a busca.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                <AnimatePresence>
-                  {showProjectForm && (
-                    <motion.form
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      onSubmit={handleCreateProject}
-                      className="space-y-4 overflow-hidden border-t border-slate-200 pt-4"
-                    >
-                      <TextInput
-                        label="Nome do projeto"
-                        value={projectForm.name}
-                        onChange={(e) => setProjectForm((prev) => ({ ...prev, name: e.target.value }))}
-                        placeholder="Ex.: Plataforma de EAD"
-                      />
-                      <TextInput
-                        label="Resumo curto"
-                        value={projectForm.description}
-                        onChange={(e) => setProjectForm((prev) => ({ ...prev, description: e.target.value }))}
-                        placeholder="Uma frase para orientar o time..."
-                      />
-                      <TextArea
-                        label="Visão do produto"
-                        value={projectForm.vision}
-                        onChange={(e) => setProjectForm((prev) => ({ ...prev, vision: e.target.value }))}
-                        placeholder="Objetivo principal, público e resultado esperado..."
-                        rows={3}
-                      />
-                      <button type="submit" disabled={saving || !canCreateProject} className="dashboard-button-primary w-full">
-                        Criar projeto
-                      </button>
-                    </motion.form>
-                  )}
-                </AnimatePresence>
-                <div className="border-t border-slate-200 pt-4">
-                  {user && workspace ?(
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Conta ativa</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">{user.name}</p>
-                      <p className="mt-1 text-xs text-slate-500">{workspace.name}</p>
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-700">Sessão indisponível</p>
-                      <p className="mt-2 text-sm leading-6 text-slate-700">
-                        Entre novamente para carregar usuário e workspace antes de criar projetos e tasks.
-                      </p>
-                    </div>
-                  )}
-                </div>
+              <div className="mt-6 flex flex-wrap justify-end gap-3">
+                <button type="button" onClick={() => setShowProjectForm(false)} className="dashboard-button-secondary">
+                  Cancelar
+                </button>
+                <button type="submit" disabled={saving || !canCreateProject} className="dashboard-button-primary">
+                  {saving ? 'Criando...' : 'Criar projeto'}
+                </button>
               </div>
-            </section>
-          </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-          <div className="min-w-0 space-y-6">
-            <section className="dashboard-panel">
-              <div className="dashboard-panel-header">
-                <div className="flex min-w-0 flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="min-w-0 max-w-3xl">
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#102a72] text-white shadow-sm">
-                        <LayoutDashboard className="h-8 w-8" />
-                      </div>
-                      <div className="min-w-0">
-                        <h2 className="truncate text-3xl font-bold tracking-tight text-slate-900">
-                          {activeProject?.name || 'Selecione um projeto'}
-                        </h2>
-                        <div className="mt-2">
-                          {activeProject ?(
-                            <span className="dashboard-badge bg-emerald-50 text-emerald-700">Operacional</span>
-                          ) : (
-                            <span className="dashboard-badge bg-slate-100 text-slate-500">Selecione um projeto</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <p className="mt-6 text-base leading-8 text-slate-500">
-                      {activeProject?.vision ||
-                        'Selecione um projeto no catálogo para operar backlog, requisitos, QA e liberação técnica no mesmo board.'}
-                    </p>
-                    <div className={`mt-5 rounded-2xl border p-4 shadow-sm ${boardToneClasses[boardNextStep.tone] || boardToneClasses.slate}`}>
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="min-w-0">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Próximo passo do board</p>
-                          <p className="mt-2 text-base font-semibold text-slate-900">{boardNextStep.title}</p>
-                          <p className="mt-2 text-sm leading-6 text-slate-600">{boardNextStep.message}</p>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap gap-3">
-                          <button
-                            type="button"
-                            onClick={handlePrimaryBoardAction}
-                            disabled={saving || generatingArchitecture || exportingPdf}
-                            className="dashboard-button-primary"
-                          >
-                            {boardNextStep.primaryLabel}
-                          </button>
-                          {activeProjectUuid && (
-                            <button
-                              type="button"
-                              onClick={() => navigate(`/projects/${activeProjectUuid}`)}
-                              className="dashboard-button-secondary"
-                            >
-                              <FileText className="h-4 w-4" />
-                              Abrir visão do projeto
-                            </button>
-                          )}
-                          {activeProjectUuid && (
-                            <button
-                              type="button"
-                              onClick={handleExportPdf}
-                              disabled={exportingPdf}
-                              className="dashboard-button-secondary"
-                            >
-                              <Download className="h-4 w-4" />
-                              {exportingPdf ?'Preparando PDF...' : 'Exportar documentação'}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                    <div className="grid w-full gap-4 sm:grid-cols-2 xl:w-[360px]">
-                      {[
-                        { label: 'Stories', value: storyTasks.length, icon: LayoutDashboard, tone: 'bg-slate-50 text-slate-900' },
-                        { label: 'Em QA', value: qaCount, icon: Sparkles, tone: 'bg-blue-50 text-[#102a72]' },
-                        { label: 'Concluídas', value: doneCount, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
-                        { label: 'Progresso', value: `${overallProgress}%`, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
-                    ].map((stat) => (
-                      <div key={stat.label} className="min-w-[160px] rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400">{stat.label}</p>
-                          <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${stat.tone}`}>
-                            <stat.icon className="h-4 w-4" />
-                          </div>
-                        </div>
-                        <p className="mt-4 text-4xl font-bold tracking-tight text-slate-900">{stat.value}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Objetivo</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">
-                      {roadmap?.milestone || 'Ainda sem objetivo principal consolidado'}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Arquitetura</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">{architectureStateLabel}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Riscos</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">
-                      {projectRiskCount} riscos · {projectImpedimentCount} impedimentos
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Meta</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">
-                      {projectTimeline?.targetDate || 'Sem data definida'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="border-t border-slate-200 p-6">
-                {activeProjectUuid && (
-                  <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Gate de arquitetura</p>
-                        <p className="mt-2 text-sm text-slate-700">
-                          {architectureStatus?.canGenerateCode
-                            ?'Todas as histórias refinadas e a arquitetura estão prontas. A implementação por task foi liberada.'
-                            : architectureStatus?.blockers?.[0] || 'Refine todas as histórias para liberar a arquitetura do projeto.'}
-                        </p>
-                        <div className="mt-3 flex flex-wrap items-center gap-3">
-                          <span className="dashboard-badge bg-slate-100 text-slate-600">
-                            {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0} histórias refinadas
-                          </span>
-                          <span
-                            className={`dashboard-badge ${
-                              architectureStatus?.hasArchitecture && !architectureStatus?.architectureNeedsRefresh
-                                ?'bg-emerald-50 text-emerald-700'
-                                : 'bg-amber-50 text-amber-700'
-                            }`}
-                          >
-                            {architectureStatus?.hasArchitecture
-                              ?architectureStatus?.architectureNeedsRefresh
-                                ?'Arquitetura desatualizada'
-                                : 'Arquitetura pronta'
-                              : 'Arquitetura pendente'}
-                          </span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleGenerateArchitecture}
-                        disabled={saving || generatingArchitecture || !architectureStatus?.canGenerateArchitecture}
-                        className="dashboard-button-primary w-full lg:w-auto"
-                        title={!architectureStatus?.canGenerateArchitecture ?architectureStatus?.blockers?.[0] : undefined}
-                      >
-                        {generatingArchitecture ?'Gerando arquitetura...' : 'Gerar arquitetura'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <form onSubmit={handleCreateTask} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_160px]">
-                  <div className="relative">
-                    <Plus className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <input
-                      placeholder="Descreva a nova task..."
-                      value={taskForm.title}
-                      onChange={(e) => setTaskForm((prev) => ({ ...prev, title: e.target.value }))}
-                      className="dashboard-input pl-11"
-                    />
-                  </div>
-                  <select
-                    value={taskForm.status}
-                    onChange={(e) => setTaskForm((prev) => ({ ...prev, status: e.target.value }))}
-                    className="dashboard-input appearance-none bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2016%2016%22%20fill%3D%22none%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cpath%20d%3D%22M4%206L8%2010L12%206%22%20stroke%3D%22%2364748B%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E')] bg-[right_1rem_center] bg-no-repeat pr-10"
-                  >
-                    {BOARD_COLUMNS.map((col) => (
-                      <option key={col.key} value={col.key}>
-                        {col.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button disabled={saving || !canCreateTask} className="dashboard-button-primary h-[46px]">
-                    Criar
-                  </button>
-                </form>
-              </div>
-            </section>
-
-            <section className="min-w-0 space-y-4">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-                {groupedColumns.map((column) => (
-                  <div key={column.key} className="min-w-0 flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-                      <column.icon className="h-4.5 w-4.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">{column.label}</p>
-                      <p className="mt-1 text-xl font-bold text-slate-900">{column.tasks.length}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="-mx-2 overflow-x-auto px-2 pb-4">
-                <div className="flex min-w-max gap-5">
-                  {groupedColumns.map((column) => (
-                    <div key={column.key} className="w-[320px] flex-none space-y-4 xl:w-[340px]">
-                      <div className="dashboard-panel">
-                        <div className="dashboard-panel-header">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-                              <column.icon className="h-4.5 w-4.5" />
-                            </div>
-                            <div>
-                              <h4 className="text-sm font-bold text-slate-900">{column.label}</h4>
-                              <p className="mt-1 text-xs text-slate-500">{column.tasks.length} itens</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="h-[min(68vh,760px)] p-3">
-                          <div className="flex h-full flex-col gap-4 overflow-y-auto pr-1">
-                            <AnimatePresence mode="popLayout">
-                              {column.tasks.map((task) => (
-                                <motion.div
-                                  key={task.uuid}
-                                  layout
-                                  initial={{ opacity: 0, y: 6 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                >
-                                  <TaskCard
-                                    task={task}
-                                    busy={saving}
-                                    onRequirements={handleRunRequirements}
-                                    onQa={handleRunQa}
-                                    onOpenCodeStudio={handleOpenCodeStudio}
-                                    onExportArtifacts={exportTaskArtifacts}
-                                    onOpenDetail={(taskUuid) => navigate(`/projects/${activeProjectUuid}/tasks/${taskUuid}`)}
-                                    implementationUnlocked={implementationUnlocked}
-                                    implementationBlockReason={implementationBlockReason}
-                                  />
-                                </motion.div>
-                              ))}
-                            </AnimatePresence>
-
-                            {!column.tasks.length && (
-                              <motion.div
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white text-center"
-                              >
-                                <Plus className="h-8 w-8 text-slate-300" />
-                                <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-                                  Coluna vazia
-                                </p>
-                                <p className="mt-2 text-sm text-slate-500">Pronta para receber novas stories</p>
-                              </motion.div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-          </div>
-        </div>
-      </div>
-      </AppShell>
       <ConfirmDialog
         open={statusDialog.open}
         title={`Atualizar status de ${statusDialog.project?.name || 'projeto'}`}
@@ -1222,58 +534,22 @@ export default function ProjectsPage() {
         onConfirm={confirmProjectStatusUpdate}
         onClose={() => setStatusDialog({ open: false, project: null, nextStatus: null })}
       />
+
+      <ConfirmDialog
+        open={deleteDialog.open}
+        title={`Excluir ${deleteDialog.project?.name || 'projeto'}`}
+        description={
+          deleteDialog.project
+            ? `Tem certeza que deseja excluir o projeto "${deleteDialog.project.name}"? Esta acao remove o projeto, tasks, artefatos e historico associados.`
+            : ''
+        }
+        confirmLabel="Excluir"
+        cancelLabel="Cancelar"
+        intent="danger"
+        loading={Boolean(deletingProjectUuid)}
+        onConfirm={confirmProjectDelete}
+        onClose={() => setDeleteDialog({ open: false, project: null })}
+      />
     </>
-  );
-}
-
-function ProjectListItem({
-  project,
-  activeProjectUuid,
-  statusUpdatingProjectUuid,
-  onOpenProject,
-  onOpenStatusDialog,
-}) {
-  const statusMeta = getProjectStatusMeta(project.status);
-  const isActive = project.uuid === activeProjectUuid;
-
-  return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, x: -10 }}
-      animate={{ opacity: 1, x: 0 }}
-      className={`w-full rounded-xl border px-4 py-4 transition ${
-        isActive ? 'border-[#102a72]/20 bg-[#102a72]/5 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <button type="button" onClick={() => onOpenProject(project.uuid)} className="min-w-0 flex-1 text-left">
-          <div className="flex flex-wrap items-center gap-2">
-            <h4 className="text-sm font-semibold text-slate-900">{project.name}</h4>
-            <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${statusMeta.tone}`}>
-              {statusMeta.label}
-            </span>
-          </div>
-          <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">
-            {project.description || 'Workspace pronto para backlog, refinamento, QA e geração técnica.'}
-          </p>
-        </button>
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          <span className="dashboard-badge bg-slate-100 text-slate-600">{project._count?.tasks || 0}</span>
-          {statusMeta.nextStatus ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenStatusDialog(project, statusMeta.nextStatus);
-              }}
-              disabled={statusUpdatingProjectUuid === project.uuid}
-              className="dashboard-button-secondary px-3 py-2 text-xs"
-            >
-              {statusUpdatingProjectUuid === project.uuid ? 'Atualizando...' : statusMeta.action}
-            </button>
-          ) : null}
-        </div>
-      </div>
-    </motion.div>
   );
 }
