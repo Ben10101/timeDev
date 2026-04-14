@@ -9,6 +9,7 @@
     "dev": "node --watch src/server.js",
     "test:auth-user-flow:smoke": "node scripts/authenticated-user-flow-smoke.mjs",
     "test:auth-governance:smoke": "node scripts/auth-governance-smoke.mjs",
+    "test:smoke:core": "npm run test:security:baseline && npm run test:security:smoke && npm run test:auth-governance:smoke && npm run test:runtime-observability:smoke",
     "test:agent-run-recovery:smoke": "node scripts/agent-run-recovery-smoke.mjs",
     "test:generated-app-run-recovery:smoke": "node scripts/generated-app-run-recovery-smoke.mjs",
     "test:project-manager-recovery:smoke": "node scripts/project-manager-recovery-smoke.mjs",

@@ -100,6 +100,8 @@ export function resetRuntimeTelemetryForTests() {
     runsStarted: 0,
     runsCompleted: 0,
     runsFailed: 0,
+    runsAborted: 0,
+    runsStale: 0,
     runsRecovered: 0,
     retriesOpened: 0,
     taskRestores: 0,

@@ -8,6 +8,7 @@ import {
 const original = {
   projectFindUnique: prisma.project.findUnique,
   projectFindFirst: prisma.project.findFirst,
+  projectUpdate: prisma.project.update,
   taskFindUnique: prisma.task.findUnique,
   taskFindFirst: prisma.task.findFirst,
   taskFindMany: prisma.task.findMany,
@@ -28,6 +29,7 @@ const state = {
     id: 101,
     uuid: 'project-pm-1',
     creator: { id: 9001 },
+    intakeConfig: {},
     tasks: [],
   },
   runs: [
@@ -98,6 +100,21 @@ function installMocks() {
     if (select?.id) {
       return { id: state.project.id };
     }
+    return state.project;
+  };
+
+  prisma.project.update = async ({ where, data }) => {
+    if (where?.uuid !== state.project.uuid) {
+      throw new Error('Projeto nao encontrado.');
+    }
+    state.project = {
+      ...state.project,
+      ...data,
+      intakeConfig: {
+        ...(state.project.intakeConfig || {}),
+        ...(data?.intakeConfig || {}),
+      },
+    };
     return state.project;
   };
 
@@ -235,6 +252,7 @@ function installMocks() {
 function restoreMocks() {
   prisma.project.findUnique = original.projectFindUnique;
   prisma.project.findFirst = original.projectFindFirst;
+  prisma.project.update = original.projectUpdate;
   prisma.task.findUnique = original.taskFindUnique;
   prisma.task.findFirst = original.taskFindFirst;
   prisma.task.findMany = original.taskFindMany;
@@ -261,7 +279,7 @@ try {
   const createdRun = await createAgentRunStart(state.project.uuid, 'project_manager', payload);
   const recoveredRun = state.runs.find((run) => run.uuid === 'stale-pm-run');
 
-  assert(recoveredRun?.status === 'failed', 'A run antiga do project_manager deveria ser recuperada.');
+  assert(recoveredRun?.status === 'stale', 'A run antiga do project_manager deveria ser marcada como stale antes da nova tentativa.');
   assert(createdRun.status === 'running', 'A nova run do project_manager deveria iniciar em running.');
 
   const backlogResult = [

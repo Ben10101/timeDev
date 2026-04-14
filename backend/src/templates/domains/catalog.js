@@ -51,7 +51,7 @@ export const DOMAIN_TEMPLATE_CATALOG = {
     highlights: [
       'Nome e contato certos reduzem retrabalho quando a visita exige apoio imediato.',
       'Tipo de suporte padronizado ajuda a recepcao a encontrar a pessoa certa mais rapido.',
-      'Base operacional pronta para reutilizacao entre visitas e turnos.',
+      'Rede de apoio pronta para reutilizacao entre visitas e turnos.',
     ],
     profileSummaryTitle: 'Leitura da operacao',
     profileSummaryDescription: 'Veja rapidamente quem apoia a visita, como acionar e qual papel cada responsavel desempenha.',
@@ -126,7 +126,7 @@ export const DOMAIN_TEMPLATE_CATALOG = {
     recordsEmptyState: 'Nenhum horario limite configurado ainda.',
     highlights: [
       'A regra precisa ser simples, visivel e facil de revisar pelo gestor administrativo.',
-      'O estado atual deve deixar claro qual horario esta valendo no sistema.',
+      'A configuracao vigente deve deixar claro qual horario esta valendo no sistema.',
       'A tela deve parecer configuracao operacional, nao cadastro generico.',
     ],
     profileSummaryTitle: 'Politica atual',

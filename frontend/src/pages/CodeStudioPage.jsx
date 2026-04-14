@@ -312,7 +312,7 @@ function getArchitectureStateLabel(architectureStatus) {
 function getCodeStudioNextStep({ selectedProject, architectureStatus, readyTasks, plannedTasks, integratedTasks, generatedApp }) {
   if (!selectedProject) {
     return {
-      title: 'Escolha um projeto para abrir o handoff técnico',
+      title: 'Escolha um projeto para abrir a implementação',
       message: 'Selecione um projeto na lista para ver arquitetura, stories prontas, geração da aplicação e detalhes de implementação.',
       tone: 'slate',
     };
@@ -473,6 +473,118 @@ function getImplementationPrecedence(entries) {
       canStartNow: blockers.length === 0,
     };
   });
+}
+
+function CodeStudioMonitoringPanel({ health, operationsOverview, implementationOverview }) {
+  if (!(health || operationsOverview || implementationOverview)) {
+    return null;
+  }
+
+  return (
+    <section className="dashboard-panel">
+      <div className="dashboard-panel-header">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Acompanhamento no produto</p>
+          <h2 className="mt-2 text-2xl font-bold text-slate-900">Estado visivel da esteira</h2>
+        </div>
+      </div>
+      <div className="grid gap-4 p-6 xl:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Health geral</p>
+          <p className="mt-3 text-lg font-semibold text-slate-900">{health?.status || 'n/a'}</p>
+          <p className="mt-2 text-sm text-slate-600">Banco {health?.database || 'n/a'} · {health?.environment || 'n/a'}</p>
+          <p className="mt-4 text-sm text-slate-700">Runs recentes: {health?.runtime?.failureRunsLast24h ?? 0} falhas · {health?.runtime?.staleRunningRuns ?? 0} travadas</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gargalo atual</p>
+          <p className="mt-3 text-lg font-semibold text-slate-900">
+            {implementationOverview?.operationalFocus?.headline || 'Sem gargalo consolidado'}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {implementationOverview?.operationalFocus?.nextStep || 'Acompanhe a proxima rodada para ampliar a amostra.'}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <LayerFocusBadge value={implementationOverview?.operationalFocus?.dominantLayer} />
+            <span className="dashboard-badge bg-slate-100 text-slate-700">
+              {implementationOverview?.repairSummary?.localRepairRatePercent ?? 0}% local
+            </span>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 xl:col-span-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Status por agente</p>
+            <span className="dashboard-badge bg-slate-100 text-slate-700">
+              {operationsOverview?.summary?.failedRunsLast24h ?? 0} falhas 24h
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {(operationsOverview?.reliability?.topFailingAgents || operationsOverview?.byAgent || []).slice(0, 4).map((agent) => (
+              <div key={`agent-${agent.agentName}`} className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
+                <div className="flex items-center justify-between gap-2">
+                  <strong className="text-slate-900">{formatAgentName(agent.agentName)}</strong>
+                  <span className="dashboard-badge bg-slate-100 text-slate-700">{agent.failureRatePercent ?? agent.failureRate ?? 0}%</span>
+                </div>
+                <p className="mt-2 text-slate-600">
+                  {agent.started ?? 0} runs · {agent.completed ?? agent.completedRuns ?? 0} concluídas · {agent.failed ?? 0} falhas
+                </p>
+              </div>
+            ))}
+            {!((operationsOverview?.reliability?.topFailingAgents || operationsOverview?.byAgent || []).length) && (
+              <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-600">
+                Ainda não há volume suficiente para consolidar o status por agente.
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Tendência recente</p>
+          <div className="mt-4 space-y-3 text-sm text-slate-700">
+            <p><strong>Janela:</strong> {implementationOverview?.trendSummary?.windowSize ?? 'n/a'} implementacoes</p>
+            <p>
+              <strong>Fallback full:</strong> {implementationOverview?.trendSummary?.recent?.fallbackFullRatePercent ?? 'n/a'}%
+              {' '}
+              {formatTrendDelta(implementationOverview?.trendSummary?.deltas?.fallbackFullRatePercent)}
+            </p>
+            <p>
+              <strong>Specialist alerta:</strong> {implementationOverview?.trendSummary?.recent?.specialistAttentionRatePercent ?? 'n/a'}%
+              {' '}
+              {formatTrendDelta(implementationOverview?.trendSummary?.deltas?.specialistAttentionRatePercent)}
+            </p>
+            <p>
+              <strong>Repair local:</strong> {implementationOverview?.trendSummary?.recent?.localRepairRatePercent ?? 'n/a'}%
+              {' '}
+              {formatTrendDelta(implementationOverview?.trendSummary?.deltas?.localRepairRatePercent)}
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="px-6 pb-6">
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Plano restante</p>
+              <h3 className="mt-2 text-lg font-bold text-slate-900">Pendências em observação</h3>
+            </div>
+            <span className="dashboard-badge bg-slate-100 text-slate-700">{TRACKING_ITEMS.length} itens</span>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            O acompanhamento principal já vive na tela; este bloco só mantém as frentes que ainda precisam de tendência observável.
+          </p>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            {TRACKING_ITEMS.map((item) => (
+              <div key={item.title} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-900">{item.title}</p>
+                  <span className="dashboard-badge bg-amber-50 text-amber-700">{item.status}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export default function CodeStudioPage() {
@@ -790,8 +902,8 @@ export default function CodeStudioPage() {
 
   return (
     <AppShell
-      eyebrow="Entrega Tecnica"
-      title="Code Studio"
+      eyebrow="Implementação"
+      title="Implementação"
       description="Concentre arquitetura, qualidade, rastreabilidade e geração da aplicação em uma área técnica por projeto."
       actions={
         <div className="flex flex-col gap-3 sm:flex-row">
@@ -824,7 +936,7 @@ export default function CodeStudioPage() {
 
           <section className="dashboard-panel">
             <div className="dashboard-panel-header">
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Contexto tecnico</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Contexto da implementação</p>
             </div>
             <div className="grid gap-3 p-4">
               <StudioStatCard
@@ -903,7 +1015,7 @@ export default function CodeStudioPage() {
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Workspace de entrega</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">
-                {selectedProject ?`Code Studio de ${selectedProject.name}` : 'Escolha um projeto para entrar no handoff técnico'}
+                {selectedProject ?`Implementação de ${selectedProject.name}` : 'Escolha um projeto para entrar na implementação'}
               </h2>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
                 Centralize arquitetura, stories prontas, aplicação base e observabilidade técnica em uma área pensada para o momento de implementar.
@@ -942,111 +1054,11 @@ export default function CodeStudioPage() {
           </div>
         </section>
 
-        {(health || operationsOverview || implementationOverview) && (
-          <section className="dashboard-panel">
-            <div className="dashboard-panel-header">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Acompanhamento no produto</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Estado visivel da esteira</h2>
-              </div>
-            </div>
-            <div className="grid gap-4 p-6 xl:grid-cols-4">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Health geral</p>
-                <p className="mt-3 text-lg font-semibold text-slate-900">{health?.status || 'n/a'}</p>
-                <p className="mt-2 text-sm text-slate-600">Banco {health?.database || 'n/a'} · {health?.environment || 'n/a'}</p>
-                <p className="mt-4 text-sm text-slate-700">Runs recentes: {health?.runtime?.failureRunsLast24h ?? 0} falhas · {health?.runtime?.staleRunningRuns ?? 0} travadas</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gargalo atual</p>
-                <p className="mt-3 text-lg font-semibold text-slate-900">
-                  {implementationOverview?.operationalFocus?.headline || 'Sem gargalo consolidado'}
-                </p>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  {implementationOverview?.operationalFocus?.nextStep || 'Acompanhe a proxima rodada para ampliar a amostra.'}
-                </p>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <LayerFocusBadge value={implementationOverview?.operationalFocus?.dominantLayer} />
-                  <span className="dashboard-badge bg-slate-100 text-slate-700">
-                    {implementationOverview?.repairSummary?.localRepairRatePercent ?? 0}% local
-                  </span>
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 xl:col-span-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Status por agente</p>
-                  <span className="dashboard-badge bg-slate-100 text-slate-700">
-                    {operationsOverview?.summary?.failedRunsLast24h ?? 0} falhas 24h
-                  </span>
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {(operationsOverview?.reliability?.topFailingAgents || operationsOverview?.byAgent || []).slice(0, 4).map((agent) => (
-                    <div key={`agent-${agent.agentName}`} className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
-                      <div className="flex items-center justify-between gap-2">
-                        <strong className="text-slate-900">{formatAgentName(agent.agentName)}</strong>
-                        <span className="dashboard-badge bg-slate-100 text-slate-700">{agent.failureRatePercent ?? agent.failureRate ?? 0}%</span>
-                      </div>
-                      <p className="mt-2 text-slate-600">
-                        {agent.started ?? 0} runs · {agent.completed ?? agent.completedRuns ?? 0} concluídas · {agent.failed ?? 0} falhas
-                      </p>
-                    </div>
-                  ))}
-                  {!((operationsOverview?.reliability?.topFailingAgents || operationsOverview?.byAgent || []).length) && (
-                    <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-600">
-                      Ainda não há volume suficiente para consolidar o status por agente.
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Tendência recente</p>
-                <div className="mt-4 space-y-3 text-sm text-slate-700">
-                  <p><strong>Janela:</strong> {implementationOverview.trendSummary?.windowSize ?? 'n/a'} implementacoes</p>
-                  <p>
-                    <strong>Fallback full:</strong> {implementationOverview.trendSummary?.recent?.fallbackFullRatePercent ?? 'n/a'}%
-                    {' '}
-                    {formatTrendDelta(implementationOverview.trendSummary?.deltas?.fallbackFullRatePercent)}
-                  </p>
-                  <p>
-                    <strong>Specialist alerta:</strong> {implementationOverview.trendSummary?.recent?.specialistAttentionRatePercent ?? 'n/a'}%
-                    {' '}
-                    {formatTrendDelta(implementationOverview.trendSummary?.deltas?.specialistAttentionRatePercent)}
-                  </p>
-                  <p>
-                    <strong>Repair local:</strong> {implementationOverview.trendSummary?.recent?.localRepairRatePercent ?? 'n/a'}%
-                    {' '}
-                    {formatTrendDelta(implementationOverview.trendSummary?.deltas?.localRepairRatePercent)}
-                  </p>
-                </div>
-              </div>
-            </div>
-            <div className="px-6 pb-6">
-              <div className="rounded-xl border border-slate-200 bg-white p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Plano restante</p>
-                    <h3 className="mt-2 text-lg font-bold text-slate-900">Pendências em observação</h3>
-                  </div>
-                  <span className="dashboard-badge bg-slate-100 text-slate-700">{TRACKING_ITEMS.length} itens</span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  O acompanhamento principal já vive na tela; este bloco só mantém as frentes que ainda precisam de tendência observável.
-                </p>
-                <div className="mt-4 grid gap-3 lg:grid-cols-3">
-                  {TRACKING_ITEMS.map((item) => (
-                    <div key={item.title} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="text-sm font-semibold text-slate-900">{item.title}</p>
-                        <span className="dashboard-badge bg-amber-50 text-amber-700">{item.status}</span>
-                      </div>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">{item.detail}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
+        <CodeStudioMonitoringPanel
+          health={health}
+          operationsOverview={operationsOverview}
+          implementationOverview={implementationOverview}
+        />
 
         {implementationOverview && (
           <section className="dashboard-panel">
@@ -1193,7 +1205,7 @@ export default function CodeStudioPage() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Projetos</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-900">Escolha o projeto para abrir o Code Studio</h2>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Escolha o projeto para abrir a implementação</h2>
               </div>
               <div className="relative w-full max-w-sm">
                 <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />

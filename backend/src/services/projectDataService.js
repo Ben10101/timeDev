@@ -3107,9 +3107,16 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
   });
 
   if (existingRunningRun) {
-    throw new Error(
+    const conflictError = new Error(
       `Ja existe uma execucao em andamento para ${agentName}${payload.task_uuid ? ' nesta task' : ' neste projeto'} (run ${existingRunningRun.uuid}).`
     );
+    conflictError.statusCode = 409;
+    conflictError.code = 'AGENT_RUN_CONFLICT';
+    conflictError.existingRunUuid = existingRunningRun.uuid;
+    conflictError.agentName = agentName;
+    conflictError.projectUuid = projectUuid;
+    conflictError.taskUuid = payload.task_uuid || null;
+    throw conflictError;
   }
 
   const createdRun = await prisma.agentRun.create({

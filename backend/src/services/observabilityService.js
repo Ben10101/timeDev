@@ -71,6 +71,153 @@ function countDriftFlags(frequencies, driftFlags = []) {
   }
 }
 
+function buildBudgetPressureSummary(enrichedRuns = []) {
+  const budgetedRuns = enrichedRuns.filter((run) => Number(run.configuredBudget || 0) > 0);
+  const overBudgetRuns = budgetedRuns.filter((run) => run.overBudget);
+  const recentBudgetedRuns = enrichedRuns.slice(0, 20).filter((run) => Number(run.configuredBudget || 0) > 0);
+  const recentOverBudgetRuns = recentBudgetedRuns.filter((run) => run.overBudget);
+
+  const pressurePercent = budgetedRuns.length ? Math.round((overBudgetRuns.length / budgetedRuns.length) * 100) : 0;
+  const recentPressurePercent = recentBudgetedRuns.length
+    ? Math.round((recentOverBudgetRuns.length / recentBudgetedRuns.length) * 100)
+    : 0;
+
+  const level =
+    recentPressurePercent >= 40 || pressurePercent >= 35
+      ? 'high'
+      : recentPressurePercent >= 20 || pressurePercent >= 15
+        ? 'medium'
+        : 'low';
+
+  return {
+    level,
+    label: level === 'high' ? 'pressao alta' : level === 'medium' ? 'pressao media' : 'pressao baixa',
+    pressurePercent,
+    recentPressurePercent,
+    budgetedRuns: budgetedRuns.length,
+    overBudgetRuns: overBudgetRuns.length,
+    recentBudgetedRuns: recentBudgetedRuns.length,
+    recentOverBudgetRuns: recentOverBudgetRuns.length,
+  };
+}
+
+function buildReadinessRunbook({ readinessChecks = [], aiOverview = null, production = false }) {
+  const checksByCode = new Map(readinessChecks.map((check) => [check.code, check]));
+  const actions = [];
+
+  if (checksByCode.get('auth_secret')?.status === 'failed') {
+    actions.push({
+      code: 'fix_auth_secret',
+      title: 'Configurar segredo de autenticação',
+      detail: 'Defina AUTH_ACCESS_SECRET ou JWT_SECRET antes de liberar qualquer ambiente de produção.',
+      category: 'security',
+    });
+  }
+
+  if (checksByCode.get('ai_settings_secret')?.status === 'failed') {
+    actions.push({
+      code: 'fix_ai_settings_secret',
+      title: 'Configurar segredo das credenciais de IA',
+      detail: 'Defina AI_SETTINGS_SECRET para manter as credenciais de IA criptografadas por ambiente.',
+      category: 'security',
+    });
+  }
+
+  if (checksByCode.get('cors')?.status === 'failed') {
+    actions.push({
+      code: 'fix_frontend_origin',
+      title: 'Fixar a origem do frontend',
+      detail: 'Configure FRONTEND_ORIGIN ou VITE_FRONTEND_URL para restringir CORS em produção.',
+      category: 'security',
+    });
+  }
+
+  if (checksByCode.get('provider_api')?.status === 'warning') {
+    actions.push({
+      code: 'configure_provider_api',
+      title: 'Garantir pelo menos um provider remoto',
+      detail: 'Adicione uma chave de provider para evitar dependência exclusiva de fallback local.',
+      category: 'runtime',
+    });
+  }
+
+  if ((aiOverview?.summary?.staleRunningRuns || 0) > 0) {
+    actions.push({
+      code: 'clear_stale_runs',
+      title: 'Limpar runs travadas',
+      detail: 'Cancele ou recupere execuções acima da janela esperada e revise o watchdog.',
+      category: 'runtime',
+    });
+  }
+
+  if ((aiOverview?.summary?.overBudgetRuns || 0) > 0 || (aiOverview?.summary?.budgetPressureLevel || 'low') === 'high') {
+    actions.push({
+      code: 'reduce_budget_pressure',
+      title: 'Reduzir pressão de budget',
+      detail: 'Corte contexto, revise budgets por agente e priorize providers mais previsíveis.',
+      category: 'cost',
+    });
+  }
+
+  if ((aiOverview?.reliability?.topFailingAgents || []).length) {
+    const lead = aiOverview.reliability.topFailingAgents[0];
+    actions.push({
+      code: `stabilize_${lead.agentName}`,
+      title: `Estabilizar ${lead.agentName}`,
+      detail: `${lead.failed} falhas em ${lead.runs} runs indicam concentração de risco nesta etapa.`,
+      category: 'runtime',
+    });
+  }
+
+  if (!actions.length) {
+    actions.push({
+      code: 'ready_to_ship',
+      title: production ? 'Pronto para operar' : 'Pronto para liberar',
+      detail: 'Sem blockers críticos, sem runs travadas e com sinais operacionais estáveis.',
+      category: 'readiness',
+    });
+  }
+
+  return actions.slice(0, 5);
+}
+
+function buildReleaseReadinessSummary({ readinessChecks = [], aiOverview = null, production = false }) {
+  const failedCount = readinessChecks.filter((check) => check.status === 'failed').length;
+  const warningCount = readinessChecks.filter((check) => check.status === 'warning').length;
+  const staleRuns = Number(aiOverview?.summary?.staleRunningRuns || 0);
+  const overBudgetRuns = Number(aiOverview?.summary?.overBudgetRuns || 0);
+  const budgetPressureLevel = String(aiOverview?.summary?.budgetPressureLevel || 'low');
+
+  const releaseState =
+    failedCount > 0
+      ? 'blocked'
+      : warningCount > 0 || staleRuns > 0 || overBudgetRuns > 0 || budgetPressureLevel === 'high'
+        ? 'watch'
+        : 'ready';
+
+  const rollbackReady = failedCount === 0 && staleRuns === 0;
+
+  return {
+    state: releaseState,
+    label:
+      releaseState === 'blocked'
+        ? 'release bloqueada'
+        : releaseState === 'watch'
+          ? 'release em observacao'
+          : 'release pronta',
+    canDeploy: releaseState === 'ready',
+    rollbackReady,
+    nextAction:
+      releaseState === 'blocked'
+        ? 'Corrigir blockers antes de liberar a próxima release.'
+        : releaseState === 'watch'
+          ? 'Estabilize budget, runs e warnings antes da próxima release.'
+          : production
+            ? 'A release pode seguir com monitoramento ativo e rollback pronto.'
+            : 'A release pode seguir com monitoramento de pré-produção.',
+  };
+}
+
 function normalizeRepairTelemetryArtifacts(artifacts = {}) {
   const executionState = artifacts.executionState || null;
   const scopeAssessment = artifacts.repairScopeAssessment || executionState?.repairScopeAssessment || null;
@@ -431,6 +578,7 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
   const recentWindowRuns = enrichedRuns.slice(0, 20);
   const recentFailedRuns = recentWindowRuns.filter((run) => run.status === 'failed');
   const staleRunningRuns = enrichedRuns.filter((run) => run.status === 'running' && (run.currentRunningSeconds || 0) > 600);
+  const budgetPressure = buildBudgetPressureSummary(enrichedRuns);
 
   const byAgent = Object.values(
     enrichedRuns.reduce((acc, run) => {
@@ -695,6 +843,10 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
       overBudgetRuns: enrichedRuns.filter((run) => run.overBudget).length,
       staleRunningRuns: staleRunningRuns.length,
       implementationFailures: implementationFailures.length,
+      budgetPressurePercent: budgetPressure.pressurePercent,
+      recentBudgetPressurePercent: budgetPressure.recentPressurePercent,
+      budgetPressureLevel: budgetPressure.level,
+      budgetPressureLabel: budgetPressure.label,
     },
     reliability: {
       topFailingAgents,
@@ -719,6 +871,7 @@ export async function getAiOperationsOverview(userUuid, projectUuid = null) {
     implementationByLane,
     recentRuns: enrichedRuns.slice(0, 20),
     generatedRuns: qualityImplementations,
+    budgetPressure,
     alerts: [
       ...(enrichedRuns.some((run) => run.overBudget)
         ? [{ code: 'agent_budget_exceeded', message: 'Existem execuções recentes acima do budget configurado por agente.' }]
@@ -740,6 +893,7 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
   const refreshCookie = getRefreshCookieOptions();
   const defaultRateLimit = getRateLimitConfig(false);
   const sensitiveRateLimit = getRateLimitConfig(true);
+  const production = process.env.NODE_ENV === 'production';
   const providersConfigured = {
     openai: Boolean(process.env.OPENAI_API_KEY),
     deepseek: Boolean(process.env.DEEPSEEK_API_KEY),
@@ -752,21 +906,37 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
 
   const readinessChecks = [
     { code: 'database', label: 'Banco operacional', status: health.database === 'ok' ? 'ok' : 'failed' },
-    { code: 'auth_secret', label: 'Segredo de autenticação configurado', status: process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET ? 'ok' : 'warning' },
-    { code: 'ai_settings_secret', label: 'Segredo de criptografia das credenciais de IA configurado', status: process.env.AI_SETTINGS_SECRET || process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET ? 'ok' : 'warning' },
-    { code: 'cors', label: 'Origem de frontend definida', status: process.env.FRONTEND_ORIGIN || process.env.VITE_FRONTEND_URL ? 'ok' : 'warning' },
+    {
+      code: 'auth_secret',
+      label: 'Segredo de autenticação configurado',
+      status: process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET ? 'ok' : production ? 'failed' : 'warning',
+    },
+    {
+      code: 'ai_settings_secret',
+      label: 'Segredo de criptografia das credenciais de IA configurado',
+      status: process.env.AI_SETTINGS_SECRET || process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET ? 'ok' : production ? 'failed' : 'warning',
+    },
+    {
+      code: 'cors',
+      label: 'Origem de frontend definida',
+      status: process.env.FRONTEND_ORIGIN || process.env.VITE_FRONTEND_URL ? 'ok' : production ? 'failed' : 'warning',
+    },
     { code: 'provider_api', label: 'Pelo menos uma API remota configurada', status: Object.values(providersConfigured).some(Boolean) ? 'ok' : 'warning' },
     { code: 'audit_log', label: 'Auditoria operacional ativa', status: recentAudit.length ? 'ok' : 'warning' },
     { code: 'success_rate', label: 'Taxa de sucesso acima de 70%', status: (aiOverview.summary.successRatePercent || 0) >= 70 ? 'ok' : 'warning' },
+    { code: 'budget_pressure', label: 'Pressao de budget controlada', status: (aiOverview.summary.overBudgetRuns || 0) === 0 ? 'ok' : 'warning' },
     { code: 'stale_runs', label: 'Sem runs travados', status: (aiOverview.summary.staleRunningRuns || 0) === 0 ? 'ok' : 'warning' },
   ];
 
   const warningCount = readinessChecks.filter((check) => check.status === 'warning').length;
   const failedCount = readinessChecks.filter((check) => check.status === 'failed').length;
+  const blockers = readinessChecks.filter((check) => check.status === 'failed');
+  const warnings = readinessChecks.filter((check) => check.status === 'warning');
   const releaseVersion = process.env.PLATFORM_VERSION || '1.0.0';
   const releaseChannel = process.env.PLATFORM_RELEASE_CHANNEL || 'internal';
   const releaseSha = process.env.PLATFORM_RELEASE_SHA || null;
   const frontendOrigin = process.env.FRONTEND_ORIGIN || process.env.VITE_FRONTEND_URL || 'http://localhost:5173';
+  const gateStatus = failedCount ? 'no-go' : warningCount ? 'attention' : 'go';
   const readinessAlerts = [
     ...(warningCount
       ? [{ code: 'readiness_attention', message: `Existem ${warningCount} checks de readiness exigindo atencao.` }]
@@ -778,11 +948,27 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
       code: `agent_instability_${agent.agentName}`,
       message: `${agent.agentName} concentra ${agent.failed} falhas recentes (${agent.failureRate}% de falha).`,
     }))),
+    ...((aiOverview.summary.budgetPressureLevel || 'low') === 'high'
+      ? [
+          {
+            code: 'budget_pressure_high',
+            message: `A pressao de budget esta alta: ${aiOverview.summary.recentBudgetPressurePercent || 0}% nas execucoes recentes.`,
+          },
+        ]
+      : []),
   ];
+  const runbook = buildReadinessRunbook({ readinessChecks, aiOverview, production });
+  const releaseReadiness = buildReleaseReadinessSummary({ readinessChecks, aiOverview, production });
 
   return {
     status: failedCount ? 'degraded' : warningCount ? 'attention' : 'ok',
     checkedAt: new Date().toISOString(),
+    gate: {
+      status: gateStatus,
+      goNoGo: gateStatus === 'go',
+      blockers,
+      warnings,
+    },
     release: {
       version: releaseVersion,
       channel: releaseChannel,
@@ -791,7 +977,9 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
       frontendOrigin,
       apiBasePath: '/api',
     },
+    releaseReadiness,
     checks: readinessChecks,
+    runbook,
     security: {
       environment: process.env.NODE_ENV || 'development',
       secureRefreshCookie: Boolean(refreshCookie.secure),
@@ -830,6 +1018,10 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
       recentFailureRatePercent: aiOverview.summary.recentFailureRatePercent || 0,
       staleRunningRuns: aiOverview.summary.staleRunningRuns || 0,
       overBudgetRuns: aiOverview.summary.overBudgetRuns || 0,
+      budgetPressurePercent: aiOverview.summary.budgetPressurePercent || 0,
+      recentBudgetPressurePercent: aiOverview.summary.recentBudgetPressurePercent || 0,
+      budgetPressureLevel: aiOverview.summary.budgetPressureLevel || 'low',
+      budgetPressureLabel: aiOverview.summary.budgetPressureLabel || 'pressao baixa',
       topFailingAgents: aiOverview.reliability.topFailingAgents || [],
     },
     alerts: readinessAlerts,
@@ -1098,6 +1290,16 @@ export async function getActiveAlerts(userUuid, { projectUuid = null } = {}) {
       code: 'over_budget_runs',
       message: `Foram detectadas ${aiOverview.summary.overBudgetRuns} execuções acima do budget configurado.`,
       recommendedAction: 'Reduzir contexto, revisar provider/modelo e reforcar budgets por agente.',
+    });
+  }
+
+  if ((aiOverview.summary.budgetPressureLevel || 'low') === 'high') {
+    alerts.push({
+      severity: 'medium',
+      source: 'cost',
+      code: 'budget_pressure_high',
+      message: `A pressao de budget esta alta: ${aiOverview.summary.recentBudgetPressurePercent || 0}% nas execucoes recentes.`,
+      recommendedAction: 'Ajustar budgets por agente, cortar contexto e revisar o provider dominante.',
     });
   }
 

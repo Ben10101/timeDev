@@ -157,7 +157,7 @@ export default function WorkspaceTeamPage() {
             Voltar ao workspace
           </button>
           <button onClick={() => navigate('/projects')} className="dashboard-button-primary w-full sm:w-auto">
-            Abrir projetos
+            Ver projetos
           </button>
         </div>
       }

@@ -263,7 +263,7 @@ export default function HomePage() {
                     onClick={() => navigate('/code-studio')}
                     className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                   >
-                    Handoff técnico
+                    Abrir implementação
                   </button>
                 </div>
               </div>

@@ -2,7 +2,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
-  Braces,
   Briefcase,
   ChevronRight,
   Compass,
@@ -24,11 +23,8 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Execução',
-    items: [
-      { label: 'Projetos', hint: 'Board operacional', to: '/projects', icon: Briefcase },
-      { label: 'Code Studio', hint: 'Handoff técnico', to: '/code-studio', icon: Braces },
-    ],
+    label: 'Projeto',
+    items: [{ label: 'Projetos', hint: 'Board operacional', to: '/projects', icon: Briefcase }],
   },
   {
     label: 'Governança',

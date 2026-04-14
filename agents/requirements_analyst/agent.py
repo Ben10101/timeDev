@@ -96,6 +96,8 @@ class RequirementsAnalyst:
 
     def _infer_entity(self, idea, backlog):
         normalized = self._normalize_text(f"{idea} {backlog}")
+        if "evento" in normalized:
+            return "evento"
         if "visita" in normalized:
             return "visita"
         if "visitante" in normalized:
@@ -260,14 +262,15 @@ class RequirementsAnalyst:
     def _build_scope_definition_document(self, idea, backlog):
         actor = self._extract_actor(idea)
         entity = self._infer_entity(idea, backlog)
+        entity_ref = "do evento" if entity == "evento" else f"da {entity}"
         field_specs = self._infer_scope_fields(idea)
         user_story = (
-            f"Como {actor}, eu quero registrar o escopo básico da {entity} "
+            f"Como {actor}, eu quero registrar o escopo básico {entity_ref} "
             "com os parâmetros iniciais necessários, para dimensionar a operação sem antecipar etapas posteriores do fluxo."
         )
         requirements = [
             "### RF-01 - Registro de Escopo Básico",
-            f"- Descricao: Permitir que {actor} registre apenas os parâmetros iniciais necessários para o escopo da {entity}.",
+            f"- Descricao: Permitir que {actor} registre apenas os parâmetros iniciais necessários para o escopo {entity_ref}.",
             f"- Atores: {actor}",
             "- Entradas:",
         ]
@@ -278,7 +281,7 @@ class RequirementsAnalyst:
             "- Validar obrigatoriedade e formato dos dados da etapa",
             "- Registrar somente os parâmetros de escopo informados",
             "- Saidas:",
-            f"- Confirmação do registro do escopo da {entity}",
+            f"- Confirmação do registro do escopo {entity_ref}",
             "- Resumo dos parâmetros informados",
         ])
         rules = []
@@ -293,7 +296,7 @@ class RequirementsAnalyst:
             "User Story Refinada": user_story,
             "Requisitos Funcionais": "\n".join(requirements),
             "Fluxo Principal": (
-                f"1. {actor} acessa a funcionalidade de escopo da {entity}\n"
+                f"1. {actor} acessa a funcionalidade de escopo {entity_ref}\n"
                 "2. Sistema apresenta os campos iniciais da etapa\n"
                 "3. Usuário informa os parâmetros de escopo exigidos\n"
                 "4. Usuário confirma o registro\n"
@@ -323,11 +326,11 @@ class RequirementsAnalyst:
             "Validacoes e Dados": "\n".join(validations),
             "Permissoes e Auditoria": (
                 f"- Execucao: {actor}.\n"
-                f"- Visualizacao: perfis autorizados da operação de {entity}.\n"
+                f"- Visualizacao: perfis autorizados da operação {entity_ref}.\n"
                 "- Auditoria: registrar usuário responsável e data/hora da ação."
             ),
             "Criterios de Aceite (BDD)": (
-                f"DADO que {actor} acessa a funcionalidade de escopo da {entity}\n"
+                f"DADO que {actor} acessa a funcionalidade de escopo {entity_ref}\n"
                 "QUANDO informa os dados obrigatórios e confirma a operação\n"
                 "ENTAO o sistema registra o escopo e exibe confirmação adequada\n\n"
                 f"DADO que {actor} deixa um campo obrigatório sem preenchimento\n"
@@ -336,6 +339,90 @@ class RequirementsAnalyst:
                 "DADO que um valor é informado fora do formato ou limite aceito\n"
                 "QUANDO o sistema valida os dados\n"
                 "ENTAO a operação não é concluída até que a inconsistência seja corrigida"
+            ),
+        }
+        return self._build_document(sections)
+
+    def _build_view_summary_document(self, idea, backlog):
+        actor = self._extract_actor(idea)
+        entity = self._infer_entity(idea, backlog)
+        entity_ref = "do evento" if entity == "evento" else f"da {entity}"
+        user_story = (
+            f"Como {actor}, eu quero visualizar o resumo {entity_ref} "
+            "com escopo, base operacional e status atual, para confirmar se o planejamento inicial esta completo."
+        )
+        sections = {
+            "User Story Refinada": user_story,
+            "Requisitos Funcionais": (
+                "### RF-01 - Visualizacao do resumo consolidado\n"
+                f"- Descricao: Permitir que {actor} consulte o resumo consolidado {entity_ref}, em modo somente leitura.\n"
+                f"- Atores: {actor}\n"
+                "- Entradas: Nao se aplica\n"
+                "- Processamento:\n"
+                "- Recuperar os dados consolidados da etapa\n"
+                "- Exibir escopo, base operacional e status atual em modo somente leitura\n"
+                "- Indicar ausencia de informacoes quando algum bloco do resumo nao estiver disponivel\n"
+                "- Saidas:\n"
+                "- Resumo consolidado exibido\n"
+                "- Indicacao visual de que o planejamento inicial pode ser conferido"
+            ),
+            "Fluxo Principal": (
+                f"1. {actor} acessa o resumo consolidado {entity_ref}\n"
+                "2. Sistema carrega os dados disponiveis\n"
+                "3. Sistema exibe escopo, base operacional e status atual\n"
+                "4. Usuario confere se o planejamento inicial esta completo\n"
+                "5. Sistema mantem a tela em modo somente leitura"
+            ),
+            "Fluxos Alternativos": (
+                "**FA-01 - Dados parciais**\n"
+                "- Sistema exibe o resumo com os blocos disponiveis\n"
+                "- Sistema sinaliza quais informacoes ainda nao foram consolidadas\n\n"
+                "**FA-02 - Falha ao carregar o resumo**\n"
+                "- Sistema informa a indisponibilidade do carregamento\n"
+                "- Usuario pode tentar novamente"
+            ),
+            "Fluxos de Excecao": (
+                "**FE-01 - Base operacional ausente**\n"
+                "- Sistema nao encontra dados suficientes para compor o resumo\n"
+                "- Sistema exibe mensagem clara sobre informacoes pendentes\n\n"
+                "**FE-02 - Falha tecnica ao carregar dados**\n"
+                "- Sistema registra o erro de leitura\n"
+                "- Sistema informa indisponibilidade temporaria"
+            ),
+            "Regras de Negocio": (
+                "1. A visualizacao do resumo nao altera dados da entidade.\n"
+                "2. O status atual e apenas informativo nesta tela.\n"
+                "3. A base operacional e o escopo devem ser exibidos somente se houver dados consolidados.\n"
+                "4. A tela permanece em modo somente leitura.\n"
+                "5. A consulta deve respeitar as permissoes do perfil autenticado."
+            ),
+            "Estados da Interface e Feedback": (
+                "- Carregando: enquanto o resumo e montado.\n"
+                "- Sucesso: quando o resumo e exibido.\n"
+                "- Vazio: quando ainda nao houver base operacional consolidada.\n"
+                "- Erro: quando o carregamento falhar."
+            ),
+            "Validacoes e Dados": (
+                "- Escopo: texto consolidado exibido sem edicao.\n"
+                "- Base operacional: resumo informativo somente leitura.\n"
+                "- Status atual: valor exibido de forma consistente com o contexto.\n"
+                "- Identificacao da entidade: Ponto a validar se o acesso sera por selecao, lista ou contexto predefinido."
+            ),
+            "Permissoes e Auditoria": (
+                f"- Execucao: {actor} autenticado.\n"
+                "- Visualizacao: perfis autorizados para leitura do resumo.\n"
+                "- Auditoria: registrar acesso ao resumo e consulta realizada."
+            ),
+            "Criterios de Aceite (BDD)": (
+                f"DADO que {actor} acessa o resumo consolidado {entity_ref}\n"
+                "QUANDO a tela carrega com sucesso\n"
+                "ENTAO o sistema exibe escopo, base operacional e status atual em modo somente leitura\n\n"
+                f"DADO que parte das informacoes ainda nao foi consolidada\n"
+                "QUANDO o usuario acessa o resumo\n"
+                "ENTAO o sistema exibe os blocos disponiveis e sinaliza o que esta pendente\n\n"
+                "DADO que ocorre falha tecnica ao carregar os dados\n"
+                "QUANDO a consulta e processada\n"
+                "ENTAO o sistema informa indisponibilidade temporaria sem alterar dados"
             ),
         }
         return self._build_document(sections)
@@ -395,6 +482,16 @@ class RequirementsAnalyst:
                 if scope_ok:
                     return scope_safe
                 deterministic_reason = scope_reason or deterministic_reason
+            if self._classify_story_type(idea) == "view" and (
+                "workflow" in (deterministic_reason or "").lower()
+                or "identificacao indevida" in (deterministic_reason or "").lower()
+                or "bleed de dominio" in (deterministic_reason or "").lower()
+            ):
+                view_safe = self._apply_story_type_guardrails(self._sanitize_requirements(self._build_view_summary_document(idea, backlog)), idea)
+                view_ok, view_reason = validate_requirements_output(view_safe)
+                if view_ok:
+                    return view_safe
+                deterministic_reason = view_reason or deterministic_reason
 
             last_reason = deterministic_reason or repaired_reason or reason or "Refinamento considerado incompleto."
 
@@ -493,6 +590,7 @@ COMO LIDAR COM INFORMACAO FALTANTE:
 - Se a story for do tipo "create" ou "record" com foco em contexto inicial, dados iniciais ou cadastro minimo, NAO antecipe status, protocolo, timestamp, identificador, aprovacao ou ciclo posterior, salvo quando a propria historia pedir isso de forma explicita.
 - Para stories de criacao/registro, descreva a confirmacao do cadastro e os dados salvos, mas nao transforme consequencias de workflow em nucleo do requisito.
 - Se a story for do tipo "view", nao invente comandos de cadastro, aprovacao, alteracao ou processamento.
+- Se a story for do tipo "view" ou "summary", trate status atual e base operacional apenas como dados exibidos em modo somente leitura. Nao converta a historia em fluxo de cadastro, workflow, aprovacao, protocolo ou identificacao.
 - Se a story for do tipo "approval", nao invente campos de criacao pertencentes a etapas anteriores.
 - Em Fluxos Alternativos, prefira cancelamento ou correcao de dados com impacto real no fluxo; evite bullets genéricos como "limpar campos" sem comportamento adicional.
 - Em Saídas, privilegie a confirmação da criacao do evento e so destaque identificador quando ele for efetivamente parte da historia ou do criterio de aceite.
@@ -675,6 +773,10 @@ DIRETRIZES FINAIS:
             for section in ["Requisitos Funcionais", "Fluxo Principal", "Regras de Negocio", "Validacoes e Dados", "Criterios de Aceite (BDD)"]:
                 if section not in missing_sections:
                     missing_sections.append(section)
+        if "workflow" in normalized_reason and self._classify_story_type(idea) == "view":
+            for section in ["User Story Refinada", "Requisitos Funcionais", "Fluxo Principal", "Regras de Negocio", "Validacoes e Dados", "Criterios de Aceite (BDD)"]:
+                if section not in missing_sections:
+                    missing_sections.append(section)
         if "regras de negocio insuficientes" in normalized_reason and "Regras de Negocio" not in missing_sections:
             missing_sections.append("Regras de Negocio")
 
@@ -854,6 +956,16 @@ Secoes para reparar:
             text = re.sub(r"(?im)^.*\bguid\b.*$\n?", "", text)
             text = re.sub(r"(?im)^.*\bstatus\b.*$\n?", "", text)
             text = self._prune_scope_definition_content(text, idea)
+        elif self._classify_story_type(idea) == "view":
+            text = re.sub(r"(?im)^.*\bworkflow\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\baprov(a|á)cao\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\bcadastro\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\bcriar\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\bregistrar\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\bidentificador\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\buuid\b.*$\n?", "", text)
+            text = re.sub(r"(?im)^.*\bguid\b.*$\n?", "", text)
+            text = re.sub(r"\n{3,}", "\n\n", text)
 
         text = self._prune_initial_registration_content(text, idea)
         text = re.sub(r"\n{3,}", "\n\n", text)

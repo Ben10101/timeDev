@@ -136,7 +136,7 @@ function ProjectCard({
         </div>
 
         <p className="mt-4 text-sm leading-6 text-slate-500">
-          Clique para abrir o contexto do projeto e seguir para overview, planejamento ou equipe.
+          Clique para abrir o projeto e seguir para o board, a equipe ou a implementação.
         </p>
       </button>
 
@@ -151,12 +151,8 @@ function ProjectCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onOpenProject(project.uuid)}
-            className="dashboard-button-secondary px-3 py-2 text-xs"
-          >
-            Abrir contexto
+          <button type="button" onClick={() => onOpenProject(project.uuid)} className="dashboard-button-secondary px-3 py-2 text-xs">
+            Abrir projeto
           </button>
           {statusMeta.nextStatus ? (
             <button

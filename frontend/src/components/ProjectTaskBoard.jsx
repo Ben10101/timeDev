@@ -16,6 +16,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import {
   bootstrapGeneratedApp,
+  AGENT_RUN_CONFLICT_MESSAGE,
   createTask,
   getApiErrorMessage,
   getProjectArchitectureStatus,
@@ -97,6 +98,7 @@ function TaskCard({
   const qaRunning =
     (task.status === 'qa' || task.status === 'in_progress' || task.status === 'in_review') &&
     isTaskAgentRunning(task, 'qa_engineer');
+  const taskHasActiveRun = requirementsRunning || qaRunning;
   const canRunRequirements = isStory && !isBlocked && !hasRequirements && !requirementsRunning;
   const canRunQa = isStory && !isBlocked && hasRequirements && !hasTestPlan && !qaRunning;
   const canRunImplementation = Boolean(implementationUnlocked);
@@ -220,12 +222,14 @@ function TaskCard({
               <>
                 <button
                   onClick={() => onRequirements(task.uuid)}
-                  disabled={busy || !canRunRequirements}
+                  disabled={busy || !canRunRequirements || taskHasActiveRun}
                   className="dashboard-button-primary flex-1"
                   title={
-                    canRunRequirements
-                      ? undefined
-                      : 'A etapa de requisitos já foi concluída ou ainda depende de outro estado.'
+                    taskHasActiveRun
+                      ? AGENT_RUN_CONFLICT_MESSAGE
+                      : canRunRequirements
+                        ? undefined
+                        : 'A etapa de requisitos já foi concluída ou ainda depende de outro estado.'
                   }
                 >
                   <FileText className="h-4 w-4" />
@@ -233,14 +237,16 @@ function TaskCard({
                 </button>
                 <button
                   onClick={() => onQa(task.uuid)}
-                  disabled={busy || !canRunQa}
+                  disabled={busy || !canRunQa || taskHasActiveRun}
                   className="dashboard-button-secondary flex-1"
                   title={
-                    qaRunning
-                      ? 'Já existe uma execução de QA em andamento para esta task.'
-                      : !canRunQa && hasTestPlan
-                        ? 'A etapa de QA já foi concluída.'
-                        : undefined
+                    taskHasActiveRun
+                      ? AGENT_RUN_CONFLICT_MESSAGE
+                      : qaRunning
+                        ? 'Já existe uma execução de QA em andamento para esta task.'
+                        : !canRunQa && hasTestPlan
+                          ? 'A etapa de QA já foi concluída.'
+                          : undefined
                   }
                 >
                   <TestTube2 className="h-4 w-4" />

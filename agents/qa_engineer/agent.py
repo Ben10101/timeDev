@@ -713,11 +713,12 @@ Gere exatamente 10 itens numerados e variados:
 - Pelo menos 1 item de resiliencia deve citar comportamento apos falha, nao apenas repeticao de fluxo.
 
 ## Casos de teste funcionais
-Gere pelo menos 3 casos numerados.
+Gere exatamente 3 casos numerados.
 Para cada caso, use explicitamente as linhas:
 - Acao:
 - Resultado esperado:
 - Cada caso deve poder ser rastreado para um criterio de aceite concreto.
+- Cada caso precisa apontar pelo menos 1 CA de forma clara no texto ou na descricao.
 - Use exatamente o titulo "## Casos de teste funcionais" para esta secao.
 """
                 functional_result = self._generate_block(
@@ -749,6 +750,7 @@ Use exatamente estes titulos de secao, sem variações:
 - Faça a ponte entre criterios de aceite, regras de negocio e testes planejados.
 - Se o requisito estiver fechado, nao use "Ponto a validar".
 - Prefira ligar cada CA a verificacao concreta de UI, API, persistencia ou validacao.
+- Cada CA deve apontar claramente para pelo menos 1 cenario de teste, 1 caso funcional e 1 smoke quando aplicavel.
 - Se faltar criterio claro, escreva o gap de forma objetiva, sem inventar cobertura.
 
 ## Smoke Minimo da Feature

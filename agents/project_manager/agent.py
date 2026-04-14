@@ -841,11 +841,12 @@ Gere APENAS as secoes abaixo em Markdown:
 
 REGRAS
 - A visao geral deve resumir problema, objetivo e primeira versao do produto em no maximo 5 linhas.
-- Gere entre 4 e 6 capacidades do produto.
-- Gere entre 4 e 6 epicos recomendados.
+- Gere entre 4 e 6 capacidades do produto, todas com verbo de acao, objeto e efeito de negocio claros.
+- Gere entre 4 e 6 epicos recomendados, todos concretos e ligados a partes reais do produto.
 - Gere exatamente 3 fatias de release: MVP, Fase 2 e Fase 3.
-- O MVP deve cobrir a espinha dorsal do produto.
-- Cada fatia deve explicitar foco e o que fica para depois.
+- O MVP deve cobrir a espinha dorsal do produto e mostrar o primeiro fluxo utilizavel.
+- Cada fatia deve explicitar foco, o que entra agora e o que fica para depois.
+- Em cada fatia, use pelo menos 1 item que deixe claro o diferimento de funcionalidade mais sofisticada.
 - Distribua capacidades e epicos cobrindo estes eixos:
 {lane_text}
 - Nao escreva user stories nesta resposta.
@@ -1483,6 +1484,7 @@ REGRAS DE CURADORIA
 - Garanta que as primeiras 8 historias representem o MVP e cubram majoritariamente criacao, configuracao, consulta, aprovacao e acompanhamento do fluxo principal.
 - Empurre para o fim ou remova historias de integracoes, exportacoes, analytics avancado, IA, ESG, marketplace, webhooks e automacoes sofisticadas quando ainda faltarem historias basicas.
 - Nao introduza financeiro, orcamento ou custos quando o briefing nao citar essa dimensao explicitamente.
+- Mantenha as historias de backlog ligadas a acoes observaveis de produto, nao a intencoes abstratas.
 - Nao invente escopo fora do briefing.
 - Responda APENAS com:
   - ## Historias de Usuario
@@ -1963,6 +1965,7 @@ REGRAS GERAIS
 {self._story_block_format_rules()}
 - Mantenha o backlog entre {min_stories} e {max_stories} historias.
 - Cada story deve cobrir uma acao verificavel de negocio e nao apenas uma intencao abstrata.
+- Cada story deve deixar claro o que o usuario faz, o que o sistema confirma e qual o efeito observavel.
 - Distribua o backlog para que haja historias de fundacao, operacao, visibilidade e governanca.
 """
 

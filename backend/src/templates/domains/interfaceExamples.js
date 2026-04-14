@@ -1,5 +1,5 @@
 const GENERIC_SETTINGS_SUMMARY = [
-  'Estado atual visivel sem depender de historico tecnico.',
+  'Configuracao vigente visivel sem depender de historico tecnico.',
   'Ajustes organizados para reduzir duvida e retrabalho.',
   'Confirmacao clara do que esta ativo nesta area.',
 ];
@@ -18,7 +18,7 @@ const GENERIC_INTERFACE_LIBRARY = {
       'Nenhum ajuste registrado ainda.',
       'Defina a configuracao principal para ativar esta area.',
     ],
-    reviewSignals: ['evitar tabela generica', 'destacar estado atual', 'copy de autosservico'],
+    reviewSignals: ['evitar tabela generica', 'destacar configuracao vigente', 'copy de autosservico'],
   },
   workspace: {
     sectionLabels: ['Fila ativa', 'Contexto do caso', 'Proximas acoes'],
@@ -48,10 +48,10 @@ export function resolveInterfaceExamples(domainKey, productMode = 'structured-wo
         'Contato e papel operacional aparecem juntos para reduzir duvida no acionamento.',
         'A lista deve parecer um registro operacional vivo, nao um cadastro generico.',
       ],
-      summaryStateTitle: 'Apoio operacional pronto',
+      summaryStateTitle: 'Apoio operacional consolidado',
       summaryStateEmpty: 'Nenhum responsavel cadastrado ainda. Adicione o primeiro contato de apoio para a visita.',
       summaryMetaIdle: 'Aguardando cadastro',
-      summaryMetaReady: 'Base operacional ativa',
+      summaryMetaReady: 'Apoio pronto',
       seedRequests: [
         {
           responsibleName: 'Joao Silva',
@@ -238,16 +238,16 @@ export function resolveInterfaceExamples(domainKey, productMode = 'structured-wo
         },
       ],
       promptExamples: [
-        'Tela de autosservico com estado atual e confirmacao clara.',
+        'Tela de autosservico com situacao vigente e confirmacao clara.',
         'Ajuste simples, sem tabela e sem linguagem operacional.',
       ],
       sectionLabels: ['Resumo atual', 'Preferencias ativas', 'Como funciona'],
       ctaLabels: ['Salvar preferencias', 'Atualizar alertas', 'Confirmar notificacoes'],
       emptyStates: [
         'Nenhuma preferencia ativa. Defina o e-mail principal para receber avisos importantes.',
-        'Assim que os alertas forem ativados, o estado atual aparecera aqui.',
+        'Assim que os alertas forem ativados, a situacao vigente aparecera aqui.',
       ],
-      reviewSignals: ['tom de autosservico', 'estado atual visivel', 'evitar jargao tecnico'],
+      reviewSignals: ['tom de autosservico', 'situacao vigente visivel', 'evitar jargao tecnico'],
     },
     'support-ticket-attachments': {
       settingsSummaryItems: [
@@ -370,7 +370,7 @@ export function resolveInterfaceExamples(domainKey, productMode = 'structured-wo
     'self-service-settings': {
       ...genericByScreen.settings,
       promptExamples: [
-        'Tela de autosservico enxuta, com foco em confirmar o estado atual antes de editar.',
+        'Tela de autosservico enxuta, com foco em confirmar a situacao vigente antes de editar.',
         'Resumo lateral curto, sem parecer uma tela de administracao tecnica.',
       ],
     },

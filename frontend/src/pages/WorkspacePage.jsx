@@ -97,14 +97,8 @@ function ProjectCard({ project, summary, onOpen, onRequestStatusChange }) {
             {statusMeta.action}
           </button>
         ) : null}
-        <button onClick={() => onOpen(`/projects/${project.uuid}`)} className="dashboard-button-secondary px-3 py-2 text-xs">
-          Visão geral
-        </button>
-        <button onClick={() => onOpen(`/projects/${project.uuid}/planning`)} className="dashboard-button-secondary px-3 py-2 text-xs">
-          Planejamento
-        </button>
         <button onClick={() => onOpen(`/projects/${project.uuid}`)} className="dashboard-button-primary px-3 py-2 text-xs">
-          Contexto
+          Abrir projeto
         </button>
       </div>
     </div>
@@ -183,9 +177,9 @@ export default function WorkspacePage() {
 
     return {
       title: 'Entrar no catálogo operacional',
-      message: 'O workspace já tem projetos ativos. Agora o melhor próximo passo é escolher um deles e seguir no board.',
+      message: 'O workspace já tem projetos ativos. Agora o melhor próximo passo é escolher um deles e seguir no board do projeto.',
       primaryLabel: 'Ver projetos',
-        primaryAction: () => navigate('/projects'),
+      primaryAction: () => navigate('/projects'),
     };
   }, [navigate, projects.length]);
 
@@ -215,7 +209,7 @@ export default function WorkspacePage() {
       <AppShell
       eyebrow="Workspace"
       title="Workspace Multi-Projetos"
-      description="Visão consolidada do portfólio, com leitura rápida da saúde, do planejamento e da execução de cada projeto."
+      description="Visão consolidada do portfólio, com leitura rápida da saúde, do board e da execução de cada projeto."
       actions={
         <div className="flex flex-col gap-2 sm:flex-row">
           <button onClick={() => navigate('/workspace/team')} className="dashboard-button-secondary w-full sm:w-auto">
@@ -267,13 +261,13 @@ export default function WorkspacePage() {
 
         <section className="space-y-4">
           <div className="flex items-end justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Portfólio</p>
-              <h3 className="mt-2 text-2xl font-bold text-slate-900">Projetos criados</h3>
-              <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                Cada card abre o contexto do projeto com overview, planejamento e equipe.
-              </p>
-            </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Portfólio</p>
+                <h3 className="mt-2 text-2xl font-bold text-slate-900">Projetos criados</h3>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+                Cada card abre o contexto do projeto com visão geral, board e equipe.
+                </p>
+              </div>
           </div>
 
           <div className="space-y-4">

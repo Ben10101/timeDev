@@ -120,6 +120,22 @@ export async function recoverStaleAgentRuns({
       }
     });
 
+    recordRuntimeEvent('agent_run_recovered', {
+      agentName: run.agentName,
+      runUuid: run.uuid,
+      projectId: run.projectId,
+      taskId: run.taskId,
+      recoveryMode: 'watchdog',
+      recoveryReason: reason,
+    });
+    logInfo('agent_run_recovered', {
+      agentName: run.agentName,
+      runUuid: run.uuid,
+      projectId: run.projectId,
+      taskId: run.taskId,
+      recoveryMode: 'watchdog',
+      reason,
+    });
     recordRuntimeEvent('agent_run_stale', {
       agentName: run.agentName,
       runUuid: run.uuid,
@@ -207,6 +223,22 @@ export async function recoverBlockingAgentRunsForStart({
       }
     });
 
+    recordRuntimeEvent('agent_run_recovered', {
+      agentName: run.agentName,
+      runUuid: run.uuid,
+      projectId,
+      taskId: run.taskId,
+      recoveryMode: 'preflight',
+      recoveryReason: reason,
+    });
+    logInfo('agent_run_recovered', {
+      agentName: run.agentName,
+      runUuid: run.uuid,
+      projectId,
+      taskId: run.taskId,
+      recoveryMode: 'preflight',
+      reason,
+    });
     recordRuntimeEvent('agent_run_stale', {
       agentName: run.agentName,
       runUuid: run.uuid,

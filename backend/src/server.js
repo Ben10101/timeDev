@@ -29,6 +29,7 @@ dotenv.config({ path: path.join(__dirname, '..', '..', '.env'), override: true }
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL || '';
+const isProduction = process.env.NODE_ENV === 'production';
 let recoveryIntervalHandle = null;
 
 function getRequiredAuthSecret() {
@@ -96,7 +97,7 @@ function parseOriginList(value, label) {
 }
 
 function buildAllowedOrigins() {
-  const defaults = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+  const defaults = isProduction ? [] : ['http://localhost:5173', 'http://127.0.0.1:5173'];
   const configured = [
     ...parseOriginList(process.env.FRONTEND_ORIGIN, 'FRONTEND_ORIGIN'),
     ...parseOriginList(process.env.VITE_FRONTEND_URL, 'VITE_FRONTEND_URL'),
@@ -108,10 +109,17 @@ function buildAllowedOrigins() {
 function validateRuntimeConfiguration() {
   getRequiredAuthSecret();
   getRequiredDatabaseUrl();
+
+  if (isProduction && !allowedOrigins.length) {
+    throw new Error('FRONTEND_ORIGIN ou VITE_FRONTEND_URL precisa ser configurado em producao.');
+  }
+
+  if (isProduction && !(process.env.AI_SETTINGS_SECRET || process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET)) {
+    throw new Error('AI_SETTINGS_SECRET precisa estar configurado em producao.');
+  }
 }
 
 const allowedOrigins = buildAllowedOrigins();
-const isProduction = process.env.NODE_ENV === 'production';
 
 validateRuntimeConfiguration();
 app.set('trust proxy', resolveTrustProxySetting());

@@ -65,6 +65,10 @@ function extractCompactRequirementSection(content = '', sectionTitle = '', maxLe
   return compactText(match ? match[1] : '', maxLength);
 }
 
+function isAgentRunConflictError(error) {
+  return error?.statusCode === 409 || error?.code === 'AGENT_RUN_CONFLICT';
+}
+
 function buildQaRequirementSummary(requirementsContent = '') {
   const userStory = extractCompactRequirementSection(requirementsContent, 'User Story Refinada', 180);
   const functional = extractCompactRequirementSection(requirementsContent, 'Requisitos Funcionais', 360);
@@ -257,6 +261,14 @@ export async function runAgentController(req, res) {
       return;
     }
 
+    if (isAgentRunConflictError(error)) {
+      console.warn(`[AgentController] Conflito ao iniciar agente: ${error.message}`);
+      return res.status(409).json({
+        message: error.message,
+        existingRunUuid: error.existingRunUuid || null,
+      });
+    }
+
     console.error(`[AgentController] Error: ${error.message}`);
     res.status(500).json({ message: 'Erro ao executar o agente de IA', error: error.message });
   }
@@ -371,6 +383,14 @@ export async function runRequirementsForTaskController(req, res) {
 
     if (runLifecycle?.wasAborted()) {
       return;
+    }
+
+    if (isAgentRunConflictError(error)) {
+      console.warn(`[AgentController] Conflito ao executar requisitos: ${error.message}`);
+      return res.status(409).json({
+        message: error.message,
+        existingRunUuid: error.existingRunUuid || null,
+      });
     }
 
     if (previousTaskState) {
@@ -516,6 +536,14 @@ export async function runQaForTaskController(req, res) {
 
     if (runLifecycle?.wasAborted()) {
       return;
+    }
+
+    if (isAgentRunConflictError(error)) {
+      console.warn(`[AgentController] Conflito ao executar QA: ${error.message}`);
+      return res.status(409).json({
+        message: error.message,
+        existingRunUuid: error.existingRunUuid || null,
+      });
     }
 
     if (previousTaskState) {

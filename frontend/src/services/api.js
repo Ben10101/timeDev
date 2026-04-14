@@ -15,6 +15,8 @@ function normalizeApiBaseUrl(rawUrl) {
 
 export const API_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL)
 export const API_ORIGIN = API_URL.replace(/\/api$/, '')
+export const AGENT_RUN_CONFLICT_MESSAGE = 'Já existe uma execução em andamento para esta tarefa. Aguarde a conclusão antes de tentar novamente.'
+export const RESOURCE_CONFLICT_MESSAGE = 'Há um conflito com o estado atual deste recurso. Tente novamente em instantes.'
 
 let accessToken = null
 let refreshPromise = null
@@ -62,17 +64,10 @@ export function clearApiAccessToken() {
 export function getApiErrorMessage(error, fallback = 'Não foi possível concluir a solicitação.') {
   const status = error?.response?.status
   const data = error?.response?.data
+  const isAgentRunConflict = data?.code === 'AGENT_RUN_CONFLICT' || Boolean(data?.existingRunUuid)
 
   if (error?.code === 'ERR_NETWORK' || error?.message === 'Network Error') {
     return 'Não foi possível conectar ao backend. Verifique se a API está ativa e se a URL configurada está correta.'
-  }
-
-  if (typeof data?.message === 'string' && data.message.trim()) {
-    return data.message
-  }
-
-  if (typeof data?.error === 'string' && data.error.trim()) {
-    return data.error
   }
 
   if (status === 404) {
@@ -85,6 +80,22 @@ export function getApiErrorMessage(error, fallback = 'Não foi possível conclui
 
   if (status === 403) {
     return 'Você não tem permissão para acessar este recurso.'
+  }
+
+  if (status === 409 && isAgentRunConflict) {
+    return data?.message?.trim() || AGENT_RUN_CONFLICT_MESSAGE
+  }
+
+  if (status === 409) {
+    return RESOURCE_CONFLICT_MESSAGE
+  }
+
+  if (typeof data?.message === 'string' && data.message.trim()) {
+    return data.message
+  }
+
+  if (typeof data?.error === 'string' && data.error.trim()) {
+    return data.error
   }
 
   return error?.message || fallback

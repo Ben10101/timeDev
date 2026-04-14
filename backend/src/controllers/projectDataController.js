@@ -39,6 +39,10 @@ import { serializeBigInts } from '../utils/serialize.js';
 import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
 import { inferProjectTemplateKey } from '../templates/projects/index.js';
 
+function isAgentRunConflictError(error) {
+  return error?.statusCode === 409 || error?.code === 'AGENT_RUN_CONFLICT';
+}
+
 function compactWhitespace(value = '') {
   return String(value || '')
     .replace(/\r/g, '')
@@ -534,6 +538,13 @@ export async function generateProjectBacklogController(req, res, next) {
       return;
     }
 
+    if (isAgentRunConflictError(error)) {
+      return res.status(409).json({
+        message: error.message,
+        existingRunUuid: error.existingRunUuid || null,
+      });
+    }
+
     next(error);
   }
 }
@@ -700,6 +711,13 @@ export async function generateProjectArchitectureController(req, res, next) {
 
     if (runLifecycle?.wasAborted()) {
       return;
+    }
+
+    if (isAgentRunConflictError(error)) {
+      return res.status(409).json({
+        message: error.message,
+        existingRunUuid: error.existingRunUuid || null,
+      });
     }
 
     next(error);

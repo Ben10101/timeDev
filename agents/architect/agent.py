@@ -444,6 +444,7 @@ REGRAS GERAIS
 - Se o briefing e as historias nao pedirem explicitamente, nao use como escolha principal: React Native, GraphQL, CQRS, Event Sourcing, Redis, Kafka, Kubernetes, EKS, Keycloak, Firebase, SMS, LaunchDarkly, Terraform, Helm, PagerDuty ou Grafana/Prometheus.
 - Quando citar evolucoes futuras, deixe-as claramente separadas do MVP e em no maximo 1 ou 2 bullets por secao.
 - O stack principal deve caber no contexto atual do produto e da esteira: frontend web, backend HTTP, banco relacional, auth/roles, logs, healthcheck e deploy simples.
+- Cada secao obrigatoria deve ter densidade real e pelo menos 3 bullets ou um equivalente claramente tecnico quando a estrutura for mais curta.
 - Evite vendor lock-in e nomes de produtos cloud como padrao, a menos que estejam explicitamente pedidos.
 - Mantenha consistencia de linguagem e stack em todo o documento: se o backend for Node/Nest, exemplos de pastas, arquivos, tipos e classes devem ser TypeScript, nunca Java/.java.
 - Nao deixe exemplos ou blocos truncados; se incluir payload/exemplo, feche-o completamente.
@@ -562,6 +563,7 @@ Gere APENAS estas secoes em Markdown:
 Cubra logs, metricas, alertas, suporte operacional e recovery.
 - Entregue no minimo 3 bullets.
 - Cite pelo menos 1 sinal de observabilidade, 1 ponto de alerta e 1 acao de recovery.
+- Traga explicitamente logs, uma ou mais metricas/sinais, um alerta pratico e uma acao de recovery em bullets separados.
 
 REGRAS ESPECIFICAS
 - Mantenha observabilidade proporcional ao MVP: logs estruturados, healthcheck, poucos indicadores operacionais.
@@ -584,10 +586,12 @@ REGRAS ESPECIFICAS
 ## Riscos Tecnicos e Trade-offs
 - Liste pelo menos 3 riscos com impacto e mitigacao.
 - Inclua trade-off real entre simplicidade, custo, operacao ou evolucao futura.
+- Cada risco deve citar impacto e mitigacao clara, sem ficar em frase conceitual.
 
 ## Sequencia Recomendada de Implementacao
 - Separar claramente MVP agora vs evolucao futura.
 - Entregue no minimo 3 passos curtos, na ordem em que o time deveria implementar.
+- Garanta que o primeiro passo seja o mais viavel agora e que o ultimo aponte a evolucao futura.
 """
                 operations_result = self._generate_block(
                     operations_prompt,

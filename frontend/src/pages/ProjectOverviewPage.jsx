@@ -139,11 +139,11 @@ export default function ProjectOverviewPage() {
     }
 
     return {
-      stage: 'Kanban',
-      title: 'Abrir o kanban do projeto refinado',
-      message: 'Briefing, backlog e arquitetura já estão prontos. Agora siga pelo kanban dentro do contexto do projeto refinado.',
+      stage: 'Board',
+      title: 'Abrir o board do projeto refinado',
+      message: 'Briefing, backlog e arquitetura já estão prontos. Agora siga pelo board dentro do contexto do projeto refinado.',
       tone: 'border-slate-200 bg-white text-slate-900',
-      ctaLabel: 'Abrir kanban do projeto',
+      ctaLabel: 'Abrir board do projeto',
       ctaAction: scrollToRefinementBoard,
       ctaDisabled: false,
       ctaType: 'button',
@@ -416,10 +416,6 @@ export default function ProjectOverviewPage() {
     }
   }
 
-  function openCodeStudio() {
-    navigate(`/code-studio?project=${projectUuid}`);
-  }
-
   return (
     <>
       <AppShell
@@ -507,14 +503,7 @@ export default function ProjectOverviewPage() {
                   onClick={scrollToRefinementBoard}
                   className="dashboard-button-secondary w-full bg-white/70"
                 >
-                  Abrir kanban do projeto
-                </button>
-                <button
-                  type="button"
-                  onClick={openCodeStudio}
-                  className="dashboard-button-secondary w-full bg-white/70"
-                >
-                  Abrir Code Studio
+                  Abrir board do projeto
                 </button>
                 <button
                   type="button"
@@ -525,6 +514,9 @@ export default function ProjectOverviewPage() {
                   {updatingStatus ? 'Atualizando...' : projectStatusMeta.primaryAction}
                 </button>
               </div>
+      <p className="mt-3 text-xs leading-5 text-slate-500">
+        O board e a implementação continuam disponíveis no contexto da task.
+      </p>
               <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                 {riskCount} riscos · {impedimentCount} impedimentos
               </p>
@@ -834,7 +826,7 @@ export default function ProjectOverviewPage() {
                   }}
                   className="dashboard-button-primary w-full sm:w-auto"
                 >
-                  Abrir projeto
+                  Voltar ao projeto
                 </button>
                 <button
                   type="button"

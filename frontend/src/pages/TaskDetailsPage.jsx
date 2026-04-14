@@ -8,6 +8,7 @@ import {
   createTaskArtifact,
   createTaskComment,
   getApiErrorMessage,
+  AGENT_RUN_CONFLICT_MESSAGE,
   getTask,
   getProjectArchitectureStatus,
   getTaskImplementationStatus,
@@ -160,7 +161,7 @@ function getTaskStageHint(task, architectureStatus, hasRequirements, hasTestPlan
   if (implementationStatus) {
     return 'A implementação já foi iniciada. Use a aba Desenvolvimento para acompanhar os artefatos.';
   }
-  return 'Use Gerar código para iniciar a implementação técnica.';
+  return 'Use Iniciar implementação para começar a etapa técnica.';
 }
 
 function getTaskJourney(task, architectureStatus, hasRequirements, hasTestPlan, implementationStatus) {
@@ -232,10 +233,10 @@ function getPrimaryAction({
     };
   }
   if (taskIsDone && !implementationStatus) {
-    return { key: 'code', label: 'Gerar código', disabled: false, helper: 'Inicie a implementação técnica desta task.' };
+    return { key: 'code', label: 'Iniciar implementação', disabled: false, helper: 'Inicie a implementação técnica desta task.' };
   }
   if (taskIsDone && implementationStatus) {
-    return { key: 'studio', label: 'Abrir Code Studio', disabled: false, helper: 'Acompanhe arquivos, revisão e execuções da implementação.' };
+    return { key: 'studio', label: 'Abrir implementação', disabled: false, helper: 'Acompanhe arquivos, revisão e execuções da implementação.' };
   }
   return { key: 'overview', label: 'Acompanhar task', disabled: true, helper: 'Esta task ainda está em andamento.' };
 }
@@ -266,6 +267,7 @@ export default function TaskDetailsPage() {
   const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
   const requirementsRunning = isTaskAgentRunning(task, 'requirements_analyst');
   const qaRunning = isTaskAgentRunning(task, 'qa_engineer');
+  const taskHasActiveRun = requirementsRunning || qaRunning;
   const canRunRequirements = !taskIsBlocked && !taskHasRequirements && !requirementsRunning;
   const canRunQa = !taskIsBlocked && taskHasRequirements && !taskHasTestPlan && !qaRunning;
   const taskTypeLabel = getTaskTypeLabel(task?.taskType);
@@ -543,7 +545,7 @@ export default function TaskDetailsPage() {
           {primaryAction.key === 'requirements' && (
             <button
               onClick={handleRunRequirements}
-              disabled={saving || loading || primaryAction.disabled}
+              disabled={saving || loading || primaryAction.disabled || taskHasActiveRun}
               className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
             >
               {actionLoading === 'requirements' ?'Refinando...' : primaryAction.label}
@@ -552,7 +554,7 @@ export default function TaskDetailsPage() {
           {primaryAction.key === 'qa' && (
             <button
               onClick={handleRunQa}
-              disabled={saving || loading || primaryAction.disabled}
+              disabled={saving || loading || primaryAction.disabled || taskHasActiveRun}
               className="w-full rounded-2xl bg-[#17322b] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#214338] disabled:opacity-50 sm:w-auto"
             >
               {actionLoading === 'qa' ?'Executando QA...' : primaryAction.label}
@@ -722,6 +724,11 @@ export default function TaskDetailsPage() {
                   <h2 className="mt-4 font-serif text-2xl font-semibold text-slate-900 sm:text-3xl">{task.title}</h2>
                   <p className="mt-4 text-sm leading-7 text-slate-600">{task.description || 'Sem descrição cadastrada.'}</p>
                   <p className="mt-4 text-sm font-medium text-slate-700">{primaryAction.helper}</p>
+                  {taskHasActiveRun && (
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                      {AGENT_RUN_CONFLICT_MESSAGE}
+                    </div>
+                  )}
                 </div>
                 <div className="min-w-[240px] rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
                   <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Próxima ação</p>
@@ -835,10 +842,10 @@ export default function TaskDetailsPage() {
                     <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#2f6c58]">Próximo passo recomendado</p>
                     <p className="mt-3 text-sm leading-7 text-slate-600">
                       {task.status !== 'done'
-                        ?'Finalize refinamento e QA antes de iniciar a implementação.'
-                        : implementationStatus
+                      ?'Finalize refinamento e QA antes de iniciar a implementação.'
+                      : implementationStatus
                           ?'Acompanhe a execução técnica, os relatórios de validação e os arquivos alterados.'
-                          : 'Clique em Gerar código para iniciar a integração da task no projeto full stack.'}
+                          : 'Clique em Iniciar implementação para iniciar a integração da task no projeto full stack.'}
                     </p>
                   </div>
                 </section>
@@ -1269,7 +1276,7 @@ export default function TaskDetailsPage() {
                 </div>
               ) : (
                 <div className="mt-6 rounded-[22px] border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
-                  A implementação ainda não foi iniciada para esta task. Quando você clicar em <strong>Gerar código</strong>, o acompanhamento técnico aparecerá aqui.
+                  A implementação ainda não foi iniciada para esta task. Quando você clicar em <strong>Iniciar implementação</strong>, o acompanhamento técnico aparecerá aqui.
                 </div>
               )}
             </section>

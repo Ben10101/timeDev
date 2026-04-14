@@ -153,6 +153,18 @@ def parse_bullets_from_section(section_text):
     return slices
 
 
+def _count_meaningful_bullets(section_match, *, min_words=4):
+    if not section_match:
+        return 0
+
+    bullets = [
+        re.sub(r"^\s*[-*]\s+", "", line).strip()
+        for line in section_match.group(1).splitlines()
+        if re.search(r"^\s*[-*]\s+", line)
+    ]
+    return sum(1 for bullet in bullets if len(bullet.split()) >= min_words)
+
+
 def validate_requirements_output(result):
     text, normalized = _normalize_text(result)
     required_sections = [
@@ -577,7 +589,7 @@ def validate_qa_output(result):
         return False, "Menos de 2 riscos distintos."
 
     traceability_count = len(re.findall(r"(?:^|\n)\s*[-*]\s*ca[\s\-]*0*\d+\b", traceability_section, re.IGNORECASE))
-    if traceability_count < 2 and "ponto a validar" not in traceability_section:
+    if traceability_count < 3 and "ponto a validar" not in traceability_section:
         return False, "Rastreabilidade dos criterios de aceite insuficiente."
 
     if "ponto a validar" in traceability_section:
@@ -722,6 +734,11 @@ def validate_backlog_output(result):
             short_lines = [line for line in bullet_lines if len(line.split()) < 3]
             if short_lines:
                 return False, f"{section_name.capitalize()} do produto com itens curtos ou genericos demais."
+            generic_lines = [
+                line for line in bullet_lines if re.search(r"\b(melhorar|gerenciar|visualizar dados|fluxo|dados)\b", line, re.IGNORECASE)
+            ]
+            if len(generic_lines) > max(1, len(bullet_lines) // 2):
+                return False, f"{section_name.capitalize()} do produto ainda está generica demais."
 
     release_text = release_section.group(1) if release_section else ""
     release_items = parse_bullets_from_section(release_text)
@@ -732,6 +749,10 @@ def validate_backlog_output(result):
     if len(release_items) < 3:
         return False, "Fatias de release insuficientes."
 
+    meaningful_release_items = _count_meaningful_bullets(release_section, min_words=4)
+    if meaningful_release_items < 3:
+        return False, "Fatias de release com itens curtos ou genericos demais."
+
     release_bodies = [item.lower() for item in release_items]
     if any(not re.search(r"\b(foco|depois|posterior|nao agora|fase seguinte)\b", item) for item in release_bodies):
         return False, "Fatias de release sem foco e diferimento suficiente."
@@ -739,6 +760,12 @@ def validate_backlog_output(result):
     mvp_line = next((item for item in release_items if "mvp" in item.lower()), "")
     if not re.search(r"\b(fundacao|espinha|fluxo principal|primeira versao|base)\b", mvp_line, re.IGNORECASE):
         return False, "MVP sem foco explicito na fundacao do produto."
+
+    if any(
+        re.search(r"\b(agora|imediato|tudo|completo|total)\b", item, re.IGNORECASE) and not re.search(r"\b(depois|posterior|fase seguinte|nao agora)\b", item, re.IGNORECASE)
+        for item in release_bodies
+    ):
+        return False, "Fatias de release sem diferimento operacional suficiente."
 
     foundation_signals = [
         r"\bcriar\b",
@@ -819,6 +846,27 @@ def validate_architecture_output(result):
 
     if has_truncated_ending(text):
         return False, "Resposta aparenta ter sido cortada no final."
+
+    observability_section = re.search(r"##\s+observabilidade e operacao([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    observability_body = observability_section.group(1) if observability_section else ""
+    if observability_body:
+        if not re.search(r"\b(log|logs|observabil|metric|alert|recuper|recovery|health)\b", observability_body, re.IGNORECASE):
+            return False, "Observabilidade e operacao sem sinais operacionais suficientes."
+        if len(re.findall(r"(?:^|\n)\s*[-*]\s+", observability_body)) < 3 and len(observability_body.split()) < 18:
+            return False, "Observabilidade e operacao sem densidade minima."
+
+    risks_section = re.search(r"##\s+riscos tecnicos e trade-offs([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    risks_body = risks_section.group(1) if risks_section else ""
+    if risks_body and len(re.findall(r"(?:^|\n)\s*[-*]\s+", risks_body)) < 3:
+        return False, "Riscos tecnicos e trade-offs sem 3 riscos distintos."
+
+    if risks_body and not re.search(r"\b(impacto|mitig|trade-off|risco)\b", risks_body, re.IGNORECASE):
+        return False, "Riscos tecnicos e trade-offs sem impacto e mitigacao claros."
+
+    sequence_section = re.search(r"##\s+sequencia recomendada de implementacao([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
+    sequence_body = sequence_section.group(1) if sequence_section else ""
+    if sequence_body and len(re.findall(r"(?:^|\n)\s*(?:\d+[\.\)]|[-*]\s+)", sequence_body)) < 3:
+        return False, "Sequencia recomendada de implementacao insuficiente."
 
     advanced_stack_markers = [
         "react native",

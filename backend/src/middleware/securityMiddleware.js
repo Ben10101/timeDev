@@ -9,6 +9,10 @@ function matchesSensitiveRoute(req) {
     req.path.startsWith('/auth/login') ||
     req.path.startsWith('/auth/register') ||
     req.path.startsWith('/auth/refresh') ||
+    req.path.startsWith('/auth/logout') ||
+    req.path.startsWith('/auth/ai-settings') ||
+    req.path.startsWith('/observability') ||
+    req.path.startsWith('/governance') ||
     req.path.includes('/generate-backlog') ||
     req.path.includes('/generate-architecture') ||
     req.path.includes('/requirements/run') ||
@@ -38,6 +42,9 @@ export function applySecurityHeaders(req, res, next) {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
   }

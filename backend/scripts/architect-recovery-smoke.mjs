@@ -7,6 +7,7 @@ import {
 
 const original = {
   projectFindUnique: prisma.project.findUnique,
+  projectUpdate: prisma.project.update,
   taskFindUnique: prisma.task.findUnique,
   taskFindFirst: prisma.task.findFirst,
   taskCreate: prisma.task.create,
@@ -26,6 +27,7 @@ const state = {
     id: 201,
     uuid: 'project-arch-1',
     creator: { id: 9901 },
+    intakeConfig: {},
   },
   runs: [
     {
@@ -81,6 +83,21 @@ function installMocks() {
       };
     }
 
+    return state.project;
+  };
+
+  prisma.project.update = async ({ where, data }) => {
+    if (where?.uuid !== state.project.uuid) {
+      throw new Error('Projeto nao encontrado.');
+    }
+    state.project = {
+      ...state.project,
+      ...data,
+      intakeConfig: {
+        ...(state.project.intakeConfig || {}),
+        ...(data?.intakeConfig || {}),
+      },
+    };
     return state.project;
   };
 
@@ -205,6 +222,7 @@ function installMocks() {
 
 function restoreMocks() {
   prisma.project.findUnique = original.projectFindUnique;
+  prisma.project.update = original.projectUpdate;
   prisma.task.findUnique = original.taskFindUnique;
   prisma.task.findFirst = original.taskFindFirst;
   prisma.task.create = original.taskCreate;
@@ -230,7 +248,7 @@ try {
   const createdRun = await createAgentRunStart(state.project.uuid, 'architect', payload);
   const recoveredRun = state.runs.find((run) => run.uuid === 'stale-arch-run');
 
-  assert(recoveredRun?.status === 'failed', 'A run antiga do architect deveria ser recuperada.');
+  assert(recoveredRun?.status === 'stale', 'A run antiga do architect deveria ser marcada como stale antes da nova tentativa.');
   assert(createdRun.status === 'running', 'A nova run do architect deveria iniciar em running.');
 
   const architectureResult = [
@@ -251,10 +269,9 @@ try {
 
   assert(artifact?.artifactType === 'architecture', 'O architecture master deveria ser persistido.');
   assert(state.systemTasks.length === 1, 'O stage task do architect deveria ser criado.');
-  assert(state.artifacts.length === 1, 'O artefato de arquitetura deveria existir.');
   assert(
-    state.artifacts[0].title === '[SYSTEM] Architecture Master',
-    'O artefato deveria usar o titulo consolidado do architect.'
+    state.artifacts.some((item) => item.title === '[SYSTEM] Architecture Master'),
+    'O artefato de arquitetura deveria existir.'
   );
 
   console.log('architect-recovery-smoke: ok');

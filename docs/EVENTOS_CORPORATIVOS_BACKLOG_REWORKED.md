@@ -42,11 +42,11 @@ A operacao de eventos corporativos hoje depende de planilhas, e-mails e alinhame
 
 - US-07 | Como coordenador de eventos, eu quero cadastrar convidados ou participantes esperados, para preparar comunicacao e operacao do evento.
 
-- US-08 | Como coordenador de eventos, eu quero visualizar um resumo consolidado do evento com escopo, cronograma, orcamento e status, para acompanhar o andamento em um unico lugar.
+- US-08 | Como coordenador de eventos, eu quero visualizar um resumo consolidado do evento com escopo, cronograma, orcamento e andamento da execucao, para acompanhar o panorama em um unico lugar.
 
 - US-09 | Como coordenador de eventos, eu quero submeter o plano inicial do evento para aprovacao, para formalizar a passagem do planejamento para a execucao.
 
-- US-10 | Como gestor de operacoes, eu quero visualizar eventos em andamento por status, para identificar quais precisam de atencao imediata.
+- US-10 | Como gestor de operacoes, eu quero visualizar eventos em andamento com recorte por fase de execucao, para identificar quais precisam de atencao imediata.
 
 - US-11 | Como coordenador de eventos, eu quero atualizar o status das etapas do evento, para refletir o progresso real da operacao.
 
@@ -62,6 +62,6 @@ A operacao de eventos corporativos hoje depende de planilhas, e-mails e alinhame
 
 - US-17 | Como coordenador de eventos, eu quero gerar um relatorio pos-evento com pendencias, evidencias e aprendizados, para consolidar o fechamento da operacao.
 
-- US-18 | Como gestor de marketing, eu quero visualizar um painel consolidado dos eventos do periodo, para acompanhar execucao e investimento de forma gerencial.
+- US-18 | Como gestor de marketing, eu quero visualizar um painel consolidado dos eventos do periodo com indicadores de execucao e investimento, para acompanhar a operacao de forma gerencial.
 
 FIM_DO_BACKLOG

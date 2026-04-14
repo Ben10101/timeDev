@@ -189,6 +189,8 @@ export default function GovernancePage() {
     () => (readiness?.checks || []).filter((check) => check.status === 'warning'),
     [readiness]
   );
+  const readinessRunbook = readiness?.runbook || [];
+  const releaseReadiness = readiness?.releaseReadiness || null;
   const topFailingAgents = operations?.reliability?.topFailingAgents || [];
   const summary = operations?.summary || {};
   const repairGovernance = governance?.repairGovernance || null;
@@ -217,6 +219,14 @@ export default function GovernancePage() {
         title: `${summary.overBudgetRuns} execução${summary.overBudgetRuns > 1 ?'es' : ''} acima do budget`,
         subtitle: 'Corte contexto, troque provider ou refine budgets por agente.',
         tone: 'amber',
+      });
+    }
+
+    if ((summary.budgetPressureLevel || 'low') === 'high') {
+      items.push({
+        title: `Pressao de budget alta (${summary.recentBudgetPressurePercent || 0}%)`,
+        subtitle: 'Ajuste budgets por agente e reduza o contexto das proximas execucoes.',
+        tone: 'rose',
       });
     }
 
@@ -303,11 +313,11 @@ export default function GovernancePage() {
                   {primaryActionItem?.subtitle || 'Sem alertas críticos ativos e sem runs travadas.'}
                 </p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-4">
                 <InsightCard
-                  label="Saude geral"
-                  value={readiness?.status || 'n/a'}
-                  hint={`${readinessFailures.length} críticos`}
+                  label="Readiness gate"
+                  value={readiness?.gate?.status || readiness?.status || 'n/a'}
+                  hint={`${readiness?.gate?.blockers?.length || readinessFailures.length} blockers`}
                 />
                 <InsightCard
                   label="Alertas ativos"
@@ -319,7 +329,30 @@ export default function GovernancePage() {
                   value={`${summary.p95RunDurationSeconds || 0}s`}
                   hint={`${summary.successRatePercent || 0}% de sucesso`}
                 />
+                <InsightCard
+                  label="Budget pressure"
+                  value={`${summary.recentBudgetPressurePercent || 0}%`}
+                  hint={summary.budgetPressureLabel || 'pressao baixa'}
+                />
               </div>
+              {releaseReadiness ? (
+                <div className={`mt-4 rounded-3xl border p-4 ${
+                  releaseReadiness.state === 'blocked'
+                    ? 'border-rose-200 bg-rose-50 text-rose-900'
+                    : releaseReadiness.state === 'watch'
+                      ? 'border-amber-200 bg-amber-50 text-amber-900'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                }`}>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] opacity-70">Próxima release</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <p className="text-lg font-semibold">{releaseReadiness.label}</p>
+                    <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold">
+                      Rollback: {releaseReadiness.rollbackReady ? 'pronto' : 'precisa de atenção'}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 opacity-90">{releaseReadiness.nextAction}</p>
+                </div>
+              ) : null}
             </div>
           </div>
         </motion.section>
@@ -503,6 +536,18 @@ export default function GovernancePage() {
                 subtitle="Capacidade remota atual"
               />
             </div>
+            {readiness?.gate?.blockers?.length ?(
+              <div className="mx-6 mb-6 rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-rose-700">Blockers do gate</p>
+                <div className="mt-3 space-y-2">
+                  {readiness.gate.blockers.map((blocker) => (
+                    <div key={blocker.code} className="rounded-2xl bg-white px-4 py-3 text-sm text-rose-800">
+                      <strong className="text-rose-900">{blocker.label}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="space-y-3 px-6 pb-6">
               {(readiness?.checks || []).length ?(
                 (readiness?.checks || []).map((check) => (
@@ -516,6 +561,26 @@ export default function GovernancePage() {
               ) : (
                 <EmptyPanel title="Sem checks de readiness" subtitle="Quando os checks estiverem disponíveis, eles aparecem aqui com status e risco." />
               )}
+            </div>
+            <div className="border-t border-slate-200 px-6 py-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Runbook recomendado</p>
+              <div className="mt-4 space-y-3">
+                {readinessRunbook.length ? (
+                  readinessRunbook.map((item) => (
+                    <EventCard
+                      key={item.code}
+                      title={item.title}
+                      subtitle={item.detail}
+                      tone={item.category === 'security' ? 'rose' : item.category === 'cost' ? 'amber' : 'slate'}
+                    />
+                  ))
+                ) : (
+                  <EmptyPanel
+                    title="Sem ações recomendadas"
+                    subtitle="O readiness não encontrou ações adicionais para a operação neste momento."
+                  />
+                )}
+              </div>
             </div>
           </motion.section>
 
