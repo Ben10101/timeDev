@@ -31,8 +31,10 @@ def main():
         idea = payload.get("idea")
         runtime_mode = input_data.get("runtime_mode") or os.getenv("ALIGNA_AGENT_RUNTIME_MODE") or "modern-single-agent"
 
-        if not agent_name or not project_id or not idea:
-            raise ValueError("Faltando 'agent', 'project_id', ou 'idea' no payload.")
+        if not agent_name or not idea:
+            raise ValueError("Faltando 'agent' ou 'idea' no payload.")
+
+        project_id = project_id or f"freeform-{agent_name}"
 
         result = None
         

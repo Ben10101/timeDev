@@ -415,6 +415,119 @@ REGRAS
 
         return text.strip()
 
+    def _has_explicit_api_contract(self, compact_requirements, project_context=None):
+        haystack = "\n".join(
+            [
+                str(compact_requirements or ""),
+                json.dumps(project_context or {}, ensure_ascii=False),
+            ]
+        )
+        return bool(
+            re.search(r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_./{}-]+", haystack, re.IGNORECASE)
+            or re.search(r"\bstatus\s+HTTP\s+\d{3}\b", haystack, re.IGNORECASE)
+        )
+
+    def _derive_story_titles(self, project_context=None):
+        stories = (project_context or {}).get("stories") or []
+        titles = []
+        for story in stories:
+            title = re.sub(r"\s+", " ", str(story.get("title") or "")).strip()
+            if title:
+                titles.append(title)
+        return titles[:8]
+
+    def _synthesize_contracts_section(self, compact_requirements, project_context=None):
+        story_titles = self._derive_story_titles(project_context)
+        signals = " ".join(story_titles + [str(compact_requirements or "")]).lower()
+        lines = []
+        if "criar o evento" in signals or "novo evento" in signals:
+            lines.append("- Operacao de cadastro de evento: criar o evento com os campos essenciais definidos no refinamento e retornar confirmacao de sucesso sem assumir payload tecnico fechado.")
+        if "escopo" in signals:
+            lines.append("- Operacao de definicao de escopo: registrar volume estimado, formato e parametros principais vinculados ao evento ja existente, respeitando regras de validacao do requisito.")
+        if "responsavel operacional" in signals:
+            lines.append("- Operacao de responsavel operacional: vincular nome, contato e tipo de suporte a um evento, com contrato de entrada definido pela validacao de dominio.")
+        if "participantes" in signals:
+            lines.append("- Operacao de participantes: registrar ou atualizar a lista inicial de participantes de um evento sem assumir batch, fila ou integracao externa como obrigatorios.")
+        if "aprovar" in signals or "reprovar" in signals:
+            lines.append("- Operacao de decisao: registrar aprovacao ou reprovacao do registro operacional com justificativa e efeito observavel no status do fluxo.")
+        if "historico" in signals:
+            lines.append("- Operacao de historico: consultar alteracoes do evento em modo somente leitura, com trilha auditavel de quem alterou, o que mudou e quando.")
+        if "pesquisar" in signals or "busca" in signals:
+            lines.append("- Operacao de pesquisa: consultar eventos por termo ou referencia usando filtros compatíveis com os campos explicitados no backlog e nos refinamentos.")
+        if "encerrar" in signals:
+            lines.append("- Operacao de encerramento: concluir o fluxo do evento somente quando as condicoes do requisito forem satisfeitas, registrando o efeito de fechamento de forma auditavel.")
+        if not lines:
+            lines = [
+                "- Contratos do MVP: expor poucas operacoes nucleares alinhadas as historias refinadas, com validacao de entrada, resposta observavel e persistencia auditavel.",
+                "- Integracoes externas: nao se aplicam como dependencia obrigatoria do MVP atual; priorizar modulo interno unico e contratos HTTP simples.",
+                "- Decisoes assumidas para o MVP: detalhes de endpoint, payload e codigos HTTP devem ser fechados na implementacao tecnica, e nao inferidos a partir do backlog.",
+            ]
+        else:
+            lines.append("- Integracoes externas: nao se aplicam como dependencia obrigatoria do MVP atual; manter fronteiras internas simples e contratos evolutivos.")
+            lines.append("- Decisoes assumidas para o MVP: nomes de endpoint, payload detalhado e codigos HTTP exatos so devem ser fechados quando o time consolidar a API de implementacao.")
+        return "\n".join(lines[:6])
+
+    def _synthesize_risks_section(self, compact_requirements, project_context=None):
+        signals = " ".join(self._derive_story_titles(project_context) + [str(compact_requirements or "")]).lower()
+        risks = [
+            "- Risco: regras de validacao espalhadas entre modulos de evento, participantes e aprovacao -> impacto: comportamento inconsistente entre telas e fluxos; mitigacao: centralizar regras de dominio em services e schemas compartilhados.",
+            "- Risco: transicoes de status e decisoes financeiras ocorrerem sem trilha auditavel suficiente -> impacto: perda de rastreabilidade operacional e contestacao de decisao; mitigacao: registrar ator, timestamp e justificativa em todas as mudancas sensiveis.",
+            "- Risco: busca e listagens crescerem sem estrategia minima de indices e filtros -> impacto: degradacao de tempo de resposta no uso operacional; mitigacao: modelar consultas principais cedo e revisar indices conforme os cenarios de uso do MVP.",
+        ]
+        if "participantes" in signals:
+            risks.append(
+                "- Risco: cadastro de participantes gerar duplicidade ou persistencia parcial em cargas maiores -> impacto: lista inconsistente e retrabalho operacional; mitigacao: validar unicidade e tratar gravacao da lista com consistencia transacional."
+            )
+        return "\n".join(risks[:4])
+
+    def _synthesize_sequence_section(self, compact_requirements, project_context=None):
+        return "\n".join(
+            [
+                "1. Fundacao do MVP: modelar entidades centrais, autenticacao simples por roles, CRUD inicial de evento e trilha basica de auditoria.",
+                "2. Fluxo operacional: implementar escopo, responsavel operacional, participantes, consulta de resumo e pesquisa com validacoes coerentes entre frontend e backend.",
+                "3. Governanca: implementar registro operacional, decisao de aprovacao, historico de mudancas e encerramento do evento com regras de bloqueio e rastreabilidade.",
+                "4. Evolucao futura: revisar contratos tecnicos detalhados, observabilidade ampliada e otimizações de performance somente apos estabilidade do fluxo principal.",
+            ]
+        )
+
+    def _normalize_architecture_sections(self, sections, compact_requirements, project_context=None):
+        normalized_sections = dict(sections)
+
+        contracts_body = self._sanitize_section_body(normalized_sections.get("Contratos e Integracoes") or "", title="Contratos e Integracoes")
+        if (
+            not contracts_body
+            or not self._has_explicit_api_contract(compact_requirements, project_context)
+            or re.search(r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_./{}-]+", contracts_body, re.IGNORECASE)
+        ):
+            normalized_sections["Contratos e Integracoes"] = self._synthesize_contracts_section(
+                compact_requirements,
+                project_context,
+            )
+        else:
+            normalized_sections["Contratos e Integracoes"] = contracts_body
+
+        risks_body = self._sanitize_section_body(normalized_sections.get("Riscos Tecnicos e Trade-offs") or "", title="Riscos Tecnicos e Trade-offs")
+        risk_count = len(re.findall(r"(?:^|\n)\s*[-*]\s+", risks_body))
+        if risk_count < 3 or re.search(r"\bmitigac[aã]o\s*$", risks_body, re.IGNORECASE):
+            normalized_sections["Riscos Tecnicos e Trade-offs"] = self._synthesize_risks_section(
+                compact_requirements,
+                project_context,
+            )
+        else:
+            normalized_sections["Riscos Tecnicos e Trade-offs"] = risks_body
+
+        sequence_body = self._sanitize_section_body(normalized_sections.get("Sequencia Recomendada de Implementacao") or "", title="Sequencia Recomendada de Implementacao")
+        sequence_count = len(re.findall(r"(?:^|\n)\s*(?:\d+[\.\)]|[-*]\s+)", sequence_body))
+        if sequence_count < 3 or "FIM_DA_ARQUITETURA" in sequence_body or re.search(r"rollback\s+via\s+`[^`]*$", sequence_body, re.IGNORECASE):
+            normalized_sections["Sequencia Recomendada de Implementacao"] = self._synthesize_sequence_section(
+                compact_requirements,
+                project_context,
+            )
+        else:
+            normalized_sections["Sequencia Recomendada de Implementacao"] = sequence_body
+
+        return normalized_sections
+
     def _generate_multi_block_architecture(self, idea, compact_requirements, architecture_model, project_context=None):
         compact_project_context = self._compact_project_context(project_context)
         base_context = f"""
@@ -441,6 +554,8 @@ REGRAS GERAIS
 - Trate isto como arquitetura de MVP implementavel, nao como arquitetura enterprise aspiracional.
 - Priorize web-first, backend REST simples e modular monolith antes de mobile, microsservicos ou plataforma distribuida.
 - Quando nao houver stack obrigatoria explicita no briefing, prefira a stack-base desta factory: React + TypeScript + Vite no frontend, Node.js + Express no backend, Prisma como ORM e PostgreSQL como banco relacional.
+- Nao trate endpoint, payload, codigo HTTP, indice, timeout, retry ou integracao externa como decisao fechada sem evidencia explicita nas historias ou no contrato do projeto.
+- Quando precisar assumir uma decisao tecnica para o MVP, marque como "Decisao assumida para o MVP:" em vez de apresentar como requisito confirmado.
 - Se o briefing e as historias nao pedirem explicitamente, nao use como escolha principal: React Native, GraphQL, CQRS, Event Sourcing, Redis, Kafka, Kubernetes, EKS, Keycloak, Firebase, SMS, LaunchDarkly, Terraform, Helm, PagerDuty ou Grafana/Prometheus.
 - Quando citar evolucoes futuras, deixe-as claramente separadas do MVP e em no maximo 1 ou 2 bullets por secao.
 - O stack principal deve caber no contexto atual do produto e da esteira: frontend web, backend HTTP, banco relacional, auth/roles, logs, healthcheck e deploy simples.
@@ -526,6 +641,7 @@ REGRAS ESPECIFICAS
 REGRAS ESPECIFICAS
 - Prefira contratos REST simples e poucos endpoints nucleares.
 - Nao invente integracoes corporativas externas como LDAP/AD, RH, catracas ou impressoras como parte obrigatoria do MVP sem base explicita.
+- Se as historias nao fecharem contrato de API, descreva operacoes de negocio e fronteiras do modulo sem forcar nome de endpoint ou codigo HTTP.
 - Se incluir exemplo de request/response, entregue JSON completo e curto, sem cortar no meio.
 - Se nao houver seguranca suficiente para montar um JSON completo e curto, liste somente endpoint + finalidade, sem exemplo.
 - Se o MVP nao exigir integracao externa, deixe isso explicito em vez de sugerir SendGrid, Firebase, SES, FCM, APNS ou equivalentes como parte central.
@@ -611,6 +727,11 @@ REGRAS ESPECIFICAS
                         self._repair_missing_sections(base_context, operations_result, missing_operations, architecture_model)
                     )
                 sections.update(operations_sections)
+                sections = self._normalize_architecture_sections(
+                    sections,
+                    compact_requirements,
+                    project_context=project_context,
+                )
 
                 full_architecture = self._build_full_architecture(sections)
                 is_complete, reason = validate_architecture_output(full_architecture)
@@ -622,6 +743,11 @@ REGRAS ESPECIFICAS
                     sections,
                     reason or "",
                     architecture_model,
+                )
+                repaired_sections = self._normalize_architecture_sections(
+                    repaired_sections,
+                    compact_requirements,
+                    project_context=project_context,
                 )
                 repaired_architecture = self._build_full_architecture(repaired_sections)
                 repaired_ok, repaired_reason = validate_architecture_output(repaired_architecture)

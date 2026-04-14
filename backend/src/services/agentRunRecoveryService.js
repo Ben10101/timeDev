@@ -20,6 +20,9 @@ function getRecoveryTargetStatus(task) {
       status: 'done',
       assigneeType: 'agent',
       assigneeAgentName: 'qa_engineer',
+      startedAt: task?.startedAt || null,
+      completedAt: task?.completedAt || null,
+      currentArtifactSummary: task?.currentArtifactSummary || null,
     };
   }
 
@@ -28,6 +31,9 @@ function getRecoveryTargetStatus(task) {
       status: 'in_review',
       assigneeType: 'agent',
       assigneeAgentName: 'requirements_analyst',
+      startedAt: task?.startedAt || null,
+      completedAt: null,
+      currentArtifactSummary: task?.currentArtifactSummary || null,
     };
   }
 
@@ -35,6 +41,9 @@ function getRecoveryTargetStatus(task) {
     status: 'backlog',
     assigneeType: task?.taskType === 'story' ? 'agent' : 'unassigned',
     assigneeAgentName: task?.taskType === 'story' ? 'requirements_analyst' : null,
+    startedAt: null,
+    completedAt: null,
+    currentArtifactSummary: null,
   };
 }
 
@@ -55,7 +64,10 @@ async function reconcileTaskAfterRecoveredRun(tx, taskId, note) {
   const needsTaskUpdate =
     task.status !== target.status ||
     task.assigneeType !== target.assigneeType ||
-    (task.assigneeAgentName || null) !== (target.assigneeAgentName || null);
+    (task.assigneeAgentName || null) !== (target.assigneeAgentName || null) ||
+    String(task.startedAt || '') !== String(target.startedAt || '') ||
+    String(task.completedAt || '') !== String(target.completedAt || '') ||
+    (task.currentArtifactSummary || null) !== (target.currentArtifactSummary || null);
 
   if (!needsTaskUpdate) return;
 
@@ -65,6 +77,9 @@ async function reconcileTaskAfterRecoveredRun(tx, taskId, note) {
       status: target.status,
       assigneeType: target.assigneeType,
       assigneeAgentName: target.assigneeAgentName,
+      startedAt: target.startedAt,
+      completedAt: target.completedAt,
+      currentArtifactSummary: target.currentArtifactSummary,
     },
   });
 

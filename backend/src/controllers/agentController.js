@@ -17,6 +17,7 @@ import { createAgentRunLifecycle } from '../utils/agentRunLifecycle.js';
 import { assertArtifactCompleteness as assertSharedArtifactCompleteness } from '../utils/artifactQuality.js';
 import { serializeBigInts } from '../utils/serialize.js';
 import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
+import { appendWorkbenchArtifactForUser } from '../services/workbenchArtifactService.js';
 
 function compactText(value = '', maxLength = 220) {
   const text = String(value || '')
@@ -213,37 +214,58 @@ export async function runAgentController(req, res) {
   let runLifecycle = null;
   try {
     const { agent, payload } = req.body;
+    const isFreeformWorkbench = payload?.request_mode === 'freeform_workbench';
+    const hasProjectBinding = Boolean(String(payload?.project_id || '').trim());
 
     if (!agent || !payload || !payload.idea) {
       return res.status(400).json({ message: 'Nome do agente e payload com a ideia sao obrigatorios.' });
     }
 
-    if (!payload.project_id) {
+    if (!isFreeformWorkbench && !payload.project_id) {
       payload.project_id = uuidv4();
     }
 
-    await ensurePipelineProject(payload.project_id, payload.idea, req.authUser.uuid);
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: agent });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
-    agentRun = await createAgentRunStart(payload.project_id, agent, payloadWithRuntime);
-    runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
+
+    if (payload.project_id) {
+      await ensurePipelineProject(payload.project_id, payload.idea, req.authUser.uuid);
+      agentRun = await createAgentRunStart(payload.project_id, agent, payloadWithRuntime);
+      runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
+    }
 
     const result = await runSingleAgent(agent, payloadWithRuntime, { envOverrides });
     assertSharedArtifactCompleteness(agent, typeof result === 'string' ? result : JSON.stringify(result, null, 2));
-    const finalized = await runLifecycle.finalizeSuccess({
-      result,
-      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
-    });
 
-    if (!finalized) {
-      return;
+    if (runLifecycle) {
+      const finalized = await runLifecycle.finalizeSuccess({
+        result,
+        usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+      });
+
+      if (!finalized) {
+        return;
+      }
     }
 
-    await persistAgentResult(payload.project_id, agent, payloadWithRuntime, result);
+    if (payload.project_id) {
+      await persistAgentResult(payload.project_id, agent, payloadWithRuntime, result);
+    } else if (isFreeformWorkbench) {
+      await appendWorkbenchArtifactForUser(req.authUser.uuid, {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        agent,
+        story: String(payload.idea || '').trim(),
+        storyPreview: String(payload.idea || '').trim().slice(0, 120),
+        context: String(payload.context || '').trim(),
+        projectId: '',
+        timestamp: new Date().toISOString(),
+        output: result,
+      });
+    }
 
     res.status(200).json({
       success: true,
-      project_id: payload.project_id,
+      project_id: hasProjectBinding ? payload.project_id : null,
       data: result,
     });
   } catch (error) {

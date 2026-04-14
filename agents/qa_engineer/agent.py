@@ -383,15 +383,163 @@ class QAEngineer:
                     fields.append(cleaned)
         return fields[:6]
 
-    def _extract_primary_route_label(self, idea):
-        text = (idea or "").lower()
-        if "criar visita" in text:
-            return "POST /visitas"
-        if "aprovar" in text and "visita" in text:
-            return "POST /visitas/{id}/aprovacao"
-        if "cadastrar" in text and "responsavel" in text:
-            return "POST /responsaveis-operacionais"
-        return "endpoint principal da feature"
+    def _extract_acceptance_lines(self, requirement_summary, requirement_spec=None):
+        spec = self._parse_requirement_spec(requirement_spec)
+        acceptance_lines = []
+
+        def append_line(value):
+            text = re.sub(r"\s+", " ", str(value or "")).strip(" -:")
+            if text and text.lower() not in {item.lower() for item in acceptance_lines}:
+                acceptance_lines.append(text)
+
+        for item in self._coerce_lines(spec.get("acceptanceCriteria")):
+            append_line(item)
+
+        match = re.search(
+            r"##+\s+.*criterios de aceite(.*?)(?=\n##+\s+|\Z)",
+            requirement_summary or "",
+            re.IGNORECASE | re.DOTALL,
+        )
+        section = match.group(1) if match else (requirement_summary or "")
+        for raw_line in section.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if re.match(r"^\s*(?:[-*]\s+|\d+[\.\)]\s+)", line):
+                append_line(re.sub(r"^\s*(?:[-*]\s+|\d+[\.\)]\s+)", "", line))
+            elif re.search(r"\bdado\b|\bquando\b|\bentao\b|\bentÃ£o\b", line, re.IGNORECASE):
+                append_line(line)
+
+        return acceptance_lines[:8]
+
+    def _extract_requirement_constraints(self, requirement_summary, requirement_spec=None):
+        spec = self._parse_requirement_spec(requirement_spec)
+        constraints = []
+
+        def append_constraint(value):
+            text = re.sub(r"\s+", " ", str(value or "")).strip(" -:")
+            if text and text.lower() not in {item.lower() for item in constraints}:
+                constraints.append(text)
+
+        for key in ["businessRules", "validationsAndData", "flows", "functionalRequirements"]:
+            for item in self._coerce_lines(spec.get(key)):
+                append_constraint(item)
+
+        for match in re.finditer(
+            r"##+\s+.*(?:regras de negocio|validacoes e dados|fluxos alternativos|fluxos de excecao)(.*?)(?=\n##+\s+|\Z)",
+            requirement_summary or "",
+            re.IGNORECASE | re.DOTALL,
+        ):
+            for raw_line in match.group(1).splitlines():
+                line = raw_line.strip()
+                if re.match(r"^\s*(?:[-*]\s+|\d+[\.\)]\s+)", line):
+                    append_constraint(re.sub(r"^\s*(?:[-*]\s+|\d+[\.\)]\s+)", "", line))
+
+        return constraints[:12]
+
+    def _extract_primary_route_label(self, idea, requirement_summary="", requirement_spec=None):
+        signals = self._extract_requirement_signals(requirement_summary, requirement_spec)
+        if any(term in line for line in signals for term in ["endpoint", "api", "post /", "get /", "put /", "patch /"]):
+            match = re.search(r"\b(?:POST|GET|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_./{}-]+", requirement_summary or "", re.IGNORECASE)
+            if match:
+                return match.group(0).upper()
+            return "endpoint explicitado no requisito"
+        return "fluxo principal da feature"
+
+    def _has_explicit_transport_contract(self, requirement_summary, requirement_spec=None):
+        combined = "\n".join(
+            [
+                str(requirement_summary or ""),
+                json.dumps(self._parse_requirement_spec(requirement_spec), ensure_ascii=False),
+            ]
+        )
+        return bool(
+            re.search(r"\b(?:POST|GET|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_./{}-]+", combined, re.IGNORECASE)
+            or re.search(r"\bstatus\s+HTTP\s+\d{3}\b", combined, re.IGNORECASE)
+        )
+
+    def _infer_core_checks(self, requirement_summary, requirement_spec=None):
+        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        constraints = self._extract_requirement_constraints(requirement_summary, requirement_spec)
+        acceptance_lines = self._extract_acceptance_lines(requirement_summary, requirement_spec)
+        checks = []
+
+        def add_check(value):
+            text = re.sub(r"\s+", " ", str(value or "")).strip(" -:")
+            if text and text.lower() not in {item.lower() for item in checks}:
+                checks.append(text)
+
+        for line in constraints + acceptance_lines:
+            normalized = unicodedata.normalize("NFD", line.lower())
+            normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+            if "obrigat" in normalized:
+                add_check("validacao de campos obrigatorios sem perder os dados ja digitados")
+            if "nao pode" in normalized and "passad" in normalized:
+                add_check("bloqueio de datas no passado com mensagem clara")
+            if "maior que zero" in normalized or "inteiro maior que zero" in normalized:
+                add_check("validacao de valor numerico inteiro acima de zero")
+            if "duplic" in normalized:
+                add_check("bloqueio de duplicidade conforme a combinacao definida no requisito")
+            if "responsavel" in normalized and any(term in normalized for term in ["exist", "cadastrad", "plataforma"]):
+                add_check("validacao de responsavel existente antes de concluir a acao")
+            if any(term in normalized for term in ["salvar", "habilitado", "desabilitado", "botao"]):
+                add_check("controle do botao de salvar conforme a validade minima do formulario")
+            if any(term in normalized for term in ["auditoria", "log", "trilha"]):
+                add_check("geracao de evidencias observaveis de auditoria ou log apos a acao principal")
+            if any(term in normalized for term in ["mensagem", "erro", "feedback"]):
+                add_check("mensagens de erro claras e feedback consistente no retorno")
+
+        if not checks and fields:
+            add_check(f"persistencia correta dos campos {', '.join(fields[:3])}")
+            add_check("bloqueio da submissao quando houver dado invalido")
+            add_check("evidencia observavel de sucesso apos a acao principal")
+
+        return checks[:6]
+
+    def _remove_unfounded_technical_assumptions(self, plan_text, requirement_summary, requirement_spec=None):
+        text = (plan_text or "").strip()
+        if not text:
+            return ""
+
+        if not self._has_explicit_transport_contract(requirement_summary, requirement_spec):
+            text = re.sub(r"\b(?:POST|GET|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_./{}-]+\b", "fluxo principal da feature", text)
+            text = re.sub(r"`/[A-Za-z0-9_./{}-]+`", "operacao definida no requisito", text)
+            text = re.sub(r"\bendpoint\s+`/[A-Za-z0-9_./{}-]+`", "operacao definida no requisito", text, flags=re.IGNORECASE)
+            text = re.sub(
+                r"\bstatus\s+HTTP\s+(?:200|201|202|204|400|401|403|404|409|422|500|503)\b",
+                "resultado de sucesso ou erro previsto",
+                text,
+                flags=re.IGNORECASE,
+            )
+            text = re.sub(
+                r"\b(?:HTTP\s*)?(?:200|201|202|204|400|401|403|404|409|422|500|503)\b",
+                "resultado previsto",
+                text,
+                flags=re.IGNORECASE,
+            )
+            text = re.sub(r"\barray ordenado por timestamp desc\b", "lista ordenada conforme o criterio definido no requisito", text, flags=re.IGNORECASE)
+            text = re.sub(r"\btimestamp iso ?8601(?: com segundos)?\b", "timestamp no formato definido pelo requisito", text, flags=re.IGNORECASE)
+            text = re.sub(r"\b(?:id|evt|ev)-\{?ano\}?-\{?sequencial\}?\b", "identificador definido pelo requisito", text, flags=re.IGNORECASE)
+            text = re.sub(r"\bidentificador definido pelo requisito\}+", "identificador definido pelo requisito", text, flags=re.IGNORECASE)
+            text = re.sub(r"\blimite de 50 resultados\b", "limite de resultados definido pelo produto", text, flags=re.IGNORECASE)
+            text = re.sub(r"\blimit\s*=\s*50\b", "limite definido pelo produto", text, flags=re.IGNORECASE)
+            text = re.sub(r"\border\s*=\s*desc[_-]?date\b", "ordenacao definida pelo requisito", text, flags=re.IGNORECASE)
+            text = re.sub(r"\b(?:<=|≤)\s*2\s*s\b", "tempo compativel com a experiencia definida pelo produto", text, flags=re.IGNORECASE)
+            text = re.sub(r"\b100 buscas simultaneas\b", "volume compativel com a demanda esperada do MVP", text, flags=re.IGNORECASE)
+            text = re.sub(r"\blog_audit\b", "trilha de auditoria", text, flags=re.IGNORECASE)
+            text = re.sub(r"\baudit_log\b", "trilha de auditoria", text, flags=re.IGNORECASE)
+            text = re.sub(r"\beventid\b", "identificador da entidade", text, flags=re.IGNORECASE)
+            text = re.sub(r"\brole equivalente a [^)]+", "perfil autorizado previsto no requisito", text, flags=re.IGNORECASE)
+            text = re.sub(r"\bpaginacao correta\b", "listagem correta conforme o requisito", text, flags=re.IGNORECASE)
+            text = re.sub(r"\bindexe corretamente\b", "considere corretamente os campos previstos", text, flags=re.IGNORECASE)
+            text = re.sub(r"\bservic[o|ó]\s+de\s+gera[cç][aã]o\s+de\s+id\b", "servico ligado ao fluxo principal", text, flags=re.IGNORECASE)
+
+        text = re.sub(r"\b255 caracteres\b", "limite textual definido no requisito", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b999999\b", "limite numerico definido no requisito", text, flags=re.IGNORECASE)
+        text = re.sub(r"\btentar novamente\b", "exibir erro tratado e permitir nova tentativa segura", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "data em formato previsto no requisito", text)
+        text = re.sub(r"\bstatus\s+\"?[A-Z_ ]+\"?\b", "status previsto no requisito", text, flags=re.IGNORECASE)
+        return text
 
     def _normalize_section_lines(self, body):
         return [
@@ -401,7 +549,7 @@ class QAEngineer:
         ]
 
     def _synthesize_risk_lines(self, idea, requirement_summary, requirement_spec=None):
-        route_label = self._extract_primary_route_label(idea)
+        route_label = self._extract_primary_route_label(idea, requirement_summary, requirement_spec)
         fields = self._extract_text_fields(requirement_summary, requirement_spec)
         field_label = ", ".join(fields[:3]) if fields else "campos obrigatorios"
         signals = self._extract_requirement_signals(requirement_summary, requirement_spec)
@@ -416,7 +564,7 @@ class QAEngineer:
             )
         if any(term in line for line in signals for term in ["contato", "email", "telefone"]):
             risks.append(
-                f"- Risco: contato salvo em formato inutilizavel para a operacao -> sinal: respostas 400 por validacao de contato ou registro persistido sem canal acionavel no {route_label}."
+                f"- Risco: contato salvo em formato inutilizavel para a operacao -> sinal: rejeicoes por validacao de contato ou registro persistido sem canal acionavel no {route_label}."
             )
         if any(term in line for line in signals for term in ["tipo de suporte", "formato", "status", "categoria"]):
             risks.append(
@@ -432,7 +580,7 @@ class QAEngineer:
             )
         if not risks:
             risks = [
-                f"- Risco: validacao insuficiente dos campos {field_label} -> sinal: aumento de respostas 400 ou registros invalidos no {route_label}.",
+                f"- Risco: validacao insuficiente dos campos {field_label} -> sinal: aumento de rejeicoes por validacao ou registros invalidos no {route_label}.",
                 "- Risco: persistencia incompleta apos confirmacao -> sinal: diferenca entre confirmacoes de sucesso e registros recuperaveis na consulta subsequente.",
                 "- Risco: ausencia de log/auditoria da acao principal -> sinal: criacao sem timestamp ou sem usuario responsavel registrado.",
             ]
@@ -445,7 +593,22 @@ class QAEngineer:
             risks.append(
                 "- Risco: ausencia de trilha de auditoria na acao principal -> sinal: criacao sem timestamp ou sem usuario responsavel registrado."
             )
-        return risks[:4]
+        unique_risks = []
+        for risk in risks:
+            if risk not in unique_risks:
+                unique_risks.append(risk)
+        fallback_risks = [
+            f"- Risco: validacao insuficiente dos campos {field_label} -> sinal: aumento de rejeicoes por validacao ou registros invalidos no {route_label}.",
+            "- Risco: persistencia incompleta apos confirmacao -> sinal: diferenca entre confirmacoes de sucesso e registros recuperaveis na consulta subsequente.",
+            "- Risco: ausencia de log/auditoria da acao principal -> sinal: criacao sem timestamp ou sem usuario responsavel registrado.",
+            "- Risco: feedback inconsistente em erro ou sucesso -> sinal: usuario sem confirmacao clara, mensagem ambigua ou tentativa repetida apos resposta inconclusiva.",
+        ]
+        for risk in fallback_risks:
+            if risk not in unique_risks:
+                unique_risks.append(risk)
+            if len(unique_risks) >= 3:
+                break
+        return unique_risks[:4]
 
     def _synthesize_limit_lines(self, idea, requirement_summary, requirement_spec=None):
         fields = self._extract_text_fields(requirement_summary, requirement_spec)
@@ -457,45 +620,66 @@ class QAEngineer:
             f"8. Limite: valor exatamente no limite minimo aceito para {secondary_text}; sistema aceita e persiste corretamente.",
         ]
 
-    def _synthesize_smoke_lines(self, idea, requirement_summary, requirement_spec=None):
-        route_label = self._extract_primary_route_label(idea)
+    def _synthesize_test_data_lines(self, idea, requirement_summary, requirement_spec=None):
         fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        checks = self._infer_core_checks(requirement_summary, requirement_spec)
         primary_field = fields[0] if fields else "campo principal"
         secondary_field = fields[1] if len(fields) > 1 else "campo complementar"
+        tertiary_field = fields[2] if len(fields) > 2 else "campo de apoio"
+        first_check = checks[0] if checks else "validacoes centrais do requisito"
+        second_check = checks[1] if len(checks) > 1 else "regra de bloqueio sem persistencia parcial"
+        return [
+            f"- Massa valida: preencher {primary_field} e {secondary_field} com valores aderentes ao requisito e persistiveis no fluxo principal.",
+            f"- Massa invalida: enviar {primary_field} ausente, invalido ou fora do formato esperado para comprovar {first_check}.",
+            f"- Massa de limite: usar {secondary_field} e {tertiary_field} exatamente nas fronteiras documentadas para provar {second_check}.",
+            "- Massa de regressao: combinar uma entrada valida com uma regra critica do requisito, como duplicidade, data invalida ou referencia inexistente, quando aplicavel.",
+            "- Evidencia operacional: confirmar mensagem de retorno, efeito persistido e sinal observavel de log/auditoria apos a acao principal.",
+        ]
+
+    def _synthesize_smoke_lines(self, idea, requirement_summary, requirement_spec=None):
+        route_label = self._extract_primary_route_label(idea, requirement_summary, requirement_spec)
+        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        checks = self._infer_core_checks(requirement_summary, requirement_spec)
+        primary_field = fields[0] if fields else "campo principal"
+        secondary_field = fields[1] if len(fields) > 1 else "campo complementar"
+        final_check = checks[0] if checks else "efeito observavel apos a acao principal"
         return [
             f"- UI: abrir a tela/fluxo principal da feature sem erro visivel.",
             f"- Validacao: submeter {primary_field} e {secondary_field} com valores validos e verificar aceite do formulario.",
-            f"- API: confirmar resposta de sucesso no {route_label} ou no endpoint principal equivalente.",
+            f"- Fluxo: confirmar resultado previsto no {route_label} sem erro inesperado.",
             "- Persistencia: consultar em seguida e verificar que o registro/reflexo da acao ficou disponivel.",
-            "- Auditoria: verificar existencia de feedback de sucesso ou sinal operacional minimo apos a acao principal.",
+            f"- Auditoria: verificar existencia de feedback de sucesso ou sinal operacional minimo ligado a {final_check}.",
         ]
 
     def _synthesize_scenarios(self, idea, requirement_summary, requirement_spec=None):
         fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        checks = self._infer_core_checks(requirement_summary, requirement_spec)
         primary_field = fields[0] if fields else "campo principal"
         secondary_field = fields[1] if len(fields) > 1 else "campo complementar"
         tertiary_field = fields[2] if len(fields) > 2 else secondary_field
+        first_check = checks[0] if checks else "validacao principal do requisito"
+        second_check = checks[1] if len(checks) > 1 else "regra central do fluxo"
         return [
             f"1. Caminho Feliz: criar/registrar a feature com {primary_field} e {secondary_field} validos; sistema conclui a operacao com sucesso.",
-            f"2. Caminho Feliz: repetir o fluxo principal com variacao valida de {secondary_field}; sistema persiste e exibe confirmacao coerente.",
-            f"3. Caminho Feliz: consultar o registro apos a acao principal; sistema apresenta os dados mais recentes sem divergencia.",
-            f"4. Excecao: submeter a feature sem {primary_field}; sistema bloqueia a operacao e informa o erro.",
+            f"2. Caminho Feliz: repetir o fluxo principal com variacao valida de {secondary_field}; sistema persiste e respeita {second_check}.",
+            f"3. Caminho Feliz: consultar o registro apos a acao principal; sistema apresenta os dados mais recentes sem divergencia e com feedback coerente.",
+            f"4. Excecao: submeter a feature sem {primary_field}; sistema bloqueia a operacao e prova {first_check}.",
             f"5. Excecao: informar {secondary_field} em formato invalido; sistema rejeita a submissao sem persistencia parcial.",
             "6. Excecao: simular falha do backend durante a confirmacao; sistema exibe erro tratado e evita inconsistencias.",
-            f"7. Limite: informar {primary_field} exatamente no tamanho maximo permitido; sistema aceita e persiste corretamente.",
-            f"8. Limite: informar {tertiary_field} exatamente no menor valor valido previsto; sistema aceita sem degradar a experiencia.",
-            "9. Resiliencia: repetir a operacao apos falha transitória; sistema recupera o fluxo sem duplicar registros.",
+            f"7. Limite: informar {primary_field} exatamente na fronteira textual documentada; sistema aceita e persiste corretamente.",
+            f"8. Limite: informar {tertiary_field} exatamente no menor ou maior valor valido previsto no requisito; sistema aceita sem degradar a experiencia.",
+            "9. Resiliencia: repetir a operacao apos falha transitoria; sistema recupera o fluxo sem duplicar registros.",
             "10. Resiliencia: executar consulta/acao principal com lentidao moderada da API; sistema preserva feedback e nao trava a interface.",
         ]
 
     def _synthesize_functional_cases(self, idea, requirement_summary, requirement_spec=None):
-        route_label = self._extract_primary_route_label(idea)
+        route_label = self._extract_primary_route_label(idea, requirement_summary, requirement_spec)
         spec = self._parse_requirement_spec(requirement_spec)
         fields = self._extract_text_fields(requirement_summary, requirement_spec)
         primary_field = fields[0] if fields else "campo principal"
         secondary_field = fields[1] if len(fields) > 1 else "campo complementar"
         rule_lines = self._coerce_lines(spec.get("businessRules"))
-        acceptance_lines = self._coerce_lines(spec.get("acceptanceCriteria"))
+        acceptance_lines = self._extract_acceptance_lines(requirement_summary, requirement_spec)
         first_rule = self._compact_phrase(rule_lines[0]) if rule_lines else "regras de negocio aplicaveis"
         first_acceptance = (
             self._compact_phrase(acceptance_lines[0]) if acceptance_lines else "confirmacao exibida ao usuario"
@@ -503,38 +687,54 @@ class QAEngineer:
         return "\n".join(
             [
                 "1. CT-01",
-                f"Acao: preencher {primary_field} e {secondary_field} com valores validos e confirmar a acao principal.",
-                f"Resultado esperado: requisicao enviada ao {route_label} com sucesso, persistencia concluida e {first_acceptance.lower()}.",
+                f"Acao: preencher {primary_field} e {secondary_field} com valores validos e confirmar a acao principal ligada ao CA-01.",
+                f"Resultado esperado: fluxo concluido com sucesso em {route_label}, persistencia concluida e {first_acceptance.lower()}.",
                 "",
                 "2. CT-02",
-                f"Acao: deixar {primary_field} ausente ou invalido e tentar confirmar a acao principal.",
+                f"Acao: deixar {primary_field} ausente ou invalido e tentar confirmar a acao principal ligada ao CA-02.",
                 f"Resultado esperado: submissao bloqueada ou rejeitada com mensagem clara, sem persistencia parcial e respeitando {first_rule.lower()}.",
                 "",
                 "3. CT-03",
-                "Acao: simular falha operacional durante a confirmacao, como indisponibilidade temporaria da API ou erro de validacao no backend.",
+                "Acao: simular falha operacional durante a confirmacao ligada ao CA-03, como indisponibilidade temporaria da integracao ou erro de validacao no backend.",
                 "Resultado esperado: erro tratado sem travar a interface, sem dado inconsistente persistido e com sinal operacional registravel.",
             ]
         ).strip()
 
     def _synthesize_traceability_lines(self, idea, requirement_summary, requirement_spec=None):
         spec = self._parse_requirement_spec(requirement_spec)
-        acceptance_lines = self._coerce_lines(spec.get("acceptanceCriteria"))
+        acceptance_lines = self._extract_acceptance_lines(requirement_summary, requirement_spec)
         rules_lines = self._coerce_lines(spec.get("businessRules"))
-        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        checks = self._infer_core_checks(requirement_summary, requirement_spec)
 
-        primary_subject = fields[0] if fields else "campo principal"
-        secondary_subject = fields[1] if len(fields) > 1 else primary_subject
-        first_acceptance = acceptance_lines[0] if acceptance_lines else "confirmacao do fluxo principal"
+        if acceptance_lines:
+            lines = []
+            for index, acceptance in enumerate(acceptance_lines[:6], start=1):
+                case_ref = "CT-01" if index == 1 else "CT-02" if index == 2 else "CT-03"
+                scenario_refs = {
+                    1: "Cenarios 1, 2 e 3",
+                    2: "Cenarios 4, 5 e 6",
+                    3: "Cenarios 7 e 8",
+                }.get(index, "Cenarios 9 e 10")
+                smoke_ref = checks[min(index - 1, len(checks) - 1)] if checks else "efeito observavel do fluxo principal"
+                lines.append(
+                    f"- CA-{index:02d} -> {acceptance}; cobertura em {scenario_refs}, caso {case_ref} e smoke ligado a {smoke_ref}."
+                )
+            if rules_lines:
+                lines.append(
+                    f"- Regra associada -> {self._compact_phrase(rules_lines[0], max_words=18)}; validada transversalmente nos cenarios e casos acima."
+                )
+            return "\n".join(lines).strip()
+
+        primary_check = checks[0] if checks else "validacao principal do requisito"
+        secondary_check = checks[1] if len(checks) > 1 else primary_check
         first_rule = rules_lines[0] if rules_lines else "regra principal da historia"
-
         return "\n".join(
             [
-                f"- CA-01 -> Cenarios 1, 2 e 3; Casos CT-01 e CT-02; Smoke: validar {primary_subject} no fluxo principal.",
-                f"- CA-02 -> Cenarios 4, 5 e 6; Casos CT-02 e CT-03; Smoke: bloquear {primary_subject} invalido sem persistencia parcial.",
-                f"- CA-03 -> Cenarios 7 e 8; Casos CT-01 e CT-03; Smoke: confirmar o efeito observavel de {secondary_subject} apos a acao.",
-                f"- CA-04 -> Cenarios 9 e 10; Casos CT-03; Smoke: manter resiliencia e rastreabilidade apos falha no fluxo principal.",
-                f"- CA-05 -> Regra: {first_rule}; cobertura associada aos cenarios e casos acima.",
-                f"- CA-06 -> Aceite: {first_acceptance}; deve aparecer no smoke e nos casos funcionais.",
+                f"- CA-01 -> Cenarios 1, 2 e 3; Caso CT-01; Smoke: validar {primary_check}.",
+                f"- CA-02 -> Cenarios 4, 5 e 6; Caso CT-02; Smoke: bloquear erro conhecido sem persistencia parcial.",
+                f"- CA-03 -> Cenarios 7 e 8; Caso CT-01; Smoke: confirmar {secondary_check} nas fronteiras do requisito.",
+                f"- CA-04 -> Cenarios 9 e 10; Caso CT-03; Smoke: manter resiliencia e rastreabilidade apos falha no fluxo principal.",
+                f"- Regra associada -> {first_rule}; cobertura associada aos cenarios e casos acima.",
             ]
         ).strip()
 
@@ -572,6 +772,14 @@ class QAEngineer:
         if action_count < 3 or expected_count < 3:
             sections["Casos de teste funcionais"] = self._synthesize_functional_cases(idea, requirement_summary, requirement_spec)
 
+        test_data_body = sections.get("Dados de teste", "")
+        if (
+            "ponto a validar" in test_data_body.lower()
+            or "ponto a verificar" in test_data_body.lower()
+            or len(self._normalize_section_lines(test_data_body)) < 3
+        ):
+            sections["Dados de teste"] = "\n".join(self._synthesize_test_data_lines(idea, requirement_summary, requirement_spec))
+
         traceability_body = sections.get("Rastreabilidade dos Criterios de Aceite", "")
         traceability_lines = self._normalize_section_lines(traceability_body)
         traceability_count = len([
@@ -592,7 +800,9 @@ class QAEngineer:
         if len(smoke_lines) < 3:
             sections["Smoke Minimo da Feature"] = "\n".join(self._synthesize_smoke_lines(idea, requirement_summary, requirement_spec))
 
-        return self._sanitize_plan(self._build_full_plan(sections))
+        stabilized = self._build_full_plan(sections)
+        stabilized = self._remove_unfounded_technical_assumptions(stabilized, requirement_summary, requirement_spec)
+        return self._sanitize_plan(stabilized)
 
     def _generate_block(self, prompt, qa_model, *, num_predict):
         result = generate_text_from_llm(
@@ -638,10 +848,10 @@ Regras gerais:
 - Prefira bullets curtos e objetivos.
 - Nao inclua introducao nem conclusao.
 - Evite repeticao: cada item deve cobrir um risco, validacao ou comportamento diferente.
-- Prefira checagens verificaveis como status HTTP, bloqueio de submissao, mensagem de erro, persistencia, log/auditoria e ausencia de erro 5xx.
+- Prefira checagens verificaveis como bloqueio de submissao, mensagem de erro, persistencia, log/auditoria e ausencia de falha inesperada.
 """
 
-        retry_count = max(1, int(os.getenv("QA_MAX_RETRIES", "1")))
+        retry_count = max(1, int(os.getenv("QA_MAX_RETRIES", "2")))
         last_reason = "sem detalhes"
 
         for _attempt in range(1, retry_count + 1):

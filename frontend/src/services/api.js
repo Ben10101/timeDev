@@ -207,6 +207,28 @@ export async function updateAiSettings(payload) {
   return response.data
 }
 
+export async function getRequirementModels() {
+  const response = await apiClient.get('/auth/requirement-models')
+  return response.data
+}
+
+export async function updateRequirementModels(payload) {
+  const response = await apiClient.put('/auth/requirement-models', payload)
+  return response.data
+}
+
+export async function importRequirementModelFile(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await apiClient.post('/auth/requirement-models/import', formData)
+  return response.data
+}
+
+export async function getWorkbenchArtifacts() {
+  const response = await apiClient.get('/auth/workbench-artifacts')
+  return response.data
+}
+
 export async function getAiRuntimeSummary() {
   const response = await apiClient.get('/auth/ai-runtime')
   return response.data
@@ -254,6 +276,14 @@ export async function getActiveAlerts(params = {}) {
 
 export async function analyzeAlignment(input) {
   const response = await apiClient.post('/alignment/analyze', { input })
+  return response.data
+}
+
+export async function runAgent({ agent, payload }) {
+  const response = await apiClient.post('/agents/run', {
+    agent,
+    payload,
+  })
   return response.data
 }
 
@@ -443,6 +473,10 @@ export default {
   logoutAuth,
   getAiSettings,
   updateAiSettings,
+  getRequirementModels,
+  importRequirementModelFile,
+  getWorkbenchArtifacts,
+  updateRequirementModels,
   getAiRuntimeSummary,
   testAiProvider,
   getProductionReadiness,
@@ -451,6 +485,7 @@ export default {
   getOperationalHistory,
   getActiveAlerts,
   analyzeAlignment,
+  runAgent,
   generateProject,
   bootstrapWorkspace,
   listProjects,

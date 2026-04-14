@@ -161,6 +161,8 @@ model User {
   name                         String              @db.VarChar(120)
   email                        String              @unique @db.VarChar(190)
   aiSettings                   Json?               @map("ai_settings")
+  requirementModels            Json?               @map("requirement_models")
+  workbenchArtifacts           Json?               @map("workbench_artifacts")
   passwordHash                 String?             @map("password_hash") @db.VarChar(255)
   refreshTokenHash             String?             @map("refresh_token_hash") @db.VarChar(255)
   refreshTokenExpiresAt        DateTime?           @map("refresh_token_expires_at") @db.DateTime(0)

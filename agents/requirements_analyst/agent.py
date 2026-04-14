@@ -930,6 +930,12 @@ Secoes para reparar:
             flags=re.IGNORECASE,
         )
 
+        extracted_sections = self._extract_sections(text)
+        if extracted_sections:
+            text = self._build_document(extracted_sections)
+
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
         return text
 
     def _apply_story_type_guardrails(self, content, idea):

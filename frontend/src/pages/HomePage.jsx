@@ -158,6 +158,13 @@ export default function HomePage() {
             <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
             Abrir projetos
           </button>
+          <button
+            onClick={() => navigate('/agents-lab')}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all hover:border-slate-300 hover:bg-slate-50"
+          >
+            <Sparkles className="h-4 w-4" strokeWidth={2.2} />
+            Bancada de agentes
+          </button>
         </div>
       }
     >
@@ -264,6 +271,12 @@ export default function HomePage() {
                     className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                   >
                     Abrir implementação
+                  </button>
+                  <button
+                    onClick={() => navigate('/agents-lab')}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                  >
+                    Abrir bancada de agentes
                   </button>
                 </div>
               </div>

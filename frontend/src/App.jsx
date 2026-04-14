@@ -16,6 +16,7 @@ const BacklogKanban = lazy(() => import('./pages/BacklogKanban'));
 const GlobalBacklogPage = lazy(() => import('./pages/GlobalBacklogPage'));
 const AiSettingsPage = lazy(() => import('./pages/AiSettingsPage'));
 const CodeStudioPage = lazy(() => import('./pages/CodeStudioPage'));
+const AgentWorkbenchPage = lazy(() => import('./pages/AgentWorkbenchPage'));
 const GovernancePage = lazy(() => import('./pages/GovernancePage'));
 
 function RouteLoadingFallback() {
@@ -114,6 +115,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <CodeStudioPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agents-lab"
+              element={
+                <ProtectedRoute>
+                  <AgentWorkbenchPage />
                 </ProtectedRoute>
               }
             />
