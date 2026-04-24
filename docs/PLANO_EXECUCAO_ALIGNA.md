@@ -46,6 +46,14 @@ Vou seguir numa ordem que reduz risco primeiro e deixa o sistema mais facil de m
 - Template compartilhado sem pendencias obvias
 - Nenhum ponto funcional quebrado durante a limpeza
 
+## Fechamento desta passada
+- Backend critico revisado com foco em conflito de execucao, recovery e runtime
+- Validacoes executadas nos fluxos alterados, com checagens praticas nos pontos mexidos
+- `CodeStudioPage` reduzida e estabilizada sem quebrar a experiencia principal
+- Template compartilhado mantido estavel, sem nova abstracao sem ganho claro
+- Documentacao principal atualizada para refletir o fechamento da limpeza
+- Auditoria final sem pendencias obvias nos pontos atacados nesta rodada
+
 ## Ordem recomendada
 1. backend critico
 2. validacoes

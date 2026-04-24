@@ -4,6 +4,7 @@ import { buildRuntimeAiEnvForUser } from '../src/services/aiSettingsService.js';
 import {
   createAgentRunStart,
   createQaArtifacts,
+  createRequirementsArtifacts,
   finishAgentRun,
   persistAgentResult,
 } from '../src/services/projectDataService.js';
@@ -47,6 +48,32 @@ function buildQaRequirementSummary(requirementsContent = '') {
   ]
     .filter(Boolean)
     .join('\n\n');
+}
+
+function buildCompactRequirementBacklog(task) {
+  const projectDna = task.project?.intakeConfig?.projectDna || null;
+  const projectDnaSummary = projectDna
+    ? [
+        projectDna.project?.productMode ? `Product mode: ${projectDna.project.productMode}` : null,
+        projectDna.project?.experienceStyle ? `Experience style: ${projectDna.project.experienceStyle}` : null,
+        projectDna.project?.primaryActor ? `Ator principal: ${projectDna.project.primaryActor}` : null,
+        Array.isArray(projectDna.project?.domainLanguage) && projectDna.project.domainLanguage.length
+          ? `Linguagem do dominio: ${projectDna.project.domainLanguage.slice(0, 8).join(', ')}` 
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' | ')
+    : null;
+
+  return [
+    `Historia alvo: ${compactText(task.title, 140)}`,
+    task.description ? `Contexto imediato: ${compactText(task.description, 180)}` : null,
+    task.project?.description ? `Projeto: ${compactText(task.project.description, 140)}` : null,
+    task.project?.vision ? `Visao: ${compactText(task.project.vision, 160)}` : null,
+    projectDnaSummary ? `Project DNA: ${compactText(projectDnaSummary, 240)}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function compactWhitespace(value = '') {
@@ -215,6 +242,54 @@ async function regenerateQaForTask(project, task, envOverrides) {
   }
 }
 
+async function regenerateRequirementsForTask(project, task, envOverrides) {
+  const payload = {
+    project_id: project.uuid,
+    task_uuid: task.uuid,
+    idea: `Refine somente esta história de usuário: ${task.title}${
+      task.description ? `\n\nContexto complementar da tarefa: ${task.description}` : ''
+    }`,
+    backlog: buildCompactRequirementBacklog({
+      ...task,
+      project,
+    }),
+    project_name: project.name,
+    project_context: {
+      description: compactText(project.description, 180),
+      vision: compactText(project.vision, 220),
+    },
+  };
+
+  const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
+  const agentRun = await createAgentRunStart(project.uuid, 'requirements_analyst', payloadWithRuntime);
+
+  try {
+    const result = await runSingleAgent('requirements_analyst', payloadWithRuntime, { envOverrides });
+    const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    assertArtifactCompleteness('requirements_analyst', content);
+    await finishAgentRun(agentRun.id, {
+      status: 'completed',
+      result,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+    });
+    await createRequirementsArtifacts(task.uuid, {
+      title: `Requisitos refinados - ${task.title}`,
+      content,
+      contentFormat: 'markdown',
+      createdByAgentName: 'requirements_analyst',
+      agentRunId: agentRun.id,
+    });
+    return { taskUuid: task.uuid, title: task.title, status: 'completed' };
+  } catch (error) {
+    await finishAgentRun(agentRun.id, {
+      status: 'failed',
+      errorMessage: error.message,
+      usageMeta: null,
+    }).catch(() => null);
+    return { taskUuid: task.uuid, title: task.title, status: 'failed', reason: error.message };
+  }
+}
+
 async function regenerateArchitecture(project, envOverrides) {
   const refinedStories = (project.tasks || [])
     .filter((task) => task.taskType !== 'agent_job')
@@ -291,13 +366,15 @@ const rawArgs = process.argv.slice(2);
 const taskFilterArg = rawArgs.find((arg) => arg.startsWith('--tasks='));
 const architectureOnly = rawArgs.includes('--architecture-only');
 const qaOnly = rawArgs.includes('--qa-only');
+const requirementsOnly = rawArgs.includes('--requirements-only');
+const requirementsFirst = rawArgs.includes('--requirements-first');
 const projectName = rawArgs
   .filter((arg) => !arg.startsWith('--'))
   .join(' ')
   .trim();
 
 if (!projectName) {
-  console.error('Uso: node scripts/regenerate-project-artifacts.mjs "Nome do projeto" [--tasks=uuid1,uuid2] [--qa-only] [--architecture-only]');
+  console.error('Uso: node scripts/regenerate-project-artifacts.mjs "Nome do projeto" [--tasks=uuid1,uuid2] [--qa-only] [--requirements-only] [--requirements-first] [--architecture-only]');
   process.exit(1);
 }
 
@@ -355,6 +432,7 @@ if (!actorUserUuid) {
 
 const qaEnvOverrides = await buildRuntimeAiEnvForUser(actorUserUuid, { agentName: 'qa_engineer' });
 const architectEnvOverrides = await buildRuntimeAiEnvForUser(actorUserUuid, { agentName: 'architect' });
+const requirementsEnvOverrides = await buildRuntimeAiEnvForUser(actorUserUuid, { agentName: 'requirements_analyst' });
 
 const qaTargetTasks = project.tasks.filter(
   (task) =>
@@ -364,8 +442,18 @@ const qaTargetTasks = project.tasks.filter(
     (!taskFilter.size || taskFilter.has(task.uuid))
 );
 
+const requirementResults = [];
+if (requirementsOnly || requirementsFirst) {
+  for (const task of qaTargetTasks) {
+    console.log(`Regenerando requisitos: ${task.title}`);
+    const taskResult = await regenerateRequirementsForTask(project, task, requirementsEnvOverrides);
+    requirementResults.push(taskResult);
+    console.log(` -> ${taskResult.status}${taskResult.reason ? ` | ${taskResult.reason}` : ''}`);
+  }
+}
+
 const qaResults = [];
-if (!architectureOnly) {
+if (!architectureOnly && !requirementsOnly) {
   for (const task of qaTargetTasks) {
     console.log(`Regenerando QA: ${task.title}`);
     const taskResult = await regenerateQaForTask(project, task, qaEnvOverrides);
@@ -385,6 +473,13 @@ const summary = {
   project: {
     uuid: project.uuid,
     name: project.name,
+  },
+  requirements: {
+    total: requirementResults.length,
+    completed: requirementResults.filter((item) => item.status === 'completed').length,
+    failed: requirementResults.filter((item) => item.status === 'failed').length,
+    skipped: requirementResults.filter((item) => item.status === 'skipped').length,
+    items: requirementResults,
   },
   qa: {
     total: qaResults.length,

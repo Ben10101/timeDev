@@ -355,10 +355,46 @@ function shouldPreserveExistingFrontendPageTemplate({
   candidateTemplate,
   candidateSource,
 }) {
+  if (process.env.ALIGNA_FORCE_WORKSPACE_TEMPLATE_REUSE === '1') {
+    return Boolean(String(existingTemplate || '').trim() && String(candidateTemplate || '').trim());
+  }
+
   const currentTemplate = String(existingTemplate || '').trim();
   const nextTemplate = String(candidateTemplate || '').trim();
+  const pageArchetype =
+    technicalSpec.frontend?.pageArchetype ||
+    technicalSpec.frontend?.screenSpec?.pageArchetype ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.pageArchetype ||
+    null;
+  const fallbackPattern =
+    technicalSpec.frontend?.fallbackPattern ||
+    technicalSpec.frontend?.screenSpec?.fallbackPattern ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.fallbackPattern ||
+    null;
+  const componentMap =
+    technicalSpec.frontend?.componentMap ||
+    technicalSpec.frontend?.screenSpec?.componentMap ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.componentMap ||
+    {};
+  const variationSignals =
+    Boolean(pageArchetype) ||
+    Boolean(fallbackPattern) ||
+    (componentMap && Object.keys(componentMap).length > 0) ||
+    Boolean(technicalSpec.frontend?.autonomousVariationProfile);
+  const currentLooksTemplateLike =
+    currentTemplate.includes('<OperationsWorkspace') &&
+    currentTemplate.includes('formTitle=') &&
+    currentTemplate.includes('listTitle=');
 
   if (!currentTemplate || !nextTemplate || currentTemplate === nextTemplate) {
+    return false;
+  }
+
+  if (candidateSource === 'llm_primary') {
+    return false;
+  }
+
+  if (variationSignals || currentLooksTemplateLike) {
     return false;
   }
 
@@ -371,6 +407,62 @@ function shouldPreserveExistingFrontendPageTemplate({
   }
 
   return candidateSource !== 'llm_primary';
+}
+
+function buildFrontendTemplatePreservationDecision({
+  technicalSpec,
+  existingTemplate,
+  candidateTemplate,
+  candidateSource,
+  preserved,
+}) {
+  const currentTemplate = String(existingTemplate || '').trim();
+  const nextTemplate = String(candidateTemplate || '').trim();
+  const screenTemplate =
+    technicalSpec.architecture?.screenTemplate ||
+    technicalSpec.structured?.classification?.screenTemplate ||
+    'crud';
+  const pageArchetype =
+    technicalSpec.frontend?.pageArchetype ||
+    technicalSpec.frontend?.screenSpec?.pageArchetype ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.pageArchetype ||
+    null;
+  const fallbackPattern =
+    technicalSpec.frontend?.fallbackPattern ||
+    technicalSpec.frontend?.screenSpec?.fallbackPattern ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.fallbackPattern ||
+    null;
+  const componentMap =
+    technicalSpec.frontend?.componentMap ||
+    technicalSpec.frontend?.screenSpec?.componentMap ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.componentMap ||
+    {};
+
+  let reason = 'no_preservation_needed';
+  if (!currentTemplate || !nextTemplate || currentTemplate === nextTemplate) {
+    reason = 'no_existing_or_candidate_difference';
+  } else if (process.env.ALIGNA_FORCE_WORKSPACE_TEMPLATE_REUSE === '1') {
+    reason = preserved ? 'forced_by_env' : 'env_requested_but_not_applicable';
+  } else if (candidateSource === 'llm_primary') {
+    reason = preserved ? 'unexpected_preserve_with_llm_primary' : 'spec_authority_over_llm_candidate';
+  } else if (pageArchetype || fallbackPattern || (componentMap && Object.keys(componentMap).length > 0)) {
+    reason = preserved ? 'unexpected_preserve_under_variation_signals' : 'variation_signals_require_regeneration';
+  } else if (!isSpecialistAlignedFrontendPageTemplate(currentTemplate, technicalSpec)) {
+    reason = 'existing_template_not_aligned';
+  } else if (!isSpecialistAlignedFrontendPageTemplate(nextTemplate, technicalSpec)) {
+    reason = preserved ? 'candidate_not_aligned_keep_existing' : 'candidate_not_aligned';
+  } else if (preserved) {
+    reason = 'workspace_template_reused';
+  }
+
+  return {
+    preserved,
+    reason,
+    candidateSource: candidateSource || null,
+    screenTemplate,
+    pageArchetype,
+    fallbackPattern,
+  };
 }
 
 async function hydrateTechnicalSpecWithWorkspaceImplementation(technicalSpec, generatedAppRoot) {
@@ -506,12 +598,14 @@ async function removeDirectoryIfExists(targetPath) {
   }
 }
 
-async function removeObsoleteGeneratedFeatureSlices(rootPath, compositionManifest) {
+async function removeObsoleteGeneratedFeatureSlices(rootPath, compositionManifest, options = {}) {
   const expectedFeatureKeys = new Set(
     (compositionManifest?.frontend?.routes || [])
       .map((route) => route.featureKey)
       .filter(Boolean)
   );
+  const generatedAppId = options.generatedAppId ? Number(options.generatedAppId) : null;
+  const removedRelativePaths = [];
 
   const cleanupDirectoryChildren = async (relativeRoot, shouldKeep) => {
     const absoluteRoot = path.join(rootPath, relativeRoot);
@@ -530,11 +624,13 @@ async function removeObsoleteGeneratedFeatureSlices(rootPath, compositionManifes
       }
 
       const targetPath = path.join(absoluteRoot, entryName);
+      const targetRelativePath = path.join(relativeRoot, entryName).replace(/\\/g, '/');
       if (entry.isDirectory()) {
         await removeDirectoryIfExists(targetPath);
       } else {
         await removeFileIfExists(targetPath);
       }
+      removedRelativePaths.push(targetRelativePath);
     }
   };
 
@@ -569,6 +665,30 @@ async function removeObsoleteGeneratedFeatureSlices(rootPath, compositionManifes
       return expectedFeatureKeys.has(featureKey);
     }
   );
+
+  await Promise.all([
+    removeDirectoryIfExists(path.join(rootPath, 'apps', 'api', 'dist')),
+    removeDirectoryIfExists(path.join(rootPath, 'apps', 'web', 'dist')),
+  ]);
+
+  if (generatedAppId && removedRelativePaths.length) {
+    await prisma.generatedFile.deleteMany({
+      where: {
+        generatedAppId,
+        OR: removedRelativePaths.map((relativePath) => ({
+          OR: [
+            { filePath: relativePath },
+            { filePath: { startsWith: `${relativePath}/` } },
+          ],
+        })),
+      },
+    });
+  }
+
+  return {
+    expectedFeatureKeys: Array.from(expectedFeatureKeys),
+    removedRelativePaths,
+  };
 }
 
 function collectDuplicateLines(content, predicate) {
@@ -1972,6 +2092,7 @@ function getExpectedDomainKeywords(domainKey = '') {
     events: ['evento', 'eventos', 'operacao', 'operacional', 'planejamento', 'execucao'],
     'event-schedules': ['evento', 'eventos', 'cronograma', 'etapa', 'etapas', 'prazo', 'prazos', 'planejamento', 'execucao'],
     'event-suppliers': ['evento', 'eventos', 'fornecedor', 'fornecedores', 'prestador', 'parceiro', 'categoria', 'servico', 'contato'],
+    'event-follow-up-notes': ['evento', 'eventos', 'observacao', 'observacoes', 'acompanhamento', 'nota', 'notas', 'risco', 'pendencia', 'leitura operacional'],
     'visit-operational-responsibles': [
       'visita',
       'visitas',
@@ -2085,6 +2206,7 @@ function inferImplementedDomain(featureKey = '', routeBase = '') {
   const candidates = [
     'event-schedules',
     'event-suppliers',
+    'event-follow-up-notes',
     'visit-operational-responsibles',
     'visit-recurring-history',
     'visit-extra-companions',
@@ -3863,6 +3985,7 @@ function buildImplementationManifest(task, technicalSpec) {
       featurePath: technicalSpec.frontend?.featurePath || null,
       pageTitle: technicalSpec.frontend?.pageTitle || null,
       navigationLabel: technicalSpec.frontend?.navigationLabel || null,
+      preservationDecision: technicalSpec.frontend?.autonomousPreservationDecision || null,
       componentMap: technicalSpec.generationIR?.frontend?.screenSpec?.componentMap || null,
       screenSpec: technicalSpec.generationIR?.frontend?.screenSpec || null,
       dataSpec: technicalSpec.generationIR?.frontend?.dataSpec || null,
@@ -3909,6 +4032,13 @@ function applyAutonomousImplementationDraft(technicalSpec, autonomousDraft) {
   })
     ? technicalSpec.frontend?.autonomousPageTsxTemplate
     : null;
+  const preservationDecision = buildFrontendTemplatePreservationDecision({
+    technicalSpec,
+    existingTemplate: technicalSpec.frontend?.autonomousPageTsxTemplate,
+    candidateTemplate: frontend.pageTsxTemplate,
+    candidateSource: frontend.fileSources?.pageTsxTemplate || null,
+    preserved: Boolean(preservedPageTemplate),
+  });
   const nextFrontendFileSources =
     frontend.fileSources && typeof frontend.fileSources === 'object'
       ? {
@@ -3966,6 +4096,7 @@ function applyAutonomousImplementationDraft(technicalSpec, autonomousDraft) {
         autonomousDraft.compositionSignature ||
         technicalSpec.frontend?.autonomousCompositionSignature ||
         null,
+      autonomousPreservationDecision: preservationDecision,
       autonomousDraft,
     },
     backend: {
@@ -5189,6 +5320,39 @@ function inferFieldDefinitions(sourceText, actionSpec = null) {
     ];
   }
 
+  if (actionSpec?.domainKey === 'event-follow-up-notes') {
+    return [
+      {
+        name: 'eventId',
+        label: 'Evento',
+        inputType: 'text',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Informe o identificador do evento ao qual a observacao sera vinculada.',
+        placeholder: 'UUID do evento',
+        defaultValue: '',
+        sampleValue: '9d4f0df3-0e52-4f5f-b2d2-8ed3f9b4e001',
+        validations: ['required', 'uuid'],
+      },
+      {
+        name: 'noteText',
+        label: 'Observacao de acompanhamento',
+        inputType: 'textarea',
+        tsType: 'string',
+        prismaType: 'String',
+        required: true,
+        unique: false,
+        helperText: 'Registre a nota de contexto que ajuda a explicar prioridades, riscos ou pendencias do evento.',
+        placeholder: 'Descreva a observacao operacional que deve acompanhar este evento.',
+        defaultValue: '',
+        sampleValue: 'Pagamento pendente devido a falta de aprovacao da diretoria.',
+        validations: ['required', 'min:10', 'max:1000'],
+      },
+    ];
+  }
+
   const fields = [];
 
   if (/\bperfil\b/.test(normalized)) {
@@ -5333,6 +5497,13 @@ function inferActionSpec(task, sourceText) {
         /\bplanejamento\b|\bexecucao\b|\bevento\b|\beventos\b/.test(normalized))) &&
     (/\bevento\b|\beventos\b/.test(titleNormalized) ||
       /\bevento\b|\beventos\b|\boperacao\b|\bplanejamento\b|\bcoordenador de eventos\b/.test(normalized));
+  const looksLikeEventFollowUpNotes =
+    (/\bobservac(?:ao|oes)\b|\bnota\b|\bnotas\b|\bacompanhamento\b|\bpendenc(?:ia|ias)\b|\brisco\b|\briscos\b/.test(titleNormalized) ||
+      /\bobservac(?:ao|oes)\b|\bnota\b|\bnotas\b|\bacompanhamento\b|\bpendenc(?:ia|ias)\b|\brisco\b|\briscos\b/.test(normalized)) &&
+    (/\bevento\b|\beventos\b/.test(titleNormalized) ||
+      /\bevento\b|\beventos\b|\bleitura operacional\b|\btomada de decisao\b/.test(normalized)) &&
+    (/\bregistrar\b|\badicionar\b|\bincluir\b|\blancar\b/.test(titleNormalized) ||
+      /\bregistrar\b|\badicionar\b|\bincluir\b|\blancar\b|\btexto da observacao\b|\btexto livre\b/.test(normalized));
   const looksLikeAccessControl =
     (/\bpermiss/.test(titleNormalized) || /\brole\b|\broles\b|\bfunca/.test(titleNormalized)) &&
     (/\bacesso\b/.test(titleNormalized) || /\bperfil\b|\bperfis\b/.test(titleNormalized) || /\bseguranc/.test(titleNormalized));
@@ -5491,6 +5662,23 @@ function inferActionSpec(task, sourceText) {
       pageDescription: 'Centralize parceiros com categoria de servico e contatos principais para acionar a operacao com menos retrabalho.',
       successMessage: 'Fornecedor cadastrado com sucesso.',
       summary: 'Permite cadastrar fornecedores com categoria de servico e contatos principais para manter a operacao de eventos centralizada.',
+    };
+  }
+
+  if (looksLikeEventFollowUpNotes) {
+    return {
+      domainKey: 'event-follow-up-notes',
+      entityName: 'EventFollowUpNote',
+      routeBase: '/api/event-follow-up-notes',
+      frontendRoute: '/operations/event-notes',
+      pageComponentName: 'EventFollowUpNotesPage',
+      serviceName: 'EventFollowUpNotesService',
+      submitLabel: 'Registrar Observacao',
+      navigationLabel: 'Observacoes do evento',
+      pageTitle: 'Registre observacoes de acompanhamento',
+      pageDescription: 'Anexe notas operacionais ao evento para dar contexto rapido sobre prioridades, riscos e pendencias.',
+      successMessage: 'Observacao registrada com sucesso.',
+      summary: 'Permite registrar observacoes de acompanhamento em eventos para apoiar leitura operacional e tomada de decisao.',
     };
   }
 
@@ -5870,6 +6058,27 @@ function getDomainTemplateLegacy(technicalSpec) {
       ],
       profileSummaryTitle: 'Governanca minima',
       profileSummaryDescription: 'Cada perfil deve registrar permissoes, escopo de acesso e responsabilidade operacional.',
+    };
+  }
+
+  if (domainKey === 'event-follow-up-notes') {
+    return {
+      templateKey: 'events/follow-up-notes',
+      productMode: 'structured-workspace',
+      heroEyebrow: 'Acompanhamento operacional',
+      heroTitle: 'Registre observacoes do evento',
+      heroDescription: 'Centralize notas de contexto sobre prioridades, riscos e pendencias sem perder o historico operacional.',
+      formCardTitle: 'Nova observacao',
+      formCardDescription: 'Associe a nota ao evento correto e registre o contexto que ajuda a orientar a proxima decisao.',
+      recordsTitle: 'Observacoes recentes',
+      recordsEmptyState: 'Nenhuma observacao registrada ainda para esta frente operacional.',
+      highlights: [
+        'Notas operacionais vinculadas ao evento certo.',
+        'Contexto rapido para leitura de prioridades e riscos.',
+        'Historico simples para apoiar a tomada de decisao.',
+      ],
+      profileSummaryTitle: 'Leitura do acompanhamento',
+      profileSummaryDescription: 'Cada observacao precisa registrar contexto util, manter rastreabilidade e apoiar a leitura operacional do evento.',
     };
   }
 
@@ -6270,6 +6479,14 @@ function inferBusinessRules(sourceText, actionSpec = null) {
     return rules;
   }
 
+  if (actionSpec?.domainKey === 'event-follow-up-notes') {
+    rules.push('Cada observacao deve ficar vinculada a um evento existente antes de ser registrada.');
+    rules.push('O texto da observacao e obrigatorio e precisa trazer contexto suficiente para leitura operacional, com minimo de 10 e maximo de 1000 caracteres.');
+    rules.push('O sistema deve registrar automaticamente autor e data/hora para manter rastreabilidade do acompanhamento.');
+    rules.push('Observacoes registradas nao devem ser excluidas do historico operacional da feature gerada.');
+    return rules;
+  }
+
   if (actionSpec?.domainKey === 'visit-operational-responsibles') {
     rules.push('O responsavel operacional precisa ter nome valido para identificacao clara durante a operacao.');
     rules.push('O contato deve aceitar e-mail valido ou telefone com DDD para acionamento rapido.');
@@ -6363,6 +6580,15 @@ function inferQaScenarios(sourceText, actionSpec = null) {
     scenarios.push({ code: 'missing_service_category', message: 'Selecione a categoria de servico principal do fornecedor.' });
     scenarios.push({ code: 'missing_primary_contacts', message: 'Registre pelo menos um contato principal para acionar este fornecedor.' });
     scenarios.push({ code: 'duplicated_supplier_name', message: 'Ja existe um fornecedor cadastrado com este nome.' });
+    return scenarios;
+  }
+
+  if (actionSpec?.domainKey === 'event-follow-up-notes') {
+    scenarios.push({ code: 'missing_event_id', message: 'Selecione um evento valido antes de registrar a observacao.' });
+    scenarios.push({ code: 'missing_note_text', message: 'Descreva a observacao de acompanhamento antes de salvar.' });
+    scenarios.push({ code: 'note_too_short', message: 'Texto deve ter no minimo 10 caracteres.' });
+    scenarios.push({ code: 'note_too_long', message: 'Texto deve ter no maximo 1000 caracteres.' });
+    scenarios.push({ code: 'event_not_found', message: 'Evento nao encontrado.' });
     return scenarios;
   }
 
@@ -6684,6 +6910,18 @@ function buildDomainSpecificValidation(actionSpec, fields) {
     ];
   }
 
+  if (actionSpec.domainKey === 'event-follow-up-notes') {
+    return [
+      `  const eventId = String(input.eventId || '').trim();`,
+      `  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(eventId)) throw new Error('Selecione um evento valido antes de registrar a observacao.');`,
+      `  const noteText = String(input.noteText || '').trim();`,
+      `  if (noteText.length < 10) throw new Error('Texto deve ter no minimo 10 caracteres.');`,
+      `  if (noteText.length > 1000) throw new Error('Texto deve ter no maximo 1000 caracteres.');`,
+      `  const duplicatedNote = existingRecords.find((record) => String(record.eventId || '').trim() === eventId && String(record.noteText || '').trim().toLowerCase() === noteText.toLowerCase());`,
+      `  if (duplicatedNote) throw new Error('Ja existe uma observacao igual registrada para este evento.');`,
+    ];
+  }
+
   return [];
 }
 
@@ -6744,6 +6982,7 @@ function inferDomainName(actionSpec, sourceText) {
   if (actionSpec.domainKey.startsWith('auth-')) return 'auth';
   if (actionSpec.domainKey === 'event-schedules') return 'events';
   if (actionSpec.domainKey === 'event-suppliers') return 'events';
+  if (actionSpec.domainKey === 'event-follow-up-notes') return 'events';
   if (actionSpec.domainKey === 'visit-operational-responsibles') return 'visits';
   if (actionSpec.domainKey === 'visit-intake') return 'visit-intake';
   if (actionSpec.domainKey === 'visit-recurring-history') return 'visits';
@@ -6770,6 +7009,7 @@ function inferIntent(actionSpec, sourceText) {
   if (actionSpec.domainKey === 'auth-register' || /\bregistr/.test(normalized) || /\bcadastr/.test(normalized)) return 'register';
   if (actionSpec.domainKey === 'event-schedules') return 'plan';
   if (actionSpec.domainKey === 'event-suppliers') return 'register';
+  if (actionSpec.domainKey === 'event-follow-up-notes') return 'annotate';
   if (actionSpec.domainKey === 'visit-operational-responsibles') return 'register';
   if (actionSpec.domainKey === 'visit-intake') return 'create';
   if (actionSpec.domainKey === 'visit-recurring-history') return 'review';
@@ -6796,6 +7036,7 @@ function inferScreenTemplate(actionSpec, fields, sourceText) {
 
   if (actionSpec.domainKey === 'event-schedules') return 'workspace';
   if (actionSpec.domainKey === 'event-suppliers') return 'workspace';
+  if (actionSpec.domainKey === 'event-follow-up-notes') return 'workspace';
   if (actionSpec.domainKey === 'visit-operational-responsibles') return hasFewFields ? 'crud' : 'workspace';
   if (actionSpec.domainKey === 'visit-intake') return 'crud';
   if (actionSpec.domainKey === 'visit-recurring-history') return 'dashboard';
@@ -8153,11 +8394,7 @@ async function getIntegratedTechnicalSpecs(generatedAppId, fallbackSpec) {
     where: {
       generatedAppId,
       technicalSpecArtifactId: { not: null },
-      OR: [
-        { status: { in: ['planned', 'in_progress', 'integrated'] } },
-        { buildStatus: 'completed' },
-        { testStatus: 'completed' },
-      ],
+      status: 'integrated',
     },
     include: {
       task: {
@@ -8176,9 +8413,12 @@ async function getIntegratedTechnicalSpecs(generatedAppId, fallbackSpec) {
       return true;
     })
     .reverse()
-    .map((implementation) =>
-      normalizeTechnicalSpec(JSON.parse(implementation.technicalSpecArtifact.content), implementation.task)
-    )
+    .map((implementation) => ({
+      implementation,
+      spec: normalizeTechnicalSpec(JSON.parse(implementation.technicalSpecArtifact.content), implementation.task),
+    }))
+    .filter(({ implementation, spec }) => isIntegratedSpecSemanticallyAligned(implementation.task, spec))
+    .map(({ spec }) => spec)
     .filter(Boolean);
 
   const dedupedSpecs = [];
@@ -8653,8 +8893,27 @@ function buildSyntheticTaskFromSpec(technicalSpec) {
   };
 }
 
+function isIntegratedSpecSemanticallyAligned(task, technicalSpec) {
+  const title = stripAccents(String(task?.title || '')).toLowerCase();
+  const featureKey = String(technicalSpec?.featureKey || '').trim().toLowerCase();
+
+  if (!featureKey) return true;
+
+  const keywordRules = {
+    'profile-settings': ['perfil', 'profile', 'conta', 'account', 'credencial', 'usuario'],
+    'event-follow-up-notes': ['observac', 'acompanhamento', 'nota', 'anotac', 'comentario'],
+  };
+
+  const expectedKeywords = keywordRules[featureKey];
+  if (!expectedKeywords?.length) {
+    return true;
+  }
+
+  return expectedKeywords.some((keyword) => title.includes(keyword));
+}
+
 async function ensureValidationScripts(generatedAppRoot) {
-  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Conclua esta etapa|Carregando dados da feature|Atividade recente/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\nconst hasPremiumShellSignals =\n  appContent.includes('AppFrame') &&\n  appContent.includes('AppHeader') &&\n  appContent.includes('SidebarNav') &&\n  appContent.includes('SurfaceCard') &&\n  appContent.includes('const routes = [');\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !hasPremiumShellSignals) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de navegacao estruturada entre as features.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem textos genericos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluido sem problemas.');\n`;
+  const lintContent = `import { readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function listFeaturePages() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(featuresRoot, entry.name, 'page.tsx'));\n  } catch {\n    return [];\n  }\n}\n\nfunction collectDuplicateLines(content, predicate) {\n  const lines = String(content || '')\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .filter(Boolean)\n    .filter((line) => (predicate ? predicate(line) : true));\n\n  const counts = new Map();\n  for (const line of lines) {\n    counts.set(line, (counts.get(line) || 0) + 1);\n  }\n\n  return Array.from(counts.entries()).filter(([, count]) => count > 1);\n}\n\nasync function readSafe(filePath) {\n  try {\n    return await readFile(filePath, 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nconst failures = [];\nconst genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;\nconst genericUxCopyPattern = /Nenhum dado exibido ainda\\.|Validacao automatica dos campos antes do envio\\.|Feedback imediato em caso de sucesso ou erro\\.|Conclua esta etapa|Carregando dados da feature|Atividade recente/;\nconst basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\\.<\\/p>|fontFamily: 'sans-serif', padding: 24/;\nconst genericSplitPattern = /<OperationsWorkspace[\\s\\S]*formTitle=[\\s\\S]*listTitle=/;\n\nconst appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));\nconst serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));\nconst hasPremiumShellSignals =\n  appContent.includes('AppFrame') &&\n  appContent.includes('AppHeader') &&\n  appContent.includes('SidebarNav') &&\n  appContent.includes('SurfaceCard') &&\n  appContent.includes('const routes = [');\n\nfor (const [line, count] of collectDuplicateLines(appContent, (line) => line.startsWith('import ') || line.includes(\"path: '\"))) {\n  failures.push(\`App.tsx possui linha duplicada \${count}x: \${line}\`);\n}\n\nfor (const [line, count] of collectDuplicateLines(serverContent, (line) => line.startsWith('import ') || line.startsWith('app.use('))) {\n  failures.push(\`server.ts possui linha duplicada \${count}x: \${line}\`);\n}\n\nif (basicWebShellPattern.test(appContent) || !hasPremiumShellSignals) {\n  failures.push('App.tsx ainda usa um shell basico e precisa de navegacao estruturada entre as features.');\n}\n\nfor (const pagePath of await listFeaturePages()) {\n  const pageContent = await readSafe(pagePath);\n  if (genericFallbackPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem textos genericos de fallback.\`);\n  }\n  if (genericUxCopyPattern.test(pageContent)) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.\`);\n  }\n  if (genericSplitPattern.test(pageContent) && !pageContent.includes('SurfaceCard')) {\n    failures.push(\`\${path.relative(root, pagePath)} ainda repete composicao generica de workspace com formulario e lista.\`);\n  }\n}\n\nif (failures.length) {\n  console.error('Lint do projeto gerado falhou.\\n');\n  for (const failure of failures) {\n    console.error(\`- \${failure}\`);\n  }\n  process.exit(1);\n}\n\nconsole.log('Lint do projeto gerado concluido sem problemas.');\n`;
   const testContent = `import { access, readFile, readdir } from 'fs/promises';\nimport path from 'path';\n\nconst root = process.cwd();\n\nasync function assertFile(relativePath) {\n  try {\n    await access(path.join(root, relativePath));\n  } catch {\n    throw new Error(\`Arquivo obrigatorio ausente: \${relativePath}\`);\n  }\n}\n\nasync function readSafe(relativePath) {\n  return readFile(path.join(root, relativePath), 'utf8');\n}\n\nasync function listFeatureDirs() {\n  const featuresRoot = path.join(root, 'apps', 'web', 'src', 'features');\n  try {\n    const entries = await readdir(featuresRoot, { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nasync function listDirectories(relativePath) {\n  try {\n    const entries = await readdir(path.join(root, relativePath), { withFileTypes: true });\n    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);\n  } catch {\n    return [];\n  }\n}\n\nconst requiredFiles = [\n  'apps/api/src/server.ts',\n  'apps/web/src/App.tsx',\n  'prisma/schema.prisma',\n];\n\nfor (const file of requiredFiles) {\n  await assertFile(file);\n}\n\nconst serverContent = await readSafe('apps/api/src/server.ts');\nconst appContent = await readSafe('apps/web/src/App.tsx');\nconst schemaContent = await readSafe('prisma/schema.prisma');\nconst featureDirs = await listFeatureDirs();\nconst apiModuleDirs = await listDirectories('apps/api/src/modules');\nconst contractFiles = await readdir(path.join(root, 'packages', 'shared', 'src', 'contracts')).catch(() => []);\n\nif (!serverContent.includes(\"app.get('/health'\")) {\n  throw new Error('API sem rota /health registrada.');\n}\n\nfor (const featureDir of featureDirs) {\n  const pagePath = \`apps/web/src/features/\${featureDir}/page.tsx\`;\n  const servicePath = \`apps/web/src/features/\${featureDir}/service.ts\`;\n  const apiRouterPath = \`apps/api/src/modules/\${featureDir}/router.ts\`;\n  const apiServicePath = \`apps/api/src/modules/\${featureDir}/service.ts\`;\n  const contractPath = \`packages/shared/src/contracts/\${featureDir}.ts\`;\n  await assertFile(pagePath);\n  await assertFile(servicePath);\n  await assertFile(apiRouterPath);\n  await assertFile(apiServicePath);\n  await assertFile(contractPath);\n\n  const pageContent = await readSafe(pagePath);\n  const routerContent = await readSafe(apiRouterPath);\n  const backendServiceContent = await readSafe(apiServicePath);\n  const contractContent = await readSafe(contractPath);\n  const importsSharedUi =\n    pageContent.includes('packages/ui/src/index.tsx') ||\n    pageContent.includes('/packages/ui/src/index.tsx');\n  if (!importsSharedUi) {\n    throw new Error(\`Feature \${featureDir} nao esta usando o design system compartilhado.\`);\n  }\n  if (!routerContent.includes(\".get('/',\") || !routerContent.includes(\".post('/',\")) {\n    throw new Error(\`Modulo \${featureDir} sem rotas GET/POST basicas.\`);\n  }\n  if (!backendServiceContent.includes(\"from '@prisma/client'\") || !backendServiceContent.includes('const prisma = new PrismaClient()')) {\n    throw new Error(\`Modulo \${featureDir} nao esta usando Prisma Client no service.\`);\n  }\n  if (/const\\s+records\\s*=\\s*\\[\\]/.test(backendServiceContent)) {\n    throw new Error(\`Modulo \${featureDir} ainda contem armazenamento em memoria e precisa persistir com Prisma.\`);\n  }\n  if (!/Request\\s*\\{/.test(contractContent) || !/Response\\s*\\{/.test(contractContent) || !/ListResponse\\s*\\{/.test(contractContent)) {\n    throw new Error(\`Contrato \${featureDir} sem Request/Response/ListResponse completos.\`);\n  }\n  const expectedModelName = contractContent.match(/export interface ([A-Za-z0-9]+)Request/)?.[1]?.replace(/Request$/, '');\n  if (expectedModelName && !schemaContent.includes(\`model \${expectedModelName} {\`)) {\n    throw new Error(\`Schema Prisma sem model esperado para \${featureDir}: \${expectedModelName}.\`);\n  }\n}\n\nconst frontendRoutes = [...appContent.matchAll(/path:\\s*'([^']+)'/g)].map((match) => match[1]);\nconst apiRoutes = [...serverContent.matchAll(/app\\.use\\('([^']+)'/g)].map((match) => match[1]);\n\nif (featureDirs.length && frontendRoutes.length < featureDirs.length) {\n  throw new Error('O frontend nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length && apiRoutes.length < featureDirs.length) {\n  throw new Error('A API nao registrou todas as rotas das features geradas.');\n}\n\nif (featureDirs.length !== apiModuleDirs.length) {\n  throw new Error('Quantidade de features web difere da quantidade de modulos da API.');\n}\n\nif (featureDirs.length !== contractFiles.filter((file) => String(file).endsWith('.ts')).length) {\n  throw new Error('Quantidade de contratos compartilhados difere das features geradas.');\n}\n\nif (!schemaContent.includes('model ')) {\n  throw new Error('Schema Prisma sem nenhum model.');\n}\n\nif (!/createdAt\\s+DateTime/.test(schemaContent) || !/updatedAt\\s+DateTime/.test(schemaContent)) {\n  throw new Error('Schema Prisma sem trilha minima de datas nas models geradas.');\n}\n\nconsole.log('Smoke tests do projeto gerado concluidos com sucesso.');\n`;
 
   return [
@@ -9476,6 +9735,48 @@ async function runImplementationReviewInternal({ task, implementation, technical
     });
   }
 
+  const preservationDecision = technicalSpec.frontend?.autonomousPreservationDecision || null;
+  const pageArchetype =
+    technicalSpec.frontend?.pageArchetype ||
+    technicalSpec.frontend?.screenSpec?.pageArchetype ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.pageArchetype ||
+    null;
+  const componentMap =
+    technicalSpec.frontend?.componentMap ||
+    technicalSpec.frontend?.screenSpec?.componentMap ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.componentMap ||
+    {};
+  const hasGenericSplitComposition =
+    pageContent.includes('<OperationsWorkspace') &&
+    pageContent.includes('formTitle=') &&
+    pageContent.includes('listTitle=') &&
+    !pageContent.includes('<SurfaceCard') &&
+    !pageContent.includes('<section style={{ display: \'grid\', gap: 16 }}>');
+  const isOperationHeavyArchetype =
+    ['operations-queue', 'approval-flow', 'review-queue', 'operational-tool', 'executive-dashboard'].includes(
+      String(pageArchetype || '')
+    ) || ['denseTable', 'queueRail', 'approvalSteps', 'evidenceRail'].includes(String(componentMap.recordsLead || ''));
+
+  if (preservationDecision?.preserved) {
+    findings.push({
+      severity: 'high',
+      code: 'workspace_template_preserved_over_spec',
+      category: 'template_deviation',
+      filePath: pagePath,
+      message: `A pagina preservou template anterior do workspace (${preservationDecision.reason || 'sem motivo auditavel'}) e reduziu a autoridade da Technical Spec.`,
+    });
+  }
+
+  if (isOperationHeavyArchetype && hasGenericSplitComposition) {
+    findings.push({
+      severity: 'high',
+      code: 'generic_structural_composition',
+      category: 'quality',
+      filePath: pagePath,
+      message: 'A tela ainda caiu em composicao generica de formulario + lista, apesar de a spec pedir uma operacao mais distinta.',
+    });
+  }
+
   if (
     technicalSpec.frontend?.productMode === 'manager-cockpit' &&
     pageContent.includes('formTitle=') &&
@@ -9875,6 +10176,46 @@ async function runImplementationSpecialistReviewInternal({ task, implementation,
     });
   }
 
+  const preservationDecision = technicalSpec.frontend?.autonomousPreservationDecision || null;
+  const pageArchetype =
+    technicalSpec.frontend?.pageArchetype ||
+    technicalSpec.frontend?.screenSpec?.pageArchetype ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.pageArchetype ||
+    null;
+  const componentMap =
+    technicalSpec.frontend?.componentMap ||
+    technicalSpec.frontend?.screenSpec?.componentMap ||
+    technicalSpec.generationIR?.frontend?.screenSpec?.componentMap ||
+    {};
+  const genericSplitShellPattern =
+    pageContent.includes('<OperationsWorkspace') &&
+    pageContent.includes('formTitle=') &&
+    pageContent.includes('listTitle=');
+  const needsOperationFirstLayout =
+    ['operations-queue', 'approval-flow', 'review-queue', 'operational-tool', 'executive-dashboard'].includes(
+      String(pageArchetype || '')
+    ) || ['denseTable', 'queueRail', 'approvalSteps', 'evidenceRail'].includes(String(componentMap.recordsLead || ''));
+
+  if (preservationDecision?.preserved) {
+    findings.push({
+      severity: 'high',
+      code: 'specialist_spec_authority_broken',
+      category: 'quality',
+      filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
+      message: 'A pagina preservou template anterior do workspace e quebrou a autoridade da spec mais recente.',
+    });
+  }
+
+  if (needsOperationFirstLayout && genericSplitShellPattern && !pageContent.includes('SurfaceCard')) {
+    findings.push({
+      severity: 'high',
+      code: 'specialist_operation_layout_generic',
+      category: 'quality',
+      filePath: `${technicalSpec.frontend.featurePath}/page.tsx`,
+      message: 'A composicao ainda parece um CRUD generico e nao expressa a operacao principal da feature.',
+    });
+  }
+
   const titleHint = normalizeSemanticText(task.title);
   if (titleHint.includes('curso') && !docsContent.toLowerCase().includes('curso')) {
     findings.push({
@@ -10265,7 +10606,9 @@ async function materializeImplementationFiles({
     routeSpecs,
     projectTemplate,
   });
-  await removeObsoleteGeneratedFeatureSlices(generatedApp.rootPath, compositionManifest);
+  await removeObsoleteGeneratedFeatureSlices(generatedApp.rootPath, compositionManifest, {
+    generatedAppId: generatedApp.id,
+  });
   const featureFiles = Array.from(
     new Map(
       (() => {

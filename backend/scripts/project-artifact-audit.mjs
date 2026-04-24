@@ -24,7 +24,7 @@ function buildRequirementFlags(content) {
   const flags = [];
   if (!/##\s+User Story Refinada/i.test(text)) flags.push('estrutura nao canonica: User Story');
   if (!/##\s+Requisitos Funcionais/i.test(text)) flags.push('estrutura nao canonica: RFs');
-  if (!/##\s+Criterios de Aceite(?:\s+\(BDD\))?/i.test(text)) flags.push('estrutura nao canonica: CA');
+  if (!/##\s+Crit[eé]rios de Aceite(?:\s+\(BDD\))?/i.test(text)) flags.push('estrutura nao canonica: CA');
   return flags;
 }
 

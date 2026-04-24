@@ -1,6 +1,8 @@
 import { Suspense, lazy } from 'react'
 import { AppFrame, AppHeader, SidebarNav, SurfaceCard } from '../../../packages/ui/src/index.tsx'
+const EventFollowUpNotesPage = lazy(() => import('./features/event-follow-up-notes/index').then((module) => ({ default: module.EventFollowUpNotesPage })))
 const routes = [
+ { path: '/operations/event-notes', label: 'Observacoes do evento', render: () => <EventFollowUpNotesPage /> },
 ]
 function RouteLoadingFallback() {
  return (

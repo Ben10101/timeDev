@@ -33,6 +33,7 @@ const failures = [];
 const genericFallbackPattern = /Campo principal da feature gerada|Informe o valor principal/;
 const genericUxCopyPattern = /Nenhum dado exibido ainda\.|Validacao automatica dos campos antes do envio\.|Feedback imediato em caso de sucesso ou erro\.|Conclua esta etapa|Carregando dados da feature|Atividade recente/;
 const basicWebShellPattern = /Frontend base gerado pela AI Software Factory|Bem-vindo ao .*?\.<\/p>|fontFamily: 'sans-serif', padding: 24/;
+const genericSplitPattern = /<OperationsWorkspace[\s\S]*formTitle=[\s\S]*listTitle=/;
 const appContent = await readSafe(path.join(root, 'apps', 'web', 'src', 'App.tsx'));
 const serverContent = await readSafe(path.join(root, 'apps', 'api', 'src', 'server.ts'));
 const hasPremiumShellSignals =
@@ -57,6 +58,9 @@ for (const pagePath of await listFeaturePages()) {
   }
   if (genericUxCopyPattern.test(pageContent)) {
     failures.push(`${path.relative(root, pagePath)} ainda contem copy generica ou placeholders de UX.`);
+  }
+  if (genericSplitPattern.test(pageContent) && !pageContent.includes('SurfaceCard')) {
+    failures.push(`${path.relative(root, pagePath)} ainda repete composicao generica de workspace com formulario e lista.`);
   }
 }
 if (failures.length) {
