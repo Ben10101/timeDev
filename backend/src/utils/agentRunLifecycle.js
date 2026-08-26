@@ -81,7 +81,7 @@ export function createAgentRunLifecycle(req, res, agentRun, finishAgentRun, opti
   return {
     finalizeSuccess: async ({ result, usageMeta = null }) =>
       finalizeRun({ status: 'completed', result, usageMeta }),
-    finalizeFailure: async ({ errorMessage }) => finalizeRun({ status: 'failed', errorMessage }),
+    finalizeFailure: async ({ errorMessage, result = null }) => finalizeRun({ status: 'failed', errorMessage, result }),
     isFinalized: () => finalized,
     wasAborted: () => aborted,
     dispose: detach,

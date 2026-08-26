@@ -19,6 +19,8 @@ import {
   getTaskByUuid,
   getWorkspaceTeamSummary,
   importBacklogTasks,
+  publishBacklogTasks,
+  updateBacklogStory,
   listProjects,
   listProjectTasks,
   listAllTasks,
@@ -29,6 +31,7 @@ import {
   updateProjectMemberRole,
   updateProjectStatus,
   updateTask,
+  reviewTaskArtifact,
 } from '../services/projectDataService.js';
 import { runSingleAgent } from '../services/orchestratorService.js';
 import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
@@ -94,8 +97,25 @@ function compactProjectBrief(project) {
 }
 
 function compactBacklogInput(idea = '', answers = {}) {
+  const answerLimits = {
+    objective: 360,
+    audience: 360,
+    mainFlows: 720,
+    constraints: 720,
+    clarifications: 1800,
+  };
   const entries = Object.entries(answers || {})
-    .map(([key, value]) => `${key}: ${clampText(typeof value === 'string' ? value : JSON.stringify(value), 120)}`)
+    .map(([key, value]) => {
+      if (key === 'clarifications' && Array.isArray(value)) {
+        const resolved = value
+          .filter((item) => item?.question && item?.answer)
+          .map((item) => `${item.question}: ${item.answer}`)
+          .join(' | ');
+        return resolved ? `Clarificacoes respondidas: ${clampText(resolved, answerLimits.clarifications)}` : null;
+      }
+      return `${key}: ${clampText(typeof value === 'string' ? value : JSON.stringify(value), answerLimits[key] || 240)}`;
+    })
+    .filter(Boolean)
     .slice(0, 8);
 
   return [
@@ -506,6 +526,22 @@ export async function generateProjectBacklogController(req, res, next) {
       return;
     }
 
+    if (result?.clarification_required) {
+      // Keep the requirements gate recoverable after a browser refresh. No
+      // backlog has been published here, so no stories/tasks are created.
+      await updateProjectBrief(projectUuid, {
+        intakeConfig: {
+          requirementsContract: result.requirements_contract || null,
+          backlogClarifications: result.clarifications || [],
+        },
+      });
+      const [project, tasks] = await Promise.all([
+        getProjectByUuid(projectUuid, req.authUser.uuid),
+        listProjectTasks(projectUuid, {}, req.authUser.uuid),
+      ]);
+      return res.status(200).json(serializeBigInts({ project, tasks, result }));
+    }
+
     await persistAgentResult(projectUuid, 'project_manager', payloadWithRuntime, result);
 
     const [project, tasks] = await Promise.all([
@@ -526,7 +562,10 @@ export async function generateProjectBacklogController(req, res, next) {
     }
 
     if (runLifecycle) {
-      await runLifecycle.finalizeFailure({ errorMessage: error.message }).catch(() => null);
+      await runLifecycle.finalizeFailure({
+        errorMessage: error.message,
+        result: error.agentDiagnostic || null,
+      }).catch(() => null);
     } else if (agentRun?.id) {
       await finishAgentRun(agentRun.id, {
         status: 'failed',
@@ -547,6 +586,22 @@ export async function generateProjectBacklogController(req, res, next) {
 
     next(error);
   }
+}
+
+export async function publishBacklogTasksController(req, res, next) {
+  try {
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
+    const tasks = await publishBacklogTasks(req.params.projectUuid);
+    res.status(201).json(serializeBigInts(tasks));
+  } catch (error) { next(error); }
+}
+
+export async function updateBacklogStoryController(req, res, next) {
+  try {
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
+    const story = await updateBacklogStory(req.params.projectUuid, req.params.storyId, req.body);
+    res.status(200).json(serializeBigInts(story));
+  } catch (error) { next(error); }
 }
 
 export async function getProjectArchitectureStatusController(req, res, next) {
@@ -660,10 +715,19 @@ export async function generateProjectArchitectureController(req, res, next) {
         intake: project?.intakeConfig || {},
         project_dna: compactProjectDnaForAgent(project?.projectDna || project?.intakeConfig?.projectDna || null),
         backlog_contract: compactArchitectureBacklogContract(project),
-        stories: refinedStories.map((story) => ({
-          taskUuid: story.taskUuid,
-          title: story.title,
-        })),
+        stories: refinedStories.map((story) => {
+          const backlogStories = Array.isArray(project?.intakeConfig?.backlogContract?.stories)
+            ? project.intakeConfig.backlogContract.stories
+            : [];
+          const backlogStory = backlogStories.find(
+            (item) => String(item?.title || '').trim() === String(story.title || '').trim()
+          );
+          return {
+            taskUuid: story.taskUuid,
+            backlogStoryId: backlogStory?.id || null,
+            title: story.title,
+          };
+        }),
       },
     };
 
@@ -742,6 +806,19 @@ export async function createTaskArtifactController(req, res, next) {
       createdByUserId: req.authUser.id,
     });
     res.status(201).json(serializeBigInts(artifact));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function reviewTaskArtifactController(req, res, next) {
+  try {
+    const artifact = await reviewTaskArtifact(req.params.taskUuid, req.params.artifactUuid, {
+      approved: req.body?.approved,
+      comment: req.body?.comment,
+      userUuid: req.authUser.uuid,
+    });
+    res.json(serializeBigInts({ success: true, artifact }));
   } catch (error) {
     next(error);
   }

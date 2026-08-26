@@ -4,6 +4,8 @@ import ProtectedRoute from './components/ProtectedRoute';
 
 const AuthPage = lazy(() => import('./pages/AuthPage'));
 const ProjectOverviewPage = lazy(() => import('./pages/ProjectOverviewPage'));
+const BacklogReviewPage = lazy(() => import('./pages/BacklogReviewPage'));
+const TaskArtifactReviewPage = lazy(() => import('./pages/TaskArtifactReviewPage'));
 const ProjectPlanningPage = lazy(() => import('./pages/ProjectPlanningPage'));
 const ProjectTeamPage = lazy(() => import('./pages/ProjectTeamPage'));
 const PipelinePage = lazy(() => import('./pages/PipelinePage'));
@@ -118,6 +120,8 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            <Route path="/tasks/:taskUuid/artifacts" element={<ProtectedRoute><TaskArtifactReviewPage /></ProtectedRoute>} />
+            <Route path="/projects/:projectUuid/backlog-review" element={<ProtectedRoute><BacklogReviewPage /></ProtectedRoute>} />
             <Route
               path="/agents-lab"
               element={

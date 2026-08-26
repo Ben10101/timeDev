@@ -11010,8 +11010,8 @@ export async function planTaskImplementation(taskUuid, userUuid = null, options 
   const task = await getTaskWithArtifactsOrThrow(taskUuid);
   const runtimeUserUuid = resolveImplementationUserUuid(task, userUuid);
 
-  if (task.status !== 'done') {
-    throw new Error('A implementacao so pode comecar apos o refinamento completo da task.');
+  if (!['todo', 'done'].includes(task.status)) {
+    throw new Error('A implementacao so pode comecar apos a aprovacao da arquitetura.');
   }
 
   const projectArchitectureSource = await getProjectArchitectureSource(task.project.uuid);

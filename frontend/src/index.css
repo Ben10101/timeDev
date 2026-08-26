@@ -72,6 +72,12 @@
     @apply rounded-xl border border-slate-200 bg-slate-50;
   }
 
+  .task-detail-page > section {
+    border-radius: 1rem !important;
+    border-color: rgb(226 232 240) !important;
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.06) !important;
+  }
+
   .dashboard-badge {
     @apply inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold;
   }

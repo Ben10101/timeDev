@@ -1155,6 +1155,15 @@ export async function getGovernanceOverview(userUuid, { projectUuid = null } = {
     }
   }
 
+  const repairEvents = Array.from(repairGroups.values());
+  const compliantRepairs = repairEvents.filter((event) => event.scopeAssessment?.status === 'compliant').length;
+  const escalatedRepairs = repairEvents.filter((event) => event.enforcement?.enforcementDirective).length;
+  const repairGovernance = {
+    repairsObserved: repairEvents.length,
+    localRepairRatePercent: percent(compliantRepairs, repairEvents.length),
+    escalatedRatePercent: percent(escalatedRepairs, repairEvents.length),
+  };
+
   return {
     summary: {
       totalEvents: auditTrail.length,

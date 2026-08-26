@@ -82,13 +82,16 @@ function TaskCard({
   onQa,
   onOpenCodeStudio,
   onOpenDetail,
+  onReview,
   onExportArtifacts,
   busy,
   implementationUnlocked,
   implementationBlockReason,
 }) {
   const hasRequirements = hasCurrentArtifact(task, 'requirements');
+  const hasApprovedRequirements = (task?.artifacts || []).some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent && artifact.isApproved);
   const hasTestPlan = hasCurrentArtifact(task, 'test_plan');
+  const hasApprovedTestPlan = (task?.artifacts || []).some((artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent && artifact.isApproved);
   const isDone = task.status === 'done';
   const isBlocked = task.status === 'blocked';
   const processingError = task.processingError;
@@ -99,8 +102,8 @@ function TaskCard({
     (task.status === 'qa' || task.status === 'in_progress' || task.status === 'in_review') &&
     isTaskAgentRunning(task, 'qa_engineer');
   const taskHasActiveRun = requirementsRunning || qaRunning;
-  const canRunRequirements = isStory && !isBlocked && !hasRequirements && !requirementsRunning;
-  const canRunQa = isStory && !isBlocked && hasRequirements && !hasTestPlan && !qaRunning;
+  const canRunRequirements = isStory && !isBlocked && (!hasRequirements || !hasApprovedRequirements) && !requirementsRunning;
+  const canRunQa = isStory && !isBlocked && hasApprovedRequirements && !hasTestPlan && !qaRunning;
   const canRunImplementation = Boolean(implementationUnlocked);
 
   const priorityColors = {
@@ -122,11 +125,24 @@ function TaskCard({
   const taskDescription = task.description || typeGuidance[task.taskType] || 'Sem contexto adicional registrado para esta task.';
   const primaryTag = isBlocked
     ? 'Bloqueada'
-    : hasTestPlan
-      ? 'QA pronto'
-      : hasRequirements
+    : hasApprovedTestPlan
+      ? 'QA aprovado'
+      : hasTestPlan
+        ? 'QA gerado'
+        : hasRequirements
         ? 'Refinada'
         : 'Briefing';
+  const validationState = isBlocked
+    ? { label: 'Bloqueada', detail: 'Resolva o bloqueio registrado para continuar.', tone: 'border-rose-200 bg-rose-50 text-rose-700' }
+    : hasApprovedTestPlan
+      ? { label: 'QA aprovado', detail: 'O plano de testes foi aprovado. A proxima etapa e arquitetura.', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
+      : hasTestPlan
+        ? { label: 'QA gerado', detail: 'Revise e aprove o plano de testes antes da arquitetura.', tone: 'border-amber-200 bg-amber-50 text-amber-700' }
+      : hasRequirements && !hasApprovedRequirements
+        ? { label: 'Aguardando aprovação', detail: 'Os requisitos foram gerados, mas precisam de validação humana.', tone: 'border-amber-200 bg-amber-50 text-amber-700' }
+        : hasApprovedRequirements
+          ? { label: 'QA liberado', detail: 'Requisitos aprovados. A validação de QA está disponível.', tone: 'border-blue-200 bg-blue-50 text-[#102a72]' }
+          : { label: 'Aguardando requisitos', detail: 'Execute a análise para gerar os requisitos desta task.', tone: 'border-slate-200 bg-slate-50 text-slate-600' };
 
   return (
     <motion.div
@@ -147,8 +163,10 @@ function TaskCard({
                 className={`dashboard-badge ${
                   isBlocked
                     ? 'bg-rose-50 text-rose-700'
-                    : hasTestPlan
+                    : hasApprovedTestPlan
                       ? 'bg-emerald-50 text-emerald-700'
+                      : hasTestPlan
+                        ? 'bg-amber-50 text-amber-700'
                       : hasRequirements
                         ? 'bg-blue-50 text-[#102a72]'
                         : 'bg-slate-100 text-slate-600'
@@ -169,6 +187,21 @@ function TaskCard({
         </div>
 
         <p className="line-clamp-3 text-sm leading-6 text-slate-500">{taskDescription}</p>
+
+        <div className={`rounded-lg border px-3 py-2 ${validationState.tone}`}>
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em]">{validationState.label}</p>
+          <p className="mt-1 text-xs font-medium">{validationState.detail}</p>
+          {hasRequirements && !hasApprovedRequirements && (
+            <button type="button" onClick={() => onReview(task.uuid)} className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-100">
+              Revisar agora
+            </button>
+          )}
+          {hasTestPlan && !hasApprovedTestPlan && (
+            <button type="button" onClick={() => onReview(task.uuid)} className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-100">
+              Revisar QA
+            </button>
+          )}
+        </div>
 
         <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
           <p>
@@ -233,7 +266,7 @@ function TaskCard({
                   }
                 >
                   <FileText className="h-4 w-4" />
-                  {requirementsRunning ? 'Executando...' : 'Analisar'}
+                  {requirementsRunning ? 'Executando...' : hasRequirements ? 'Regenerar' : 'Analisar'}
                 </button>
                 <button
                   onClick={() => onQa(task.uuid)}
@@ -625,6 +658,7 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
                               onOpenCodeStudio={handleOpenCodeStudio}
                               onExportArtifacts={handleExportArtifacts}
                               onOpenDetail={handleOpenDetail}
+                              onReview={(taskUuid) => navigate(`/tasks/${taskUuid}/artifacts`)}
                               implementationUnlocked={implementationUnlocked}
                               implementationBlockReason={implementationBlockReason}
                             />

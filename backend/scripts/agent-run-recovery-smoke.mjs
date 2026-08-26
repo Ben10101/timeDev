@@ -156,7 +156,7 @@ try {
 
   const staleRun = state.runs.find((run) => run.uuid === 'stale-run-uuid');
   assert(staleRun, 'A run antiga deveria existir no estado.');
-  assert(staleRun.status === 'failed', 'A run travada deveria ser marcada como failed.');
+  assert(staleRun.status === 'stale', 'A run travada deveria ser marcada como stale.');
   assert(
     staleRun.errorMessage?.includes('Execucao travada recuperada automaticamente'),
     'A run travada deveria receber mensagem de recuperacao automatica.'

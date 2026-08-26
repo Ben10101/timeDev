@@ -19,6 +19,12 @@ from agents.schema_agent.agent import SchemaAgent
 from agents.backend_agent.agent import BackendAgent
 from agents.frontend_agent.agent import FrontendAgent
 from agents.ui_ux_specialist.agent import UiUxSpecialist
+from agents.alignment_semantic.agent import AlignmentSemanticAgent
+from agents.requirement_engine.agent import RequirementEngineAgent
+from agents.requirement_challenger.agent import RequirementChallenger
+from agents.visual_requirement_analyst.agent import VisualRequirementAnalyst
+from agents.backlog_challenger.agent import BacklogChallenger
+from agents.backlog_judge.agent import BacklogJudge
 from orchestrator.projectBuilder import ProjectBuilder
 
 def main():
@@ -31,7 +37,7 @@ def main():
         idea = payload.get("idea")
         runtime_mode = input_data.get("runtime_mode") or os.getenv("ALIGNA_AGENT_RUNTIME_MODE") or "modern-single-agent"
 
-        if not agent_name or not idea:
+        if not agent_name or (not idea and agent_name not in {"visual_requirement_analyst", "backlog_challenger", "backlog_judge"}):
             raise ValueError("Faltando 'agent' ou 'idea' no payload.")
 
         project_id = project_id or f"freeform-{agent_name}"
@@ -46,7 +52,13 @@ def main():
             backlog = payload.get("backlog")
             if not backlog: raise ValueError("Faltando 'backlog' para o requirements_analyst.")
             agent = RequirementsAnalyst(project_id)
-            result = agent.process(idea, backlog)
+            markdown = agent.process(idea, backlog, project_context=payload.get("project_context"))
+            # Keep the Markdown contract for every existing consumer while
+            # exposing the AI-produced, validated contract for traceability.
+            result = {
+                "markdown": markdown,
+                "requirement_contract": agent.last_refinement_contract,
+            }
 
         elif agent_name == "architect":
             requirements = payload.get("requirements")
@@ -129,6 +141,24 @@ def main():
         elif agent_name == "ui_ux_specialist":
             agent = UiUxSpecialist(project_id)
             result = agent.process(payload)
+        elif agent_name == "alignment_semantic":
+            agent = AlignmentSemanticAgent()
+            result = agent.process(idea)
+        elif agent_name == "requirement_engine":
+            agent = RequirementEngineAgent()
+            result = agent.process(payload)
+        elif agent_name == "requirement_challenger":
+            agent = RequirementChallenger()
+            result = agent.process(payload)
+        elif agent_name == "backlog_challenger":
+            agent = BacklogChallenger()
+            result = agent.process(payload.get("backlog_contract"), payload.get("evidence_contract"))
+        elif agent_name == "backlog_judge":
+            agent = BacklogJudge()
+            result = agent.process(payload.get("findings"))
+        elif agent_name == "visual_requirement_analyst":
+            agent = VisualRequirementAnalyst()
+            result = agent.process(payload)
         else:
             raise ValueError(f"Agente desconhecido: {agent_name}")
 
@@ -142,7 +172,8 @@ def main():
         }, ensure_ascii=False))
 
     except Exception as e:
-        print(json.dumps({"success": False, "error": str(e)}), file=sys.stdout)
+        diagnostic = getattr(e, "rejected_draft", None)
+        print(json.dumps({"success": False, "error": str(e), "diagnostic": diagnostic}, ensure_ascii=False), file=sys.stdout)
         sys.exit(1)
 
 if __name__ == '__main__':

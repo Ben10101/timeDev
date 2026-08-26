@@ -14,6 +14,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const GENERATED_PROJECTS_ROOT = path.join(REPO_ROOT, 'generated-projects');
 
+export function resolveArtifactReviewTransition(artifactType, approved) {
+  if (approved && artifactType === 'requirements') return { status: 'qa', assigneeAgentName: 'qa_engineer', assigneeType: 'agent', releasedStage: 'qa' };
+  if (approved && artifactType === 'test_plan') return { status: 'done', assigneeAgentName: 'architect', assigneeType: 'agent', releasedStage: 'architecture' };
+  if (approved && artifactType === 'architecture') return { status: 'todo', assigneeAgentName: 'developer', assigneeType: 'agent', releasedStage: 'implementation' };
+  if (!approved && artifactType === 'architecture') return { status: 'in_review', assigneeAgentName: 'architect', assigneeType: 'agent', releasedStage: null };
+  if (!approved) return { status: 'backlog', assigneeAgentName: 'requirements_analyst', assigneeType: 'agent', releasedStage: null };
+  return null;
+}
+
 const taskListInclude = {
   assigneeUser: { select: { uuid: true, name: true, email: true } },
   reporterUser: { select: { uuid: true, name: true, email: true } },
@@ -61,6 +70,7 @@ const taskDetailInclude = {
   artifacts: {
     where: { artifactScope: 'refinement' },
     orderBy: [{ createdAt: 'desc' }, { version: 'desc' }],
+    include: { reviews: { orderBy: { reviewedAt: 'desc' }, include: { reviewer: { select: { uuid: true, name: true } } } } },
   },
   statusHistory: {
     orderBy: { changedAt: 'desc' },
@@ -1322,6 +1332,34 @@ export async function listProjectTasks(projectUuid, { status, parentTaskUuid } =
     throw new Error('Projeto nÃ£o encontrado.');
   }
 
+  // Reconcile legacy QA approvals so the board immediately places them in A Fazer.
+  const legacyArchitectureTasks = await prisma.task.findMany({
+    where: {
+      projectId: project.id,
+      status: 'in_review',
+      assigneeAgentName: 'architect',
+      artifacts: { some: { isCurrent: true, artifactScope: 'refinement', artifactType: 'test_plan', isApproved: true } },
+    },
+    select: { id: true },
+  });
+  if (legacyArchitectureTasks.length) {
+    await prisma.task.updateMany({ where: { id: { in: legacyArchitectureTasks.map((item) => item.id) } }, data: { status: 'done' } });
+  }
+  const legacyQaTasks = await prisma.task.findMany({
+    where: {
+      projectId: project.id,
+      status: { in: ['backlog', 'in_review'] },
+      AND: [
+        { artifacts: { some: { isCurrent: true, artifactScope: 'refinement', artifactType: 'requirements', isApproved: true } } },
+        { artifacts: { none: { isCurrent: true, artifactScope: 'refinement', artifactType: 'test_plan' } } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (legacyQaTasks.length) {
+    await prisma.task.updateMany({ where: { id: { in: legacyQaTasks.map((item) => item.id) } }, data: { status: 'qa', assigneeAgentName: 'qa_engineer', assigneeType: 'agent' } });
+  }
+
   let parentTaskId;
   if (parentTaskUuid) {
     const parentTask = await prisma.task.findUnique({
@@ -1398,6 +1436,18 @@ export async function getTaskByUuid(taskUuid, userUuid = null) {
     },
     include: taskDetailInclude,
   });
+
+  // One-time reconciliation for tasks approved before QA->architecture used
+  // the `todo` state. This keeps legacy records consistent on the next read.
+  if (task?.status === 'in_review' && task.assigneeAgentName === 'architect') {
+    const approvedQa = (task.artifacts || []).some(
+      (artifact) => artifact.isCurrent && artifact.artifactType === 'test_plan' && artifact.isApproved
+    );
+    if (approvedQa) {
+      await prisma.task.update({ where: { id: task.id }, data: { status: 'done' } });
+      task.status = 'done';
+    }
+  }
 
   const agentAliases = userUuid ? (await getAiSettingsForUser(userUuid)).agentAliases : DEFAULT_AI_SETTINGS.agentAliases;
   const enrichedTask = enrichTask(task, agentAliases);
@@ -2104,7 +2154,7 @@ function parseReleaseSlices(sectionContent) {
   return slices;
 }
 
-function buildBacklogContract(backlogMarkdown, projectDna = null) {
+function buildBacklogContract(backlogMarkdown, projectDna = null, generatedContract = null) {
   const overview = extractMarkdownSection(backlogMarkdown, 'Visao Geral');
   const capabilities = normalizeBacklogContractList(
     extractBulletLines(extractMarkdownSection(backlogMarkdown, 'Capacidades do Produto'))
@@ -2115,7 +2165,7 @@ function buildBacklogContract(backlogMarkdown, projectDna = null) {
   const releaseSlices = parseReleaseSlices(extractMarkdownSection(backlogMarkdown, 'Fatias de Release'));
   const { stories } = extractBacklogItems(backlogMarkdown);
 
-  return {
+  const baseContract = {
     version: 1,
     generatedAt: new Date().toISOString(),
     source: 'project_manager',
@@ -2141,13 +2191,71 @@ function buildBacklogContract(backlogMarkdown, projectDna = null) {
       order: index + 1,
     })),
   };
+
+  if (!generatedContract || typeof generatedContract !== 'object') return baseContract;
+  const generatedStories = Array.isArray(generatedContract.stories) ? generatedContract.stories : [];
+  const storyMetadataById = new Map(generatedStories.map((story) => [String(story?.id || '').toUpperCase(), story]));
+  const persistedIdByGeneratedId = new Map(
+    baseContract.stories.map((story, index) => [`US-${String(index + 1).padStart(2, '0')}`, story.id])
+  );
+  const persistedStories = baseContract.stories.map((story, index) => {
+    const metadata = storyMetadataById.get(`US-${String(index + 1).padStart(2, '0')}`) || {};
+    const sourceContext = metadata.refinement_context && typeof metadata.refinement_context === 'object'
+      ? metadata.refinement_context
+      : { inputs: [], outputs: [], confirmed_rules: [], constraints: [], dependencies: [], open_questions: [], acceptance_hints: [], acceptance_criteria: [] };
+    const refinementContext = {
+      ...sourceContext,
+      dependencies: Array.isArray(sourceContext.dependencies)
+        ? sourceContext.dependencies.map((id) => persistedIdByGeneratedId.get(String(id).toUpperCase()) || String(id))
+        : [],
+    };
+    if (sourceContext.traceability && typeof sourceContext.traceability === 'object') {
+      refinementContext.traceability = {
+        ...sourceContext.traceability,
+        dependencies: Array.isArray(sourceContext.traceability.dependencies)
+          ? sourceContext.traceability.dependencies.map((item) => ({
+            ...item,
+            text: persistedIdByGeneratedId.get(String(item?.text || '').toUpperCase()) || item?.text,
+          }))
+          : [],
+      };
+    }
+    return {
+      ...story,
+      sourceIds: Array.isArray(metadata.source_ids) ? metadata.source_ids : [],
+      status: metadata.status || 'proposed',
+      lane: metadata.lane || null,
+      priority: ['low', 'medium', 'high', 'urgent'].includes(metadata.priority) ? metadata.priority : 'medium',
+      release: metadata.release || null,
+      reviewTags: Array.isArray(metadata.review_tags) ? metadata.review_tags : ['REVIEW_EVIDENCE'],
+      openQuestions: Array.isArray(metadata.open_questions) ? metadata.open_questions : [],
+      refinementContext,
+    };
+  });
+  const coverage = Array.isArray(generatedContract.coverage)
+    ? generatedContract.coverage.map((item) => ({
+      ...item,
+      story_ids: Array.isArray(item?.story_ids)
+        ? item.story_ids.map((id) => persistedIdByGeneratedId.get(String(id).toUpperCase())).filter(Boolean)
+        : [],
+    })).filter((item) => item.story_ids.length)
+    : [];
+  return {
+    ...baseContract,
+    version: 2,
+    evidence: generatedContract.evidence || { facts: [] },
+    requirementsContract: generatedContract.requirements_contract || null,
+    qualityReview: generatedContract.quality_review || null,
+    coverage,
+    stories: persistedStories,
+  };
 }
 
-async function persistBacklogContractArtifact(projectUuid, projectRecord, backlogMarkdown) {
+async function persistBacklogContractArtifact(projectUuid, projectRecord, backlogMarkdown, generatedContract = null) {
   const stageTask = await ensureStageTask(projectUuid, 'project_manager');
   if (!stageTask) return null;
 
-  const backlogContract = buildBacklogContract(backlogMarkdown, projectRecord?.intakeConfig?.projectDna || null);
+  const backlogContract = buildBacklogContract(backlogMarkdown, projectRecord?.intakeConfig?.projectDna || null, generatedContract);
 
   await prisma.project.update({
     where: { uuid: projectUuid },
@@ -2207,6 +2315,21 @@ function buildRequirementSpec(requirementsMarkdown, context = {}) {
     permissionsAndAudit,
     acceptanceCriteria,
     assumptions,
+    traceability: context.requirementContract ? {
+      contractVersion: 1,
+      domain: context.requirementContract.domain || null,
+      intent: context.requirementContract.intent || null,
+      evidenceSources: context.requirementContract.evidence_sources || [],
+      upstreamReview: context.requirementContract.upstream_review || null,
+      elements: {
+        refinedStory: context.requirementContract.refined_story || null,
+        inputs: context.requirementContract.inputs || [],
+        outputs: context.requirementContract.outputs || [],
+        confirmedRules: context.requirementContract.confirmed_rules || [],
+        dependencies: context.requirementContract.dependencies || [],
+        acceptanceCriteria: context.requirementContract.acceptance_criteria || [],
+      },
+    } : null,
   };
 }
 
@@ -2245,6 +2368,7 @@ export async function createRequirementsArtifacts(taskUuid, metadata = {}) {
     projectUuid: task.project?.uuid || null,
     projectName: task.project?.name || null,
     projectDna: task.project?.intakeConfig?.projectDna || null,
+    requirementContract: metadata.requirementContract || null,
   });
 
   const requirementSpecArtifact = await createSystemTaskArtifact(taskUuid, {
@@ -2452,17 +2576,27 @@ export async function importBacklogTasks(projectUuid, backlogMarkdown) {
 
   const { stories } = extractBacklogItems(backlogMarkdown);
   const existingTitles = new Set(project.tasks.filter((task) => task.taskType === 'story').map((task) => task.title.trim()));
+  const backlogStories = Array.isArray(project.intakeConfig?.backlogContract?.stories)
+    ? project.intakeConfig.backlogContract.stories
+    : [];
 
   const itemsToCreate = [
-    ...stories.map((story, index) => ({
+    ...stories.map((story, index) => {
+      const metadata = backlogStories[index] || {};
+      const priority = ['low', 'medium', 'high', 'urgent'].includes(metadata.priority)
+        ? metadata.priority
+        : 'medium';
+      return {
       title: story.title,
       taskType: 'story',
       assigneeType: 'agent',
       assigneeAgentName: 'requirements_analyst',
       position: index,
       description: story.description,
+      priority,
       note: 'Story refinada importada do backlog',
-    })),
+      };
+    }),
   ];
 
   for (const item of itemsToCreate) {
@@ -2476,7 +2610,7 @@ export async function importBacklogTasks(projectUuid, backlogMarkdown) {
         description: item.description || null,
         taskType: item.taskType,
         status: 'backlog',
-        priority: 'medium',
+        priority: item.priority,
         assigneeType: item.assigneeType,
         assigneeAgentName: item.assigneeAgentName,
         position: item.position,
@@ -2494,6 +2628,34 @@ export async function importBacklogTasks(projectUuid, backlogMarkdown) {
   }
 
   return listProjectTasks(projectUuid);
+}
+
+export async function publishBacklogTasks(projectUuid) {
+  const project = await prisma.project.findUnique({ where: { uuid: projectUuid }, include: { creator: { select: { id: true } }, tasks: { select: { title: true, taskType: true } } } });
+  const contract = project?.intakeConfig?.backlogContract;
+  if (!project || !contract) throw new Error('Nenhum backlog aguardando aprovacao humana.');
+  if (contract.qualityReview?.decision !== 'PASS') throw new Error('O backlog precisa passar pela validacao de qualidade antes da publicacao.');
+  const existing = new Set(project.tasks.filter((task) => task.taskType === 'story').map((task) => task.title.trim()));
+  for (const [index, story] of (contract.stories || []).entries()) {
+    if (!story?.title || existing.has(story.title.trim())) continue;
+    await prisma.task.create({ data: { uuid: randomUUID(), projectId: project.id, title: story.title, description: story.description || null, taskType: 'story', status: 'backlog', priority: ['low', 'medium', 'high', 'urgent'].includes(story.priority) ? story.priority : 'medium', assigneeType: 'agent', assigneeAgentName: 'requirements_analyst', position: index, createdBy: project.creator.id, statusHistory: { create: { fromStatus: null, toStatus: 'backlog', changedByUserId: project.creator.id, note: 'Story publicada apos aprovacao humana' } } } });
+  }
+  await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, publicationStatus: 'published', publishedAt: new Date().toISOString() } } } });
+  return listProjectTasks(projectUuid);
+}
+
+export async function updateBacklogStory(projectUuid, storyId, input = {}) {
+  const project = await prisma.project.findUnique({ where: { uuid: projectUuid }, select: { id: true, intakeConfig: true } });
+  const contract = project?.intakeConfig?.backlogContract;
+  const stories = Array.isArray(contract?.stories) ? contract.stories : [];
+  const story = stories.find((item) => String(item?.id || '').toLowerCase() === String(storyId || '').toLowerCase());
+  if (!project || !contract || !story) throw new Error('Story pendente nao encontrada.');
+  const title = String(input.title || '').trim();
+  if (!title) throw new Error('O titulo da story e obrigatorio.');
+  story.title = title;
+  story.description = String(input.description || '').trim();
+  await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, stories } } } });
+  return story;
 }
 
 export async function createTaskArtifact(taskUuid, input) {
@@ -2604,6 +2766,44 @@ export async function createSystemTaskArtifact(taskUuid, input) {
   });
 }
 
+export async function reviewTaskArtifact(taskUuid, artifactUuid, { approved, comment = '', userUuid }) {
+  const task = await getTaskContextByUuid(taskUuid, userUuid);
+  const artifact = task?.artifacts?.find((item) => item.uuid === artifactUuid && item.isCurrent);
+  if (!artifact) throw new Error('Artefato atual não encontrado.');
+  if (!approved && !String(comment).trim()) throw new Error('Informe um comentário ao rejeitar o artefato.');
+  const reviewer = await prisma.user.findUnique({ where: { uuid: userUuid }, select: { id: true } });
+  const decision = approved ? 'APPROVED' : 'REJECTED';
+  const transition = resolveArtifactReviewTransition(artifact.artifactType, Boolean(approved));
+  const releasedStage = transition?.releasedStage || null;
+  const trimmedComment = String(comment).trim();
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      const existing = await tx.artifactReview.findFirst({ where: { artifactId: artifact.id, version: artifact.version, decision }, orderBy: { reviewedAt: 'desc' } });
+      if (existing) {
+        // Reconcile approvals created before automatic transitions were enabled.
+        const taskData = transition && { status: transition.status, assigneeAgentName: transition.assigneeAgentName, assigneeType: transition.assigneeType };
+        if (taskData) await tx.task.update({ where: { id: task.id }, data: taskData });
+        return tx.taskArtifact.findUnique({ where: { id: artifact.id } });
+      }
+      const next = await tx.taskArtifact.update({ where: { id: artifact.id }, data: { isApproved: Boolean(approved), approvedBy: approved ? reviewer?.id || null : null, approvedAt: approved ? new Date() : null } });
+      await tx.artifactReview.create({ data: { uuid: randomUUID(), artifactId: artifact.id, taskId: task.id, decision, releasedStage, comment: trimmedComment || null, reason: approved ? null : trimmedComment, reviewedBy: reviewer?.id || null, version: artifact.version } });
+      const taskData = transition && { status: transition.status, assigneeAgentName: transition.assigneeAgentName, assigneeType: transition.assigneeType };
+      if (taskData) await tx.task.update({ where: { id: task.id }, data: taskData });
+      return next;
+    });
+  } catch (error) {
+    // A concurrent identical decision can win the unique constraint; treat it as idempotent.
+    if (error?.code === 'P2002') {
+      updated = await prisma.taskArtifact.findUnique({ where: { id: artifact.id } });
+    } else {
+      throw error;
+    }
+  }
+  await createTaskComment(taskUuid, { authorUserUuid: userUuid, body: `${approved ? 'Artefato aprovado' : 'Artefato rejeitado'} (v${artifact.version}).${String(comment).trim() ? ` ${String(comment).trim()}` : ''}` });
+  return updated;
+}
+
 export async function getTaskContextByUuid(taskUuid, userUuid = null) {
   return prisma.task.findFirst({
     where: {
@@ -2670,6 +2870,12 @@ const stageTaskConfig = {
     title: '[SYSTEM] Development Master',
     artifactType: 'code',
     note: 'Artefato consolidado pelo Developer',
+  },
+  requirement_challenger: {
+    title: '[SYSTEM] Requirement Challenge',
+    artifactType: 'custom',
+    contentFormat: 'json',
+    note: 'Diagnóstico de riscos e lacunas pelo Requirement Challenger',
   },
 };
 
@@ -2749,6 +2955,7 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
               version: true,
               createdAt: true,
               isCurrent: true,
+              isApproved: true,
             },
             orderBy: { createdAt: 'desc' },
           },
@@ -2796,6 +3003,9 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
     task.artifacts.some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent)
   );
   const refinedStories = refinedTasks.length;
+  const qaApprovedStories = project.tasks.filter((task) =>
+    task.artifacts.some((artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent && artifact.isApproved)
+  ).length;
   const pendingTasks = project.tasks.filter(
     (task) => !task.artifacts.some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent)
   );
@@ -2806,7 +3016,8 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
   const hasArchitecture = Boolean(architectureArtifact);
   const architectureApproved = Boolean(architectureArtifact?.isApproved);
   const architectureNeedsRefresh = false;
-  const canGenerateArchitecture = allStoriesRefined && !hasArchitecture;
+  const allStoriesQaApproved = totalStories > 0 && qaApprovedStories === totalStories;
+  const canGenerateArchitecture = allStoriesRefined && allStoriesQaApproved && !hasArchitecture;
   const canGenerateCode = allStoriesRefined && hasArchitecture && architectureApproved;
   const blockers = buildArchitectureBlockers({
     totalStories,
@@ -2815,6 +3026,7 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
     architectureNeedsRefresh,
     architectureApproved,
   });
+  if (allStoriesRefined && !allStoriesQaApproved) blockers.push(`${totalStories - qaApprovedStories} task(s) ainda aguardam aprovação do QA.`);
 
   return {
     projectUuid: project.uuid,
@@ -2823,6 +3035,8 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
     refinedStories,
     pendingStories,
     allStoriesRefined,
+    qaApprovedStories,
+    allStoriesQaApproved,
     canGenerateArchitecture,
     hasArchitecture,
     architectureApproved,
@@ -3342,6 +3556,9 @@ export async function persistAgentResult(projectUuid, agentName, payload, result
   const config = stageTaskConfig[agentName];
   const stageTask = await ensureStageTask(projectUuid, agentName);
   const content =
+    agentName === 'project_manager' && result?.markdown
+      ? result.markdown
+      :
     typeof result === 'string'
       ? result
       : agentName === 'developer' && result?.code
@@ -3352,7 +3569,7 @@ export async function persistAgentResult(projectUuid, agentName, payload, result
     artifactType: config.artifactType,
     title: config.title,
     content,
-    contentFormat: 'markdown',
+    contentFormat: config.contentFormat || 'markdown',
     createdByAgentName: agentName,
   });
 
@@ -3361,8 +3578,7 @@ export async function persistAgentResult(projectUuid, agentName, payload, result
       where: { uuid: projectUuid },
       select: { intakeConfig: true },
     });
-    await persistBacklogContractArtifact(projectUuid, projectRecord, content);
-    await importBacklogTasks(projectUuid, content);
+    await persistBacklogContractArtifact(projectUuid, projectRecord, content, result?.backlog_contract || null);
   }
 
   if (agentName === 'architect') {

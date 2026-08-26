@@ -3,6 +3,8 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import urllib.error
 import urllib.request
 
@@ -64,6 +66,14 @@ if GEMINI_API_KEY:
 SUPPORTED_PROVIDERS = ("gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "openrouter", "ollama")
 
 
+class ProviderRateLimitError(RuntimeError):
+    """A transient 429 response, optionally carrying the Retry-After delay."""
+
+    def __init__(self, message, retry_after_seconds=None):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
 def is_error_text_response(result: str) -> bool:
     if not isinstance(result, str):
         return False
@@ -77,6 +87,37 @@ def is_error_text_response(result: str) -> bool:
         or normalized.startswith("modelo nao disponivel")
         or normalized.startswith("modelo não disponível")
     )
+
+
+def validate_structured_response(result: str, options_override: dict | None = None) -> str | None:
+    """Return a provider-quality error when a structured response is unusable.
+
+    This quality gate runs *inside* the model router.  A provider that returns
+    a tiny refusal or non-JSON text no longer counts as a successful attempt,
+    allowing the router to try the next configured model.
+    """
+    options = options_override or {}
+    text = str(result or "").strip()
+    try:
+        minimum_length = max(0, int(options.get("min_response_chars", 0) or 0))
+    except (TypeError, ValueError):
+        minimum_length = 0
+    if minimum_length and len(text) < minimum_length:
+        return f"Resposta curta para contrato estruturado ({len(text)} caracteres; minimo {minimum_length})."
+    if not options.get("require_json_object"):
+        return None
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text.lstrip("\ufeff")):
+        if char != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(text.lstrip("\ufeff")[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            return None
+    return "Resposta sem objeto JSON completo."
 
 
 def get_provider_order():
@@ -141,14 +182,38 @@ def http_post_json(url, payload, headers=None, timeout=120):
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8")
-            return response.status, json.loads(body) if body else {}
+            return response.status, json.loads(body) if body else {}, dict(response.headers.items())
     except urllib.error.HTTPError as error:
         body = error.read().decode("utf-8", errors="replace")
         try:
             parsed = json.loads(body) if body else {}
         except Exception:
             parsed = {"raw": body}
-        return error.code, parsed
+        return error.code, parsed, dict(error.headers.items()) if error.headers else {}
+
+
+def get_retry_after_seconds(headers):
+    value = next((value for key, value in (headers or {}).items() if key.lower() == "retry-after"), None)
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        try:
+            retry_at = parsedate_to_datetime(str(value))
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, IndexError):
+            return None
+
+
+def raise_for_rate_limit(status, data, headers):
+    if status == 429:
+        raise ProviderRateLimitError(
+            extract_error_message(data) or "Too Many Requests",
+            get_retry_after_seconds(headers),
+        )
 
 
 def extract_error_message(data):
@@ -207,25 +272,36 @@ def generate_attributes_fallback(idea: str, error_message: str = "") -> list:
     return attributes
 
 
-def generate_text_with_gemini(prompt, model):
+def generate_text_with_gemini(prompt, model, options_override=None):
     if not os.getenv("GEMINI_API_KEY"):
         raise RuntimeError("GEMINI_API_KEY nao configurada.")
+
+    options = options_override or {}
+    generation_config = {"temperature": options.get("temperature", 0.7)}
+    # Gemini supports a native JSON MIME type.  Prefer it whenever an agent is
+    # producing a contract, instead of relying solely on prompt compliance.
+    if options.get("json_mode"):
+        generation_config["response_mime_type"] = "application/json"
 
     if GEMINI_SDK == "google-genai":
         client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         response = client.models.generate_content(
             model=model,
             contents=prompt,
-            config={"temperature": 0.7},
+            config=generation_config,
         )
         text = getattr(response, "text", None)
         if text and str(text).strip():
             return str(text).strip()
         raise RuntimeError("Resposta vazia do Gemini.")
 
-    generation_config = {"temperature": 0.7}
     model_instance = genai.GenerativeModel(model, generation_config=generation_config)
-    response = model_instance.generate_content(prompt)
+    response = model_instance.generate_content(
+        prompt,
+        request_options={
+            "timeout": get_provider_timeout_seconds("gemini", 120, options_override),
+        },
+    )
 
     if response.prompt_feedback.block_reason:
         raise RuntimeError(f"Prompt bloqueado: {response.prompt_feedback.block_reason.name}")
@@ -250,7 +326,21 @@ def compact_prompt(prompt, ratio):
 
 
 def extract_text_from_openai_like(data):
-    return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    """Extract text without assuming providers always return message.content.
+
+    Some OpenAI-compatible providers return ``content: null`` for an interrupted,
+    filtered or otherwise empty completion.  Treat it as an empty response so the
+    router can retry another candidate instead of crashing with ``None.strip()``.
+    """
+    if not isinstance(data, dict):
+        return ""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = choice.get("message") if isinstance(choice, dict) else {}
+    content = message.get("content") if isinstance(message, dict) else None
+    return content.strip() if isinstance(content, str) else ""
 
 
 def parse_model_list(value):
@@ -263,7 +353,13 @@ def parse_model_list(value):
     return [str(item).strip() for item in items if str(item).strip()]
 
 
-def get_provider_timeout_seconds(provider, default_timeout=120):
+def get_provider_timeout_seconds(provider, default_timeout=120, options_override=None):
+    requested_timeout = (options_override or {}).get("request_timeout_seconds")
+    if requested_timeout is not None:
+        try:
+            return max(30, int(requested_timeout))
+        except (TypeError, ValueError):
+            pass
     specific_key = f"{str(provider or '').upper()}_REQUEST_TIMEOUT_SECONDS"
     candidate = os.getenv(specific_key) or os.getenv("LLM_REQUEST_TIMEOUT_SECONDS")
     try:
@@ -276,8 +372,12 @@ def get_provider_timeout_seconds(provider, default_timeout=120):
 def get_openrouter_model_candidates(primary_model):
     candidates = []
     for candidate in [primary_model, *parse_model_list(os.getenv("OPENROUTER_MODEL_FALLBACKS", ""))]:
+        if str(candidate).strip().lower() in {"openrouter/free", "qwen/qwen3-coder:free"}:
+            continue
         if candidate and candidate not in candidates:
             candidates.append(candidate)
+    if not candidates:
+        candidates.append("openai/gpt-4.1-mini")
     return candidates
 
 
@@ -298,6 +398,7 @@ def should_fallback_openrouter_model(error_message):
         r"capacity",
         r"temporarily unavailable",
         r"no endpoints found",
+        r"resposta vazia ou invalida",
     )
     return any(re.search(pattern, normalized, re.I) for pattern in patterns)
 
@@ -314,22 +415,32 @@ def generate_text_with_openrouter_model(prompt, model, api_key, options_override
         "temperature": (options_override or {}).get("temperature", 0.7),
         "max_tokens": max(64, int((options_override or {}).get("num_predict", 800))),
     }
+    if (options_override or {}).get("json_mode"):
+        payload["response_format"] = {"type": "json_object"}
 
     attempts = [payload]
     tried_prompt_compaction = False
 
     while attempts:
         current_payload = attempts.pop(0)
-        status, data = http_post_json(
+        status, data, response_headers = http_post_json(
             "https://openrouter.ai/api/v1/chat/completions",
             current_payload,
             headers=headers,
-            timeout=get_provider_timeout_seconds("openrouter", 180),
+            timeout=get_provider_timeout_seconds("openrouter", 180, options_override),
         )
         if status < 400:
-            return extract_text_from_openai_like(data)
+            result = extract_text_from_openai_like(data)
+            if result:
+                return result
+            raise RuntimeError("Resposta vazia ou invalida.")
+
+        raise_for_rate_limit(status, data, response_headers)
 
         error_message = extract_error_message(data)
+        if current_payload.get("response_format") and re.search(r"response_format|json.?mode|unsupported", error_message or "", re.I):
+            attempts.insert(0, {key: value for key, value in current_payload.items() if key != "response_format"})
+            continue
         affordable_match = re.search(r"can only afford\s+(\d+)", error_message or "", re.I)
         if affordable_match:
             affordable_tokens = int(affordable_match.group(1))
@@ -379,6 +490,8 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
                 print(f"[LLM Service] OpenRouter tentando modelo: {candidate_model}", file=sys.stderr)
                 return generate_text_with_openrouter_model(prompt, candidate_model, api_key, options_override)
             except Exception as error:
+                if isinstance(error, ProviderRateLimitError):
+                    raise
                 error_message = str(error)
                 openrouter_errors.append(f"{candidate_model}: {error_message}")
                 if should_fallback_openrouter_model(error_message) and index < len(candidates) - 1:
@@ -392,16 +505,19 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
         "temperature": (options_override or {}).get("temperature", 0.7),
         "max_tokens": max(64, int((options_override or {}).get("num_predict", 800))),
     }
+    if (options_override or {}).get("json_mode"):
+        payload["response_format"] = {"type": "json_object"}
 
-    status, data = http_post_json(
+    status, data, response_headers = http_post_json(
         base_urls[provider],
         payload,
         headers=headers,
-        timeout=get_provider_timeout_seconds(provider, 180 if provider == "nvidia" else 120),
+        timeout=get_provider_timeout_seconds(provider, 180 if provider == "nvidia" else 120, options_override),
     )
     if status < 400:
         return extract_text_from_openai_like(data)
 
+    raise_for_rate_limit(status, data, response_headers)
     raise RuntimeError(extract_error_message(data))
 
 
@@ -409,7 +525,7 @@ def extract_text_from_anthropic(data):
     return " ".join(
         item.get("text", "").strip()
         for item in data.get("content", [])
-        if item.get("type") == "text"
+        if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str)
     ).strip()
 
 
@@ -424,13 +540,14 @@ def generate_text_with_anthropic(prompt, model, api_key, options_override=None):
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
     }
-    status, data = http_post_json(
+    status, data, response_headers = http_post_json(
         "https://api.anthropic.com/v1/messages",
         payload,
         headers=headers,
         timeout=get_provider_timeout_seconds("anthropic", 180),
     )
     if status >= 400:
+        raise_for_rate_limit(status, data, response_headers)
         raise RuntimeError(extract_error_message(data))
 
     return extract_text_from_anthropic(data)
@@ -448,43 +565,53 @@ def generate_text_from_provider(provider, prompt, options_override=None, model_o
         )
 
     if provider == "gemini":
-        return generate_text_with_gemini(prompt, os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+        return generate_text_with_gemini(
+            prompt,
+            model_override or os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+            options_override,
+        )
 
     if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY nao configurada.")
-        return generate_text_with_openai_compatible("openai", prompt, os.getenv("OPENAI_MODEL", "gpt-4.1-mini"), api_key, options_override)
+        return generate_text_with_openai_compatible("openai", prompt, model_override or os.getenv("OPENAI_MODEL", "gpt-4.1-mini"), api_key, options_override)
 
     if provider == "anthropic":
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY nao configurada.")
-        return generate_text_with_anthropic(prompt, os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"), api_key, options_override)
+        return generate_text_with_anthropic(prompt, model_override or os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"), api_key, options_override)
 
     if provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
             raise RuntimeError("DEEPSEEK_API_KEY nao configurada.")
-        return generate_text_with_openai_compatible("deepseek", prompt, os.getenv("DEEPSEEK_MODEL", "deepseek-chat"), api_key, options_override)
+        return generate_text_with_openai_compatible("deepseek", prompt, model_override or os.getenv("DEEPSEEK_MODEL", "deepseek-chat"), api_key, options_override)
 
     if provider == "nvidia":
         api_key = os.getenv("NVIDIA_API_KEY")
         if not api_key:
             raise RuntimeError("NVIDIA_API_KEY nao configurada.")
-        return generate_text_with_openai_compatible("nvidia", prompt, os.getenv("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b"), api_key, options_override)
+        return generate_text_with_openai_compatible("nvidia", prompt, model_override or os.getenv("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b"), api_key, options_override)
 
     if provider == "groq":
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             raise RuntimeError("GROQ_API_KEY nao configurada.")
-        return generate_text_with_openai_compatible("groq", prompt, os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"), api_key, options_override)
+        model = model_override or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        if str(model).lower() == "qwen/qwen3.6-27b":
+            model = "llama-3.3-70b-versatile"
+        return generate_text_with_openai_compatible("groq", prompt, model, api_key, options_override)
 
     if provider == "openrouter":
         api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
             raise RuntimeError("OPENROUTER_API_KEY nao configurada.")
-        return generate_text_with_openai_compatible("openrouter", prompt, os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini"), api_key, options_override)
+        model = model_override or os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
+        if str(model).lower() in {"openrouter/free", "qwen/qwen3-coder:free"}:
+            model = "openai/gpt-4.1-mini"
+        return generate_text_with_openai_compatible("openrouter", prompt, model, api_key, options_override)
 
     raise RuntimeError(f"Provider nao suportado: {provider}")
 
@@ -565,7 +692,7 @@ def get_attributes_from_llm(idea: str) -> list:
     return generate_attributes_fallback(idea, " | ".join(errors[:5]))
 
 
-def generate_text_from_llm(prompt: str, model: str = None, options_override: dict | None = None, use_cache: bool = True) -> str:
+def generate_text_from_llm(prompt: str, model: str = None, options_override: dict | None = None, use_cache: bool = True, task: str = None) -> str:
     provider_key = get_cache_provider_key()
 
     if CACHE_ENABLED and use_cache:
@@ -579,29 +706,35 @@ def generate_text_from_llm(prompt: str, model: str = None, options_override: dic
 
     provider_order = get_provider_order()
 
-    errors = []
-    for provider in provider_order:
-        try:
-            print(f"[LLM Service] Tentando gerar texto com {provider}...", file=sys.stderr)
-            result = generate_text_from_provider(
-                provider,
-                prompt,
-                options_override=options_override,
-                model_override=model if provider == "ollama" else None,
-            )
-            if result and not is_error_text_response(result):
-                if CACHE_ENABLED and use_cache:
-                    try:
-                        CACHE.set(prompt, result, model=provider_key, provider="provider-chain", is_json=False)
-                    except Exception as e:
-                        print(f"[LLM Service] Erro ao guardar cache: {e}", file=sys.stderr)
-                return result
+    from .model_router import execute_routed_text
 
+    def execute_provider(provider, selected_model, selected_options):
+        print(f"[LLM Service] Tentando gerar texto com {provider}...", file=sys.stderr)
+        result = generate_text_from_provider(
+            provider,
+            prompt,
+            options_override=selected_options,
+            # O parametro model legado sempre foi exclusivo do Ollama. Mantemos esse
+            # contrato e permitimos que o router escolha os demais modelos.
+            model_override=model if provider == "ollama" and model else selected_model,
+        )
+        if not result or is_error_text_response(result):
             raise RuntimeError("Resposta vazia ou invalida.")
-        except Exception as e:
-            errors.append(f"{provider}: {e}")
-            print(f"[LLM Service] Falha ao gerar texto com {provider}: {e}", file=sys.stderr)
+        structured_error = validate_structured_response(result, selected_options)
+        if structured_error:
+            raise RuntimeError(structured_error)
+        return result
 
-    raise RuntimeError(
-        "Nenhum modelo de IA conseguiu gerar o texto solicitado. Tentativas: " + " | ".join(errors[:5])
+    result, _metadata = execute_routed_text(
+        prompt,
+        task=task,
+        options_override=options_override,
+        provider_order=provider_order,
+        provider_executor=execute_provider,
     )
+    if CACHE_ENABLED and use_cache:
+        try:
+            CACHE.set(prompt, result, model=provider_key, provider="provider-chain", is_json=False)
+        except Exception as e:
+            print(f"[LLM Service] Erro ao guardar cache: {e}", file=sys.stderr)
+    return result

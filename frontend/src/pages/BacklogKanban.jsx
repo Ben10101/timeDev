@@ -131,10 +131,10 @@ function mapTasksToStories(tasks, stageName) {
   return tasks
     .map((task) => {
       const requirementsArtifact = task.artifacts?.find(
-        (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent
+        (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent && artifact.isApproved
       );
       const qaArtifact = task.artifacts?.find(
-        (artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent
+        (artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent && artifact.isApproved
       );
 
       if (stageName === 'qa' && !requirementsArtifact) {

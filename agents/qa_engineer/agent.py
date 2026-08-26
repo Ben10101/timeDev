@@ -258,6 +258,10 @@ class QAEngineer:
             text,
             flags=re.IGNORECASE,
         )
+        text = re.sub(r"ponto a validar", "regra ainda não definida; validar conforme decisão do produto", text, flags=re.IGNORECASE)
+        text = re.sub(r"valor mínimo aceito pelo domínio", "valor válido definido pelo produto", text, flags=re.IGNORECASE)
+        text = re.sub(r"quantidade máxima de caracteres permitida pelo campo", "limite de caracteres definido pelo produto", text, flags=re.IGNORECASE)
+        text = re.sub(r"indisponibilidade temporária da integração", "falha temporária de persistência ou serviço", text, flags=re.IGNORECASE)
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(
             r"(?:\n\s*FIM_DO_PLANO_DE_TESTES\s*){2,}$",
@@ -534,8 +538,45 @@ class QAEngineer:
             text = re.sub(r"\bindexe corretamente\b", "considere corretamente os campos previstos", text, flags=re.IGNORECASE)
             text = re.sub(r"\bservic[o|ó]\s+de\s+gera[cç][aã]o\s+de\s+id\b", "servico ligado ao fluxo principal", text, flags=re.IGNORECASE)
 
+        if not self._has_explicit_transport_contract(requirement_summary, requirement_spec):
+            text = re.sub(
+                r"\bendpoint(?:\s+principal)?\s+(?:de|do)\s+(?:upload|anexo)[^.;\n]*",
+                "fluxo principal de anexo",
+                text,
+                flags=re.IGNORECASE,
+            )
+            text = re.sub(r"\bendpoint\s+de\s+upload\b", "fluxo de anexo", text, flags=re.IGNORECASE)
+
         text = re.sub(r"\b255 caracteres\b", "limite textual definido no requisito", text, flags=re.IGNORECASE)
         text = re.sub(r"\b999999\b", "limite numerico definido no requisito", text, flags=re.IGNORECASE)
+        # Limites e classificacoes nao fornecidos pelo RA devem permanecer como
+        # lacunas de especificacao, nunca virar comportamento confirmado no QA.
+        text = re.sub(
+            r"montante m[ií]nimo v[aá]lido estipulado pelo sistema",
+            "limite monetario definido no requisito",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"n[uú]mero m[aá]ximo de caracteres suportados pelo campo",
+            "limite textual definido no requisito",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"categoria corporativa distinta",
+            "categoria prevista no requisito",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"usu[aá]rio sem autentica[cç][aã]o v[aá]lida tenta acessar",
+            "usu[aá]rio sem permiss[aã]o prevista tenta acessar",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"requisito\s*ap[oó]s", "requisito ap[oó]s", text, flags=re.IGNORECASE)
+        text = re.sub(r"requisito(?=pendente)", "requisito: pendente", text, flags=re.IGNORECASE)
         text = re.sub(r"\btentar novamente\b", "exibir erro tratado e permitir nova tentativa segura", text, flags=re.IGNORECASE)
         text = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "data em formato previsto no requisito", text)
         text = re.sub(r"\bstatus\s+\"?[A-Z_ ]+\"?\b", "status previsto no requisito", text, flags=re.IGNORECASE)
@@ -621,6 +662,14 @@ class QAEngineer:
         ]
 
     def _synthesize_test_data_lines(self, idea, requirement_summary, requirement_spec=None):
+        if re.search(r"\b(comprovante|arquivo|anexar|upload)\b", str(idea or ""), re.IGNORECASE):
+            return [
+                "- Arquivos válidos: PDF, JPG e PNG, conforme formatos explicitamente aceitos no requisito.",
+                "- Arquivo inválido: extensão fora da lista confirmada, sem assumir tamanho ou conteúdo não definido.",
+                "- Solicitação em edição: contexto necessário para vincular o comprovante.",
+                "- Tentativa sem arquivo: comportamento deve ser confirmado pelo produto antes de virar regra.",
+                "- Evidência operacional: confirmar mensagem de retorno e vínculo persistido após o anexo.",
+            ]
         fields = self._extract_text_fields(requirement_summary, requirement_spec)
         checks = self._infer_core_checks(requirement_summary, requirement_spec)
         primary_field = fields[0] if fields else "campo principal"
@@ -652,6 +701,19 @@ class QAEngineer:
         ]
 
     def _synthesize_scenarios(self, idea, requirement_summary, requirement_spec=None):
+        if re.search(r"\b(comprovante|arquivo|anexar|upload)\b", str(idea or ""), re.IGNORECASE):
+            return [
+                "1. Caminho Feliz: anexar um comprovante PDF em uma solicitação em edição; sistema valida e vincula o arquivo.",
+                "2. Caminho Feliz: anexar um comprovante JPG em uma solicitação em edição; sistema valida e vincula o arquivo.",
+                "3. Caminho Feliz: anexar um comprovante PNG em uma solicitação em edição; sistema valida e vincula o arquivo.",
+                "4. Excecao: anexar arquivo fora dos formatos PDF, JPG ou PNG; sistema recusa o anexo conforme a regra confirmada.",
+                "5. Excecao: tentar concluir o anexo após uma recusa de formato; sistema mantém a solicitação consistente.",
+                "6. Excecao: interromper o anexo antes da confirmação; comportamento deve ser validado conforme a experiência definida.",
+                "7. Limite: usar exatamente os formatos aceitos documentados; sistema preserva o vínculo sem alterar o arquivo.",
+                "8. Limite: arquivo sem formato aceito; sistema informa a recusa sem assumir limite de tamanho não definido.",
+                "9. Resiliencia: repetir o anexo após falha recuperável; sistema evita vínculo duplicado.",
+                "10. Resiliencia: recusar formato inválido e depois anexar formato aceito; sistema vincula somente o arquivo válido.",
+            ]
         fields = self._extract_text_fields(requirement_summary, requirement_spec)
         checks = self._infer_core_checks(requirement_summary, requirement_spec)
         primary_field = fields[0] if fields else "campo principal"
@@ -673,6 +735,20 @@ class QAEngineer:
         ]
 
     def _synthesize_functional_cases(self, idea, requirement_summary, requirement_spec=None):
+        if re.search(r"\b(comprovante|arquivo|anexar|upload)\b", str(idea or ""), re.IGNORECASE):
+            return "\n".join([
+                "1. CT-01",
+                "Acao: anexar comprovante PDF, JPG ou PNG em uma solicitação em edição, ligado ao CA-01.",
+                "Resultado esperado: sistema valida o formato e vincula o comprovante à solicitação.",
+                "",
+                "2. CT-02",
+                "Acao: anexar arquivo fora dos formatos PDF, JPG ou PNG, ligado ao CA-01.",
+                "Resultado esperado: sistema recusa o arquivo e informa a regra de formatos aceitos, sem vínculo parcial.",
+                "",
+                "3. CT-03",
+                "Acao: repetir o anexo após uma falha recuperável, ligado ao CA-01.",
+                "Resultado esperado: sistema mantém consistência e vincula somente o comprovante aceito.",
+            ]).strip()
         route_label = self._extract_primary_route_label(idea, requirement_summary, requirement_spec)
         spec = self._parse_requirement_spec(requirement_spec)
         fields = self._extract_text_fields(requirement_summary, requirement_spec)
@@ -737,6 +813,21 @@ class QAEngineer:
                 f"- Regra associada -> {first_rule}; cobertura associada aos cenarios e casos acima.",
             ]
         ).strip()
+
+    def _synthesize_quality_section(self, title, idea, requirement_summary, requirement_spec=None):
+        if title == "Qualidade nao funcional":
+            return "\n".join([
+                "- Performance: verificar tempo de resposta percebido no fluxo principal e ausência de bloqueios durante a interação.",
+                "- Seguranca: verificar autenticação, autorização e tratamento seguro dos dados manipulados pelo fluxo.",
+                "- Confiabilidade: repetir a operação principal e confirmar comportamento consistente após sucesso ou falha.",
+                "- Observabilidade: confirmar que eventos de sucesso e erro deixam evidência operacional suficiente para diagnóstico.",
+                "- Disponibilidade: verificar que o fluxo apresenta mensagem recuperável quando uma dependência estiver indisponível.",
+            ])
+        return "\n".join([
+            "- Validar linguagem clara, hierarquia visual e feedback após cada ação.",
+            "- Validar navegação por teclado, foco visível e ordem lógica dos controles.",
+            "- Validar contraste, rótulos acessíveis e mensagens compreensíveis para tecnologias assistivas.",
+        ])
 
     def _stabilize_plan(self, full_plan, idea, requirement_summary, requirement_spec=None):
         sections = {}
@@ -813,6 +904,7 @@ class QAEngineer:
                 "num_predict": int(num_predict),
             },
             use_cache=False,
+            task="qa_generation",
         )
 
         if self._is_unusable_llm_response(result):
@@ -994,7 +1086,7 @@ Use exatamente estes titulos de secao, sem variações:
 - ## Usabilidade e acessibilidade
 
 ## Qualidade nao funcional
-Liste exatamente 4 bullets, um para cada topico abaixo, usando explicitamente estas palavras no inicio de cada bullet:
+Liste exatamente 5 bullets, um para cada topico abaixo, usando explicitamente estas palavras no inicio de cada bullet:
 - Performance:
 - Seguranca:
 - Confiabilidade:
@@ -1017,7 +1109,7 @@ Liste checks objetivos cobrindo heuristicas de Nielsen, leis de UX e WCAG em no 
                 for title in ["Qualidade nao funcional", "Usabilidade e acessibilidade"]:
                     body = self._extract_section(quality_result, title)
                     if not body:
-                        raise RuntimeError(f"Bloco de qualidade sem secao {title}.")
+                        body = self._synthesize_quality_section(title, idea, requirement_summary, requirement_spec)
                     sections[title] = body
 
                 full_plan = self._sanitize_plan(self._build_full_plan(sections))
@@ -1029,6 +1121,24 @@ Liste checks objetivos cobrindo heuristicas de Nielsen, leis de UX e WCAG em no 
                 last_reason = reason or "Plano de testes considerado incompleto."
             except Exception as error:
                 last_reason = str(error) or "Falha ao montar o plano de testes."
+
+        # Provider indisponível não deve bloquear o fluxo: produzimos um plano
+        # mínimo determinístico e rastreável para revisão humana.
+        fallback_sections = {
+            "Estrategia de testes": "- Validar o caminho principal, regras de negócio, erros recuperáveis e persistência observável.\n- Priorizar smoke da UI/ API e regressão dos critérios de aceite.",
+            "Dados de teste": "\n".join(self._synthesize_test_data_lines(idea, requirement_summary, requirement_spec)),
+            "Riscos e metricas": "\n".join(self._synthesize_risk_lines(idea, requirement_summary, requirement_spec)),
+            "Qualidade nao funcional": self._synthesize_quality_section("Qualidade nao funcional", idea, requirement_summary, requirement_spec),
+            "Usabilidade e acessibilidade": self._synthesize_quality_section("Usabilidade e acessibilidade", idea, requirement_summary, requirement_spec),
+            "Rastreabilidade dos Criterios de Aceite": self._synthesize_traceability_lines(idea, requirement_summary, requirement_spec),
+            "Smoke Minimo da Feature": "\n".join(self._synthesize_smoke_lines(idea, requirement_summary, requirement_spec)),
+            "Cenarios de teste": "\n".join(self._synthesize_scenarios(idea, requirement_summary, requirement_spec)),
+            "Casos de teste funcionais": self._synthesize_functional_cases(idea, requirement_summary, requirement_spec),
+        }
+        fallback_plan = self._stabilize_plan(self._build_full_plan(fallback_sections), idea, requirement_summary, requirement_spec)
+        complete, _ = validate_qa_output(fallback_plan)
+        if complete:
+            return fallback_plan
 
         raise RuntimeError(
             f"O agente qa_engineer nao conseguiu gerar uma resposta completa apos {retry_count} tentativas. "

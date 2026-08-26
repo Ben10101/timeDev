@@ -5,10 +5,13 @@ import { PencilLine } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import ConfirmDialog from '../components/ConfirmDialog';
 import ProjectTaskBoard from '../components/ProjectTaskBoard';
+import ProjectStageNav from '../components/ProjectStageNav';
 import {
   approveProjectArchitecture,
   generateProjectArchitecture,
   generateProjectBacklog,
+  publishProjectBacklog,
+  updateProjectBacklogStory,
   getApiErrorMessage,
   getProject,
   getProjectArchitectureStatus,
@@ -61,6 +64,7 @@ export default function ProjectOverviewPage() {
   const [architectureStatus, setArchitectureStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [publishingBacklog, setPublishingBacklog] = useState(false);
   const [generatingArchitecture, setGeneratingArchitecture] = useState(false);
   const [approvingArchitecture, setApprovingArchitecture] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
@@ -68,6 +72,9 @@ export default function ProjectOverviewPage() {
   const [statusDialog, setStatusDialog] = useState({ open: false, nextStatus: null });
   const [showBriefingModal, setShowBriefingModal] = useState(false);
   const [briefingResult, setBriefingResult] = useState(null);
+  const [clarifications, setClarifications] = useState([]);
+  const [clarificationAnswers, setClarificationAnswers] = useState({});
+  const [requirementsContract, setRequirementsContract] = useState(null);
   const [editingStory, setEditingStory] = useState(null);
   const [storyDraft, setStoryDraft] = useState({ title: '', description: '' });
   const [storySaving, setStorySaving] = useState(false);
@@ -93,13 +100,18 @@ export default function ProjectOverviewPage() {
     () => tasks.some((task) => task.taskType === 'story') || Boolean(project?.intakeConfig?.backlogContract?.stories?.length),
     [project?.intakeConfig?.backlogContract?.stories?.length, tasks]
   );
+  const hasPublishedStories = useMemo(() => tasks.some((task) => task.taskType === 'story'), [tasks]);
+  const backlogQualityReview = project?.intakeConfig?.backlogContract?.qualityReview || null;
+  const activeRequirementsContract = requirementsContract || project?.intakeConfig?.backlogContract?.requirementsContract || project?.intakeConfig?.requirementsContract || null;
+  const pendingBacklogContract = project?.intakeConfig?.backlogContract;
+  const backlogAwaitingApproval = Boolean(pendingBacklogContract?.stories?.length && pendingBacklogContract?.publicationStatus !== 'published');
   const ideaLength = form.idea.trim().length;
   const shortcutReady = ideaLength >= 40;
   const riskCount = project?.intakeConfig?.riskRegister?.risks?.length || 0;
   const impedimentCount = project?.intakeConfig?.riskRegister?.impediments?.length || 0;
   const projectStatusMeta = useMemo(() => getProjectStatusWorkflow(project?.status || 'draft'), [project?.status]);
   const projectJourney = useMemo(() => {
-    if (!tasks.length) {
+    if (!hasPublishedStories) {
       return {
         stage: 'Briefing',
         title: 'Consolidar briefing e gerar stories',
@@ -149,7 +161,7 @@ export default function ProjectOverviewPage() {
       ctaType: 'button',
     };
   }, [
-    tasks.length,
+    hasPublishedStories,
     architectureStatus,
     hasGeneratedStories,
     generating,
@@ -188,6 +200,22 @@ export default function ProjectOverviewPage() {
 
       setProject(projectData);
       setTasks(taskList);
+      const pendingRequirements = projectData?.intakeConfig?.requirementsContract || null;
+      const persistedClarifications = projectData?.intakeConfig?.backlogClarifications || pendingRequirements?.blocking_questions || [];
+      setRequirementsContract(projectData?.intakeConfig?.backlogContract?.requirementsContract || pendingRequirements);
+      setClarifications(Array.isArray(persistedClarifications) ? persistedClarifications : []);
+      const persistedAnswers = projectData?.intakeConfig?.answers?.clarifications || [];
+      const answersByQuestion = Object.fromEntries(
+        (Array.isArray(persistedAnswers) ? persistedAnswers : [])
+          .filter((item) => item?.question && item?.answer)
+          .map((item) => [item.question, item.answer])
+      );
+      setClarificationAnswers(Object.fromEntries(
+        (Array.isArray(persistedClarifications) ? persistedClarifications : []).map((item) => [
+          item.id,
+          answersByQuestion[item.question] || '',
+        ])
+      ));
       setArchitectureStatus(nextArchitectureStatus);
       setForm({
         idea: projectData?.intakeConfig?.idea || projectData?.description || '',
@@ -214,6 +242,10 @@ export default function ProjectOverviewPage() {
       setError('Descreva a ideia do projeto antes de acionar o PM Agent.');
       return;
     }
+    if (clarifications.length && clarifications.some((item) => !String(clarificationAnswers[item.id] || '').trim())) {
+      setError('Responda todas as perguntas de esclarecimento antes de gerar as user stories.');
+      return;
+    }
 
     setGenerating(true);
     setError(null);
@@ -230,11 +262,25 @@ export default function ProjectOverviewPage() {
           audience: form.audience,
           mainFlows: form.mainFlows,
           constraints: form.constraints,
+          clarifications: clarifications.map((item) => ({ question: item.question, answer: clarificationAnswers[item.id] || '' })),
         },
       });
 
+      if (response.result?.clarification_required) {
+        const questions = response.result.clarifications || [];
+        setClarifications(questions);
+        setClarificationAnswers(Object.fromEntries(questions.map((item) => [
+          item.id,
+          clarificationAnswers[item.id] || '',
+        ])));
+        setRequirementsContract(response.result.requirements_contract || null);
+        setSuccessMessage('O PM Agent precisa de algumas respostas antes de publicar as user stories.');
+        return;
+      }
+
       setProject(response.project);
       setTasks(response.tasks || []);
+      setRequirementsContract(response.project?.intakeConfig?.backlogContract?.requirementsContract || response.result?.backlog_contract?.requirements_contract || null);
       const nextArchitectureStatus = await getProjectArchitectureStatus(projectUuid);
       setArchitectureStatus(nextArchitectureStatus);
       setForm({
@@ -244,31 +290,67 @@ export default function ProjectOverviewPage() {
         mainFlows: response.project?.intakeConfig?.answers?.mainFlows || form.mainFlows,
         constraints: response.project?.intakeConfig?.answers?.constraints || form.constraints,
       });
-      const generatedStories = (response.tasks || [])
+      const contractStories = response.result?.backlog_contract?.stories || response.project?.intakeConfig?.backlogContract?.stories || [];
+      const generatedStories = (contractStories.length ? contractStories : (response.tasks || []))
         .filter((task) => task.taskType !== 'agent_job')
-        .slice(0, 3)
         .map((task) => ({
+          id: task.id,
           uuid: task.uuid,
           title: task.title,
           description: task.description || '',
           status: task.status,
         }));
-      const taskCount = (response.tasks || []).filter((task) => task.taskType !== 'agent_job').length || (response.tasks || []).length || 0;
+      const taskCount = contractStories.length || (response.tasks || []).filter((task) => task.taskType !== 'agent_job').length || 0;
       setBriefingResult({
         projectName: response.project?.name || project?.name || 'Projeto',
         totalStories: taskCount,
         generatedStories,
-        nextStep: nextArchitectureStatus?.hasArchitecture
-          ? 'A próxima etapa é revisar a arquitetura.'
-          : 'A próxima etapa é abrir a arquitetura para liberar implementação.',
+        nextStep: 'Revise as tasks e aprove a publicação para enviá-las ao board.',
       });
-      setShowBriefingModal(false);
+      setClarifications([]);
+      setClarificationAnswers({});
       setSuccessMessage('User stories geradas com sucesso.');
     } catch (submitError) {
       setError(getApiErrorMessage(submitError, 'Não foi possível gerar o backlog do projeto.'));
     } finally {
       setGenerating(false);
     }
+  }
+
+  async function handlePublishBacklog() {
+    setPublishingBacklog(true);
+    setError(null);
+    try {
+      const nextTasks = await publishProjectBacklog(projectUuid);
+      setTasks(nextTasks || []);
+      setBriefingResult(null);
+      setSuccessMessage('Tasks aprovadas e publicadas no board.');
+      await loadOverview();
+    } catch (publishError) {
+      setError(getApiErrorMessage(publishError, 'Não foi possível publicar as tasks no board.'));
+    } finally {
+      setPublishingBacklog(false);
+    }
+  }
+
+  function openPersistedBacklogReview() {
+    const stories = pendingBacklogContract?.stories || [];
+    if (!stories.length) return;
+    setBriefingResult({
+      projectName: project?.name || 'Projeto',
+      totalStories: stories.length,
+      generatedStories: stories.map((story, index) => ({
+        id: story.id,
+        uuid: story.uuid,
+        title: story.title,
+        description: story.description || '',
+        status: story.status || 'proposed',
+      })),
+      nextStep: 'Revise as tasks e aprove a publicação para enviá-las ao board.',
+    });
+    window.requestAnimationFrame(() => {
+      document.getElementById('backlog-human-review')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   }
 
   function applyShortcutExample(example) {
@@ -292,10 +374,18 @@ export default function ProjectOverviewPage() {
     });
   }
 
+  function isEditingStory(story) {
+    if (!editingStory || !story) return false;
+    return Boolean(
+      (editingStory.uuid && story.uuid && editingStory.uuid === story.uuid)
+      || (editingStory.id && story.id && editingStory.id === story.id)
+    );
+  }
+
   async function handleSaveStoryEdit(event) {
     event.preventDefault();
 
-    if (!editingStory?.uuid) return;
+    if (!editingStory?.uuid && !editingStory?.id) return;
 
     if (!storyDraft.title.trim()) {
       setError('O título da story é obrigatório.');
@@ -306,18 +396,17 @@ export default function ProjectOverviewPage() {
     setError(null);
 
     try {
-      const updatedTask = await updateTask(editingStory.uuid, {
-        title: storyDraft.title.trim(),
-        description: storyDraft.description.trim(),
-      });
+      const updatedTask = editingStory.uuid
+        ? await updateTask(editingStory.uuid, { title: storyDraft.title.trim(), description: storyDraft.description.trim() })
+        : await updateProjectBacklogStory(projectUuid, editingStory.id, { title: storyDraft.title.trim(), description: storyDraft.description.trim() });
 
-      setTasks((current) => current.map((task) => (task.uuid === updatedTask.uuid ? updatedTask : task)));
+      if (updatedTask.uuid) setTasks((current) => current.map((task) => (task.uuid === updatedTask.uuid ? updatedTask : task)));
       setBriefingResult((current) => {
         if (!current?.generatedStories?.length) return current;
         return {
           ...current,
           generatedStories: current.generatedStories.map((story) =>
-            story.uuid === updatedTask.uuid
+            (editingStory.uuid ? story.uuid === updatedTask.uuid : story.id === updatedTask.id)
               ? {
                   ...story,
                   title: updatedTask.title,
@@ -458,73 +547,16 @@ export default function ProjectOverviewPage() {
             </button>
           </div>
         }
-        sidebar={
-          <>
-            <section className="dashboard-panel">
-              <div className="dashboard-panel-header">
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Saude do projeto</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3 p-4">
-                {[
-                  [groupedStats.total, 'Tasks'],
-                  [groupedStats.backlog, 'Backlog'],
-                  [groupedStats.qa, 'Em QA'],
-                  [groupedStats.done, 'Concluídas'],
-                ].map(([value, label]) => (
-                  <div key={label} className="rounded-xl border border-slate-200 bg-white p-4">
-                    <div className="text-2xl font-semibold text-slate-900">{value}</div>
-                    <div className="mt-1 text-xs text-slate-500">{label}</div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className={`rounded-2xl border p-5 shadow-sm ${projectJourney.tone}`}>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em]">Próxima ação</p>
-              <p className="mt-3 text-base font-semibold text-slate-900">{projectJourney.title}</p>
-              <p className="mt-2 text-sm leading-7 text-slate-600">{projectJourney.message}</p>
-              <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Etapa atual: {projectJourney.stage}
-              </p>
-              <div className={`mt-4 inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${projectStatusMeta.tone}`}>
-                Status do projeto: {projectStatusMeta.label}
-              </div>
-              <div className="mt-4 flex flex-col gap-3">
-                <button
-                  type={projectJourney.ctaType}
-                  onClick={projectJourney.ctaType === 'button' ? projectJourney.ctaAction : undefined}
-                  disabled={projectJourney.ctaDisabled}
-                  className="dashboard-button-secondary w-full bg-white/80"
-                >
-                  {projectJourney.ctaLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={scrollToRefinementBoard}
-                  className="dashboard-button-secondary w-full bg-white/70"
-                >
-                  Abrir board do projeto
-                </button>
-                <button
-                  type="button"
-                  onClick={() => requestProjectStatusChange(projectStatusMeta.primaryTarget)}
-                  disabled={loading || updatingStatus}
-                  className="dashboard-button-secondary w-full bg-white/70"
-                >
-                  {updatingStatus ? 'Atualizando...' : projectStatusMeta.primaryAction}
-                </button>
-              </div>
-      <p className="mt-3 text-xs leading-5 text-slate-500">
-        O board e a implementação continuam disponíveis no contexto da task.
-      </p>
-              <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {riskCount} riscos · {impedimentCount} impedimentos
-              </p>
-            </section>
-          </>
-        }
       >
       <section className="space-y-6">
+        <ProjectStageNav
+          projectUuid={projectUuid}
+          active={backlogAwaitingApproval ? 'review' : hasPublishedStories ? 'tasks' : 'briefing'}
+          completed={[
+            ...(hasGeneratedStories ? ['briefing', 'requirements', 'backlog'] : []),
+            ...(hasPublishedStories ? ['review'] : []),
+          ]}
+        />
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
         {successMessage && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{successMessage}</div>}
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
@@ -546,6 +578,49 @@ export default function ProjectOverviewPage() {
             </div>
           </div>
         </section>
+        {(activeRequirementsContract || backlogQualityReview) && (
+          <section className="hidden">
+            <div className={`rounded-2xl border p-5 ${activeRequirementsContract?.decision === 'BLOCK' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50'}`}>
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Contrato de requisitos</p>
+              <h3 className="mt-2 text-lg font-bold text-slate-900">
+                {activeRequirementsContract?.decision === 'BLOCK' ? 'Aguardando decisões de produto' : 'Requisitos prontos para o backlog'}
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {activeRequirementsContract?.requirements?.length || 0} evidências mapeadas · {activeRequirementsContract?.assumptions?.length || 0} premissas · {activeRequirementsContract?.questions?.length || 0} perguntas registradas
+              </p>
+              {activeRequirementsContract?.blocking_questions?.length > 0 && (
+                <p className="mt-3 text-sm font-semibold text-amber-800">Há decisões bloqueantes pendentes. Abra o briefing para respondê-las.</p>
+              )}
+            </div>
+            <div className={`rounded-2xl border p-5 ${backlogQualityReview?.decision === 'PASS' ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-600">Qualidade do backlog</p>
+              <h3 className="mt-2 text-lg font-bold text-slate-900">
+                {backlogQualityReview?.decision === 'PASS' ? 'Backlog validado antes da publicação' : 'Backlog ainda não foi publicado'}
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {backlogQualityReview
+                  ? `${backlogQualityReview.repair_attempts || 0} rodada(s) de autocorreção executada(s).`
+                  : 'O PM ainda não concluiu a validação do contrato de backlog.'}
+              </p>
+            </div>
+          </section>
+        )}
+        {backlogAwaitingApproval && (
+          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-800">Próxima etapa do PM</p>
+                <h3 className="mt-2 text-xl font-bold text-slate-900">Revisão humana das tasks</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-700">
+                  {pendingBacklogContract.stories.length} tasks foram geradas, mas ainda não foram publicadas no board. Revise o conteúdo antes de aprovar.
+                </p>
+              </div>
+              <button type="button" onClick={() => navigate(`/projects/${projectUuid}/backlog-review`)} className="dashboard-button-primary w-full sm:w-auto">
+                Revisar tasks e aprovar
+              </button>
+            </div>
+          </section>
+        )}
         <section className="hidden dashboard-panel" id="project-briefing-form">
           <div className="dashboard-panel-header">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -640,14 +715,14 @@ export default function ProjectOverviewPage() {
             </div>
           </div>
 
-          <div className="grid gap-4 p-6 lg:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+          <div className="grid gap-3 border-t border-slate-100 px-6 py-4 sm:grid-cols-4">
+            <div className="rounded-xl bg-slate-50 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Histórias refinadas</p>
               <p className="mt-3 text-3xl font-bold text-slate-900">
                 {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+            <div className="rounded-xl bg-slate-50 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Arquitetura</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.hasArchitecture
@@ -657,13 +732,13 @@ export default function ProjectOverviewPage() {
                   : 'Pendente'}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+            <div className="rounded-xl bg-slate-50 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Implementação</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.canGenerateCode ?'Liberada' : 'Bloqueada'}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+            <div className="rounded-xl bg-slate-50 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Aprovação humana</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
                 {architectureStatus?.hasArchitecture
@@ -684,8 +759,8 @@ export default function ProjectOverviewPage() {
           )}
         </section>
 
-        <section className="dashboard-panel" id="project-refinement-board">
-          <div className="dashboard-panel-header">
+        <details className="dashboard-panel group" id="project-refinement-board">
+          <summary className="dashboard-panel-header cursor-pointer list-none">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Etapa 3</p>
@@ -698,7 +773,7 @@ export default function ProjectOverviewPage() {
                 {tasks.length} tasks
               </span>
             </div>
-          </div>
+          </summary>
 
           <div className="p-6">
             {loading ? (
@@ -710,7 +785,7 @@ export default function ProjectOverviewPage() {
               />
             )}
           </div>
-        </section>
+        </details>
       </section>
       </AppShell>
       <AnimatePresence>
@@ -719,18 +794,19 @@ export default function ProjectOverviewPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-md"
+            id="backlog-human-review"
+            className="mx-auto w-full max-w-7xl scroll-mt-6 px-4 py-8 sm:px-6 lg:px-8"
           >
             <motion.div
               initial={{ opacity: 0, y: 18, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 18, scale: 0.98 }}
               transition={{ duration: 0.18 }}
-              className="w-full max-w-6xl overflow-hidden rounded-[30px] border border-white/15 bg-white shadow-2xl"
+              className="w-full overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm"
             >
               <div className="border-b border-slate-200 px-6 py-5">
                 <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#102a72]">Resultado do briefing</p>
-                <h3 className="mt-2 text-3xl font-bold text-slate-900">Stories prontas para o board</h3>
+                <h3 className="mt-2 text-3xl font-bold text-slate-900">Validação humana das tasks</h3>
                 <p className="mt-3 text-sm leading-7 text-slate-600">
                   O PM Agent terminou a geração e organizou o resultado de forma fácil de revisar.
                 </p>
@@ -741,7 +817,7 @@ export default function ProjectOverviewPage() {
                   <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Resumo</p>
                   <p className="mt-2 text-2xl font-bold text-slate-900">{briefingResult.totalStories} histórias geradas</p>
                   <p className="mt-3 text-sm leading-7 text-slate-600">
-                    {briefingResult.projectName} agora tem um backlog inicial pronto para seguir para arquitetura e execução.
+                    {briefingResult.projectName} tem tasks geradas pelo PM aguardando sua aprovação antes de entrar no board.
                   </p>
                   <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-800">
                     {briefingResult.nextStep}
@@ -762,8 +838,8 @@ export default function ProjectOverviewPage() {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">O que saiu</p>
-                      <p className="mt-2 text-sm text-slate-600">
-                        A lista abaixo mostra as stories geradas e permite ajustar cada uma sem sair do modal.
+                    <p className="mt-2 text-sm text-slate-600">
+                        Revise títulos e descrições. A publicação no board só acontece após sua confirmação.
                       </p>
                     </div>
                     <div className="hidden rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 lg:block">
@@ -780,15 +856,19 @@ export default function ProjectOverviewPage() {
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Story {index + 1}</p>
-                              <h4 className="mt-1 line-clamp-2 text-sm font-semibold leading-6 text-slate-900">
-                                {clampStoryText(story.title, 120)}
-                              </h4>
+                              {isEditingStory(story) ? (
+                                <input value={storyDraft.title} onChange={(event) => setStoryDraft((current) => ({ ...current, title: event.target.value }))} className="dashboard-input mt-2 text-sm" aria-label="Título da story" />
+                              ) : (
+                                <h4 className="mt-1 line-clamp-2 text-sm font-semibold leading-6 text-slate-900">{clampStoryText(story.title, 120)}</h4>
+                              )}
                             </div>
                             <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold capitalize text-slate-600">
                               {story.status}
                             </span>
                           </div>
-                          {story.description ? (
+                          {isEditingStory(story) ? (
+                            <textarea value={storyDraft.description} onChange={(event) => setStoryDraft((current) => ({ ...current, description: event.target.value }))} rows={4} className="dashboard-input mt-3 min-h-[100px] resize-none text-sm" aria-label="Descrição da story" />
+                          ) : story.description ? (
                             <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">{story.description}</p>
                           ) : (
                             <p className="mt-3 text-sm leading-6 text-slate-500">Sem descrição adicional.</p>
@@ -803,8 +883,14 @@ export default function ProjectOverviewPage() {
                               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-[#102a72]/30 hover:bg-[#102a72]/5 hover:text-[#102a72]"
                             >
                               <PencilLine className="h-3.5 w-3.5" />
-                              Ajustar story
+                              {story.uuid ? 'Ajustar story' : 'Editar no local'}
                             </button>
+                            {isEditingStory(story) && (
+                              <div className="mt-3 flex gap-2">
+                                <button type="button" onClick={handleSaveStoryEdit} disabled={storySaving} className="dashboard-button-primary px-3 py-1.5 text-[11px]">{storySaving ? 'Salvando...' : 'Salvar'}</button>
+                                <button type="button" onClick={() => setEditingStory(null)} disabled={storySaving} className="dashboard-button-secondary px-3 py-1.5 text-[11px]">Cancelar</button>
+                              </div>
+                            )}
                           </div>
                         </article>
                       ))
@@ -835,13 +921,21 @@ export default function ProjectOverviewPage() {
                 >
                   Fechar
                 </button>
+                <button
+                  type="button"
+                  onClick={handlePublishBacklog}
+                  disabled={publishingBacklog || !briefingResult.generatedStories.length}
+                  className="dashboard-button-primary w-full sm:w-auto"
+                >
+                  {publishingBacklog ? 'Publicando...' : 'Aprovar e enviar ao board'}
+                </button>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {editingStory && (
+        {false && editingStory && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -925,7 +1019,9 @@ export default function ProjectOverviewPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="max-w-3xl">
                     <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing do projeto</p>
-                    <h3 className="mt-2 text-3xl font-bold text-slate-900">Etapa 1 · Gerar user stories</h3>
+                    <h3 className="mt-2 text-3xl font-bold text-slate-900">
+                      {clarifications.length ? 'Etapa 2 · Validar decisões de produto' : 'Etapa 1 · Analisar requisitos e gerar user stories'}
+                    </h3>
                     <p className="mt-3 text-sm leading-7 text-slate-600">
                       Descreva o produto com contexto suficiente e o PM Agent transforma isso em user stories acionáveis para o board.
                     </p>
@@ -955,6 +1051,46 @@ export default function ProjectOverviewPage() {
               )}
 
               <div className="grid gap-4 px-6 py-6 lg:grid-cols-2">
+                <div className="lg:col-span-2 grid gap-3 sm:grid-cols-3">
+                  {[
+                    ['1', 'Requisitos', activeRequirementsContract?.decision === 'READY' || clarifications.length ? 'Concluído' : 'Em análise'],
+                    ['2', 'Decisões', clarifications.length ? 'Sua ação' : 'Sem bloqueios'],
+                    ['3', 'Backlog', hasGeneratedStories ? 'Publicado' : 'Aguardando'],
+                  ].map(([step, label, state]) => (
+                    <div key={step} className={`rounded-2xl border p-4 ${label === 'Decisões' && clarifications.length ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Etapa {step}</p>
+                      <p className="mt-1 font-semibold text-slate-900">{label}</p>
+                      <p className="mt-1 text-xs text-slate-600">{state}</p>
+                    </div>
+                  ))}
+                </div>
+                {clarifications.length > 0 && (
+                  <div className="lg:col-span-2 rounded-2xl border border-amber-200 bg-amber-50 p-5">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-800">Esclarecimentos necessários</p>
+                    <h4 className="mt-2 text-xl font-bold text-slate-900">Responda antes de gerar as stories</h4>
+                    <p className="mt-2 text-sm leading-6 text-slate-700">As respostas entram no briefing; elas não aparecerão nas user stories finais.</p>
+                    {activeRequirementsContract?.assumptions?.length > 0 && (
+                      <p className="mt-3 text-sm leading-6 text-amber-900">Premissas identificadas: {activeRequirementsContract.assumptions.map((item) => item.text).join(' · ')}</p>
+                    )}
+                    <div className="mt-5 grid gap-4">
+                      {clarifications.map((item) => (
+                        <div key={item.id} className="rounded-2xl border border-amber-200 bg-white p-4">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-800">{item.id}</p>
+                          <p className="mt-2 text-base font-semibold leading-6 text-slate-900">{item.question}</p>
+                          {item.reason && <p className="mt-2 text-sm leading-6 text-slate-600"><strong>Por que isso importa:</strong> {item.reason}</p>}
+                          <TextAreaField
+                            label="Sua decisão"
+                            value={clarificationAnswers[item.id] || ''}
+                            onChange={(event) => setClarificationAnswers((current) => ({ ...current, [item.id]: event.target.value }))}
+                            placeholder={item.answer_hint || 'Informe a decisão de produto, regra ou detalhe de negócio.'}
+                            rows={3}
+                            disabled={generating || loading}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="max-w-3xl">

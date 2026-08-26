@@ -43,13 +43,22 @@ function buildCompactRequirementBacklog(task) {
         .filter(Boolean)
         .join(' | ')
     : null;
+  const backlogContract = task.project?.intakeConfig?.backlogContract || null;
+  const stories = Array.isArray(backlogContract?.stories) ? backlogContract.stories : [];
+  const currentStory = stories.find((story) => String(story?.title || '').trim() === String(task.title || '').trim()) || null;
+  const relatedStories = stories
+    .filter((story) => story && story.id !== currentStory?.id)
+    .slice(0, 6)
+    .map((story) => `${story.id}: ${compactText(story.title, 110)}`);
 
   return [
+    currentStory?.id ? `ID rastreavel da historia: ${currentStory.id}` : null,
     `Historia alvo: ${compactText(task.title, 140)}`,
     task.description ? `Contexto imediato: ${compactText(task.description, 180)}` : null,
     task.project?.description ? `Projeto: ${compactText(task.project.description, 140)}` : null,
     task.project?.vision ? `Visao: ${compactText(task.project.vision, 160)}` : null,
     projectDnaSummary ? `Project DNA: ${compactText(projectDnaSummary, 240)}` : null,
+    relatedStories.length ? `Outras historias do backlog: ${relatedStories.join(' | ')}` : null,
   ]
     .filter(Boolean)
     .join('\n');
@@ -296,6 +305,15 @@ export async function runAgentController(req, res) {
   }
 }
 
+function parseJsonArtifact(content = '') {
+  try {
+    const value = JSON.parse(String(content || ''));
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function runRequirementsForTaskController(req, res) {
   let agentRun = null;
   let previousTaskState = null;
@@ -324,7 +342,7 @@ export async function runRequirementsForTaskController(req, res) {
       (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent
     );
 
-    if (latestRequirements) {
+    if (latestRequirements?.isApproved) {
       return res.status(400).json({
         message: 'A etapa de requisitos desta task já foi concluída e não pode ser executada novamente.',
       });
@@ -345,10 +363,23 @@ export async function runRequirementsForTaskController(req, res) {
         task.description ? `\n\nContexto complementar da tarefa: ${task.description}` : ''
       }`,
       backlog: buildCompactRequirementBacklog(task),
+      backlog_contract: task.project?.intakeConfig?.backlogContract || null,
       project_name: task.project.name,
       project_context: {
         description: compactText(task.project.description, 180),
         vision: compactText(task.project.vision, 220),
+        projectDna: task.project?.intakeConfig?.projectDna || null,
+        backlogContract: task.project?.intakeConfig?.backlogContract || null,
+        storyContext: (() => {
+          const stories = Array.isArray(task.project?.intakeConfig?.backlogContract?.stories)
+            ? task.project.intakeConfig.backlogContract.stories
+            : [];
+          const current = stories.find((story) => String(story?.title || '').trim() === String(task.title || '').trim()) || null;
+          return {
+            currentStory: current,
+            relatedStories: stories.filter((story) => story && story.id !== current?.id).slice(0, 6),
+          };
+        })(),
       },
     };
 
@@ -357,7 +388,9 @@ export async function runRequirementsForTaskController(req, res) {
     agentRun = await createAgentRunStart(task.project.uuid, 'requirements_analyst', payloadWithRuntime);
     runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
     const result = await runSingleAgent('requirements_analyst', payloadWithRuntime, { envOverrides });
-    const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    const content = typeof result === 'string'
+      ? result
+      : (typeof result?.markdown === 'string' ? result.markdown : JSON.stringify(result, null, 2));
     assertSharedArtifactCompleteness('requirements_analyst', content);
 
     const finalized = await runLifecycle.finalizeSuccess({
@@ -375,6 +408,7 @@ export async function runRequirementsForTaskController(req, res) {
       contentFormat: 'markdown',
       createdByAgentName: 'requirements_analyst',
       agentRunId: agentRun.id,
+      requirementContract: result?.requirement_contract || result?.requirementContract || parseJsonArtifact(content)?.requirement_contract || parseJsonArtifact(content)?.requirementContract || null,
     });
 
     const updatedTask = await updateTask(taskUuid, {
@@ -461,6 +495,12 @@ export async function runQaForTaskController(req, res) {
       });
     }
 
+    if (!latestRequirements.isApproved) {
+      return res.status(409).json({
+        message: 'Os requisitos precisam ser aprovados antes de iniciar o QA.',
+      });
+    }
+
     const latestTestPlan = task.artifacts.find(
       (artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent
     );
@@ -483,6 +523,7 @@ export async function runQaForTaskController(req, res) {
     const latestRequirementSpec = task.artifacts.find(
       (artifact) => artifact.title === '[SYSTEM] Requirement Spec' && artifact.isCurrent
     );
+    const requirementSpec = parseJsonArtifact(latestRequirementSpec?.content);
     const projectDnaSummary = buildCompactProjectDnaSummary(task.project?.intakeConfig?.projectDna || null);
 
     const payload = {
@@ -503,6 +544,7 @@ export async function runQaForTaskController(req, res) {
       },
       requirement_summary: requirementSummary,
       requirement_spec: latestRequirementSpec?.content || '',
+      requirement_contract: requirementSpec?.requirementContract || requirementSpec?.requirement_contract || null,
     };
 
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'qa_engineer' });
@@ -531,11 +573,11 @@ export async function runQaForTaskController(req, res) {
     });
 
     const updatedTask = await updateTask(taskUuid, {
-      status: 'done',
+      status: 'in_review',
       assigneeType: 'agent',
       assigneeAgentName: 'qa_engineer',
       changedByUserUuid: req.authUser.uuid,
-      statusNote: 'Plano de testes concluído',
+      statusNote: 'Plano de testes gerado; aguardando aprovação humana',
     });
 
     res.status(200).json(

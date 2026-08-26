@@ -3,6 +3,7 @@ import { requireAuth } from '../middleware/authMiddleware.js';
 import {
   bootstrapController,
   createTaskArtifactController,
+  reviewTaskArtifactController,
   createProjectController,
   createTaskCommentController,
   createTaskController,
@@ -17,6 +18,8 @@ import {
   getWorkspaceTeamSummaryController,
   getTaskController,
   importBacklogTasksController,
+  publishBacklogTasksController,
+  updateBacklogStoryController,
   listProjectsController,
   listProjectTasksController,
   listAllTasksController,
@@ -51,11 +54,14 @@ router.get('/tasks', listAllTasksController);
 router.post('/projects/:projectUuid/generate-backlog', generateProjectBacklogController);
 router.post('/projects/:projectUuid/generate-architecture', generateProjectArchitectureController);
 router.post('/projects/:projectUuid/import-backlog', importBacklogTasksController);
+router.post('/projects/:projectUuid/publish-backlog', publishBacklogTasksController);
+router.patch('/projects/:projectUuid/backlog-stories/:storyId', updateBacklogStoryController);
 router.post('/projects/:projectUuid/tasks', createTaskController);
 router.get('/tasks/:taskUuid', getTaskController);
 router.patch('/tasks/:taskUuid', updateTaskController);
 router.patch('/tasks/:taskUuid/status', updateTaskController);
 router.post('/tasks/:taskUuid/comments', createTaskCommentController);
 router.post('/tasks/:taskUuid/artifacts', createTaskArtifactController);
+router.post('/tasks/:taskUuid/artifacts/:artifactUuid/review', reviewTaskArtifactController);
 
 export default router;

@@ -159,11 +159,15 @@ export function runSingleAgent(agent, payload, options = {}) {
         // ({"success": false, "error": "mensagem"}) e sai com código 1.
         // Tentamos extrair essa mensagem para deixar o erro mais claro.
         let detailedError = stderrData;
+        let diagnostic = null;
         try {
           if (stdoutData) {
             const parsed = JSON.parse(stdoutData);
             if (parsed && parsed.error) {
               detailedError = parsed.error;
+            }
+            if (parsed?.diagnostic) {
+              diagnostic = parsed.diagnostic;
             }
           }
         } catch {
@@ -172,7 +176,9 @@ export function runSingleAgent(agent, payload, options = {}) {
         if (!detailedError) {
           detailedError = `Processo Python finalizou com code=${code ?? 'null'} signal=${signal ?? 'null'} (sem saída em stdout/stderr)`;
         }
-        return settle(reject, new Error(`Erro ao executar agente ${agent}: ${detailedError}`));
+        const agentError = new Error(`Erro ao executar agente ${agent}: ${detailedError}`);
+        agentError.agentDiagnostic = diagnostic;
+        return settle(reject, agentError);
       }
       try {
         const result = JSON.parse(stdoutData);

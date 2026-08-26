@@ -156,12 +156,12 @@ export default function PipelineExecutor({ idea, answers }) {
       stageName === 'requirements'
         ?persistedTasks
         : persistedTasks.filter((task) =>
-            task.artifacts?.some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent)
+            task.artifacts?.some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent && artifact.isApproved)
           );
 
     const completedTasks = relevantTasks.filter((task) =>
       task.artifacts?.some((artifact) =>
-        artifact.artifactType === (stageName === 'requirements' ?'requirements' : 'test_plan') && artifact.isCurrent
+        artifact.artifactType === (stageName === 'requirements' ?'requirements' : 'test_plan') && artifact.isCurrent && artifact.isApproved
       )
     );
 

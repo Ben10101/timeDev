@@ -173,25 +173,35 @@ async function startServer() {
     logInfo('database_connected', {
       databaseTarget: getSafeDatabaseLabel(),
     });
-    const timeoutMs = Number(process.env.AGENT_RUN_TIMEOUT_MS || 10 * 60 * 1000);
-    const recoveryWindowSeconds = Math.max(120, Math.round(timeoutMs / 1000) + 30);
+    // This backend owns local Python child processes. After it restarts, no prior
+    // process can still complete, so release every persisted running run now.
+    // Waiting for the execution timeout here left the UI blocked by ghost runs.
+    const startupRecoveryWindowSeconds = 0;
+    const configuredWatchdogWindow = Number(process.env.AGENT_RUN_WATCHDOG_MAX_AGE_SECONDS || 900);
+    // Startup can safely release every run from a previous process. The
+    // periodic watchdog runs alongside live child processes and must never
+    // use that zero-second window.
+    const recoveryWindowSeconds = Number.isFinite(configuredWatchdogWindow)
+      ? Math.max(120, configuredWatchdogWindow)
+      : 900;
     const recoveryResult = await recoverStaleAgentRuns({
-      maxAgeSeconds: recoveryWindowSeconds,
+      maxAgeSeconds: startupRecoveryWindowSeconds,
+      reason: 'Execucao interrompida pela reinicializacao do backend local.',
     });
     const generatedRunRecoveryResult = await recoverStaleGeneratedAppRuns({
-      maxAgeSeconds: recoveryWindowSeconds,
+      maxAgeSeconds: startupRecoveryWindowSeconds,
     });
 
     if (recoveryResult.recoveredCount > 0) {
       logWarn('backend_startup_recovered_runs', {
         recoveredCount: recoveryResult.recoveredCount,
-        recoveryWindowSeconds,
+        recoveryWindowSeconds: startupRecoveryWindowSeconds,
       });
     }
     if (generatedRunRecoveryResult.recoveredCount > 0) {
       logWarn('backend_startup_recovered_generated_runs', {
         recoveredCount: generatedRunRecoveryResult.recoveredCount,
-        recoveryWindowSeconds,
+        recoveryWindowSeconds: startupRecoveryWindowSeconds,
       });
     }
 

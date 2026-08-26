@@ -279,6 +279,19 @@ export async function analyzeAlignment(input) {
   return response.data
 }
 
+export async function submitAlignmentClarifications(sessionUuid, answers) {
+  const response = await apiClient.post(`/alignment/sessions/${sessionUuid}/clarifications`, { answers })
+  return response.data
+}
+
+export async function analyzeVisualAlignment(input, image) {
+  const formData = new FormData()
+  formData.append('input', input || '')
+  formData.append('image', image)
+  const response = await apiClient.post('/alignment/analyze-visual', formData)
+  return response.data
+}
+
 export async function runAgent({ agent, payload }) {
   const response = await apiClient.post('/agents/run', {
     agent,
@@ -458,8 +471,23 @@ export const importBacklogTasks = async (projectUuid, backlogMarkdown) => {
   return response.data
 }
 
+export const publishProjectBacklog = async (projectUuid) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/publish-backlog`)
+  return response.data
+}
+
+export const updateProjectBacklogStory = async (projectUuid, storyId, payload) => {
+  const response = await apiClient.patch(`/projects/${projectUuid}/backlog-stories/${storyId}`, payload)
+  return response.data
+}
+
 export const createTaskArtifact = async (taskUuid, payload) => {
   const response = await apiClient.post(`/tasks/${taskUuid}/artifacts`, payload)
+  return response.data
+}
+
+export const reviewTaskArtifact = async (taskUuid, artifactUuid, payload) => {
+  const response = await apiClient.post(`/tasks/${taskUuid}/artifacts/${artifactUuid}/review`, payload)
   return response.data
 }
 
@@ -485,6 +513,8 @@ export default {
   getOperationalHistory,
   getActiveAlerts,
   analyzeAlignment,
+  submitAlignmentClarifications,
+  analyzeVisualAlignment,
   runAgent,
   generateProject,
   bootstrapWorkspace,

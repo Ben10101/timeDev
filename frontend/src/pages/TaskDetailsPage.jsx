@@ -224,7 +224,7 @@ function getPrimaryAction({
   if (canRunQa) {
     return { key: 'qa', label: 'Executar QA', disabled: false, helper: 'Consolide o plano de testes antes de liberar a implementação.' };
   }
-  if (taskIsDone && !implementationUnlocked) {
+  if (!implementationUnlocked && taskIsDone) {
     return {
       key: 'architecture-blocked',
       label: 'Aguardando arquitetura',
@@ -232,10 +232,10 @@ function getPrimaryAction({
       helper: architectureStatus?.blockers?.[0] || 'A arquitetura do projeto ainda precisa ser gerada.',
     };
   }
-  if (taskIsDone && !implementationStatus) {
+  if (implementationUnlocked && !implementationStatus) {
     return { key: 'code', label: 'Iniciar implementação', disabled: false, helper: 'Inicie a implementação técnica desta task.' };
   }
-  if (taskIsDone && implementationStatus) {
+  if (implementationStatus) {
     return { key: 'studio', label: 'Abrir implementação', disabled: false, helper: 'Acompanhe arquivos, revisão e execuções da implementação.' };
   }
   return { key: 'overview', label: 'Acompanhar task', disabled: true, helper: 'Esta task ainda está em andamento.' };
@@ -261,6 +261,7 @@ export default function TaskDetailsPage() {
   const [actionLoading, setActionLoading] = useState(null);
   const bootstrapContext = JSON.parse(localStorage.getItem('factory_bootstrap_context') || 'null');
   const taskHasRequirements = hasCurrentArtifact(task, 'requirements');
+  const taskHasApprovedRequirements = Boolean((task?.artifacts || []).some((artifact) => artifact.isCurrent && artifact.artifactType === 'requirements' && artifact.isApproved));
   const taskHasTestPlan = hasCurrentArtifact(task, 'test_plan');
   const taskIsDone = task?.status === 'done';
   const taskIsBlocked = task?.status === 'blocked';
@@ -268,8 +269,8 @@ export default function TaskDetailsPage() {
   const requirementsRunning = isTaskAgentRunning(task, 'requirements_analyst');
   const qaRunning = isTaskAgentRunning(task, 'qa_engineer');
   const taskHasActiveRun = requirementsRunning || qaRunning;
-  const canRunRequirements = !taskIsBlocked && !taskHasRequirements && !requirementsRunning;
-  const canRunQa = !taskIsBlocked && taskHasRequirements && !taskHasTestPlan && !qaRunning;
+  const canRunRequirements = !taskIsBlocked && (!taskHasRequirements || !taskHasApprovedRequirements) && !requirementsRunning;
+  const canRunQa = !taskIsBlocked && taskHasApprovedRequirements && !taskHasTestPlan && !qaRunning;
   const taskTypeLabel = getTaskTypeLabel(task?.taskType);
   const taskStatusLabel = getTaskStatusLabel(task?.status);
   const latestComment = task?.comments?.[0] || null;
@@ -540,6 +541,7 @@ export default function TaskDetailsPage() {
       eyebrow="Detalhe da Task"
       title={task?.title || 'Detalhe da task'}
       description="Acompanhe contexto, refinamento, desenvolvimento, histórico e execuções da tarefa."
+      hideSidebar
       actions={
         <div className="flex flex-col gap-3 sm:flex-row">
           {primaryAction.key === 'requirements' && (
@@ -695,7 +697,7 @@ export default function TaskDetailsPage() {
         </>
       }
     >
-      <section className="space-y-6">
+      <section className="task-detail-page space-y-6">
         {error && (
           <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>
         )}
@@ -721,8 +723,6 @@ export default function TaskDetailsPage() {
                     <span className="rounded-full bg-[#fff5d9] px-3 py-1 text-xs font-semibold text-[#8a6a1f]">{taskStatusLabel}</span>
                     <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{task.priority || 'Sem prioridade'}</span>
                   </div>
-                  <h2 className="mt-4 font-serif text-2xl font-semibold text-slate-900 sm:text-3xl">{task.title}</h2>
-                  <p className="mt-4 text-sm leading-7 text-slate-600">{task.description || 'Sem descrição cadastrada.'}</p>
                   <p className="mt-4 text-sm font-medium text-slate-700">{primaryAction.helper}</p>
                   {taskHasActiveRun && (
                     <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -764,7 +764,7 @@ export default function TaskDetailsPage() {
               </div>
             </section>
 
-            <section className="rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
+            <section className="hidden rounded-[32px] border border-slate-200 bg-white/88 p-6 shadow-[0_20px_60px_rgba(23,50,43,0.08)]">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#2f6c58]">Resumo operacional</p>
                 <p className="mt-2 text-sm text-slate-500">O essencial para seguir sem disputar atenção com blocos administrativos repetidos.</p>
@@ -933,9 +933,10 @@ export default function TaskDetailsPage() {
                         <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#2f6c58]">Artefatos humanos</p>
                         <p className="mt-2 text-sm text-slate-500">User story, requisitos refinados e planos legíveis por pessoas.</p>
                       </div>
-                      <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">
-                        {humanArtifacts.length}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => navigate(`/tasks/${task.uuid}/artifacts`)} className="dashboard-button-secondary px-3 py-1.5 text-xs">Abrir revisão</button>
+                        <span className="rounded-full bg-[#eef5ef] px-3 py-1 text-xs font-semibold text-[#2f6c58]">{humanArtifacts.length}</span>
+                      </div>
                     </div>
 
                     <div className="space-y-4">

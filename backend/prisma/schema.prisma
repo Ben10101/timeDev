@@ -178,6 +178,7 @@ model User {
   assignedTasks                Task[]              @relation("TaskAssigneeUser")
   reportedTasks                Task[]              @relation("TaskReporterUser")
   createdTasks                 Task[]              @relation("TaskCreatorUser")
+  artifactReviews              ArtifactReview[]    @relation("ArtifactReviews")
   commentAuthored              TaskComment[]
   startedAgentRuns             AgentRun[]
   approvedArtifacts            TaskArtifact[]      @relation("ArtifactApprovedBy")
@@ -281,6 +282,7 @@ model Task {
   comments               TaskComment[]
   agentRuns              AgentRun[]
   artifacts              TaskArtifact[]
+  artifactReviews        ArtifactReview[]
   statusHistory          TaskStatusHistory[]
   attachments            TaskAttachment[]
   checklistItems         TaskChecklist[]
@@ -384,6 +386,7 @@ model TaskArtifact {
   agentRun          AgentRun?      @relation(fields: [agentRunId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   approvedByUser    User?          @relation("ArtifactApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
   createdByUser     User?          @relation("ArtifactCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  reviews           ArtifactReview[]
   technicalSpecForImplementations TaskImplementation[] @relation("ImplementationTechnicalSpec")
   implementationPlanForImplementations TaskImplementation[] @relation("ImplementationPlanArtifact")
 
@@ -397,6 +400,75 @@ model TaskArtifact {
   @@index([approvedBy])
   @@index([createdByUserId])
   @@map("task_artifacts")
+}
+
+model ArtifactReview {
+  id            BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid          String       @unique @db.Char(36)
+  artifactId    BigInt       @map("artifact_id") @db.UnsignedBigInt
+  taskId        BigInt       @map("task_id") @db.UnsignedBigInt
+  decision      String       @db.VarChar(20)
+  releasedStage String?      @map("released_stage") @db.VarChar(50)
+  comment       String?      @db.Text
+  reason        String?      @db.Text
+  reviewedBy    BigInt?      @map("reviewed_by") @db.UnsignedBigInt
+  reviewedAt    DateTime     @default(now()) @map("reviewed_at") @db.DateTime(0)
+  version       Int          @db.UnsignedInt
+  artifact      TaskArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  task          Task         @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  reviewer      User?        @relation("ArtifactReviews", fields: [reviewedBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  @@index([artifactId])
+  @@index([taskId])
+  @@index([reviewedBy])
+  @@unique([artifactId, version, decision])
+  @@map("artifact_reviews")
+}
+
+model AlignmentSession {
+  id              BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid            String             @unique @db.Char(36)
+  originalInput   String             @map("original_input") @db.LongText
+  status          String             @default("required") @db.VarChar(30)
+  createdByUserId BigInt?            @map("created_by_user_id") @db.UnsignedBigInt
+  createdAt       DateTime           @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.DateTime(0)
+  versions        AlignmentVersion[]
+
+  @@index([createdByUserId])
+  @@index([status])
+  @@map("alignment_sessions")
+}
+
+model AlignmentVersion {
+  id                    BigInt                         @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid                  String                         @unique @db.Char(36)
+  sessionId             BigInt                         @map("session_id") @db.UnsignedBigInt
+  version               Int                            @db.UnsignedInt
+  inputSnapshot         String                         @map("input_snapshot") @db.LongText
+  analysisSnapshot      String                         @map("analysis_snapshot") @db.LongText
+  clarificationSnapshot String                         @map("clarification_snapshot") @db.LongText
+  createdByUserId       BigInt?                        @map("created_by_user_id") @db.UnsignedBigInt
+  createdAt             DateTime                       @default(now()) @map("created_at") @db.DateTime(0)
+  session               AlignmentSession               @relation(fields: [sessionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  answers               AlignmentClarificationAnswer[]
+
+  @@unique([sessionId, version])
+  @@index([createdByUserId])
+  @@map("alignment_versions")
+}
+
+model AlignmentClarificationAnswer {
+  id                 BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  uuid               String           @unique @db.Char(36)
+  alignmentVersionId BigInt           @map("alignment_version_id") @db.UnsignedBigInt
+  questionId         String           @map("question_id") @db.VarChar(120)
+  question           String           @db.VarChar(500)
+  answer             String           @db.LongText
+  createdAt          DateTime         @default(now()) @map("created_at") @db.DateTime(0)
+  version            AlignmentVersion @relation(fields: [alignmentVersionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([alignmentVersionId])
+  @@map("alignment_clarification_answers")
 }
 
 model TaskStatusHistory {

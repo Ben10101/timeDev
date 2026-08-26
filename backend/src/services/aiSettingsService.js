@@ -2,6 +2,9 @@ import { prisma } from '../lib/prisma.js';
 import { decryptSensitiveValue, encryptSensitiveValue } from '../utils/crypto.js';
 
 const ENCRYPTED_VALUE_PREFIX = 'enc::';
+// OpenRouter retired this free slug. Keep the runtime resilient for users
+// who had the old UI preset saved before it became unavailable.
+const RETIRED_OPENROUTER_FALLBACK_MODELS = new Set(['openai/gpt-oss-120b:free']);
 
 const DEFAULT_AI_SETTINGS = {
   providerPreference: 'auto',
@@ -96,17 +99,19 @@ function normalizeProviderSettings(current = {}, fallback = {}) {
 }
 
 function normalizeModelList(value) {
+  const normalize = (item) => String(item || '').trim();
+  const isAvailable = (item) => item && !RETIRED_OPENROUTER_FALLBACK_MODELS.has(item.toLowerCase());
   if (Array.isArray(value)) {
     return value
-      .map((item) => String(item || '').trim())
-      .filter(Boolean);
+      .map(normalize)
+      .filter(isAvailable);
   }
 
   if (typeof value === 'string') {
     return value
       .split(/[\n,;]+/)
-      .map((item) => item.trim())
-      .filter(Boolean);
+      .map(normalize)
+      .filter(isAvailable);
   }
 
   return [];

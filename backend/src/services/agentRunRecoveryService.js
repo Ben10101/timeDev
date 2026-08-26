@@ -3,7 +3,9 @@ import { logInfo, logWarn } from '../utils/logger.js';
 import { recordRuntimeEvent } from './runtimeTelemetryService.js';
 
 function resolveRunAgeCutoff(maxAgeSeconds) {
-  return new Date(Date.now() - Math.max(30, Number(maxAgeSeconds || 720)) * 1000);
+  const parsed = Number(maxAgeSeconds);
+  const ageSeconds = Number.isFinite(parsed) ? Math.max(0, parsed) : 720;
+  return new Date(Date.now() - ageSeconds * 1000);
 }
 
 function getRecoveryTargetStatus(task) {

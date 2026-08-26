@@ -92,7 +92,9 @@ export default function AppShell({
   description,
   actions,
   sidebar,
+  hideSidebar = false,
   children,
+  mainClassName = 'p-8',
 }) {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -300,12 +302,12 @@ export default function AppShell({
         )}
 
         <main
-          className={`min-w-0 flex-1 overflow-x-hidden p-8 ${
-            sidebar ? 'grid gap-8 lg:grid-cols-[1fr_320px]' : ''
+          className={`min-w-0 flex-1 overflow-x-hidden ${mainClassName} ${
+            sidebar && !hideSidebar ? 'grid gap-8 lg:grid-cols-[1fr_320px]' : ''
           }`}
         >
           <div className="min-w-0">{children}</div>
-          {sidebar && <aside className="space-y-6">{sidebar}</aside>}
+          {sidebar && !hideSidebar && <aside className="space-y-6">{sidebar}</aside>}
         </main>
       </div>
     </div>

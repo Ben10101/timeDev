@@ -214,7 +214,7 @@ try {
   });
 
   const recoveredRun = state.runs.find((run) => run.uuid === 'stale-req-run');
-  assert(recoveredRun?.status === 'failed', 'A run antiga deveria ser recuperada antes da nova tentativa.');
+  assert(recoveredRun?.status === 'stale', 'A run antiga deveria ser recuperada antes da nova tentativa.');
   assert(createdRun.status === 'running', 'A nova run deveria iniciar em running.');
 
   await finishAgentRun(createdRun.id, {

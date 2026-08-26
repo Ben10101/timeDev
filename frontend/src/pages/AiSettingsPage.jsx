@@ -37,7 +37,6 @@ const EMPTY_SETTINGS = {
 const OPENROUTER_FREE_PRESET = {
   model: 'openrouter/free',
   fallbackModels: [
-    'openai/gpt-oss-120b:free',
     'qwen/qwen3-coder:free',
     'deepseek/deepseek-r1-0528-qwen3-8b:free',
     'z-ai/glm-4.5-air:free',

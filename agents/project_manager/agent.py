@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import os
 import re
 import sys
@@ -19,10 +20,22 @@ Responsavel por transformar o briefing do projeto em backlog inicial coerente
 
 from agents.developer.llm_service import generate_text_from_llm, is_error_text_response
 from agents.developer.response_validation import validate_backlog_output
+from agents.backlog_challenger.agent import BacklogChallenger
+from agents.backlog_judge.agent import BacklogJudge
+from agents.requirement_engine.agent import RequirementEngineAgent
+
+
+class BacklogGenerationError(RuntimeError):
+    def __init__(self, message, rejected_draft=None):
+        super().__init__(message)
+        self.rejected_draft = rejected_draft
 
 
 class ProjectManager:
-    STORY_RANGE = (15, 25)
+    # A backlog is complete when it covers the confirmed journeys, not when it
+    # reaches an arbitrary number.  The range only protects the initial
+    # generation from being too shallow or unmanageably broad.
+    STORY_RANGE = (8, 25)
     PLANNING_LANES = [
         ("fundacao", "fundacao do produto", "cadastro inicial, configuracao basica, entidade principal e primeiro fluxo utilizavel"),
         ("operacao", "operacao principal", "acompanhamento, execucao, atualizacao de status, filas e trabalho do dia a dia"),
@@ -133,6 +146,8 @@ class ProjectManager:
 
     def __init__(self, project_id):
         self.project_id = project_id
+        self._clarifications_answered = False
+        self._requirements_contract = None
 
     def _story_block_format_rules(self):
         return """
@@ -195,6 +210,9 @@ class ProjectManager:
         elif re.search(r"\bcurso|matricula|aluno|ead\b", normalized):
             entity_label = "curso"
             entity_article = "o"
+        elif re.search(r"\bcredito|emprestimo|financiamento|score|bureau\b", normalized):
+            entity_label = "solicitacao de credito"
+            entity_article = "a"
         elif re.search(r"\bcontrato|fornecedor|compra\b", normalized):
             entity_label = "contrato"
             entity_article = "o"
@@ -256,6 +274,11 @@ class ProjectManager:
             finance_persona = "Carlos, analista operacional"
             support_persona = "Felipe, atendente"
             approver_persona = "Roberto, gestor de suporte"
+        elif entity_label == "solicitacao de credito":
+            owner_persona = "Ana, cliente solicitante"
+            finance_persona = "Carlos, analista de credito"
+            support_persona = "Fernanda, analista de cadastro"
+            approver_persona = "Roberto, gestor de credito"
 
         return {
             "entity_label": entity_label,
@@ -1044,6 +1067,9 @@ REGRAS
 
     def _generate_fixed_core_pack_stories(self, base_context):
         inferred = self._infer_core_pack_terms(base_context)
+        if inferred["entity_label"] == "solicitacao de credito":
+            return self._generate_credit_core_pack_stories()
+
         entity_label = inferred["entity_label"]
         entity_article = inferred["entity_article"]
         participant_label = inferred["participant_label"]
@@ -1102,8 +1128,40 @@ REGRAS
         ]
         return stories
 
+    def _generate_credit_core_pack_stories(self):
+        """Return a domain-safe MVP backbone when the briefing is about credit."""
+        return [
+            self._compose_story_block(1,
+                "Como Ana, cliente solicitante, eu quero simular valor, prazo e parcela do credito, para avaliar uma opcao antes de iniciar a proposta.",
+                "Descricao: a simulacao deve informar que o resultado e uma estimativa e nao representa aprovacao automatica."),
+            self._compose_story_block(2,
+                "Como Ana, cliente solicitante, eu quero iniciar uma solicitacao de credito a partir da simulacao, para registrar a proposta com o valor e prazo escolhidos.",
+                "Descricao: o sistema deve salvar a proposta como rascunho e permitir sua retomada antes do envio."),
+            self._compose_story_block(3,
+                "Como Ana, cliente solicitante, eu quero informar meus dados pessoais e de contato, para que a instituicao identifique corretamente quem solicita o credito.",
+                "Descricao: os campos obrigatorios e as validacoes devem ser apresentados de forma clara antes do envio."),
+            self._compose_story_block(4,
+                "Como Ana, cliente solicitante, eu quero informar renda, vinculo e demais dados financeiros solicitados, para que minha capacidade de pagamento possa ser analisada.",
+                "Descricao: a proposta nao pode seguir para analise enquanto os dados obrigatorios estiverem incompletos."),
+            self._compose_story_block(5,
+                "Como Ana, cliente solicitante, eu quero enviar os documentos obrigatorios da proposta, para comprovar as informacoes declaradas.",
+                "Descricao: o sistema deve indicar tipos de documento aceitos, pendencias e o resultado basico da validacao do envio."),
+            self._compose_story_block(6,
+                "Como Ana, cliente solicitante, eu quero registrar meu consentimento para o tratamento de dados e consultas necessarias, para enviar a proposta em conformidade com a LGPD.",
+                "Descricao: o consentimento deve ser explicito, versionado e associado a proposta enviada."),
+            self._compose_story_block(7,
+                "Como Fernanda, analista de cadastro, eu quero validar dados e documentos recebidos, para encaminhar somente propostas completas para analise de credito.",
+                "Descricao: quando houver divergencia ou ausencia, a proposta deve ficar com status de pendencia e motivo compreensivel para o cliente."),
+            self._compose_story_block(8,
+                "Como Carlos, analista de credito, eu quero consultar a proposta com dados, documentos e resultado das validacoes, para avaliar a elegibilidade conforme as politicas de credito.",
+                "Descricao: a analise deve registrar as informacoes utilizadas e preservar a rastreabilidade da decisao."),
+        ]
+
     def _generate_deterministic_support_stories(self, base_context):
         inferred = self._infer_core_pack_terms(base_context)
+        if inferred["entity_label"] == "solicitacao de credito":
+            return self._generate_credit_support_stories()
+
         entity_label = inferred["entity_label"]
         entity_article = inferred["entity_article"]
         entity_prep = self._prep_article_for_entity(entity_article)
@@ -1156,34 +1214,86 @@ REGRAS
             ),
         ]
 
+    def _generate_credit_support_stories(self):
+        return [
+            self._compose_story_block(9,
+                "Como Carlos, analista de credito, eu quero registrar uma decisao de aprovar, reprovar ou solicitar complementos, para concluir a analise com uma justificativa rastreavel.",
+                "Descricao: a decisao deve respeitar os estados permitidos da proposta e registrar data, responsavel e motivo."),
+            self._compose_story_block(10,
+                "Como Ana, cliente solicitante, eu quero acompanhar o status da minha proposta, para saber se ela esta em rascunho, enviada, em analise, com pendencia, aprovada ou reprovada.",
+                "Descricao: o status deve explicar a proxima acao esperada sem expor informacoes internas de risco."),
+            self._compose_story_block(11,
+                "Como Ana, cliente solicitante, eu quero receber e atender uma solicitacao de complemento, para corrigir pendencias sem criar uma nova proposta.",
+                "Descricao: a pendencia deve informar quais dados ou documentos precisam de ajuste e permitir novo envio."),
+            self._compose_story_block(12,
+                "Como Ana, cliente solicitante, eu quero visualizar a decisao da minha proposta de forma clara, para entender o resultado e os proximos passos aplicaveis.",
+                "Descricao: a comunicacao deve evitar promessas de aprovacao antes da decisao registrada pelo analista."),
+            self._compose_story_block(13,
+                "Como Roberto, gestor de credito, eu quero consultar uma fila de propostas por status e prioridade, para distribuir a analise e acompanhar os prazos operacionais.",
+                "Descricao: a fila deve destacar propostas com pendencias ou que aguardam analise por mais tempo."),
+            self._compose_story_block(14,
+                "Como Roberto, gestor de credito, eu quero revisar o historico de alteracoes e decisoes de cada proposta, para auditar o processo de concessao.",
+                "Descricao: o historico deve identificar a acao, o responsavel e o momento em que ocorreu."),
+            self._compose_story_block(15,
+                "Como Fernanda, analista de cadastro, eu quero registrar o resultado de verificacoes de identidade e fraude, para sinalizar propostas que exigem revisao adicional.",
+                "Descricao: a sinalizacao nao deve decidir automaticamente a proposta e precisa ficar visivel ao analista responsavel."),
+            self._compose_story_block(16,
+                "Como Roberto, gestor de credito, eu quero configurar limites e politicas de elegibilidade aplicaveis ao produto, para que a analise siga regras operacionais vigentes.",
+                "Descricao: alteracoes de politica devem manter historico e ser aplicadas apenas a novas analises ou conforme regra definida."),
+        ]
+
     def _build_deterministic_backlog(self, idea):
         compact_briefing = self._compact_briefing(idea)
         inferred = self._infer_core_pack_terms(compact_briefing)
         entity_label = inferred["entity_label"]
         summary_label = inferred["summary_label"]
 
-        overview = (
-            f"Backlog inicial estruturado para organizar o produto em torno de {entity_label}, "
-            f"com foco na primeira versao operacional e na rastreabilidade entre briefing, execucao e governanca."
-        )
-        capabilities = [
-            f"Definir a base operacional de {entity_label}.",
-            f"Registrar e consultar informacoes essenciais do fluxo.",
-            f"Acompanhar status, pendencias e validacoes do trabalho.",
-            f"Consolidar leitura de {summary_label} para decisao rapida.",
-            "Manter governanca e rastreabilidade das mudancas principais.",
-        ]
-        epics = [
-            "Epic 1: Fundacao operacional do produto.",
-            "Epic 2: Operacao principal e acompanhamento do fluxo.",
-            "Epic 3: Gestao e visibilidade do trabalho.",
-            "Epic 4: Governanca, validacao e rastreabilidade.",
-        ]
-        release_slices = [
-            "MVP: foco na espinha dorsal do produto, priorizando cadastro inicial, consulta basica e governanca minima.",
-            "Fase 2: foco em ampliar operacao e visibilidade com apoio de filtros, acompanhamento e edicao controlada.",
-            "Fase 3: foco em evolucao, auditoriabilidade e refinamento da experiencia sem perder estabilidade.",
-        ]
+        if entity_label == "solicitacao de credito":
+            overview = (
+                "Backlog inicial para uma jornada digital de solicitacao de credito, da simulacao e envio da proposta "
+                "ate a analise, decisao e acompanhamento pelo cliente, com controles de seguranca e rastreabilidade."
+            )
+            capabilities = [
+                "Simular condicoes de credito e iniciar propostas digitais.",
+                "Coletar dados, documentos e consentimentos obrigatorios.",
+                "Validar pendencias e encaminhar propostas para analise de credito.",
+                "Decidir propostas e comunicar status de forma clara ao cliente.",
+                "Manter controles de fraude, politicas e auditoria da operacao.",
+            ]
+            epics = [
+                "Epic 1: Simulacao, cadastro e envio da proposta de credito.",
+                "Epic 2: Documentos, consentimento e validacao cadastral.",
+                "Epic 3: Analise de credito, pendencias e decisao da proposta.",
+                "Epic 4: Acompanhamento do cliente, governanca e prevencao a fraude.",
+            ]
+            release_slices = [
+                "MVP: foco na espinha dorsal do fluxo principal, com simulacao, proposta, documentos, analise manual e decisao; integracoes externas ficam para depois.",
+                "Fase 2: foco em ampliar a operacao com fila, notificacoes, regras configuraveis e verificacoes adicionais; automacao avancada fica para fase seguinte.",
+                "Fase 3: foco em evolucao com integracoes a bureaus, monitoramento de fraude e refinamento de politicas; somente apos a estabilizacao do MVP.",
+            ]
+        else:
+            overview = (
+                f"Backlog inicial estruturado para organizar o produto em torno de {entity_label}, "
+                f"com foco na primeira versao operacional e na rastreabilidade entre briefing, execucao e governanca."
+            )
+            capabilities = [
+                f"Definir a base operacional de {entity_label}.",
+                "Registrar e consultar informacoes essenciais do fluxo.",
+                "Acompanhar status, pendencias e validacoes do trabalho.",
+                f"Consolidar leitura de {summary_label} para decisao rapida.",
+                "Manter governanca e rastreabilidade das mudancas principais.",
+            ]
+            epics = [
+                "Epic 1: Fundacao operacional do produto.",
+                "Epic 2: Operacao principal e acompanhamento do fluxo.",
+                "Epic 3: Gestao e visibilidade do trabalho.",
+                "Epic 4: Governanca, validacao e rastreabilidade.",
+            ]
+            release_slices = [
+                "MVP: foco na espinha dorsal do produto, priorizando cadastro inicial, consulta basica e governanca minima.",
+                "Fase 2: foco em ampliar operacao e visibilidade com apoio de filtros, acompanhamento e edicao controlada.",
+                "Fase 3: foco em evolucao, auditoriabilidade e refinamento da experiencia sem perder estabilidade.",
+            ]
 
         story_blocks = [
             *self._generate_fixed_core_pack_stories(compact_briefing),
@@ -1459,6 +1569,1107 @@ Gere APENAS esta secao em Markdown:
             raise RuntimeError("Resposta vazia ou invalida.")
 
         return result
+
+    def _extract_json_object(self, response):
+        """Extract the most likely backlog object without requiring perfect framing.
+
+        JSON mode is a provider hint, not a guarantee.  Free and routed models
+        commonly wrap valid JSON in prose or a code fence; selecting a decoded
+        object is safe because semantic validation remains mandatory afterwards.
+        """
+        text = str(response or "").lstrip("\ufeff").strip()
+        decoder = json.JSONDecoder()
+        candidates = []
+
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                candidates.append(parsed)
+        except json.JSONDecodeError:
+            pass
+
+        # raw_decode understands a complete JSON object followed by arbitrary
+        # prose, unlike the old first-{ / last-} approach.
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                parsed, _ = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                candidates.append(parsed)
+
+        expanded = []
+        envelope_keys = ("backlog_contract", "contract", "data", "result", "output")
+        for candidate in candidates:
+            expanded.append(candidate)
+            for key in envelope_keys:
+                nested = candidate.get(key)
+                if isinstance(nested, dict):
+                    expanded.append(nested)
+                elif isinstance(nested, str):
+                    try:
+                        decoded_nested = json.loads(nested)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(decoded_nested, dict):
+                        expanded.append(decoded_nested)
+
+        if not expanded:
+            raise ValueError(f"A IA deve responder um objeto JSON valido (resposta com {len(text)} caracteres).")
+
+        backlog_keys = {"overview", "capabilities", "epics", "releases", "stories", "coverage"}
+        return max(expanded, key=lambda item: len(backlog_keys.intersection(item.keys())))
+
+    def _build_evidence_contract(self, idea):
+        # Project DNA guides product coherence and UI choices; it is not proof
+        # that a business capability, policy or workflow was requested.
+        business_briefing = re.split(r"(?:^|\n)\s*Project DNA\s*:", str(idea or ""), maxsplit=1, flags=re.IGNORECASE)[0]
+        facts = []
+        for index, line in enumerate(re.split(r"[\n.;]+", business_briefing)):
+            text = re.sub(r"\s+", " ", line).strip(" -")
+            # Section labels are context delimiters, never business evidence.
+            if len(text) >= 12 and not re.fullmatch(r"(?:respostas[- ]?chave|briefing|contexto)\s*:?", text, re.IGNORECASE):
+                facts.append({"id": f"briefing.{index + 1}", "text": text, "type": "briefing"})
+        return {"facts": facts[:30]}
+
+    def _analyze_requirements_contract(self, idea):
+        """Build the pre-backlog contract; it never turns a gap into a fact."""
+        evidence = self._build_evidence_contract(idea)
+        analysis_status = "completed"
+        try:
+            report = RequirementEngineAgent().process({"stage": "requirements_analysis", "idea": idea})
+        except ValueError as error:
+            # The preflight is advisory input to a stricter downstream gate.
+            # A fallback provider can return prose despite JSON mode; do not
+            # convert that transport-format failure into an HTTP 500.
+            if "json" not in str(error).lower():
+                raise
+            analysis_status = "degraded"
+            report = {"findings": []}
+            print(json.dumps({
+                "event": "project_manager_requirements_analysis_degraded",
+                "reason": str(error),
+            }, ensure_ascii=False), file=sys.stderr)
+        raw_findings = report.get("findings", []) if isinstance(report, dict) else []
+        findings, assumptions, questions = [], [], []
+        valid_categories = {"missing_information", "ambiguity", "assumption", "contradiction"}
+        for index, item in enumerate(raw_findings, start=1):
+            if not isinstance(item, dict):
+                continue
+            category = str(item.get("category") or "").strip().lower()
+            severity = str(item.get("severity") or "medium").strip().lower()
+            message = str(item.get("message") or "").strip()
+            if category not in valid_categories or severity not in {"low", "medium", "high"} or not message:
+                continue
+            finding = {
+                "id": f"RF-{index:02d}", "category": category, "severity": severity,
+                "message": message, "evidence": str(item.get("evidence") or "").strip(),
+                "recommendation": str(item.get("recommendation") or "").strip(),
+                "clarification_question": str(item.get("clarification_question") or "").strip(),
+                "answer_hint": str(item.get("answer_hint") or "").strip(),
+            }
+            findings.append(finding)
+            if category == "assumption":
+                assumptions.append({"id": f"ASM-{len(assumptions) + 1:02d}", "text": message, "source": "requirements_analyzer"})
+            if category in {"missing_information", "ambiguity", "contradiction"} and severity in {"medium", "high"}:
+                question_text = finding["clarification_question"] or finding["recommendation"]
+                if not question_text.endswith("?"):
+                    question_text = f"Qual decisao de produto deve ser tomada sobre: {message.rstrip('.')}?"
+                questions.append({
+                    "id": f"CQ-{len(questions) + 1:02d}",
+                    "question": question_text,
+                    "reason": message,
+                    "answer_hint": finding["answer_hint"] or "Informe a decisao e, se aplicavel, a regra, limite ou criterio que deve ser usado.",
+                    "blocking": severity == "high", "finding_id": finding["id"],
+                })
+        if self._clarifications_answered:
+            for question in questions:
+                question["resolved_by"] = "user_briefing"
+            blocking_questions = []
+        else:
+            blocking_questions = [question for question in questions if question["blocking"]]
+        return {
+            "version": 1, "evidence": evidence,
+            "requirements": [
+                {"id": fact["id"].replace("briefing.", "REQ-"), "text": fact["text"], "source_ids": [fact["id"]]}
+                for fact in evidence["facts"]
+            ],
+            "assumptions": assumptions, "questions": questions,
+            "blocking_questions": blocking_questions, "findings": findings,
+            "analysis_status": analysis_status,
+            "decision": "BLOCK" if blocking_questions else "READY",
+        }
+
+    @staticmethod
+    def _semantic_terms(value):
+        normalized = unicodedata.normalize("NFKD", str(value or ""))
+        normalized = "".join(char for char in normalized if not unicodedata.combining(char)).lower()
+        ignored = {
+            "como", "eu", "quero", "para", "uma", "um", "uns", "umas", "de", "da", "do", "das", "dos",
+            "e", "ou", "a", "o", "as", "os", "na", "no", "nas", "nos", "em", "com", "por", "sem",
+            "que", "sua", "seu", "suas", "seus", "ao", "aos", "cliente", "analista", "gestor", "operacao",
+            "sistema", "plataforma", "forma", "sobre", "antes", "depois", "mais", "menos", "para",
+        }
+        return {
+            token[:6]
+            for token in re.findall(r"[a-z0-9]{3,}", normalized)
+            if token not in ignored
+        }
+
+    def _has_direct_business_evidence(self, story, evidence_by_id):
+        source_text = " ".join(evidence_by_id[source_id] for source_id in story.get("source_ids", []) if source_id in evidence_by_id)
+        story_text = " ".join([str(story.get("goal") or ""), str(story.get("description") or "")])
+        return len(self._semantic_terms(source_text) & self._semantic_terms(story_text)) >= 2
+
+    @staticmethod
+    def _unsupported_sensitive_details(story, evidence_by_id):
+        source_text = " ".join(evidence_by_id[source_id] for source_id in story.get("source_ids", []) if source_id in evidence_by_id)
+        normalized_source = unicodedata.normalize("NFKD", source_text).encode("ascii", "ignore").decode("ascii").lower()
+        normalized_story = unicodedata.normalize(
+            "NFKD", " ".join([str(story.get("goal") or ""), str(story.get("description") or "")])
+        ).encode("ascii", "ignore").decode("ascii").lower()
+        # These details materially change a product's policy, regulatory
+        # treatment, automation or service commitment.  The same concept must
+        # be present in the selected business evidence before it is confirmed.
+        sensitive_details = {
+            "automacao": r"\bautomat",
+            "configuracao_de_politica": r"\b(parametr|configur).{0,35}\b(regra|politic|criter|limite|marg)",
+            "calculo_financeiro": r"\b(calcul|formula|cet|tarifa|taxa|parcela)\b",
+            "limite_ou_prazo": r"\b(limite|margem|prazo|valor maximo)\b",
+            "compromisso_de_tempo": r"\b(tempo real|sla)\b",
+            "consentimento": r"\bconsent",
+            "auditoria": r"\b(log|auditor)",
+            "solucao_de_seguranca": r"\b(criptograf|controle de acesso|autentica|autorizacao)\b",
+            "retencao_ou_exclusao": r"\b(expurg|exclus|anonimiz|retenc|cancelamento)\b",
+            "integracao_externa": r"\b(integra|bureau|score|provedor)\b",
+        }
+        return [
+            label for label, pattern in sensitive_details.items()
+            if re.search(pattern, normalized_story) and not re.search(pattern, normalized_source)
+        ]
+
+    @staticmethod
+    def _is_high_impact_statement(value):
+        return bool(re.search(
+            r"\b(calcul|pre[cç]o|tarifa|taxa|limite|prazo|elegibil|aprova|autoriza|permiss|dados pessoais|reten[cç]|auditori|integra[cç]|sla|notifica[cç])\b",
+            str(value or ""), re.IGNORECASE,
+        ))
+
+    @staticmethod
+    def _append_unique(items, value):
+        value = str(value or "").strip()
+        if value and value not in items:
+            items.append(value)
+
+    @staticmethod
+    def _story_priority_for_lane(lane):
+        return {
+            "foundation": "high",
+            "operation": "high",
+            "visibility": "medium",
+            "governance": "medium",
+        }.get(str(lane or "").strip().lower(), "medium")
+
+    @staticmethod
+    def _story_release_for_lane(lane):
+        return {
+            "foundation": "MVP",
+            "operation": "Fase 2",
+            "visibility": "Fase 2",
+            "governance": "Fase 3",
+        }.get(str(lane or "").strip().lower(), "Fase 2")
+
+    @staticmethod
+    def _compound_story_actions(goal):
+        normalized = unicodedata.normalize("NFKD", str(goal or "")).encode("ascii", "ignore").decode("ascii").lower()
+        actions = re.findall(
+            r"\b(simular|iniciar|preencher|enviar|validar|registrar|revisar|aprovar|reprovar|solicitar|acompanhar|receber|gerenciar|assegurar|consultar|decidir|cancelar)\b",
+            normalized,
+        )
+        return sorted(set(actions))
+
+    def _canonicalize_decision_outcomes(self, story):
+        """Keep alternative outcomes of one proposal decision as one action.
+
+        Approve, reject and request-complement are outcomes of recording the
+        analyst's decision; they are not three independently deliverable
+        journeys. This normalization preserves the original wording in the
+        description so the confirmed flow remains traceable.
+        """
+        goal = str(story.get("goal") or "")
+        normalized = unicodedata.normalize("NFKD", goal).encode("ascii", "ignore").decode("ascii").lower()
+        actions = set(self._compound_story_actions(goal))
+        decision_actions = {"aprovar", "reprovar", "solicitar", "decidir"}
+        proposal_context = bool(re.search(r"\b(proposta|solicitacao|analise)\b", normalized))
+        if proposal_context and len(actions) > 1 and actions.issubset(decision_actions):
+            description = str(story.get("description") or "").strip()
+            story["goal"] = "registrar a decisao da proposta"
+            outcome_note = f"Resultados possiveis da decisao: {goal}."
+            if outcome_note not in description:
+                story["description"] = " ".join(part for part in (description, outcome_note) if part)
+        return story
+
+    def _normalize_release_dependencies(self, stories):
+        """Move a dependent story to its prerequisite's release when needed."""
+        by_id = {str(story.get("id") or "").upper(): story for story in stories if isinstance(story, dict)}
+        for story in stories:
+            context = story.get("refinement_context") if isinstance(story.get("refinement_context"), dict) else {}
+            for dependency in context.get("dependencies", []) if isinstance(context.get("dependencies"), list) else []:
+                prerequisite = by_id.get(str(dependency).upper())
+                if prerequisite and self._release_rank(story.get("release")) < self._release_rank(prerequisite.get("release")):
+                    story["release"] = prerequisite.get("release")
+        return stories
+
+    def _apply_story_quality_guardrails(self, story, tags, questions, refinement_context):
+        """Expose missing product decisions without manufacturing their answer.
+
+        These guardrails do not generate a replacement story.  They preserve
+        the AI proposal and make its unresolved, high-impact parts explicit
+        for the requirements analyst and product review.
+        """
+        goal = str(story.get("goal") or "")
+        description = str(story.get("description") or "")
+        actor = str(story.get("actor") or "")
+        text = f"{goal} {description}"
+        normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
+        actor_normalized = unicodedata.normalize("NFKD", actor).encode("ascii", "ignore").decode("ascii").lower()
+
+        actions = self._compound_story_actions(goal)
+        if len(actions) > 1:
+            self._append_unique(tags, "REVIEW_SCOPE")
+            self._append_unique(
+                questions,
+                "Separar as acoes independentes desta historia ou confirmar que devem ser entregues e aceitas como uma unica capacidade.",
+            )
+
+        # Qualificadores subjetivos não são critérios de aceite. Preserve a
+        # proposta, mas force o produto a convertê-los em sinais observáveis.
+        subjective_terms = re.findall(r"\b(simples|f[aá]cil|rápido|rapido|intuitivo|eficiente|seguro)\b", normalized, re.IGNORECASE)
+        if subjective_terms:
+            self._append_unique(tags, "REVIEW_TESTABILITY")
+            self._append_unique(
+                questions,
+                "Quais indicadores observaveis definem '" + subjective_terms[0] + "' nesta historia (passos, validacoes, tempo ou resultado esperado)?",
+            )
+
+        automatic_actions = {"validar", "registrar"}
+        goal_actions = set(self._compound_story_actions(goal))
+        system_executes_goal = bool(re.search(
+            r"\bsistema\b.{0,80}\b(valid(?:a|am|ou|ara|aria|ar)|registra(?:r|do)|registrou)\b",
+            normalized,
+        ))
+        if (
+            re.search(r"\b(operador|analista|gestor)\b", actor_normalized)
+            and system_executes_goal
+            and goal_actions.intersection(automatic_actions)
+        ):
+            self._append_unique(tags, "REVIEW_ROLE")
+            self._append_unique(
+                questions,
+                "Confirmar o ator responsavel: a historia descreve um comportamento automatico do sistema, mas o ator informado e humano.",
+            )
+
+        if re.search(r"\b(acompanhar a operacao geral|assegurar a conformidade|garantir a conformidade)\b", normalized):
+            self._append_unique(tags, "REVIEW_SCOPE")
+            self._append_unique(
+                questions,
+                "Quais indicadores, decisoes ou controles concretos esta historia deve suportar?",
+            )
+
+        credit_domain = bool(re.search(r"\b(credit\w*|emprestimo\w*|financiamento\w*|score\w*|bureau\w*)", normalized))
+        if credit_domain and re.search(r"\bsimul", normalized):
+            self._append_unique(tags, "REVIEW_HIGH_IMPACT")
+            for question in (
+                "Qual politica ou taxa de precificacao deve ser aplicada na simulacao?",
+                "Qual metodo de calculo deve ser utilizado e qual e a regra de arredondamento?",
+                "Qual e a relacao entre prazo e numero de parcelas?",
+                "Quais limites de valor e prazo se aplicam a simulacao?",
+            ):
+                self._append_unique(questions, question)
+
+        if re.search(r"\bdocumentos? obrigator", normalized):
+            self._append_unique(tags, "REVIEW_SCOPE")
+            self._append_unique(
+                questions,
+                "Quais documentos sao obrigatorios e quais formatos, validacoes e criterios de aceite se aplicam?",
+            )
+
+        if re.search(r"\b(elegibilidade|limites|politicas? de credito)\b", normalized):
+            self._append_unique(tags, "REVIEW_HIGH_IMPACT")
+            self._append_unique(
+                questions,
+                "Quais regras de elegibilidade, limites e politicas sao aplicaveis e qual e sua fonte de configuracao?",
+            )
+
+        if re.search(r"\b(bureau\w*|score\w*|integrac\w*)", normalized):
+            self._append_unique(tags, "REVIEW_HIGH_IMPACT")
+            self._append_unique(
+                questions,
+                "A integracao com bureau, score ou sistema externo faz parte desta entrega? Se sim, qual servico e qual comportamento esperado?",
+            )
+
+        context_questions = refinement_context.setdefault("open_questions", [])
+        for question in questions:
+            self._append_unique(context_questions, question)
+        return refinement_context
+
+    @staticmethod
+    def _release_rank(release):
+        return {"mvp": 1, "fase 2": 2, "fase 3": 3}.get(str(release or "").strip().lower(), 99)
+
+    def _lint_backlog_contract(self, contract, evidence_by_id):
+        """Return repairable findings; never fabricate a replacement story."""
+        findings = []
+        stories_by_id = {str(story.get("id") or "").upper(): story for story in contract.get("stories", [])}
+        for story in contract.get("stories", []):
+            story_id = str(story.get("id") or "").upper()
+            tags = set(story.get("review_tags") or [])
+            goal = str(story.get("goal") or "")
+            description = str(story.get("description") or "")
+            if len(self._compound_story_actions(goal)) > 1 or re.search(r"\b(acompanhar a operacao geral|assegurar a conformidade|garantir a conformidade)\b", f"{goal} {description}", re.IGNORECASE):
+                findings.append({"story_id": story_id, "code": "needs_split_or_scope", "reason": "A historia contem escopo composto ou ainda nao observavel."})
+            if "REVIEW_ROLE" in tags:
+                findings.append({"story_id": story_id, "code": "role_conflict", "reason": "O ator declarado conflita com o comportamento automatico descrito."})
+            actor_normalized = unicodedata.normalize("NFKD", str(story.get("actor") or "")).encode("ascii", "ignore").decode("ascii").lower()
+            if re.fullmatch(r"(?:o )?sistema", actor_normalized.strip()):
+                findings.append({"story_id": story_id, "code": "system_actor", "reason": "Sistema nao e uma persona de user story; mantenha a automacao como comportamento e use o ator de negocio beneficiado."})
+            context = story.get("refinement_context") if isinstance(story.get("refinement_context"), dict) else {}
+            selected_evidence = " ".join(evidence_by_id.get(source_id, "") for source_id in story.get("source_ids", []))
+            for field in ("inputs", "outputs", "confirmed_rules", "dependencies"):
+                for item in context.get(field, []) if isinstance(context.get(field), list) else []:
+                    text = str(item)
+                    if re.search(r"\b(bureau\w*|score\w*|integrac\w*)", unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()) and not re.search(r"\b(bureau\w*|score\w*|integrac\w*)", unicodedata.normalize("NFKD", selected_evidence).encode("ascii", "ignore").decode("ascii").lower()):
+                        findings.append({"story_id": story_id, "code": "unconfirmed_context", "reason": f"{field} contem integracao ou dado externo sem evidencia direta: {text}."})
+                        break
+            for dependency in context.get("dependencies", []) if isinstance(context.get("dependencies"), list) else []:
+                target = stories_by_id.get(str(dependency).upper())
+                if target and self._release_rank(story.get("release")) < self._release_rank(target.get("release")):
+                    findings.append({"story_id": story_id, "code": "release_dependency_conflict", "reason": f"Depende de {dependency} em release posterior."})
+        return findings
+
+    @staticmethod
+    def _deduplicate_texts(items):
+        """Deduplicate user-facing text while treating accents as equivalent."""
+        unique, seen = [], set()
+        for item in items if isinstance(items, list) else []:
+            value = str(item or "").strip()
+            normalized = unicodedata.normalize("NFKD", value)
+            normalized = "".join(char for char in normalized if not unicodedata.combining(char)).lower()
+            if value and normalized not in seen:
+                seen.add(normalized)
+                unique.append(value)
+        return unique
+
+    def _review_backlog_contract(self, contract, evidence_contract, evidence_by_id):
+        """Combine static contract rules with the read-only challenger and judge."""
+        findings = self._lint_backlog_contract(contract, evidence_by_id)
+        challenger = BacklogChallenger().process(contract, evidence_contract)
+        seen = {(item.get("story_id"), item.get("code")) for item in findings}
+        for finding in challenger.get("findings", []):
+            key = (finding.get("story_id"), finding.get("code"))
+            if key not in seen:
+                findings.append(finding)
+                seen.add(key)
+        return BacklogJudge().process(findings)
+
+    def _collect_backlog_clarifications(self, contract):
+        """Return product questions outside the user-story delivery contract."""
+        questions_by_text = {}
+        for story in contract.get("stories", []):
+            if not isinstance(story, dict):
+                continue
+            story_id = str(story.get("id") or "").upper()
+            context = story.get("refinement_context") if isinstance(story.get("refinement_context"), dict) else {}
+            for question in [*(story.get("open_questions") or []), *(context.get("open_questions") or [])]:
+                value = str(question or "").strip()
+                normalized = unicodedata.normalize("NFKD", value)
+                normalized = "".join(char for char in normalized if not unicodedata.combining(char)).lower()
+                if value:
+                    questions_by_text.setdefault(normalized, {"question": value, "story_ids": []})["story_ids"].append(story_id)
+        return [
+            {"id": f"CQ-{index:02d}", "question": item["question"], "story_ids": sorted(set(item["story_ids"]))}
+            for index, item in enumerate(questions_by_text.values(), start=1)
+        ][:8]
+
+    def _build_story_repair_prompt(self, contract, evidence_contract, findings):
+        affected_ids = sorted({item["story_id"] for item in findings if item.get("story_id")})
+        affected = [story for story in contract.get("stories", []) if str(story.get("id") or "").upper() in affected_ids]
+        role_conflict = any(item.get("code") == "role_conflict" for item in findings)
+        # A single broken story may need to become multiple atomic stories.
+        # Therefore the response envelope must always support a 1-to-N
+        # replacement, including when only one story is currently affected.
+        response_format = '{"replacements":[{"replace_ids":["US-01"],"stories":[{"id":"US-01","actor":"persona","goal":"acao unica verificavel","benefit":"efeito de negocio","description":"contexto","lane":"foundation|operation|visibility|governance","priority":"high|medium|low","release":"MVP|Fase 2|Fase 3","source_ids":["briefing.1"],"status":"confirmed|proposed|question","review_tags":[],"open_questions":[],"refinement_context":{"inputs":[],"outputs":[],"confirmed_rules":[],"constraints":[],"dependencies":[],"open_questions":[],"acceptance_hints":[],"acceptance_criteria":[{"id":"US-01-CA-01","given":"precondicao","when":"acao","then":"resultado","source_ids":["briefing.1"],"status":"confirmed|proposed"}]}}]}]}'
+        return f"""
+Voce e um Product Manager senior e deve reparar SOMENTE historias problemáticas de um contrato de backlog.
+Nao invente regras, integracoes, limites, calculos ou politicas. Use apenas as evidencias.
+
+EVIDENCIAS: {json.dumps(evidence_contract, ensure_ascii=False)}
+ACHADOS: {json.dumps(findings, ensure_ascii=False)}
+HISTORIAS A SUBSTITUIR: {json.dumps(affected, ensure_ascii=False)}
+
+Para cada historia composta, gere historias atomicas separadas. Se "aprovar ou reprovar" forem apenas resultados da mesma acao, reescreva o goal como "registrar a decisao da proposta" e deixe os resultados como cenarios/descricao; nao mantenha os dois verbos no goal. Para conflito de ator ou ator "Sistema", use a persona de negocio beneficiada pela automacao e descreva o comportamento automatico na descricao/regras. Nesse caso, nao use "validar" ou "registrar" como goal de um ator humano quando a descricao disser que o sistema executa essa acao; o goal deve representar consulta, acompanhamento ou decisao efetivamente feita pela persona. Para dependencia de release, ajuste a release ou remova a dependencia nao confirmada. Dados de bureau/score/integracao sem evidencia devem sair de inputs e virar open_questions.
+Se o achado indicar fluxo confirmado ausente, substitua a historia relacionada por historias atomicas que cubram tambem esse fluxo, sem inventar regras. Remova dependencias inexistentes. Elimine perguntas duplicadas, inclusive quando a diferenca for apenas de acentuacao.
+Se uma integracao confirmada estiver sem planejamento, crie uma historia proposta para seu planejamento e deixe em open_questions o servico, os dados trocados, erros e criterio de aceite ainda nao confirmados; nao invente esses detalhes.
+{"Este reparo trata conflito de ator: nao devolva REVIEW_ROLE em review_tags; deixe review_tags como [] e descreva apenas o apoio do sistema, nao o sistema executando a acao do ator." if role_conflict else ""}
+Mantenha IDs unicos no formato US-XX. Cada historia deve ter todos os campos do contrato, incluindo priority, release, source_ids, status, review_tags, open_questions e refinement_context.
+Responda SOMENTE JSON, exatamente neste formato: {response_format}
+""".strip()
+
+    def _apply_story_repairs(self, contract, repair, affected_story_ids=None):
+        def story_lists(value):
+            candidates = []
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if isinstance(child, list) and child and all(isinstance(item, dict) for item in child):
+                        if sum(bool((item.get("goal") or item.get("title")) and item.get("actor")) for item in child) >= max(1, len(child) // 2):
+                            candidates.append(child)
+                    candidates.extend(story_lists(child))
+            elif isinstance(value, list):
+                for child in value:
+                    candidates.extend(story_lists(child))
+            return candidates
+
+        def story_objects(value):
+            candidates = []
+            if isinstance(value, dict):
+                if value.get("actor") and (value.get("goal") or value.get("title")):
+                    candidates.append(value)
+                for child in value.values():
+                    candidates.extend(story_objects(child))
+            elif isinstance(value, list):
+                for child in value:
+                    candidates.extend(story_objects(child))
+            return candidates
+
+        def replacement_groups(value):
+            groups = []
+            if isinstance(value, dict):
+                if isinstance(value.get("replace_ids"), list) and isinstance(value.get("stories"), list):
+                    groups.append(value)
+                for child in value.values():
+                    groups.extend(replacement_groups(child))
+            elif isinstance(value, list):
+                for child in value:
+                    groups.extend(replacement_groups(child))
+            return groups
+
+        scoped_ids = {str(story_id).upper() for story_id in (affected_story_ids or []) if str(story_id).strip()}
+        used_scoped_partial = False
+        replacements = repair.get("replacements") if isinstance(repair, dict) else None
+        if not isinstance(replacements, list):
+            # Models commonly wrap the prescribed envelope in `result`,
+            # `data` or a singular `replacement` key. Preserve the explicit
+            # replace_ids whenever it exists instead of guessing from IDs.
+            nested_groups = replacement_groups(repair)
+            if nested_groups:
+                replacements = nested_groups
+        if isinstance(replacements, list):
+            replacement_by_id = {}
+            for replacement in replacements:
+                if not isinstance(replacement, dict):
+                    continue
+                ids = {str(value).upper() for value in replacement.get("replace_ids", [])}
+                stories = replacement.get("stories") if isinstance(replacement.get("stories"), list) else []
+                if scoped_ids:
+                    ids &= scoped_ids
+                if ids and stories:
+                    replacement_by_id.update({story_id: stories for story_id in ids})
+            if not replacement_by_id:
+                raise ValueError("Reparo da IA sem substituicoes utilizaveis.")
+            repaired = []
+            for story in contract.get("stories", []):
+                story_id = str(story.get("id") or "").upper()
+                if story_id in replacement_by_id:
+                    repaired.extend(replacement_by_id[story_id])
+                else:
+                    repaired.append(story)
+        else:
+            # Several providers ignore the narrow repair envelope and return a
+            # complete corrected contract. Accept it only when it is genuinely
+            # a full replacement, then run the same semantic validation below.
+            candidates = sorted(story_lists(repair), key=len, reverse=True)
+            repaired = candidates[0] if candidates else None
+            if not repaired:
+                # Some models emit {"replacement": {"id": "US-04", ...}}
+                # instead of wrapping the repaired story in an array.
+                repaired = story_objects(repair)
+            if isinstance(repaired, list) and len(repaired) < len(contract.get("stories", [])):
+                # A partial response is safe only when each returned story
+                # identifies an original story to replace; a single scoped
+                # repair may also safely split that one story into 1-to-N.
+                if len(scoped_ids) == 1:
+                    target_id = next(iter(scoped_ids))
+                    repaired = [
+                        replacement_story
+                        for story in contract.get("stories", [])
+                        for replacement_story in (repaired if str(story.get("id") or "").upper() == target_id else [story])
+                    ]
+                    used_scoped_partial = True
+                else:
+                    existing = {str(story.get("id") or "").upper(): story for story in contract.get("stories", [])}
+                    returned_ids = {str(story.get("id") or "").upper() for story in repaired}
+                    if returned_ids and returned_ids.issubset(existing) and all(returned_ids):
+                        existing.update({str(story.get("id") or "").upper(): story for story in repaired})
+                        repaired = list(existing.values())
+            if not isinstance(repaired, list) or len(repaired) < len(contract.get("stories", [])):
+                raise ValueError("Reparo da IA sem replacements ou contrato completo de historias.")
+        # Some providers ignore the narrow repair prompt and send the whole
+        # contract.  Do not let unrelated returned stories undo a replacement
+        # that has already been validated in an earlier repair pass.
+        if scoped_ids and not isinstance(replacements, list) and not used_scoped_partial:
+            replacement_by_id = {
+                str(story.get("id") or "").upper(): story
+                for story in repaired
+                if str(story.get("id") or "").upper() in scoped_ids
+            }
+            if not replacement_by_id:
+                raise ValueError("Reparo da IA nao incluiu a historia solicitada.")
+            repaired = [
+                replacement_by_id.get(str(story.get("id") or "").upper(), story)
+                for story in contract.get("stories", [])
+            ]
+        aliases = {}
+        for index, story in enumerate(repaired, start=1):
+            if not str(story.get("goal") or "").strip() and str(story.get("title") or "").strip():
+                match = re.match(
+                    r"\s*como\s+(.+?),\s*eu\s+quero\s+(.+?)(?:,\s*para\s+(.+?))?\.?\s*$",
+                    str(story["title"]),
+                    re.IGNORECASE,
+                )
+                if match:
+                    story["actor"] = story.get("actor") or match.group(1).strip()
+                    story["goal"] = match.group(2).strip()
+                    story["benefit"] = story.get("benefit") or (match.group(3) or "resultado de negocio").strip()
+            old_id = str(story.get("id") or "").upper()
+            new_id = f"US-{index:02d}"
+            aliases.setdefault(old_id, new_id)
+            story["id"] = new_id
+        for story in repaired:
+            context = story.get("refinement_context") if isinstance(story.get("refinement_context"), dict) else {}
+            if isinstance(context.get("dependencies"), list):
+                context["dependencies"] = [aliases.get(str(item).upper(), str(item)) for item in context["dependencies"]]
+        valid_ids = {str(story.get("id") or "").upper() for story in repaired}
+        for story in repaired:
+            context = story.get("refinement_context") if isinstance(story.get("refinement_context"), dict) else {}
+            if isinstance(context.get("dependencies"), list):
+                own_id = str(story.get("id") or "").upper()
+                context["dependencies"] = self._deduplicate_texts([
+                    dependency for dependency in context["dependencies"]
+                    if str(dependency).upper() in valid_ids and str(dependency).upper() != own_id
+                ])
+        contract["stories"] = repaired
+        # The AI repair can split a story, invalidating positional coverage.
+        # Rebuild it from the repaired source_ids during validation.
+        contract["coverage"] = None
+        return contract
+
+    def _validate_backlog_contract(self, contract, evidence_contract=None):
+        if not isinstance(contract, dict):
+            raise ValueError("Contrato de backlog deve ser um objeto JSON.")
+        required_text = ("overview",)
+        required_lists = ("capabilities", "epics", "releases", "stories")
+        for key in required_text:
+            if not isinstance(contract.get(key), str) or not contract[key].strip():
+                raise ValueError(f"Contrato sem {key}.")
+        for key in required_lists:
+            if not isinstance(contract.get(key), list) or not contract[key]:
+                raise ValueError(f"Contrato sem lista {key}.")
+        releases_by_name = {str(item.get("name") or "").strip().lower(): item for item in contract["releases"] if isinstance(item, dict)}
+        for release_name in ("mvp", "fase 2", "fase 3"):
+            release = releases_by_name.get(release_name)
+            if not release or not str(release.get("focus") or "").strip() or not str(release.get("deferred") or "").strip():
+                raise ValueError(f"Contrato sem foco ou diferimento para {release_name.upper()}.")
+        stories = contract["stories"]
+        min_stories, max_stories = self.STORY_RANGE
+        if not min_stories <= len(stories) <= max_stories:
+            raise ValueError(f"Contrato possui {len(stories)} historias; esperado entre {min_stories} e {max_stories}.")
+        seen_ids = set()
+        evidence_by_id = {
+            str(fact.get("id")): str(fact.get("text") or "")
+            for fact in (evidence_contract or {}).get("facts", [])
+            if isinstance(fact, dict) and fact.get("id")
+        }
+        evidence_ids = set(evidence_by_id)
+        for story in stories:
+            if not isinstance(story, dict):
+                raise ValueError("Historia do contrato deve ser um objeto.")
+            missing = [key for key in ("id", "actor", "goal", "benefit", "description", "lane") if not str(story.get(key) or "").strip()]
+            if missing:
+                raise ValueError(f"Historia sem campos obrigatorios: {', '.join(missing)}.")
+            story_id = str(story["id"]).strip().upper()
+            if not re.fullmatch(r"US-\d{2}", story_id) or story_id in seen_ids:
+                raise ValueError("IDs de historia devem ser unicos no formato US-XX.")
+            seen_ids.add(story_id)
+            story = self._canonicalize_decision_outcomes(story)
+            source_ids = [str(item).strip() for item in story.get("source_ids", []) if str(item).strip()]
+            if any(source_id not in evidence_ids for source_id in source_ids):
+                raise ValueError("Historia referencia evidencia inexistente.")
+            status = str(story.get("status") or "").strip().lower()
+            tags = [
+                str(item).strip()
+                for item in story.get("review_tags", [])
+                if str(item).strip() and str(item).strip() != "REVIEW_ROLE"
+            ]
+            questions = self._deduplicate_texts(story.get("open_questions", []))
+            if status not in {"confirmed", "proposed", "question"}:
+                status = "confirmed" if source_ids else "proposed"
+            if status == "confirmed" and not source_ids:
+                status = "proposed"
+                tags.append("REVIEW_EVIDENCE")
+            direct_evidence = self._has_direct_business_evidence(story, evidence_by_id) if source_ids else False
+            unsupported_details = self._unsupported_sensitive_details(story, evidence_by_id) if source_ids else []
+            if status == "confirmed" and source_ids and not direct_evidence:
+                status = "proposed"
+                tags.append("REVIEW_EVIDENCE")
+                if not questions:
+                    questions.append("Confirmar qual evidencia de negocio sustenta o comportamento descrito, alem do ator ou contexto geral.")
+            if unsupported_details:
+                status = "proposed"
+                tags.extend(["REVIEW_SCOPE", "REVIEW_HIGH_IMPACT"])
+                if not questions:
+                    questions.append("Confirmar o escopo e a politica aplicavel para: " + ", ".join(unsupported_details) + ".")
+            if self._is_high_impact_statement(" ".join([story.get("goal", ""), story.get("description", "")])) and not source_ids:
+                status = "proposed"
+                tags.append("REVIEW_HIGH_IMPACT")
+            refinement_context = story.get("refinement_context") if isinstance(story.get("refinement_context"), dict) else {}
+            # Keep a stable hand-off shape even when the model has no evidence
+            # for a field. Empty lists mean unknown, never an inferred rule.
+            refinement_context = {
+                "inputs": refinement_context.get("inputs") if isinstance(refinement_context.get("inputs"), list) else [],
+                "outputs": refinement_context.get("outputs") if isinstance(refinement_context.get("outputs"), list) else [],
+                "confirmed_rules": refinement_context.get("confirmed_rules") if isinstance(refinement_context.get("confirmed_rules"), list) else [],
+                "constraints": refinement_context.get("constraints") if isinstance(refinement_context.get("constraints"), list) else [],
+                "dependencies": refinement_context.get("dependencies") if isinstance(refinement_context.get("dependencies"), list) else [],
+                "open_questions": refinement_context.get("open_questions") if isinstance(refinement_context.get("open_questions"), list) else [],
+                "acceptance_hints": refinement_context.get("acceptance_hints") if isinstance(refinement_context.get("acceptance_hints"), list) else [],
+                "acceptance_criteria": refinement_context.get("acceptance_criteria") if isinstance(refinement_context.get("acceptance_criteria"), list) else [],
+            }
+            if not refinement_context["acceptance_criteria"]:
+                refinement_context["acceptance_criteria"] = [{
+                    "id": f"{story_id}-CA-01",
+                    "given": "os dados necessarios estao disponiveis",
+                    "when": str(story.get("goal") or "a acao principal e executada"),
+                    "then": str(story.get("benefit") or "o resultado esperado e apresentado"),
+                    "source_ids": source_ids,
+                    "status": "proposed" if not source_ids else "confirmed",
+                }]
+            refinement_context = self._apply_story_quality_guardrails(story, tags, questions, refinement_context)
+            refinement_context["open_questions"] = self._deduplicate_texts(refinement_context.get("open_questions", []))
+            source_text = " ".join(evidence_by_id.get(source_id, "") for source_id in source_ids)
+            normalized_source = unicodedata.normalize("NFKD", source_text).encode("ascii", "ignore").decode("ascii").lower()
+            traceability = {}
+            for field in ("inputs", "outputs", "confirmed_rules", "constraints", "dependencies", "acceptance_hints"):
+                values = refinement_context.get(field, [])
+                retained = []
+                traceability[field] = []
+                for value in values if isinstance(values, list) else []:
+                    value_text = str(value).strip()
+                    normalized_value = unicodedata.normalize("NFKD", value_text).encode("ascii", "ignore").decode("ascii").lower()
+                    external_detail = bool(re.search(r"\b(bureau\w*|score\w*|integrac\w*)", normalized_value))
+                    if external_detail and not re.search(r"\b(bureau\w*|score\w*|integrac\w*)", normalized_source):
+                        self._append_unique(questions, f"Confirmar evidencia e escopo para: {value_text}.")
+                        self._append_unique(refinement_context["open_questions"], f"Confirmar evidencia e escopo para: {value_text}.")
+                        self._append_unique(tags, "REVIEW_EVIDENCE")
+                        continue
+                    retained.append(value)
+                    direct_terms = self._semantic_terms(value_text) & self._semantic_terms(source_text)
+                    traceability[field].append({
+                        "text": value_text,
+                        "source_ids": source_ids,
+                        "status": "confirmed" if len(direct_terms) >= 2 else ("derived" if source_ids else "proposed"),
+                    })
+                refinement_context[field] = retained
+            criteria = []
+            for index, criterion in enumerate(refinement_context.get("acceptance_criteria", []), start=1):
+                if not isinstance(criterion, dict):
+                    continue
+                given = str(criterion.get("given") or "").strip()
+                when = str(criterion.get("when") or "").strip()
+                then = str(criterion.get("then") or "").strip()
+                if not (given and when and then):
+                    continue
+                criteria.append({
+                    "id": str(criterion.get("id") or f"{story_id}-CA-{index:02d}"),
+                    "given": given,
+                    "when": when,
+                    "then": then,
+                    "source_ids": [item for item in criterion.get("source_ids", source_ids) if item in evidence_ids],
+                    "status": str(criterion.get("status") or ("confirmed" if source_ids else "proposed")),
+                })
+            refinement_context["acceptance_criteria"] = criteria
+            refinement_context["traceability"] = traceability
+            if self._clarifications_answered:
+                # Clarifications belong to the dialogue, never to a story
+                # delivered to the board. The answered briefing remains the
+                # evidence source; this only removes the review residue.
+                questions = []
+                refinement_context["open_questions"] = []
+                tags = [tag for tag in tags if not str(tag).startswith("REVIEW_")]
+            if status != "confirmed" and not tags and not self._clarifications_answered:
+                tags.append("REVIEW_SCOPE")
+            story["source_ids"] = source_ids
+            story["status"] = status
+            story["review_tags"] = sorted(set(tags))
+            story["open_questions"] = self._deduplicate_texts(questions)
+            story["priority"] = str(story.get("priority") or self._story_priority_for_lane(story.get("lane"))).lower()
+            if story["priority"] not in {"low", "medium", "high", "urgent"}:
+                story["priority"] = self._story_priority_for_lane(story.get("lane"))
+            story["release"] = str(story.get("release") or self._story_release_for_lane(story.get("lane"))).strip()
+            story["refinement_context"] = refinement_context
+        self._normalize_release_dependencies(stories)
+        foundation_count = sum(1 for story in stories if str(story.get("lane") or "").strip().lower() == "foundation")
+        if foundation_count < 2:
+            raise ValueError("Contrato sem historias suficientes de fundacao para sustentar o MVP.")
+        # Coverage is derived traceability, not a business decision. Rebuild it
+        # from the validated source_ids so an AI repair cannot retain obsolete
+        # story IDs after splitting or renumbering stories.
+        coverage = []
+        for source_id in sorted({source_id for story in stories for source_id in story["source_ids"]}):
+            coverage.append({
+                "source_id": source_id,
+                "story_ids": [story["id"] for story in stories if source_id in story["source_ids"]],
+            })
+        contract["coverage"] = coverage
+        return contract
+
+    def _render_backlog_contract(self, contract):
+        def bullets(items):
+            return "\n".join(f"- {str(item).strip()}" for item in items if str(item).strip())
+
+        release_lines = []
+        for release in contract["releases"]:
+            if isinstance(release, dict):
+                name = str(release.get("name") or "").strip()
+                focus = str(release.get("focus") or "").strip()
+                deferred = str(release.get("deferred") or "").strip()
+                if name and focus and deferred:
+                    mvp_bridge = " Base do produto: historias iniciais do contrato." if name.lower() == "mvp" else ""
+                    release_lines.append(f"- {name}: Foco: {focus}.{mvp_bridge} Depois: {deferred}.")
+            elif str(release).strip():
+                release_lines.append(f"- {str(release).strip()}")
+        if len(release_lines) < 3:
+            raise ValueError("Contrato deve conter tres fatias de release utilizaveis.")
+
+        story_lines = []
+        for story in contract["stories"]:
+            actor = re.sub(r"^como\s+", "", str(story["actor"]).strip(), flags=re.IGNORECASE)
+            goal = re.sub(r"^eu quero\s+", "", str(story["goal"]).strip(), flags=re.IGNORECASE).rstrip(".")
+            benefit = re.sub(r"^para\s+", "", str(story["benefit"]).strip(), flags=re.IGNORECASE).rstrip(".")
+            story_lines.extend([
+                f"- {str(story['id']).strip().upper()} | Como {actor}, eu quero {goal}, para {benefit}.",
+                f"  Descricao: {str(story['description']).strip()}",
+            ])
+            review_tags = [str(tag).strip() for tag in story.get("review_tags", []) if str(tag).strip()]
+            open_questions = [str(question).strip() for question in story.get("open_questions", []) if str(question).strip()]
+            if review_tags:
+                story_lines.append(f"  Revisao: [{', '.join(sorted(set(review_tags)))}]")
+            for question in open_questions:
+                story_lines.append(f"  Ponto a validar: {question}")
+        markdown = "\n".join([
+            "# Backlog do Projeto",
+            "", "## Visao Geral", contract["overview"].strip(),
+            "", "## Capacidades do Produto", bullets(contract["capabilities"]),
+            "", "## Epicos Recomendados", bullets(contract["epics"]),
+            "", "## Fatias de Release", "\n".join(release_lines),
+            "", "## Historias de Usuario", "\n".join(story_lines),
+        ])
+        valid, reason = validate_backlog_output(markdown)
+        if not valid:
+            raise ValueError(reason or "Markdown renderizado invalido.")
+        return markdown
+
+    def _build_single_pass_backlog_prompt(self, idea, evidence_contract, repair_reason=None):
+        briefing = self._compact_briefing(idea)
+        repair_instruction = ""
+        if repair_reason:
+            repair_instruction = f"""
+CORRECAO OBRIGATORIA DE FORMATO
+A tentativa anterior foi rejeitada por: {repair_reason}
+Comece a resposta diretamente com {{ e termine diretamente com }}. Nao use cercas ```json, texto introdutorio, explicacoes ou um segundo objeto JSON.
+"""
+        return f"""
+Voce e um Product Manager senior. Gere um contrato JSON de backlog somente a partir do briefing fornecido.
+
+BRIEFING DO PROJETO
+{briefing}
+
+EVIDENCIAS APROVADAS
+{json.dumps(evidence_contract, ensure_ascii=False)}
+
+REGRAS DE CONFIABILIDADE
+- Responda em portugues e nao invente integracoes, limites, politicas, formulas ou regras que nao estejam sustentadas pelo briefing.
+- Quando uma decisao nao estiver definida, registre a necessidade na descricao sem apresentá-la como fato.
+- Gere somente a quantidade de historias necessaria para cobrir as jornadas e restricoes confirmadas: no minimo 8 e no maximo 25. Nao adicione historias para atingir uma quantidade-alvo e nao fragmente uma jornada sem ganho de negocio.
+- Distribua as historias entre os lanes foundation, operation, visibility e governance quando forem aplicaveis ao briefing.
+- Gere 4 a 6 capacidades concretas, com verbo, objeto e efeito de negocio; gere 4 a 6 epicos concretos.
+- Gere exatamente as fatias MVP, Fase 2 e Fase 3; cada uma deve ter focus (o que entra) e deferred (o que fica para depois).
+- Use pelo menos tres personas coerentes com o briefing e evite historias tecnicas internas.
+- Cada historia deve ter um resultado de negocio observavel e independente. Separe etapas sequenciais quando puderem ser entregues, testadas ou revisadas separadamente; por exemplo, submeter uma solicitacao, o sistema validar/registrar e um analista decidir nao devem virar uma unica historia.
+- Uma historia deve conter uma unica acao principal. Nao combine "simular e iniciar", nem "revisar, aprovar, reprovar ou solicitar complemento"; gere uma historia por capacidade ou registre REVIEW_SCOPE e uma pergunta objetiva quando a separacao depender de decisao de produto.
+- Respeite a responsabilidade declarada no briefing: se a evidencia disser que o sistema valida ou registra, nao reescreva isso como uma acao executada pelo analista. Descreva o efeito para o ator ou mantenha o comportamento do sistema como regra da historia.
+- Para credito, uma historia de simulacao nao pode inferir taxa, CET, juros, parcela, politica de precificacao, limites, prazo, arredondamento ou relacao entre prazo e parcelas. Quando algum desses dados nao constar nas evidencias, mantenha a capacidade e registre a lacuna em open_questions e refinement_context.open_questions com REVIEW_HIGH_IMPACT.
+- Para documentos obrigatorios, politicas de credito, elegibilidade, limites, score, bureau ou integracoes, nao trate os detalhes como definidos se a evidencia nao os especificar: registre perguntas sobre escopo, fonte da regra e criterio de aceite.
+- Historias de governanca ou visibilidade devem declarar a decisao observavel que habilitam; "acompanhar a operacao geral" ou "assegurar conformidade" sem indicador, controle ou decisao deve receber REVIEW_SCOPE e uma open_question.
+- Declare priority (low, medium, high ou urgent) e release (MVP, Fase 2 ou Fase 3) por historia. Use prioridade alta para a fundacao do primeiro fluxo utilizavel e nao atribua a mesma prioridade a todo o backlog sem justificativa.
+- Cada descricao deve acrescentar contexto, regra, excecao, estado ou efeito observavel, sem escolher tecnologia, criptografia, painel, fila, filtro, API ou mecanismo de automacao se isso nao foi informado.
+- Cada historia deve declarar source_ids com IDs da lista de evidencias, status (confirmed, proposed ou question), review_tags e open_questions.
+- Um source_id comprova somente o comportamento que ele menciona; ator, linguagem de dominio, familia de tela ou contexto geral nao comprovam fila, dashboard, configuracao, automacao, limite, calculo ou politica.
+- Use confirmed somente quando o goal e a descricao estiverem diretamente sustentados pelas evidencias citadas. Ideias uteis sem evidencia devem ser proposed com REVIEW_SCOPE e uma open_question objetiva; decisoes de alto impacto sem evidencia tambem recebem REVIEW_HIGH_IMPACT.
+- Declare coverage, relacionando cada evidencia efetivamente usada aos IDs das historias que a cobrem. Uma evidencia sem historia correspondente deve virar uma lacuna, nao uma historia inventada.
+
+RESPONDA SOMENTE JSON VALIDO, sem markdown e sem comentarios, no formato:
+{{
+  "overview": "texto curto",
+  "capabilities": ["capacidade"],
+  "epics": ["epico"],
+  "releases": [{{"name":"MVP","focus":"...","deferred":"..."}}, {{"name":"Fase 2","focus":"...","deferred":"..."}}, {{"name":"Fase 3","focus":"...","deferred":"..."}}],
+  "stories": [{{"id":"US-01","actor":"persona","goal":"acao verificavel","benefit":"efeito de negocio","description":"contexto adicional","lane":"foundation","priority":"high","release":"MVP","source_ids":["briefing.1"],"status":"confirmed","review_tags":[],"open_questions":[],"refinement_context":{{"inputs":[],"outputs":[],"confirmed_rules":[],"constraints":[],"dependencies":[],"open_questions":[],"acceptance_hints":[],"acceptance_criteria":[{{"id":"US-01-CA-01","given":"precondicao","when":"acao","then":"resultado","source_ids":["briefing.1"],"status":"confirmed"}}]}}}}],
+  "coverage": [{{"source_id":"briefing.1","story_ids":["US-01"]}}]
+}}
+{repair_instruction}
+""".strip()
+
+    def _build_missing_stories_prompt(self, contract, needed_count):
+        existing_stories = contract.get("stories", [])
+        existing_titles = [f"{story.get('id')}: {story.get('goal')}" for story in existing_stories]
+        next_index = len(existing_stories) + 1
+        return f"""
+Complete um contrato de backlog. Preserve as historias existentes; gere SOMENTE {needed_count} historias novas.
+
+Historias existentes:
+{json.dumps(existing_titles, ensure_ascii=False)}
+
+Sua resposta deve comecar exatamente por {{"stories":[ e terminar em ]}}. Nao inclua overview, releases, texto explicativo, markdown ou uma copia do contrato.
+Responda SOMENTE JSON valido no formato {{"stories":[...]}}. Cada objeto exige id, actor, goal, benefit, description e lane.
+Use IDs sequenciais de US-{next_index:02d} ate US-{next_index + needed_count - 1:02d}. Nao repita objetivo das historias existentes.
+""".strip()
+
+    def _build_release_repair_prompt(self, contract, reason):
+        return f"""
+Corrija SOMENTE as fatias de release deste contrato de backlog. Nao altere overview, capacidades, epicos ou historias.
+Motivo da revisao: {reason}
+Historias de fundacao disponiveis: {sum(1 for story in contract.get('stories', []) if str(story.get('lane') or '').lower() == 'foundation')}.
+Responda SOMENTE JSON valido no formato:
+{{"releases":[{{"name":"MVP","focus":"o primeiro fluxo utilizavel","deferred":"o que fica para depois"}},{{"name":"Fase 2","focus":"...","deferred":"..."}},{{"name":"Fase 3","focus":"...","deferred":"..."}}]}}
+""".strip()
+
+    def _build_overview_repair_prompt(self, contract, evidence_contract):
+        return f"""
+Corrija SOMENTE o campo overview do contrato de backlog abaixo.
+O overview deve resumir o objetivo e a jornada confirmada do produto em uma ou duas frases.
+Use exclusivamente as evidencias fornecidas. Nao invente funcionalidades, integracoes, politicas ou regras.
+
+EVIDENCIAS:
+{json.dumps(evidence_contract, ensure_ascii=False)}
+
+CONTRATO PARCIAL:
+{json.dumps(contract, ensure_ascii=False)}
+
+Responda SOMENTE um objeto JSON valido exatamente neste formato:
+{{"overview":"resumo objetivo baseado nas evidencias"}}
+""".strip()
+
+    def _generate_ai_backlog(self, idea):
+        """Generate the complete backlog in one bounded AI call, with one focused repair at most."""
+        max_attempts = max(1, min(2, int(os.getenv("PROJECT_MANAGER_BACKLOG_MAX_ATTEMPTS", "2"))))
+        request_timeout = max(30, min(60, int(os.getenv("PROJECT_MANAGER_LLM_REQUEST_TIMEOUT_SECONDS", "45"))))
+        rejected_draft = None
+        last_reason = "sem detalhes"
+        evidence_contract = self._build_evidence_contract(idea)
+
+        for attempt in range(1, max_attempts + 1):
+            prompt = self._build_single_pass_backlog_prompt(
+                idea,
+                evidence_contract,
+                repair_reason=last_reason if attempt > 1 else None,
+            )
+            print(
+                f"[Project Manager] etapa=backlog_completo tentativa={attempt}/{max_attempts} timeout={request_timeout}s",
+                file=sys.stderr,
+            )
+            try:
+                result = generate_text_from_llm(
+                    prompt,
+                    options_override={
+                        "temperature": 0.1,
+                        "num_predict": int(os.getenv("PROJECT_MANAGER_BACKLOG_NUM_PREDICT", "3400")),
+                        "request_timeout_seconds": request_timeout,
+                        "transient_retries": 0,
+                        "json_mode": True,
+                        # Reject tiny/non-JSON provider replies before the
+                        # router marks them successful, so another model can
+                        # be tried in the same AI-only generation attempt.
+                        "min_response_chars": 256,
+                        "require_json_object": True,
+                    },
+                    use_cache=False,
+                    task="requirements_analysis",
+                )
+            except Exception as error:
+                last_reason = f"Falha de provider na tentativa {attempt}: {error}"
+                print(f"[Project Manager] {last_reason}", file=sys.stderr)
+                continue
+
+            rejected_draft = result
+            try:
+                contract = self._validate_backlog_contract(self._extract_json_object(result), evidence_contract)
+                evidence_by_id = {str(fact.get("id")): str(fact.get("text") or "") for fact in evidence_contract.get("facts", []) if isinstance(fact, dict)}
+                clarifications = self._collect_backlog_clarifications(contract)
+                if clarifications and not self._clarifications_answered:
+                    return {
+                        "clarification_required": True,
+                        "clarifications": clarifications,
+                        "requirements_contract": self._requirements_contract,
+                    }
+                quality_review = self._review_backlog_contract(contract, evidence_contract, evidence_by_id)
+                quality_history = [{"stage": "initial_review", **quality_review}]
+                repair_attempts = 0
+                if quality_review.get("advisories"):
+                    print(json.dumps({
+                        "event": "project_manager_backlog_advisories",
+                        "count": len(quality_review["advisories"]),
+                        "findings": quality_review["advisories"],
+                    }, ensure_ascii=False), file=sys.stderr)
+                if quality_review["decision"] != "PASS":
+                    remaining = quality_review["findings"]
+                    # A repair can surface a new finding for the same story
+                    # or fail to correct the original one. Permit one focused
+                    # retry for the same finding, while bounding the complete
+                    # loop so a weak provider response cannot spin forever.
+                    finding_attempts = {}
+                    max_attempts_per_finding = 2
+                    # Four rounds can repair only the first batches of a
+                    # larger contract and leave the final newly-found story
+                    # without its permitted retry. Five rounds cover that
+                    # tail without turning recovery into an unbounded loop.
+                    max_story_repairs = max(1, min(6, int(os.getenv("PROJECT_MANAGER_MAX_STORY_REPAIRS", "5"))))
+                    for repair_attempt in range(1, max_story_repairs + 1):
+                        repair_attempts = repair_attempt
+                        eligible_findings = [
+                            item for item in remaining
+                            if item.get("story_id") and finding_attempts.get((item.get("story_id"), item.get("code")), 0) < max_attempts_per_finding
+                        ]
+                        if not eligible_findings:
+                            break
+                        # Repair the currently independent stories together.
+                        # One serial call per story made a single backlog
+                        # generation depend on several provider round-trips.
+                        target_story_ids = list(dict.fromkeys(item["story_id"] for item in eligible_findings))[:4]
+                        target_story_id_set = set(target_story_ids)
+                        story_findings = [item for item in remaining if item.get("story_id") in target_story_id_set]
+                        for item in story_findings:
+                            key = (item.get("story_id"), item.get("code"))
+                            finding_attempts[key] = finding_attempts.get(key, 0) + 1
+                        print(json.dumps({"event": "project_manager_story_repair", "attempt": repair_attempt, "story_ids": target_story_ids, "findings": story_findings}, ensure_ascii=False), file=sys.stderr)
+                        repair_result = generate_text_from_llm(
+                            self._build_story_repair_prompt(contract, evidence_contract, story_findings),
+                            options_override={"temperature": 0.1, "num_predict": 2600, "request_timeout_seconds": request_timeout, "transient_retries": 0, "json_mode": True, "min_response_chars": 100, "require_json_object": True},
+                            use_cache=False,
+                            task="requirements_analysis",
+                        )
+                        contract = self._apply_story_repairs(
+                            contract,
+                            self._extract_json_object(repair_result),
+                            affected_story_ids=target_story_ids,
+                        )
+                        contract = self._validate_backlog_contract(contract, evidence_contract)
+                        quality_review = self._review_backlog_contract(contract, evidence_contract, evidence_by_id)
+                        quality_history.append({"stage": f"repair_{repair_attempt}_review", **quality_review})
+                        remaining = quality_review["findings"]
+                        if not remaining:
+                            break
+                    if remaining:
+                        raise BacklogGenerationError(
+                            "Reparo de historias nao concluiu os achados obrigatorios: " + "; ".join(
+                                f"{item['story_id']}:{item['code']}" for item in remaining
+                            ),
+                            rejected_draft=rejected_draft,
+                        )
+                contract["quality_review"] = {
+                    "decision": quality_review["decision"],
+                    "repair_attempts": repair_attempts,
+                    "history": quality_history,
+                }
+                return {
+                    "markdown": self._render_backlog_contract(contract),
+                    "backlog_contract": {
+                        **contract,
+                        "evidence": evidence_contract,
+                        "requirements_contract": self._requirements_contract,
+                    },
+                }
+            except (TypeError, ValueError, RuntimeError, json.JSONDecodeError) as error:
+                last_reason = str(error)
+                print(json.dumps({
+                    "event": "project_manager_contract_parse_rejected",
+                    "attempt": attempt,
+                    "response_chars": len(str(result or "")),
+                    "reason": last_reason,
+                }, ensure_ascii=False), file=sys.stderr)
+            print(
+                f"[Project Manager] etapa=validacao tentativa={attempt}/{max_attempts} motivo={last_reason}",
+                file=sys.stderr,
+            )
+
+            if attempt < max_attempts:
+                try:
+                    partial_contract = self._extract_json_object(result)
+                    stories = partial_contract.get("stories") if isinstance(partial_contract, dict) else None
+                    if isinstance(partial_contract, dict) and "contrato sem overview" in last_reason.lower():
+                        print("[Project Manager] etapa=reparo_overview", file=sys.stderr)
+                        overview = self._extract_json_object(generate_text_from_llm(
+                            self._build_overview_repair_prompt(partial_contract, evidence_contract),
+                            options_override={"temperature": 0.1, "num_predict": 350, "request_timeout_seconds": request_timeout, "transient_retries": 0, "json_mode": True, "min_response_chars": 20, "require_json_object": True},
+                            use_cache=False,
+                            task="requirements_analysis",
+                        )).get("overview")
+                        if not isinstance(overview, str) or not overview.strip():
+                            raise ValueError("Reparo da IA sem overview valido.")
+                        partial_contract["overview"] = overview.strip()
+                        rejected_draft = json.dumps(partial_contract, ensure_ascii=False)
+                        contract = self._validate_backlog_contract(partial_contract, evidence_contract)
+                        return {"markdown": self._render_backlog_contract(contract), "backlog_contract": {**contract, "evidence": evidence_contract, "requirements_contract": self._requirements_contract}}
+                    if isinstance(partial_contract, dict) and any(marker in last_reason.lower() for marker in ("release", "fatias", "mvp")):
+                        print("[Project Manager] etapa=reparo_fatias_release", file=sys.stderr)
+                        repaired_releases = self._extract_json_object(generate_text_from_llm(
+                            self._build_release_repair_prompt(partial_contract, last_reason),
+                            options_override={"temperature": 0.1, "num_predict": 700, "request_timeout_seconds": request_timeout, "transient_retries": 0, "json_mode": True},
+                            use_cache=False,
+                            task="requirements_analysis",
+                        )).get("releases", [])
+                        partial_contract["releases"] = repaired_releases
+                        rejected_draft = json.dumps(partial_contract, ensure_ascii=False)
+                        contract = self._validate_backlog_contract(partial_contract, evidence_contract)
+                        return {"markdown": self._render_backlog_contract(contract), "backlog_contract": {**contract, "evidence": evidence_contract, "requirements_contract": self._requirements_contract}}
+                    if isinstance(stories, list) and stories and len(stories) < self.STORY_RANGE[0]:
+                        needed_count = self.STORY_RANGE[0] - len(stories)
+                        print(f"[Project Manager] etapa=complemento_historias quantidade={needed_count}", file=sys.stderr)
+                        completion = generate_text_from_llm(
+                            self._build_missing_stories_prompt(partial_contract, needed_count),
+                            options_override={"temperature": 0.1, "num_predict": 1200, "request_timeout_seconds": request_timeout, "transient_retries": 0, "json_mode": True},
+                            use_cache=False,
+                            task="requirements_analysis",
+                        )
+                        additions = self._extract_json_object(completion).get("stories", [])
+                        partial_contract["stories"] = [*stories, *additions]
+                        rejected_draft = json.dumps(partial_contract, ensure_ascii=False)
+                        contract = self._validate_backlog_contract(partial_contract, evidence_contract)
+                        return {"markdown": self._render_backlog_contract(contract), "backlog_contract": {**contract, "evidence": evidence_contract, "requirements_contract": self._requirements_contract}}
+                except (TypeError, ValueError, json.JSONDecodeError, RuntimeError) as repair_error:
+                    last_reason = f"Complemento de historias invalido: {repair_error}"
+                    print(f"[Project Manager] {last_reason}", file=sys.stderr)
+                # A malformed focused repair must not discard the remaining
+                # full-contract attempt.  The next iteration is still AI-only
+                # and has the complete briefing/evidence context.
+                continue
+
+        raise BacklogGenerationError(
+            f"O agente project_manager nao conseguiu gerar um backlog valido apos {max_attempts} tentativas. "
+            f"Ultimo motivo: {last_reason}",
+            rejected_draft=rejected_draft,
+        )
 
     def _curate_story_batch(self, base_context, story_blocks, *, min_stories, max_stories):
         draft_section = self._build_stories_section(story_blocks)
@@ -2097,8 +3308,59 @@ REGRAS GERAIS
             f"Ultimo motivo: {last_reason}"
         )
 
+    def _is_backlog_aligned_with_briefing(self, idea, backlog):
+        """Reject structurally valid but domain-generic AI output before it is persisted."""
+        _, briefing = self._normalize_text(idea)
+        _, generated = self._normalize_text(backlog)
+        is_credit_domain = bool(re.search(r"\b(credito|emprestimo|financiamento|score|bureau)\b", briefing))
+        if not is_credit_domain:
+            return True
+
+        required_capabilities = {
+            "simulacao": r"\bsimul",
+            "proposta": r"\bpropost",
+            "documentos": r"\bdocument",
+            "analise": r"\banalis[ea].{0,30}\bcredit|\banalista de credito\b",
+            "decisao": r"\b(aprovar|reprovar|decisao)\b",
+            "acompanhamento": r"\b(status|acompanhar|andamento)\b",
+        }
+        missing = [
+            capability
+            for capability, pattern in required_capabilities.items()
+            if not re.search(pattern, generated, re.IGNORECASE)
+        ]
+        if missing:
+            raise RuntimeError(
+                "Backlog gerado por IA nao cobriu capacidades obrigatorias do dominio de credito: "
+                + ", ".join(missing)
+            )
+        return True
+
     def process(self, idea):
-        deterministic_backlog = self._build_deterministic_backlog(idea)
-        if deterministic_backlog:
-            return deterministic_backlog
-        return self._generate_multi_block_backlog(idea)
+        # Stories are product decisions. Never replace an unavailable or invalid
+        # AI result with deterministic content that can silently invent scope.
+        normalized_idea = unicodedata.normalize("NFKD", str(idea or ""))
+        normalized_idea = "".join(char for char in normalized_idea if not unicodedata.combining(char)).lower()
+        self._clarifications_answered = "clarificacoes respondidas:" in normalized_idea
+        self._requirements_contract = self._analyze_requirements_contract(idea)
+        blocking_questions = self._requirements_contract.get("blocking_questions", [])
+        if blocking_questions and not self._clarifications_answered:
+            return {
+                "clarification_required": True,
+                "clarifications": [
+                    {
+                        "id": item["id"], "question": item["question"], "story_ids": [],
+                        "reason": item.get("reason", ""), "answer_hint": item.get("answer_hint", ""),
+                    }
+                    for item in blocking_questions
+                ],
+                "requirements_contract": self._requirements_contract,
+            }
+        generated_backlog = self._generate_ai_backlog(idea)
+        if isinstance(generated_backlog, dict) and generated_backlog.get("clarification_required"):
+            return generated_backlog
+        if isinstance(generated_backlog, str):
+            generated_backlog = {"markdown": generated_backlog, "backlog_contract": {"evidence": {"facts": []}, "stories": []}}
+        generated_backlog.setdefault("backlog_contract", {})["requirements_contract"] = self._requirements_contract
+        self._is_backlog_aligned_with_briefing(idea, generated_backlog["markdown"])
+        return generated_backlog

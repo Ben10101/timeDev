@@ -165,6 +165,35 @@ def _count_meaningful_bullets(section_match, *, min_words=4):
     return sum(1 for bullet in bullets if len(bullet.split()) >= min_words)
 
 
+def _flow_has_confirmed_content_or_na(flow_body):
+    """Accept a real flow independently of the list format chosen by the LLM.
+
+    The requirements prompt asks for confirmed steps, but numbered lists are a
+    presentation choice. Rejecting a valid bullet list or a concise narrative
+    makes a formatting variation consume an entire generation attempt.
+    """
+    body = (flow_body or "").strip()
+    if not body:
+        return False
+    if re.search(r"\bnao\s+se\s+aplica\b", body, re.IGNORECASE):
+        return True
+    if re.search(r"(?:^|\n)\s*(?:\d+[\.\)]|[-*])\s+\S+", body):
+        return True
+
+    # A prose flow is valid when it is substantive.  Do not accept template
+    # instructions or an unresolved placeholder as evidence of a real flow.
+    normalized_body = _normalize_text(body)[1]
+    rejected_markers = (
+        "inclua somente",
+        "descreva somente",
+        "ponto a validar",
+        "a definir",
+        "pendente",
+        "preencher",
+    )
+    return len(body.split()) >= 5 and not any(marker in normalized_body for marker in rejected_markers)
+
+
 def validate_requirements_output(result):
     text, normalized = _normalize_text(result)
     required_sections = [
@@ -208,12 +237,18 @@ def validate_requirements_output(result):
             return False, "Escopo expandido com funcionalidade derivada."
 
     flow_section = re.search(r"##\s+fluxo principal([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
-    if not flow_section or len(re.findall(r"(?:^|\n)\s*\d+[\.\)]", flow_section.group(1))) < 3:
-        return False, "Fluxo principal sem passos suficientes."
+    if not flow_section:
+        return False, "Fluxo principal ausente."
+    flow_body = flow_section.group(1).strip()
+    if not _flow_has_confirmed_content_or_na(flow_body):
+        return False, "Fluxo principal sem passo confirmado ou indicacao de nao se aplica."
 
     rules_section = re.search(r"##\s+regras de negocio([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
-    if not rules_section or len(re.findall(r"(?:^|\n)\s*(?:\d+[\.\)]|[-*]\s+)", rules_section.group(1))) < 2:
-        return False, "Regras de negocio insuficientes."
+    if not rules_section:
+        return False, "Regras de negocio ausentes."
+    rules_body = rules_section.group(1).strip()
+    if "nao se aplica" not in rules_body and len(re.findall(r"(?:^|\n)\s*(?:\d+[\.\)]|[-*]\s+)", rules_body)) < 1:
+        return False, "Regras de negocio sem comportamento confirmado ou indicacao de nao se aplica."
 
     interface_section = re.search(r"##\s+estados da interface e feedback([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
     validations_section = re.search(r"##\s+validacoes e dados([\s\S]*?)(?=\n##\s+|$)", normalized, re.IGNORECASE)
@@ -246,7 +281,10 @@ def validate_requirements_output(result):
         return False, "Validacoes e dados sem detalhes operacionais suficientes."
 
     if permissions_body and not re.search(
-        r"(execut|aprova|visualiz|edit|audit|trilha|nao se aplica)",
+        # A visible pending decision is valid when the story has no evidence
+        # for an access profile or audit mechanism.  Requiring the model to
+        # invent one would be worse than preserving the gap for review.
+        r"(execut|aprova|visualiz|edit|audit|trilha|ponto a validar|nao se aplica)",
         permissions_body,
         re.IGNORECASE,
     ):
@@ -291,44 +329,22 @@ def validate_requirements_output(result):
     ]
 
     if has_core_story:
+        # A central field named by the story must keep its meaning in the
+        # refinement, but its format, limits and policy are not facts merely
+        # because they are normally useful.  Those unknown details belong in
+        # Premissas e Pontos a Validar.  Reject only when the field itself is
+        # hidden behind a generic placeholder in Validacoes e Dados.
         unresolved_validations = [
             line.strip()
             for line in validations_section_body.splitlines()
-            if "ponto a validar" in line.lower()
-            and any(marker in line.lower() for marker in central_field_markers)
-        ]
-        unresolved_assumptions = [
-            line.strip()
-            for line in assumptions_body.splitlines()
-            if any(marker in line.lower() for marker in central_field_markers)
-        ]
-        if unresolved_validations or unresolved_assumptions:
-            return False, "Campos centrais da feature ainda estao como ponto a validar."
-
-        normalized_validations = validations_section_body.lower()
-        if "contato" in normalized and (
-            re.search(r"contato[\s\S]{0,120}texto livre", normalized_validations)
-            or re.search(r"contato[\s\S]{0,120}formato livre", normalized_validations)
-            or (
-                "contato" in normalized_validations
-                and "telefone" not in normalized_validations
-                and "e-mail" not in normalized_validations
-                and "email" not in normalized_validations
+            if re.search(
+                rf"\b(?:{'|'.join(re.escape(marker) for marker in central_field_markers)})\b\s*:\s*ponto a validar",
+                line,
+                re.IGNORECASE,
             )
-        ):
-            return False, "Campo central de contato precisa de contrato mais fechado."
-
-        if "tipo de suporte" in normalized and (
-            re.search(r"tipo de suporte[\s\S]{0,120}texto livre", normalized_validations)
-            or re.search(r"tipo de suporte[\s\S]{0,120}formato livre", normalized_validations)
-            or (
-                "tipo de suporte" in normalized_validations
-                and "lista" not in normalized_validations
-                and "predefinid" not in normalized_validations
-                and "enum" not in normalized_validations
-            )
-        ):
-            return False, "Campo central de tipo precisa de contrato mais fechado."
+        ]
+        if unresolved_validations:
+            return False, "Campo central sem significado definido em Validacoes e Dados."
 
         if "visita" in normalized and (
             "formato do evento" in normalized
@@ -641,8 +657,8 @@ def validate_backlog_output(result):
     if has_truncated_ending(text):
         return False, "Resposta aparenta ter sido cortada no final."
 
-    if len(story_lines) < 15:
-        return False, "Foram geradas poucas historias de usuario. O minimo esperado e 15."
+    if len(story_lines) < 8:
+        return False, "Foram geradas poucas historias de usuario. O minimo esperado e 8."
 
     if len(story_lines) > 25:
         return False, "Foram geradas historias demais. O maximo esperado e 25."
@@ -767,31 +783,12 @@ def validate_backlog_output(result):
     ):
         return False, "Fatias de release sem diferimento operacional suficiente."
 
-    foundation_signals = [
-        r"\bcriar\b",
-        r"\bcadastrar\b",
-        r"\bregistrar\b",
-        r"\bconfigurar\b",
-        r"\bvisualizar\b",
-        r"\bacompanhar\b",
-        r"\baprovar\b",
-    ]
-    covered_signals = sum(1 for pattern in foundation_signals if any(re.search(pattern, line, re.IGNORECASE) for line in normalized_story_lines))
-    if covered_signals < 4:
-        return False, "Backlog sem cobertura suficiente da espinha dorsal do produto."
-
-    lane_signal_groups = {
-        "fundacao": [r"\bcriar\b", r"\bcadastrar\b", r"\bregistrar\b", r"\bconfigurar\b", r"\bplanejar\b"],
-        "operacao": [r"\bacompanhar\b", r"\batualizar\b", r"\bexecut", r"\bmonitorar\b", r"\bstatus\b"],
-        "gestao": [r"\bvisualizar\b", r"\bconsultar\b", r"\bdashboard\b", r"\brelatorio\b", r"\bpainel\b", r"\bresumo\b"],
-        "governanca": [r"\baprovar\b", r"\bvalidar\b", r"\bautorizar\b", r"\bauditor", r"\bpermiss", r"\bgovernanca\b"],
-    }
-    covered_lanes = 0
-    for patterns in lane_signal_groups.values():
-        if any(any(re.search(pattern, line, re.IGNORECASE) for line in normalized_story_lines) for pattern in patterns):
-            covered_lanes += 1
-    if covered_lanes < 4:
-        return False, "Backlog sem cobertura suficiente de fundacao, operacao, gestao e governanca."
+    # Do not infer the product backbone from a fixed Portuguese verb list.
+    # Valid domains have different flows (for example, credit commonly uses
+    # "simular -> enviar -> analisar -> decidir", none of which needs CRUD
+    # vocabulary).  The structured backlog contract validates story count,
+    # fields, evidence and foundation stories before Markdown is rendered;
+    # this legacy Markdown validation remains focused on format and quality.
 
     # O marcador final continua sendo desejavel, mas nao deve derrubar um backlog
     # estruturalmente completo quando o modelo apenas esquece a linha final.
@@ -953,6 +950,10 @@ def generate_complete_text(prompt, *, agent_label, validator, model=None, option
             model=model,
             options_override=current_options,
             use_cache=False,
+            task=agent_label if agent_label in {
+                "requirements_analysis", "requirements_challenge", "requirements_judge",
+                "text_extraction", "visual_analysis", "classification", "code_generation", "qa_generation",
+            } else None,
         )
         if not result or is_error_text_response(result):
             last_reason = "Resposta vazia ou invalida."
