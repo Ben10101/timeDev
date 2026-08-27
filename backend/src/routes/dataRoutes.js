@@ -3,6 +3,7 @@ import { requireAuth } from '../middleware/authMiddleware.js';
 import {
   bootstrapController,
   createTaskArtifactController,
+  repairTaskArtifactController,
   reviewTaskArtifactController,
   createProjectController,
   createTaskCommentController,
@@ -63,5 +64,6 @@ router.patch('/tasks/:taskUuid/status', updateTaskController);
 router.post('/tasks/:taskUuid/comments', createTaskCommentController);
 router.post('/tasks/:taskUuid/artifacts', createTaskArtifactController);
 router.post('/tasks/:taskUuid/artifacts/:artifactUuid/review', reviewTaskArtifactController);
+router.post('/tasks/:taskUuid/artifacts/:artifactUuid/repair', repairTaskArtifactController);
 
 export default router;

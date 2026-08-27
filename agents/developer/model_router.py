@@ -24,6 +24,10 @@ TASK_CAPABILITIES = {
     "classification": {"text", "structured_output"},
     "code_generation": {"text", "reasoning", "code"},
     "qa_generation": {"text", "reasoning", "structured_output"},
+    # Reparo direcionado usado somente na tela de revisão.  O agente devolve
+    # um patch JSON pequeno, portanto precisa de saída estruturada, mas não
+    # deve herdar as exigências de geração completa de requisitos/QA.
+    "artifact_repair": {"text", "reasoning", "structured_output"},
     "general_text": {"text"},
 }
 
@@ -39,7 +43,7 @@ DEFAULT_PROVIDER_CAPABILITIES = {
 }
 
 DEFAULT_PROVIDER_MODELS = {
-    "gemini": ("GEMINI_MODEL", "gemini-2.0-flash"),
+    "gemini": ("GEMINI_MODEL", "gemini-3.6-flash"),
     "openai": ("OPENAI_MODEL", "gpt-4.1-mini"),
     "anthropic": ("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
     "deepseek": ("DEEPSEEK_MODEL", "deepseek-chat"),
@@ -181,6 +185,9 @@ def build_default_registry(env: dict[str, str] | None = None) -> list[ModelDefin
         # chain. They can remain in a user's .env, but should resolve to a
         # known provider default instead of producing guaranteed 404/1010s.
         invalid_models = {
+            # Gemini 2.0 Flash was retired by Google; transparently recover
+            # when an older .env still pins it.
+            "gemini": {"gemini-2.0-flash", "models/gemini-2.0-flash"},
             "groq": {"qwen/qwen3.6-27b"},
             "openrouter": {"openrouter/free", "qwen/qwen3-coder:free"},
         }

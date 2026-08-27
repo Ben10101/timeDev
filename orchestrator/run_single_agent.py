@@ -23,6 +23,7 @@ from agents.alignment_semantic.agent import AlignmentSemanticAgent
 from agents.requirement_engine.agent import RequirementEngineAgent
 from agents.requirement_challenger.agent import RequirementChallenger
 from agents.visual_requirement_analyst.agent import VisualRequirementAnalyst
+from agents.artifact_repair.agent import ArtifactRepairAgent
 from agents.backlog_challenger.agent import BacklogChallenger
 from agents.backlog_judge.agent import BacklogJudge
 from orchestrator.projectBuilder import ProjectBuilder
@@ -59,6 +60,10 @@ def main():
                 "markdown": markdown,
                 "requirement_contract": agent.last_refinement_contract,
             }
+
+        elif agent_name == "artifact_repair":
+            agent = ArtifactRepairAgent(project_id)
+            result = agent.process(payload)
 
         elif agent_name == "architect":
             requirements = payload.get("requirements")

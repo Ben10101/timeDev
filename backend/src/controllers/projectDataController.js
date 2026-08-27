@@ -33,6 +33,7 @@ import {
   updateTask,
   reviewTaskArtifact,
 } from '../services/projectDataService.js';
+import { evaluateArtifactQuality } from '../services/artifactQualityGateService.js';
 import { runSingleAgent } from '../services/orchestratorService.js';
 import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
 import { bootstrapGeneratedApp } from '../services/implementationService.js';
@@ -806,6 +807,47 @@ export async function createTaskArtifactController(req, res, next) {
       createdByUserId: req.authUser.id,
     });
     res.status(201).json(serializeBigInts(artifact));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function repairTaskArtifactController(req, res, next) {
+  try {
+    const task = await getTaskByUuid(req.params.taskUuid, req.authUser.uuid);
+    if (!task) return res.status(404).json({ message: 'Tarefa não encontrada.' });
+    const artifact = (task.artifacts || []).find((item) => item.uuid === req.params.artifactUuid && item.isCurrent);
+    if (!artifact) return res.status(404).json({ message: 'Artefato atual não encontrado.' });
+    const relatedRequirement = artifact.artifactType === 'test_plan'
+      ? (task.artifacts || []).find((item) => item.artifactType === 'requirements' && item.isCurrent)?.content || `${task.title}\n${task.description || ''}`
+      : `${task.title}\n${task.description || ''}`;
+    const suppliedReport = req.body?.qualityReport || {};
+    const currentReport = evaluateArtifactQuality({ artifactType: artifact.artifactType, content: artifact.content, relatedRequirement });
+    const findings = suppliedReport.findings?.length ? suppliedReport.findings : currentReport.findings;
+    const result = await runSingleAgent('artifact_repair', {
+      project_id: task.project.uuid,
+      task_uuid: task.uuid,
+      artifact_type: artifact.artifactType,
+      current_artifact: artifact.content,
+      findings: findings?.length ? findings : (req.body?.findings || []),
+      source_context: `${task.title}\n${task.description || ''}`,
+      idea: `Reparar somente o artefato ${artifact.artifactType}`,
+    });
+    const sectionTitle = String(result.section || '').replace(/^#+\s*/, '').trim();
+    const sectionRegex = new RegExp(`(^##\\s+${sectionTitle.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*$)([\\s\\S]*?)(?=^##\\s+|$)`, 'im');
+    const replacement = `## ${sectionTitle}\n${String(result.content).trim()}\n`;
+    const patchedContent = sectionRegex.test(artifact.content)
+      ? artifact.content.replace(sectionRegex, replacement)
+      : `${artifact.content.trim()}\n\n${replacement}`;
+    const nextArtifact = await createTaskArtifact(task.uuid, {
+      artifactType: artifact.artifactType,
+      title: artifact.title,
+      content: patchedContent,
+      contentFormat: artifact.contentFormat,
+      createdByAgentName: 'artifact_repair',
+    });
+    const repairedReport = evaluateArtifactQuality({ artifactType: artifact.artifactType, content: patchedContent, relatedRequirement });
+    res.status(201).json(serializeBigInts({ success: true, artifact: nextArtifact, patch: result, qualityReport: repairedReport }));
   } catch (error) {
     next(error);
   }

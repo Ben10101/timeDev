@@ -953,6 +953,7 @@ def generate_complete_text(prompt, *, agent_label, validator, model=None, option
             task=agent_label if agent_label in {
                 "requirements_analysis", "requirements_challenge", "requirements_judge",
                 "text_extraction", "visual_analysis", "classification", "code_generation", "qa_generation",
+                "artifact_repair",
             } else None,
         )
         if not result or is_error_text_response(result):

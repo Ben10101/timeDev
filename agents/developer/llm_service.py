@@ -567,7 +567,7 @@ def generate_text_from_provider(provider, prompt, options_override=None, model_o
     if provider == "gemini":
         return generate_text_with_gemini(
             prompt,
-            model_override or os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+            model_override or os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
             options_override,
         )
 

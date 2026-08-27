@@ -2772,11 +2772,12 @@ export async function reviewTaskArtifact(taskUuid, artifactUuid, { approved, com
   const artifact = task?.artifacts?.find((item) => item.uuid === artifactUuid && item.isCurrent);
   if (!artifact) throw new Error('Artefato atual não encontrado.');
   if (!approved && !String(comment).trim()) throw new Error('Informe um comentário ao rejeitar o artefato.');
+  let qualityReport = null;
   if (approved && ['requirements', 'test_plan'].includes(artifact.artifactType)) {
     const relatedRequirement = artifact.artifactType === 'test_plan'
       ? task.artifacts.find((item) => item.artifactType === 'requirements' && item.isCurrent)?.content || `${task.title}\n${task.description || ''}`
       : `${task.title}\n${task.description || ''}`;
-    const qualityReport = assertArtifactQuality({ artifactType: artifact.artifactType, content: artifact.content, relatedRequirement });
+    qualityReport = assertArtifactQuality({ artifactType: artifact.artifactType, content: artifact.content, relatedRequirement });
     logInfo('artifact_quality_gate_passed', { taskUuid, artifactUuid: artifact.uuid, artifactType: artifact.artifactType, score: qualityReport.score, threshold: qualityReport.threshold });
   }
   const reviewer = await prisma.user.findUnique({ where: { uuid: userUuid }, select: { id: true } });
@@ -2795,7 +2796,7 @@ export async function reviewTaskArtifact(taskUuid, artifactUuid, { approved, com
         return tx.taskArtifact.findUnique({ where: { id: artifact.id } });
       }
       const next = await tx.taskArtifact.update({ where: { id: artifact.id }, data: { isApproved: Boolean(approved), approvedBy: approved ? reviewer?.id || null : null, approvedAt: approved ? new Date() : null } });
-      await tx.artifactReview.create({ data: { uuid: randomUUID(), artifactId: artifact.id, taskId: task.id, decision, releasedStage, comment: trimmedComment || null, reason: approved ? null : trimmedComment, reviewedBy: reviewer?.id || null, version: artifact.version } });
+      await tx.artifactReview.create({ data: { uuid: randomUUID(), artifactId: artifact.id, taskId: task.id, decision, releasedStage, comment: trimmedComment || null, reason: approved ? null : trimmedComment, qualityScore: qualityReport?.score ?? null, qualityReport: qualityReport || undefined, reviewedBy: reviewer?.id || null, version: artifact.version } });
       const taskData = transition && { status: transition.status, assigneeAgentName: transition.assigneeAgentName, assigneeType: transition.assigneeType };
       if (taskData) await tx.task.update({ where: { id: task.id }, data: taskData });
       return next;

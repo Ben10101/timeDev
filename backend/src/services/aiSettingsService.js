@@ -5,6 +5,7 @@ const ENCRYPTED_VALUE_PREFIX = 'enc::';
 // OpenRouter retired this free slug. Keep the runtime resilient for users
 // who had the old UI preset saved before it became unavailable.
 const RETIRED_OPENROUTER_FALLBACK_MODELS = new Set(['openai/gpt-oss-120b:free']);
+const RETIRED_GEMINI_MODELS = new Set(['gemini-2.0-flash', 'models/gemini-2.0-flash']);
 
 const DEFAULT_AI_SETTINGS = {
   providerPreference: 'auto',
@@ -27,7 +28,7 @@ const DEFAULT_AI_SETTINGS = {
   gemini: {
     enabled: false,
     apiKey: '',
-    model: 'gemini-2.0-flash',
+    model: 'gemini-3.6-flash',
   },
   openai: {
     enabled: false,
@@ -95,6 +96,9 @@ function normalizeProviderSettings(current = {}, fallback = {}) {
   delete normalized.apiKeyPreview;
   delete normalized.clearApiKey;
 
+  if (RETIRED_GEMINI_MODELS.has(String(normalized.model || '').trim().toLowerCase())) {
+    normalized.model = DEFAULT_AI_SETTINGS.gemini.model;
+  }
   return normalized;
 }
 

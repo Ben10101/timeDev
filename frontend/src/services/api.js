@@ -491,6 +491,11 @@ export const reviewTaskArtifact = async (taskUuid, artifactUuid, payload) => {
   return response.data
 }
 
+export const repairTaskArtifact = async (taskUuid, artifactUuid, payload) => {
+  const response = await apiClient.post(`/tasks/${taskUuid}/artifacts/${artifactUuid}/repair`, payload)
+  return response.data
+}
+
 export { apiClient }
 
 export default {

@@ -117,7 +117,7 @@ export async function testOllamaConnection(settings) {
 
 export async function testGeminiConnection(settings) {
   const apiKey = settings?.gemini?.apiKey;
-  const model = settings?.gemini?.model || 'gemini-2.0-flash';
+  const model = settings?.gemini?.model || 'gemini-3.6-flash';
 
   if (!apiKey?.trim()) {
     return failResult('Informe uma API key do Gemini para testar.');

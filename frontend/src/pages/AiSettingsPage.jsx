@@ -25,7 +25,7 @@ const EMPTY_SETTINGS = {
     implementation_architect: 'UI Agent',
   },
   ollama: { enabled: true, host: 'http://127.0.0.1:11434', model: 'gemma3:4b' },
-  gemini: { enabled: false, apiKey: '', model: 'gemini-2.0-flash' },
+  gemini: { enabled: false, apiKey: '', model: 'gemini-3.6-flash' },
   openai: { enabled: false, apiKey: '', model: 'gpt-4.1-mini' },
   deepseek: { enabled: false, apiKey: '', model: 'deepseek-chat' },
   nvidia: { enabled: false, apiKey: '', model: 'qwen/qwen3.5-122b-a10b' },
@@ -491,7 +491,7 @@ export default function AiSettingsPage() {
                 <TextInput
                   value={settings.gemini?.model || ''}
                   onChange={(event) => patchProvider('gemini', 'model', event.target.value)}
-                  placeholder="gemini-2.0-flash"
+                  placeholder="gemini-3.6-flash"
                 />
               </Field>
             </div>

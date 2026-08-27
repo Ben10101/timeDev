@@ -411,6 +411,8 @@ model ArtifactReview {
   releasedStage String?      @map("released_stage") @db.VarChar(50)
   comment       String?      @db.Text
   reason        String?      @db.Text
+  qualityScore  Int?         @map("quality_score") @db.UnsignedInt
+  qualityReport Json?        @map("quality_report")
   reviewedBy    BigInt?      @map("reviewed_by") @db.UnsignedBigInt
   reviewedAt    DateTime     @default(now()) @map("reviewed_at") @db.DateTime(0)
   version       Int          @db.UnsignedInt
