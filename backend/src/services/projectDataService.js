@@ -2645,16 +2645,31 @@ export async function publishBacklogTasks(projectUuid) {
   return listProjectTasks(projectUuid);
 }
 
-export async function updateBacklogStory(projectUuid, storyId, input = {}) {
+export async function updateBacklogStory(projectUuid, storyId, input = {}, actorUserUuid = null) {
   const project = await prisma.project.findUnique({ where: { uuid: projectUuid }, select: { id: true, intakeConfig: true } });
   const contract = project?.intakeConfig?.backlogContract;
   const stories = Array.isArray(contract?.stories) ? contract.stories : [];
   const story = stories.find((item) => String(item?.id || '').toLowerCase() === String(storyId || '').toLowerCase());
   if (!project || !contract || !story) throw new Error('Story pendente nao encontrada.');
+  if (contract.publicationStatus === 'published') {
+    const error = new Error('O backlog ja foi publicado e suas user stories estao bloqueadas para edicao.');
+    error.statusCode = 409;
+    throw error;
+  }
   const title = String(input.title || '').trim();
   if (!title) throw new Error('O titulo da story e obrigatorio.');
   story.title = title;
   story.description = String(input.description || '').trim();
+  if (input.reviewStatus !== undefined) {
+    const reviewStatus = String(input.reviewStatus).toLowerCase();
+    if (!['approved', 'rejected', 'needs_review'].includes(reviewStatus)) throw new Error('Status de revisão inválido.');
+    const comment = String(input.comment || '').trim();
+    if (reviewStatus === 'rejected' && !comment) throw new Error('Comentário é obrigatório ao rejeitar uma story.');
+    story.reviewStatus = reviewStatus;
+    story.reviewComment = comment || null;
+    story.reviewHistory = Array.isArray(story.reviewHistory) ? story.reviewHistory : [];
+    story.reviewHistory.push({ status: reviewStatus, comment: comment || null, userUuid: actorUserUuid, at: new Date().toISOString() });
+  }
   await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, stories } } } });
   return story;
 }

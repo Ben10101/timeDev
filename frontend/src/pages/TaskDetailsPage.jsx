@@ -640,21 +640,6 @@ export default function TaskDetailsPage() {
                 </div>
 
                 <div className="rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Próxima ação</p>
-                  <p className="mt-2 text-sm leading-6 text-slate-700">{stageHint}</p>
-                  <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-500">
-                    <div className="rounded-2xl bg-white p-3">
-                      <p className="font-semibold uppercase tracking-[0.14em] text-slate-400">Requisitos</p>
-                      <p className="mt-1 font-medium text-slate-700">{taskHasRequirements ?'Disponível' : 'Pendente'}</p>
-                    </div>
-                    <div className="rounded-2xl bg-white p-3">
-                      <p className="font-semibold uppercase tracking-[0.14em] text-slate-400">QA</p>
-                      <p className="mt-1 font-medium text-slate-700">{taskHasTestPlan ?'Disponível' : 'Pendente'}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
                   <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Última atividade</p>
                   <div className="mt-3 space-y-3 text-sm text-slate-700">
                     <div>
@@ -729,11 +714,6 @@ export default function TaskDetailsPage() {
                       {AGENT_RUN_CONFLICT_MESSAGE}
                     </div>
                   )}
-                </div>
-                <div className="min-w-[240px] rounded-[24px] border border-slate-200 bg-[#faf8f2] p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Próxima ação</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{primaryAction.label}</p>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">{stageHint}</p>
                 </div>
               </div>
             </section>

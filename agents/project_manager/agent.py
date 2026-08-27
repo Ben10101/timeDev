@@ -1640,6 +1640,16 @@ Gere APENAS esta secao em Markdown:
         analysis_status = "completed"
         try:
             report = RequirementEngineAgent().process({"stage": "requirements_analysis", "idea": idea})
+        except json.JSONDecodeError as error:
+            # Providers may return almost-valid JSON (for example a missing
+            # comma). The requirements preflight is advisory; continue with
+            # deterministic evidence instead of aborting backlog generation.
+            analysis_status = "degraded"
+            report = {"findings": []}
+            print(json.dumps({
+                "event": "project_manager_requirements_analysis_degraded",
+                "reason": str(error),
+            }, ensure_ascii=False), file=sys.stderr)
         except ValueError as error:
             # The preflight is advisory input to a stricter downstream gate.
             # A fallback provider can return prose despite JSON mode; do not
@@ -1972,7 +1982,17 @@ Gere APENAS esta secao em Markdown:
             if key not in seen:
                 findings.append(finding)
                 seen.add(key)
-        return BacklogJudge().process(findings)
+        judged = BacklogJudge().process(findings)
+        # Completeness suggestions are advisory product decisions. They are
+        # returned to the caller for human confirmation and never merged into
+        # the backlog automatically.
+        judged["proposals"] = challenger.get("proposals", [])
+        judged["questions"] = challenger.get("questions", [])
+        if (judged["proposals"] or judged["questions"]) and judged.get("decision") == "PASS":
+            judged["decision"] = "REVISE"
+        for key in ("domain", "score", "threshold", "dimensions"):
+            judged[key] = challenger.get(key)
+        return judged
 
     def _collect_backlog_clarifications(self, contract):
         """Return product questions outside the user-story delivery contract."""
@@ -2198,6 +2218,21 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
             missing = [key for key in ("id", "actor", "goal", "benefit", "description", "lane") if not str(story.get(key) or "").strip()]
             if missing:
                 raise ValueError(f"Historia sem campos obrigatorios: {', '.join(missing)}.")
+            # Providers sometimes localize lane names (fundação/operação etc.).
+            # Canonicalize them before validating MVP foundation coverage.
+            lane_key = unicodedata.normalize("NFKD", str(story.get("lane") or ""))\
+                .encode("ascii", "ignore").decode("ascii").strip().lower().replace("_", "-")
+            lane_aliases = {
+                "fundacao": "foundation", "foundation": "foundation",
+                "operacao": "operation", "operation": "operation",
+                "gestao": "visibility", "visibilidade": "visibility", "visibility": "visibility",
+                "executive-cockpit": "visibility", "executive cockpit": "visibility",
+                "cockpit": "visibility", "dashboard": "visibility", "painel": "visibility",
+                "governanca": "governance", "governance": "governance",
+            }
+            story["lane"] = lane_aliases.get(lane_key, lane_key)
+            if story["lane"] not in {"foundation", "operation", "visibility", "governance"}:
+                raise ValueError(f"Lane de historia invalido: {story.get('lane')}.")
             story_id = str(story["id"]).strip().upper()
             if not re.fullmatch(r"US-\d{2}", story_id) or story_id in seen_ids:
                 raise ValueError("IDs de historia devem ser unicos no formato US-XX.")
@@ -2321,7 +2356,20 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
         self._normalize_release_dependencies(stories)
         foundation_count = sum(1 for story in stories if str(story.get("lane") or "").strip().lower() == "foundation")
         if foundation_count < 2:
-            raise ValueError("Contrato sem historias suficientes de fundacao para sustentar o MVP.")
+            # A classificação de lane é um atributo de planejamento, não uma
+            # regra de negócio. Se o modelo entregou o MVP sem marcar a base,
+            # promova deterministicamente as primeiras histórias do MVP para
+            # sustentar o primeiro fluxo utilizável.
+            mvp_stories = [story for story in stories if str(story.get("release") or "").strip().lower() == "mvp"]
+            for story in mvp_stories:
+                if foundation_count >= 2:
+                    break
+                if str(story.get("lane") or "").strip().lower() != "foundation":
+                    story["lane"] = "foundation"
+                    story["priority"] = "high"
+                    foundation_count += 1
+            if foundation_count < 2:
+                raise ValueError("Contrato sem historias suficientes de fundacao para sustentar o MVP.")
         # Coverage is derived traceability, not a business decision. Rebuild it
         # from the validated source_ids so an AI repair cannot retain obsolete
         # story IDs after splitting or renumbering stories.
@@ -2589,7 +2637,13 @@ Responda SOMENTE um objeto JSON valido exatamente neste formato:
                         )
                 contract["quality_review"] = {
                     "decision": quality_review["decision"],
+                    "domain": quality_review.get("domain", "generic"),
+                    "score": quality_review.get("score"),
+                    "threshold": quality_review.get("threshold", 80),
+                    "dimensions": quality_review.get("dimensions", {}),
                     "repair_attempts": repair_attempts,
+                    "proposals": quality_review.get("proposals", []),
+                    "questions": quality_review.get("questions", []),
                     "history": quality_history,
                 }
                 return {
@@ -3316,14 +3370,24 @@ REGRAS GERAIS
         if not is_credit_domain:
             return True
 
-        required_capabilities = {
-            "simulacao": r"\bsimul",
-            "proposta": r"\bpropost",
-            "documentos": r"\bdocument",
-            "analise": r"\banalis[ea].{0,30}\bcredit|\banalista de credito\b",
-            "decisao": r"\b(aprovar|reprovar|decisao)\b",
-            "acompanhamento": r"\b(status|acompanhar|andamento)\b",
-        }
+        is_collection_campaign = bool(re.search(r"\b(campanh|cobran[cç]|inadimpl|devedor|recupera[cç][aã]o)\b", briefing))
+        if is_collection_campaign:
+            required_capabilities = {
+                "campanha": r"\bcampanh",
+                "segmentacao": r"\bsegment",
+                "cobranca": r"\bcobran[cç]",
+                "aprovacao": r"\b(aprov|reprov|decis[aã]o)",
+                "acompanhamento": r"\b(status|acompanhar|andamento|resultado|m[eé]trica)",
+            }
+        else:
+            required_capabilities = {
+                "simulacao": r"\bsimul",
+                "proposta": r"\bpropost",
+                "documentos": r"\bdocument",
+                "analise": r"\banalis[ea].{0,30}\bcredit|\banalista de credito\b",
+                "decisao": r"\b(aprovar|reprovar|decisao)\b",
+                "acompanhamento": r"\b(status|acompanhar|andamento)\b",
+            }
         missing = [
             capability
             for capability, pattern in required_capabilities.items()
@@ -3331,7 +3395,7 @@ REGRAS GERAIS
         ]
         if missing:
             raise RuntimeError(
-                "Backlog gerado por IA nao cobriu capacidades obrigatorias do dominio de credito: "
+                "Backlog gerado por IA nao cobriu capacidades obrigatorias do dominio: "
                 + ", ".join(missing)
             )
         return True

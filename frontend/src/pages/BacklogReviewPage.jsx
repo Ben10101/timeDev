@@ -1,100 +1,24 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import AppShell from '../components/AppShell';
-import ProjectStageNav from '../components/ProjectStageNav';
-import { getApiErrorMessage, getProject, publishProjectBacklog, updateProjectBacklogStory } from '../services/api';
+import { getApiErrorMessage, getProject, publishProjectBacklog, reviewProjectBacklogStory, updateProjectBacklogStory } from '../services/api';
+
+const labels = { approved: 'Aprovada', confirmed: 'Confirmada', proposed: 'Proposta', needs_review: 'Em revisão', rejected: 'Rejeitada' };
+const tones = { approved: 'bg-emerald-100 text-emerald-800', confirmed: 'bg-emerald-100 text-emerald-800', proposed: 'bg-blue-100 text-blue-800', needs_review: 'bg-amber-100 text-amber-800', rejected: 'bg-rose-100 text-rose-800' };
 
 export default function BacklogReviewPage() {
   const { projectUuid } = useParams();
-  const navigate = useNavigate();
-  const [project, setProject] = useState(null);
-  const [stories, setStories] = useState([]);
-  const [editing, setEditing] = useState(null);
-  const [draft, setDraft] = useState({ title: '', description: '' });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  const [filter, setFilter] = useState('all');
-  const visibleStories = stories.filter((story) => {
-    if (filter === 'aligned') return ['confirmed', 'aligned', 'ready'].includes(String(story.status || '').toLowerCase());
-    if (filter === 'review') return !['confirmed', 'aligned', 'ready'].includes(String(story.status || '').toLowerCase());
-    return true;
-  });
+  const [project, setProject] = useState(null); const [error, setError] = useState(null); const [busy, setBusy] = useState(false);
+  const [edit, setEdit] = useState(null); const [reject, setReject] = useState(null); const [assist, setAssist] = useState(null); const [assistResult, setAssistResult] = useState(null);
+  const contract = project?.intakeConfig?.backlogContract || {}; const review = contract.quality_review || contract.qualityReview || {}; const stories = Array.isArray(contract.stories) ? contract.stories : [];
+  const reload = async () => setProject(await getProject(projectUuid));
+  useEffect(() => { reload().catch((e) => setError(getApiErrorMessage(e, 'Falha ao carregar o backlog.'))); }, [projectUuid]);
+  const decide = async (story, status, comment = '') => { if (status === 'rejected' && !comment.trim()) { setReject({ story, comment: '' }); return; } setBusy(true); setError(null); try { await updateProjectBacklogStory(projectUuid, story.id, { title: story.title, description: story.description, reviewStatus: status, comment }); await reload(); } catch (e) { setError(getApiErrorMessage(e, 'Falha ao salvar a decisão.')); } finally { setBusy(false); } };
+  const reviewWithAgent = async (story) => { setBusy(true); setError(null); setAssist({ story, loading: true }); setAssistResult(null); try { const result = await reviewProjectBacklogStory(projectUuid, story.id); setAssist({ story, loading: false }); setAssistResult(result.review || result); } catch (e) { setAssist(null); setError(getApiErrorMessage(e, 'Falha ao revisar a story com o agente.')); } finally { setBusy(false); } };
+  const publish = async () => { setBusy(true); setError(null); try { await publishProjectBacklog(projectUuid); await reload(); } catch (e) { setError(getApiErrorMessage(e, 'Falha ao publicar o backlog.')); } finally { setBusy(false); } };
 
-  useEffect(() => {
-    getProject(projectUuid).then((data) => {
-      setProject(data);
-      setStories(data?.intakeConfig?.backlogContract?.stories || []);
-    }).catch((err) => setError(getApiErrorMessage(err, 'Não foi possível carregar a revisão.')));
-  }, [projectUuid]);
-
-  function startEdit(story) {
-    setEditing(story.id || story.uuid);
-    setDraft({ title: story.title || '', description: story.description || '' });
-  }
-
-  async function saveEdit(story) {
-    setBusy(true);
-    try {
-      const updated = await updateProjectBacklogStory(projectUuid, story.id, draft);
-      setStories((current) => current.map((item) => item.id === story.id ? { ...item, ...updated } : item));
-      setEditing(null);
-    } catch (err) { setError(getApiErrorMessage(err, 'Não foi possível salvar a story.')); }
-    finally { setBusy(false); }
-  }
-
-  async function publish() {
-    setBusy(true);
-    try { await publishProjectBacklog(projectUuid); navigate(`/projects/${projectUuid}`); }
-    catch (err) { setError(getApiErrorMessage(err, 'Não foi possível publicar as tasks.')); }
-    finally { setBusy(false); }
-  }
-
-  return <AppShell mainClassName="p-4" eyebrow="Revisão do backlog" title="Validação humana das tasks" description="Revise o conteúdo antes de publicar no board." actions={<button className="dashboard-button-secondary" onClick={() => navigate(`/projects/${projectUuid}`)}>Voltar ao projeto</button>}>
-    <ProjectStageNav projectUuid={projectUuid} active="review" completed={['briefing', 'requirements', 'backlog']} />
-    <section className="w-full rounded-3xl border border-slate-200 bg-white">
-      <div>
-        <aside className="grid items-center gap-4 border-b border-slate-200 p-4 md:grid-cols-[auto_minmax(0,1fr)_auto]">
-          <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Resumo</p>
-          <div>
-            <p className="text-2xl font-bold text-slate-900">{stories.length} histórias geradas</p>
-            <p className="mt-1 text-sm leading-6 text-slate-600">{project?.name || 'Projeto'} aguarda aprovação.</p>
-          </div>
-          <button onClick={publish} disabled={busy || !stories.length} className="dashboard-button-primary w-full md:w-auto">{busy ? 'Publicando...' : 'Aprovar e enviar ao board'}</button>
-        </aside>
-        <div className="p-4 sm:p-5">
-          <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">O que saiu</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {[['all', 'Todas'], ['aligned', 'Alinhadas'], ['review', 'Precisam de revisão']].map(([value, label]) => <button key={value} type="button" onClick={() => setFilter(value)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${filter === value ? 'border-[#102a72] bg-[#102a72] text-white' : 'border-slate-200 bg-white text-slate-600'}`}>{label}</button>)}
-          </div>
-          {error && <p className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {visibleStories.map((story, index) => {
-              const aligned = ['confirmed', 'aligned', 'ready'].includes(String(story.status || '').toLowerCase());
-              return <article key={story.id || index} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Story {index + 1}</p>
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${aligned ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                  {aligned ? 'Alinhada' : 'Precisa de revisão'}
-                </span>
-              </div>
-              {editing === (story.id || story.uuid) ? <>
-                <input className="dashboard-input mt-2" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
-                <textarea className="dashboard-input mt-3 min-h-[110px]" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
-                <div className="mt-3 flex gap-2"><button className="dashboard-button-primary px-3 py-1.5 text-xs" onClick={() => saveEdit(story)} disabled={busy}>Salvar</button><button className="dashboard-button-secondary px-3 py-1.5 text-xs" onClick={() => setEditing(null)}>Cancelar</button></div>
-              </> : <><h3 className="mt-2 font-semibold text-slate-900">{story.title}</h3><p className="mt-3 text-sm leading-6 text-slate-600">{story.description || 'Sem descrição adicional.'}</p>
-                <div className="mt-4 grid gap-2 text-xs text-slate-500 sm:grid-cols-3">
-                  <span><strong>Release:</strong> {story.release || 'Não definida'}</span>
-                  <span><strong>Prioridade:</strong> {story.priority || 'Não definida'}</span>
-                  <span><strong>Evidências:</strong> {Array.isArray(story.source_ids || story.sourceIds) ? (story.source_ids || story.sourceIds).length : 0}</span>
-                </div>
-                {(story.review_tags?.length || story.reviewTags?.length) ? <p className="mt-2 text-xs text-amber-700"><strong>Revisar:</strong> {(story.review_tags || story.reviewTags).join(' · ')}</p> : null}
-                {(story.open_questions?.length || story.openQuestions?.length) ? <p className="mt-2 text-xs text-amber-700"><strong>Perguntas abertas:</strong> {(story.open_questions || story.openQuestions).length}</p> : null}
-                <button className="mt-4 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold" onClick={() => startEdit(story)}>Editar no local</button></>}
-            </article>;
-            })}
-          </div>
-        </div>
-      </div>
-    </section>
-  </AppShell>;
+  return <AppShell eyebrow="Revisão do backlog" title="Validação humana das tasks" description="Revise e decida cada story antes da publicação."><section className="dashboard-panel p-4 sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold">{project?.name || 'Projeto'}</h2><p className="text-sm text-slate-600">{stories.length} stories · Quality Gate: {review.decision || 'pendente'}</p></div><button type="button" disabled={busy || !stories.length || review.decision !== 'PASS' || contract.publicationStatus === 'published'} onClick={publish} className="dashboard-button-primary">{contract.publicationStatus === 'published' ? 'Já publicado' : 'Aprovar e enviar ao board'}</button></div>{error && <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}<div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{stories.map((story, index) => { const status = String(story.reviewStatus || story.status || 'proposed').toLowerCase(); return <article key={story.id || index} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-widest text-slate-500">{story.id || `US-${index + 1}`}</span><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tones[status] || tones.proposed}`}>{labels[status] || status}</span></div><h3 className="mt-3 font-semibold text-slate-900">{story.title || story.goal || 'Story sem título'}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{story.description || story.benefit || 'Sem descrição.'}</p><div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={busy} onClick={() => reviewWithAgent(story)} className="dashboard-button-secondary px-3 py-1.5 text-xs">Revisar com agente</button><button type="button" disabled={busy} onClick={() => setEdit({ story, title: story.title || '', description: story.description || '' })} className="dashboard-button-secondary px-3 py-1.5 text-xs">Editar</button><button type="button" disabled={busy} onClick={() => decide(story, 'approved')} className="dashboard-button-primary px-3 py-1.5 text-xs">Aprovar</button><button type="button" disabled={busy} onClick={() => decide(story, 'rejected')} className="dashboard-button-secondary px-3 py-1.5 text-xs">Rejeitar</button></div></article>; })}</div>
+  {assist && <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 p-4 sm:p-8" role="dialog" aria-modal="true" aria-labelledby="story-review-title"><div className="mx-auto flex min-h-full max-w-2xl items-center justify-center"><div className="w-full overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-slate-900/10"><div className="border-b border-slate-200 bg-slate-50 px-6 py-5 sm:px-8"><div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">PM · revisão contextual</p><h2 id="story-review-title" className="mt-2 text-xl font-bold text-slate-950">Refinar {assist.story.id}</h2><p className="mt-1 max-w-xl text-sm text-slate-600">O agente consulta o briefing e o backlog completo antes de sugerir ajustes.</p></div><button type="button" aria-label="Fechar revisão" onClick={() => { setAssist(null); setAssistResult(null); }} className="dashboard-button-secondary shrink-0">Fechar</button></div></div>{assist.loading ? <div className="px-6 py-10 sm:px-8"><div className="flex items-center gap-4"><span className="flex h-11 w-11 animate-pulse items-center justify-center rounded-2xl bg-[#102a72]/10"><span className="h-3 w-3 rounded-full bg-[#102a72]" /></span><div><p className="font-semibold text-slate-900">Analisando contexto</p><p className="mt-1 text-sm text-slate-600">Briefing, dependências e stories relacionadas...</p></div></div><div className="mt-8 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full w-2/3 animate-pulse rounded-full bg-[#102a72]" /></div><p className="mt-3 text-xs text-slate-500">Isso pode levar alguns segundos.</p></div> : <div className="space-y-5 px-6 py-6 sm:px-8"><div className="grid gap-3 sm:grid-cols-3"><div className="rounded-2xl bg-slate-50 p-4"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Nota</p><p className="mt-1 text-xl font-bold text-slate-950">{assistResult?.assessment?.score ?? '—'}/100</p></div><div className="rounded-2xl bg-slate-50 p-4 sm:col-span-2"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Regra</p><p className="mt-1 text-sm text-slate-700">Nada é publicado sem confirmação humana.</p></div></div><section><h3 className="text-sm font-bold text-slate-900">Lacunas encontradas</h3>{assistResult?.assessment?.gaps?.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">{assistResult.assessment.gaps.map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="mt-2 text-sm text-slate-600">Nenhuma lacuna crítica identificada.</p>}</section><section><h3 className="text-sm font-bold text-slate-900">Perguntas para fechar lacunas</h3>{assistResult?.questions?.length ? <div className="mt-2 space-y-2">{assistResult.questions.map((item, i) => <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{item.question || item}</div>)}</div> : <p className="mt-2 text-sm text-slate-600">Nenhuma pergunta adicional.</p>}</section>{assistResult?.proposed_story && <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900"><p className="font-semibold">Proposta de refinamento disponível</p><p className="mt-1">Revise a sugestão e aplique-a manualmente em “Editar” após confirmar as informações.</p></div>}</div>}</div></div></div>}
+  {reject && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"><h2 className="text-lg font-bold">Rejeitar story</h2><textarea autoFocus className="dashboard-input mt-4 min-h-[120px]" placeholder="Motivo obrigatório" value={reject.comment} onChange={(e) => setReject({ ...reject, comment: e.target.value })} /><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setReject(null)} className="dashboard-button-secondary">Cancelar</button><button type="button" disabled={!reject.comment.trim() || busy} onClick={() => { const current = reject; setReject(null); decide(current.story, 'rejected', current.comment); }} className="dashboard-button-primary">Confirmar rejeição</button></div></div></div>}
+  {edit && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl"><h2 className="text-lg font-bold">Editar story</h2><input className="dashboard-input mt-4" value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} /><textarea className="dashboard-input mt-3 min-h-[130px]" value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} /><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setEdit(null)} className="dashboard-button-secondary">Cancelar</button><button type="button" disabled={busy || !edit.title.trim()} onClick={async () => { setBusy(true); try { await updateProjectBacklogStory(projectUuid, edit.story.id, { title: edit.title, description: edit.description }); await reload(); setEdit(null); } catch (e) { setError(getApiErrorMessage(e, 'Falha ao salvar.')); } finally { setBusy(false); } }} className="dashboard-button-primary">Salvar alterações</button></div></div></div>}</section></AppShell>;
 }

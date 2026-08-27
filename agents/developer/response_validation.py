@@ -567,17 +567,17 @@ def validate_qa_output(result):
     if functional_cases_count == 0:
         functional_cases_count = min(action_count, expected_result_count)
 
-    if happy_count < 3:
-        return False, "Menos de 3 cenarios de caminho feliz."
-
-    if exception_count < 3:
-        return False, "Menos de 3 cenarios de excecao."
-
-    if limit_count < 2:
-        return False, "Menos de 2 cenarios de limite."
-
-    if resilience_count < 2:
-        return False, "Menos de 2 cenarios de resiliencia."
+    # A cobertura nao deve ser artificialmente preenchida por uma quantidade
+    # fixa de cenarios. Exigimos apenas um fluxo positivo e um negativo quando
+    # o requisito possuir tratamento de erro; limites/resiliencia sao opcionais
+    # e entram somente quando sustentados pela evidencia do requisito.
+    scenario_count = count_numbered_items(scenarios_section)
+    if scenario_count < 3:
+        return False, "Menos de 3 cenarios executaveis."
+    if happy_count < 1:
+        return False, "Cenario de caminho feliz ausente."
+    if exception_count < 1 and re.search(r"valid|erro|falha|obrigat|inval", normalized):
+        return False, "Cenario negativo ausente para comportamento de validacao ou falha."
 
     has_structured_functional_cases = (
         functional_cases_count >= 3 and action_count >= 3 and expected_result_count >= 3

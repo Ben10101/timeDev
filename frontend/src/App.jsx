@@ -13,7 +13,6 @@ const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
 const WorkspaceTeamPage = lazy(() => import('./pages/WorkspaceTeamPage'));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
 const ResultsPage = lazy(() => import('./pages/ResultsPage'));
-const TaskDetailsPage = lazy(() => import('./pages/TaskDetailsPage'));
 const BacklogKanban = lazy(() => import('./pages/BacklogKanban'));
 const GlobalBacklogPage = lazy(() => import('./pages/GlobalBacklogPage'));
 const AiSettingsPage = lazy(() => import('./pages/AiSettingsPage'));
@@ -106,11 +105,7 @@ function App() {
             />
             <Route
               path="/projects/:projectUuid/tasks/:taskUuid"
-              element={
-                <ProtectedRoute>
-                  <TaskDetailsPage />
-                </ProtectedRoute>
-              }
+              element={<ProtectedRoute><Navigate to="../../" replace /></ProtectedRoute>}
             />
             <Route
               path="/code-studio"

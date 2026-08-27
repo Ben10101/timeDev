@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Mantém o diálogo de revisão rigorosamente centralizado, inclusive em telas
+   baixas ou quando o conteúdo exige rolagem. */
+[role='dialog'] {
+  display: grid;
+  place-items: center;
+}
+
+[role='dialog'] > div {
+  width: min(100%, 42rem);
+  max-height: calc(100vh - 2rem);
+}
+
 :root {
   /* Premium HSL Palette */
   --primary-h: 226;

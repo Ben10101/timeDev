@@ -1640,7 +1640,7 @@ export default function CodeStudioPage() {
                               : 'Integrar direto'}
                       </button>
                       <button
-                        onClick={() => navigate(`/projects/${selectedProjectUuid}/tasks/${task.uuid}`)}
+                        onClick={() => navigate(`/tasks/${task.uuid}/artifacts`)}
                         className="dashboard-button-secondary"
                       >
                         Abrir task

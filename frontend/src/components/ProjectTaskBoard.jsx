@@ -488,7 +488,7 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
   }
 
   function handleOpenDetail(taskUuid) {
-    navigate(`/projects/${projectUuid}/tasks/${taskUuid}`);
+    navigate(`/tasks/${taskUuid}/artifacts`);
   }
 
   function handleExportArtifacts(task) {

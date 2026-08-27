@@ -220,34 +220,6 @@ export default function WorkspacePage() {
           </button>
         </div>
       }
-      sidebar={
-        <>
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Resumo do workspace</p>
-            <p className="mt-3 text-base font-semibold text-slate-900">{workspaceNextStep.title}</p>
-            <p className="mt-2 text-sm leading-7 text-slate-600">{workspaceNextStep.message}</p>
-
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-                <div className="text-lg font-semibold text-slate-900">{projects.length}</div>
-                <div className="mt-1 text-[11px] text-slate-500">Projetos</div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-                <div className="text-lg font-semibold text-slate-900">{metrics.activeProjects}</div>
-                <div className="mt-1 text-[11px] text-slate-500">Ativos</div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-                <div className="text-lg font-semibold text-slate-900">{metrics.blockedTasks}</div>
-                <div className="mt-1 text-[11px] text-slate-500">Bloqueadas</div>
-              </div>
-            </div>
-
-            <button onClick={workspaceNextStep.primaryAction} className="dashboard-button-secondary mt-4 w-full">
-              {workspaceNextStep.primaryLabel}
-            </button>
-          </section>
-        </>
-      }
     >
       <section className="space-y-6">
         {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">{error}</div>}

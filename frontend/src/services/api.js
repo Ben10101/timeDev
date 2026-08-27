@@ -475,9 +475,26 @@ export const publishProjectBacklog = async (projectUuid) => {
   const response = await apiClient.post(`/projects/${projectUuid}/publish-backlog`)
   return response.data
 }
+export const decideBacklogProposal = async (projectUuid, proposalId, payload) => {
+  const response = await apiClient.patch(`/projects/${projectUuid}/backlog-proposals/${proposalId}`, payload)
+  return response.data
+}
+export const answerBacklogQuestion = async (projectUuid, questionId, payload) => {
+  const response = await apiClient.patch(`/projects/${projectUuid}/backlog-questions/${questionId}`, payload)
+  return response.data
+}
+export const applyBacklogProposals = async (projectUuid) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/backlog-proposals/apply`)
+  return response.data
+}
 
 export const updateProjectBacklogStory = async (projectUuid, storyId, payload) => {
   const response = await apiClient.patch(`/projects/${projectUuid}/backlog-stories/${storyId}`, payload)
+  return response.data
+}
+
+export const reviewProjectBacklogStory = async (projectUuid, storyId) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/backlog-stories/${storyId}/review`)
   return response.data
 }
 

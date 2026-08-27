@@ -1001,21 +1001,19 @@ Use exatamente estes titulos de secao, sem variações:
 - ## Casos de teste funcionais
 
 ## Cenarios de teste
-Gere exatamente 10 itens numerados e variados:
-- 3 cenarios de Caminho Feliz
-- 3 cenarios de Excecao
-- 2 cenarios de Limite
-- 2 cenarios de Resiliencia
-- Inclua explicitamente essas expressoes nos itens.
+Gere de 5 a 8 cenarios executaveis, derivados exclusivamente dos criterios de aceite e regras confirmadas.
+- Priorize cobertura sobre quantidade fixa: inclua caminho feliz, entradas invalidas/ausentes e falha operacional somente quando aplicavel.
+- Cada cenario deve ser independente, verificavel na pratica e conter explicitamente: Tipo, Dado, Acao, Resultado esperado e CA relacionado.
+- Use tipos: Caminho Feliz, Excecao, Limite ou Resiliencia apenas quando houver base no requisito; se nao houver base, nao invente o tipo.
 - Evite expressoes temporais fortes como "no exato momento", "imediatamente" ou equivalentes sem base no requisito.
 - Cada item deve cobrir um comportamento diferente; nao repita cinco variacoes do mesmo submit com outra frase.
 - Cenario de Limite deve usar fronteira real de tamanho, formato ou valor maximo/minimo aceito. Nao use campo vazio, dado nulo ou ausencia de preenchimento como limite.
-- Os 10 itens precisam ficar equilibrados entre Caminho Feliz, Excecao, Limite e Resiliencia.
+- Nao crie cenarios apenas para preencher uma meta numerica. Uma lacuna sem evidencia deve ser declarada como pergunta ou risco.
 - Cada item precisa ser verificavel na pratica, com entrada e saida observaveis.
-- Pelo menos 1 item de resiliencia deve citar comportamento apos falha, nao apenas repeticao de fluxo.
+- Todo cenario deve apontar para um CA-xx real; nunca crie IDs inexistentes.
 
 ## Casos de teste funcionais
-Gere exatamente 3 casos numerados.
+Gere de 2 a 5 casos funcionais, somente para os cenarios de maior risco.
 Para cada caso, use explicitamente as linhas:
 - Acao:
 - Resultado esperado:

@@ -21,6 +21,10 @@ import {
   importBacklogTasksController,
   publishBacklogTasksController,
   updateBacklogStoryController,
+  reviewBacklogStoryController,
+  decideBacklogProposalController,
+  answerBacklogQuestionController,
+  applyBacklogProposalsController,
   listProjectsController,
   listProjectTasksController,
   listAllTasksController,
@@ -57,6 +61,10 @@ router.post('/projects/:projectUuid/generate-architecture', generateProjectArchi
 router.post('/projects/:projectUuid/import-backlog', importBacklogTasksController);
 router.post('/projects/:projectUuid/publish-backlog', publishBacklogTasksController);
 router.patch('/projects/:projectUuid/backlog-stories/:storyId', updateBacklogStoryController);
+router.post('/projects/:projectUuid/backlog-stories/:storyId/review', reviewBacklogStoryController);
+router.patch('/projects/:projectUuid/backlog-proposals/:proposalId', decideBacklogProposalController);
+router.patch('/projects/:projectUuid/backlog-questions/:questionId', answerBacklogQuestionController);
+router.post('/projects/:projectUuid/backlog-proposals/apply', applyBacklogProposalsController);
 router.post('/projects/:projectUuid/tasks', createTaskController);
 router.get('/tasks/:taskUuid', getTaskController);
 router.patch('/tasks/:taskUuid', updateTaskController);

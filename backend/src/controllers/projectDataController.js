@@ -600,8 +600,121 @@ export async function publishBacklogTasksController(req, res, next) {
 export async function updateBacklogStoryController(req, res, next) {
   try {
     await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
-    const story = await updateBacklogStory(req.params.projectUuid, req.params.storyId, req.body);
+    const story = await updateBacklogStory(req.params.projectUuid, req.params.storyId, req.body, req.authUser.uuid);
     res.status(200).json(serializeBigInts(story));
+  } catch (error) { next(error); }
+}
+
+export async function reviewBacklogStoryController(req, res, next) {
+  try {
+    const project = await getProjectByUuid(req.params.projectUuid, req.authUser.uuid);
+    if (!project) return res.status(404).json({ message: 'Projeto não encontrado.' });
+    await assertProjectPermission(project.uuid, req.authUser.uuid, 'editor');
+    const contract = project.intakeConfig?.backlogContract || {};
+    const stories = Array.isArray(contract.stories) ? contract.stories : [];
+    const story = stories.find((item) => String(item?.id) === String(req.params.storyId));
+    if (!story) return res.status(404).json({ message: 'Story não encontrada.' });
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'story_reviewer' });
+    const result = await runSingleAgent('story_reviewer', {
+      project_id: project.uuid,
+      idea: project.description || project.vision || project.name,
+      briefing: {
+        name: project.name,
+        description: project.description,
+        vision: project.vision,
+        intake: project.intakeConfig,
+      },
+      project_dna: project.projectDna || project.intakeConfig?.projectDna || {},
+      backlog_contract: contract,
+      other_stories: stories.filter((item) => String(item?.id) !== String(story.id)).slice(0, 30),
+      story,
+    }, { envOverrides });
+    res.status(200).json(serializeBigInts({ success: true, review: result }));
+  } catch (error) { next(error); }
+}
+
+export async function decideBacklogProposalController(req, res, next) {
+  try {
+    const project = await getProjectByUuid(req.params.projectUuid, req.authUser.uuid);
+    if (!project) return res.status(404).json({ message: 'Projeto nÃ£o encontrado.' });
+    await assertProjectPermission(project.uuid, req.authUser.uuid, 'editor');
+    const contract = project.intakeConfig?.backlogContract || {};
+    const review = contract.quality_review || {};
+    const proposalId = String(req.params.proposalId || '');
+    const decision = String(req.body?.decision || '').toLowerCase();
+    if (!['accepted', 'rejected', 'edited'].includes(decision)) return res.status(400).json({ message: 'DecisÃ£o invÃ¡lida.' });
+    const proposals = (review.proposals || []).map((item, index) => ({ ...item, id: item.id || `PROP-${String(index + 1).padStart(3, '0')}` }));
+    const proposal = proposals.find((item) => item.id === proposalId);
+    if (!proposal) return res.status(404).json({ message: 'Proposta nÃ£o encontrada.' });
+    if (decision === 'edited') proposal.capability = String(req.body?.comment || proposal.capability).trim();
+    proposal.status = decision === 'edited' ? 'proposed' : decision;
+    proposal.decidedBy = req.authUser.uuid;
+    proposal.decidedAt = new Date().toISOString();
+    proposal.comment = String(req.body?.comment || '').trim() || null;
+    const nextContract = { ...contract, quality_review: { ...review, proposals } };
+    await updateProjectBrief(project.uuid, { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: nextContract } });
+    res.json(serializeBigInts({ success: true, proposal }));
+  } catch (error) { next(error); }
+}
+
+export async function answerBacklogQuestionController(req, res, next) {
+  try {
+    const project = await getProjectByUuid(req.params.projectUuid, req.authUser.uuid);
+    if (!project) return res.status(404).json({ message: 'Projeto nÃ£o encontrado.' });
+    await assertProjectPermission(project.uuid, req.authUser.uuid, 'editor');
+    const contract = project.intakeConfig?.backlogContract || {};
+    const review = contract.quality_review || {};
+    const questionId = String(req.params.questionId || '');
+    const answer = String(req.body?.answer || '').trim();
+    if (!answer) return res.status(400).json({ message: 'A resposta Ã© obrigatÃ³ria.' });
+    const questions = (review.questions || []).map((item, index) => ({ ...item, id: item.id || `CQ-${String(index + 1).padStart(3, '0')}` }));
+    const question = questions.find((item) => item.id === questionId);
+    if (!question) return res.status(404).json({ message: 'Pergunta nÃ£o encontrada.' });
+    Object.assign(question, { answer, status: 'answered', answeredBy: req.authUser.uuid, answeredAt: new Date().toISOString() });
+    await updateProjectBrief(project.uuid, { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, quality_review: { ...review, questions } } } });
+    res.json(serializeBigInts({ success: true, question }));
+  } catch (error) { next(error); }
+}
+
+export async function applyBacklogProposalsController(req, res, next) {
+  try {
+    const project = await getProjectByUuid(req.params.projectUuid, req.authUser.uuid);
+    if (!project) return res.status(404).json({ message: 'Projeto não encontrado.' });
+    await assertProjectPermission(project.uuid, req.authUser.uuid, 'editor');
+    const config = project.intakeConfig || {}; const contract = config.backlogContract || {}; const review = contract.quality_review || {};
+    const accepted = (review.proposals || []).filter((item) => item.status === 'accepted');
+    const stories = [...(contract.stories || [])];
+    for (const proposal of accepted) {
+      if (stories.some((story) => String(story.title || '').toLowerCase().includes(String(proposal.capability || '').toLowerCase()))) continue;
+      const id = `US-${String(stories.length + 1).padStart(2, '0')}`;
+      const capability = String(proposal.capability || 'capacidade aprovada').trim();
+      const actor = capability.match(/segment|campanh|cobran/i) ? 'Analista de cobrança' : 'Usuário autorizado';
+      stories.push({
+        id,
+        actor,
+        goal: `executar ${capability}`,
+        benefit: `garantir a cobertura de ${capability} no fluxo da campanha`,
+        description: `[PROPOSTO - VALIDAR] História adicionada após confirmação humana: ${proposal.reason || 'capacidade identificada pelo Challenger'}.`,
+        lane: capability.match(/aprova|decis/i) ? 'governance' : 'operation',
+        priority: 'medium', release: 'MVP',
+        source_ids: Array.isArray(proposal.source_ids) ? proposal.source_ids : [],
+        status: 'proposed', review_tags: ['REVIEW_HUMAN_APPROVED'], open_questions: [],
+        refinement_context: {
+          inputs: [], outputs: [capability], confirmed_rules: [], constraints: [], dependencies: [], open_questions: ['Confirmar regra e comportamento esperado para esta capacidade.'], acceptance_hints: [],
+          acceptance_criteria: [{ id: `${id}-CA-01`, given: 'o usuário autorizado está no contexto da campanha', when: `executar ${capability}`, then: 'o sistema deve registrar e apresentar o resultado esperado', source_ids: Array.isArray(proposal.source_ids) ? proposal.source_ids : [], status: 'proposed' }],
+        },
+      });
+    }
+    const next = { ...contract, stories, version: Number(contract.version || 1) + 1, quality_review: { ...review, appliedAt: new Date().toISOString(), appliedBy: req.authUser.uuid } };
+    await updateProjectBrief(project.uuid, { intakeConfig: { ...config, backlogContract: next } });
+    const masterTask = await prisma.task.findFirst({ where: { projectId: project.id, title: '[SYSTEM] Backlog Master' }, select: { uuid: true } });
+    if (masterTask) {
+      const previousContent = JSON.stringify(contract, null, 2);
+      const nextContent = JSON.stringify(next, null, 2);
+      await createTaskArtifact(masterTask.uuid, { artifactType: 'backlog', title: `[SYSTEM] Backlog v${next.version}`, content: nextContent, contentFormat: 'json', createdByUserUuid: req.authUser.uuid, createdByUserId: req.authUser.id, createdByAgentName: 'backlog_challenger' });
+      await createTaskArtifact(masterTask.uuid, { artifactType: 'custom', title: `[SYSTEM] Backlog diff v${next.version}`, content: JSON.stringify({ fromVersion: contract.version || 1, toVersion: next.version, generatedAt: new Date().toISOString(), generatedBy: req.authUser.uuid, previous: previousContent, current: nextContent }, null, 2), contentFormat: 'json', createdByUserUuid: req.authUser.uuid, createdByUserId: req.authUser.id, createdByAgentName: 'backlog_challenger' });
+    }
+    res.json(serializeBigInts({ success: true, version: next.version, stories: next.stories }));
   } catch (error) { next(error); }
 }
 
@@ -836,9 +949,21 @@ export async function repairTaskArtifactController(req, res, next) {
     const sectionTitle = String(result.section || '').replace(/^#+\s*/, '').trim();
     const sectionRegex = new RegExp(`(^##\\s+${sectionTitle.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*$)([\\s\\S]*?)(?=^##\\s+|$)`, 'im');
     const replacement = `## ${sectionTitle}\n${String(result.content).trim()}\n`;
-    const patchedContent = sectionRegex.test(artifact.content)
+    let patchedContent = sectionRegex.test(artifact.content)
       ? artifact.content.replace(sectionRegex, replacement)
       : `${artifact.content.trim()}\n\n${replacement}`;
+    // Garantia determinística: um reparo não pode continuar sem a seção que
+    // o Quality Gate apontou. O texto é explicitamente proposto para revisão
+    // humana, sem inventar regra de negócio.
+    if (artifact.artifactType === 'requirements' && currentReport.findings?.some((item) => item.code === 'missing_section' && /criterios de aceite/i.test(item.message))) {
+      const hasAcceptance = /^##\s+Criterios de Aceite\s*$/im.test(patchedContent);
+      if (!hasAcceptance) {
+        patchedContent = `${patchedContent.trim()}\n\n## Criterios de Aceite\n- [PROPOSTO - VALIDAR] DADO o ator autorizado e o contexto descrito na User Story, QUANDO executar a ação principal, ENTÃO o sistema deve apresentar o resultado esperado descrito na história.\n`;
+      }
+    }
+    if (currentReport.findings?.some((item) => item.code === 'contradictory_not_applicable')) {
+      patchedContent = patchedContent.replace(/n[aã]o se aplica/gi, 'A validar com o responsável');
+    }
     const nextArtifact = await createTaskArtifact(task.uuid, {
       artifactType: artifact.artifactType,
       title: artifact.title,

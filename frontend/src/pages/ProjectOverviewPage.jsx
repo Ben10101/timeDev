@@ -101,7 +101,12 @@ export default function ProjectOverviewPage() {
     [project?.intakeConfig?.backlogContract?.stories?.length, tasks]
   );
   const hasPublishedStories = useMemo(() => tasks.some((task) => task.taskType === 'story'), [tasks]);
-  const backlogQualityReview = project?.intakeConfig?.backlogContract?.qualityReview || null;
+  // O PM persiste o contrato em snake_case; versões antigas usavam camelCase.
+  // Normalizamos aqui para que o resultado recém-gerado apareça no overview
+  // independentemente da versão do contrato retornada pela API.
+  const backlogQualityReview = project?.intakeConfig?.backlogContract?.quality_review
+    || project?.intakeConfig?.backlogContract?.qualityReview
+    || null;
   const activeRequirementsContract = requirementsContract || project?.intakeConfig?.backlogContract?.requirementsContract || project?.intakeConfig?.requirementsContract || null;
   const pendingBacklogContract = project?.intakeConfig?.backlogContract;
   const backlogAwaitingApproval = Boolean(pendingBacklogContract?.stories?.length && pendingBacklogContract?.publicationStatus !== 'published');

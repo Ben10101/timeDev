@@ -26,6 +26,7 @@ from agents.visual_requirement_analyst.agent import VisualRequirementAnalyst
 from agents.artifact_repair.agent import ArtifactRepairAgent
 from agents.backlog_challenger.agent import BacklogChallenger
 from agents.backlog_judge.agent import BacklogJudge
+from agents.story_reviewer.agent import StoryReviewer
 from orchestrator.projectBuilder import ProjectBuilder
 
 def main():
@@ -161,6 +162,9 @@ def main():
         elif agent_name == "backlog_judge":
             agent = BacklogJudge()
             result = agent.process(payload.get("findings"))
+        elif agent_name == "story_reviewer":
+            agent = StoryReviewer(project_id)
+            result = agent.process(payload)
         elif agent_name == "visual_requirement_analyst":
             agent = VisualRequirementAnalyst()
             result = agent.process(payload)
