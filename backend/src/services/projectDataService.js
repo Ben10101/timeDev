@@ -9,6 +9,7 @@ import { DEFAULT_AI_SETTINGS, getAiSettingsForUser } from './aiSettingsService.j
 import { inferProjectTemplateKey, resolveProjectTemplate } from '../templates/projects/index.js';
 import { logInfo, logWarn } from '../utils/logger.js';
 import { recordRuntimeEvent } from './runtimeTelemetryService.js';
+import { assertArtifactQuality } from './artifactQualityGateService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
@@ -2771,6 +2772,13 @@ export async function reviewTaskArtifact(taskUuid, artifactUuid, { approved, com
   const artifact = task?.artifacts?.find((item) => item.uuid === artifactUuid && item.isCurrent);
   if (!artifact) throw new Error('Artefato atual não encontrado.');
   if (!approved && !String(comment).trim()) throw new Error('Informe um comentário ao rejeitar o artefato.');
+  if (approved && ['requirements', 'test_plan'].includes(artifact.artifactType)) {
+    const relatedRequirement = artifact.artifactType === 'test_plan'
+      ? task.artifacts.find((item) => item.artifactType === 'requirements' && item.isCurrent)?.content || `${task.title}\n${task.description || ''}`
+      : `${task.title}\n${task.description || ''}`;
+    const qualityReport = assertArtifactQuality({ artifactType: artifact.artifactType, content: artifact.content, relatedRequirement });
+    logInfo('artifact_quality_gate_passed', { taskUuid, artifactUuid: artifact.uuid, artifactType: artifact.artifactType, score: qualityReport.score, threshold: qualityReport.threshold });
+  }
   const reviewer = await prisma.user.findUnique({ where: { uuid: userUuid }, select: { id: true } });
   const decision = approved ? 'APPROVED' : 'REJECTED';
   const transition = resolveArtifactReviewTransition(artifact.artifactType, Boolean(approved));
