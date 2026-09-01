@@ -38,6 +38,7 @@ DEFAULT_PROVIDER_CAPABILITIES = {
     "deepseek": {"text", "reasoning", "structured_output", "long_context", "code"},
     "nvidia": {"text", "reasoning", "structured_output", "long_context", "code"},
     "groq": {"text", "reasoning", "structured_output", "code"},
+    "huggingface": {"text", "reasoning", "vision", "structured_output", "long_context", "code"},
     "openrouter": {"text", "reasoning", "vision", "structured_output", "long_context", "code"},
     "ollama": {"text", "reasoning", "structured_output", "code"},
 }
@@ -48,8 +49,9 @@ DEFAULT_PROVIDER_MODELS = {
     "anthropic": ("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
     "deepseek": ("DEEPSEEK_MODEL", "deepseek-chat"),
     "nvidia": ("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b"),
-    "groq": ("GROQ_MODEL", "llama-3.3-70b-versatile"),
-    "openrouter": ("OPENROUTER_MODEL", "openai/gpt-4.1-mini"),
+    "groq": ("GROQ_MODEL", "openai/gpt-oss-120b"),
+    "huggingface": ("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct:hf-inference"),
+    "openrouter": ("OPENROUTER_MODEL", "openrouter/free"),
     "ollama": ("OLLAMA_MODEL", "gemma3:4b"),
 }
 
@@ -76,7 +78,12 @@ def _transient_retry_delay(error: Exception, retry_number: int) -> float | None:
     message = str(error or "").lower()
     is_transient = (
         getattr(error, "retry_after_seconds", None) is not None
-        or bool(re.search(r"\b429\b|too many requests|rate.?limit|temporarily unavailable|timeout|timed out|connection reset", message))
+        or bool(re.search(
+            r"\b429\b|\b504\b|too many requests|rate.?limit|temporarily unavailable|"
+            r"timeout|timed out|deadline\s*exceeded|deadlineexceeded|connection reset|"
+            r"server overload|service overloaded|temporarily overloaded",
+            message,
+        ))
     )
     if not is_transient:
         return None
@@ -181,15 +188,14 @@ def build_default_registry(env: dict[str, str] | None = None) -> list[ModelDefin
     models = []
     for priority, (provider, (env_key, fallback_model)) in enumerate(DEFAULT_PROVIDER_MODELS.items()):
         model = str(source.get(env_key) or fallback_model).strip()
-        # Keep retired/invalid free slugs from poisoning the whole fallback
-        # chain. They can remain in a user's .env, but should resolve to a
-        # known provider default instead of producing guaranteed 404/1010s.
+        # Keep retired model slugs from poisoning the whole fallback chain.
+        # Valid OpenRouter free routes must pass through unchanged so the
+        # provider can select an available zero-cost model.
         invalid_models = {
             # Gemini 2.0 Flash was retired by Google; transparently recover
             # when an older .env still pins it.
             "gemini": {"gemini-2.0-flash", "models/gemini-2.0-flash"},
             "groq": {"qwen/qwen3.6-27b"},
-            "openrouter": {"openrouter/free", "qwen/qwen3-coder:free"},
         }
         if model.lower() in {item.lower() for item in invalid_models.get(provider, set())}:
             model = fallback_model

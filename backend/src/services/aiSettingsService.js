@@ -6,6 +6,7 @@ const ENCRYPTED_VALUE_PREFIX = 'enc::';
 // who had the old UI preset saved before it became unavailable.
 const RETIRED_OPENROUTER_FALLBACK_MODELS = new Set(['openai/gpt-oss-120b:free']);
 const RETIRED_GEMINI_MODELS = new Set(['gemini-2.0-flash', 'models/gemini-2.0-flash']);
+const RETIRED_GROQ_MODELS = new Set(['llama-3.3-70b-versatile', 'qwen/qwen3.6-27b']);
 
 const DEFAULT_AI_SETTINGS = {
   providerPreference: 'auto',
@@ -53,7 +54,12 @@ const DEFAULT_AI_SETTINGS = {
   groq: {
     enabled: false,
     apiKey: '',
-    model: 'llama-3.3-70b-versatile',
+    model: 'openai/gpt-oss-120b',
+  },
+  huggingface: {
+    enabled: false,
+    apiKey: '',
+    model: 'meta-llama/Llama-3.1-8B-Instruct:hf-inference',
   },
   openrouter: {
     enabled: false,
@@ -63,7 +69,7 @@ const DEFAULT_AI_SETTINGS = {
   },
 };
 
-const REMOTE_PROVIDER_KEYS = ['gemini', 'openai', 'deepseek', 'nvidia', 'anthropic', 'groq', 'openrouter'];
+const REMOTE_PROVIDER_KEYS = ['gemini', 'openai', 'deepseek', 'nvidia', 'anthropic', 'groq', 'huggingface', 'openrouter'];
 const ALLOWED_PROVIDER_PREFERENCES = ['auto', 'ollama', ...REMOTE_PROVIDER_KEYS];
 
 function getAiSettingsSecret() {
@@ -95,9 +101,21 @@ function normalizeProviderSettings(current = {}, fallback = {}) {
   delete normalized.apiKeyConfigured;
   delete normalized.apiKeyPreview;
   delete normalized.clearApiKey;
+  // Settings created by older clients may contain checkbox values serialized
+  // as strings. Runtime routing relies on strict booleans, especially for
+  // Ollama preference, so normalize them at the source of truth.
+  if (typeof normalized.enabled !== 'boolean') {
+    normalized.enabled = String(normalized.enabled || '').trim().toLowerCase() === 'true';
+  }
 
   if (RETIRED_GEMINI_MODELS.has(String(normalized.model || '').trim().toLowerCase())) {
     normalized.model = DEFAULT_AI_SETTINGS.gemini.model;
+  }
+  if (RETIRED_GROQ_MODELS.has(String(normalized.model || '').trim().toLowerCase())) {
+    normalized.model = DEFAULT_AI_SETTINGS.groq.model;
+  }
+  if (['openai/gpt-oss-120b:cerebras', 'qwen/qwen2.5-7b-instruct:hf-inference'].includes(String(normalized.model || '').trim().toLowerCase())) {
+    normalized.model = DEFAULT_AI_SETTINGS.huggingface.model;
   }
   return normalized;
 }
@@ -122,7 +140,7 @@ function normalizeModelList(value) {
 }
 
 function normalizeProviderPreference(value, fallback = DEFAULT_AI_SETTINGS.providerPreference) {
-  return String(value || fallback).trim() || fallback;
+  return String(value || fallback).trim().toLowerCase() || fallback;
 }
 
 function isEncryptedApiKey(value) {
@@ -174,6 +192,7 @@ function exposeAiSettings(settings, { includeSecrets = false } = {}) {
     nvidia: exposeRemoteProvider(normalized.nvidia, { includeSecrets }),
     anthropic: exposeRemoteProvider(normalized.anthropic, { includeSecrets }),
     groq: exposeRemoteProvider(normalized.groq, { includeSecrets }),
+    huggingface: exposeRemoteProvider(normalized.huggingface, { includeSecrets }),
     openrouter: {
       ...exposeRemoteProvider(normalized.openrouter, { includeSecrets }),
       fallbackModels: normalizeModelList(normalized.openrouter?.fallbackModels),
@@ -305,6 +324,7 @@ export function normalizeAiSettings(input = {}) {
     nvidia: normalizeProviderSettings(input.nvidia, DEFAULT_AI_SETTINGS.nvidia),
     anthropic: normalizeProviderSettings(input.anthropic, DEFAULT_AI_SETTINGS.anthropic),
     groq: normalizeProviderSettings(input.groq, DEFAULT_AI_SETTINGS.groq),
+    huggingface: normalizeProviderSettings(input.huggingface, DEFAULT_AI_SETTINGS.huggingface),
     openrouter: {
       ...normalizedOpenRouter,
       fallbackModels: normalizeModelList(normalizedOpenRouter.fallbackModels),
@@ -339,6 +359,7 @@ export function mergeAiSettings(currentSettings = {}, input = {}, options = {}) 
     nvidia: mergeRemoteProvider(current.nvidia, patch.nvidia, DEFAULT_AI_SETTINGS.nvidia, { encryptSecrets }),
     anthropic: mergeRemoteProvider(current.anthropic, patch.anthropic, DEFAULT_AI_SETTINGS.anthropic, { encryptSecrets }),
     groq: mergeRemoteProvider(current.groq, patch.groq, DEFAULT_AI_SETTINGS.groq, { encryptSecrets }),
+    huggingface: mergeRemoteProvider(current.huggingface, patch.huggingface, DEFAULT_AI_SETTINGS.huggingface, { encryptSecrets }),
     openrouter: {
       ...mergeRemoteProvider(current.openrouter, patch.openrouter, DEFAULT_AI_SETTINGS.openrouter, { encryptSecrets }),
       fallbackModels: normalizeModelList(patch.openrouter?.fallbackModels ?? current.openrouter?.fallbackModels),
@@ -366,7 +387,12 @@ export async function updateAiSettingsForUser(userUuid, input = {}) {
 
 export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
   const settings = await getAiSettingsForUser(userUuid, { includeSecrets: true });
-  const includeLocalFallback = options.includeLocalFallback === true;
+  const localProviderEnabled = settings.ollama?.enabled === true;
+  const localProviderPreferred = settings.providerPreference === 'ollama' && localProviderEnabled;
+  // Choosing Ollama in the UI must be sufficient to use it. Previously it
+  // was added only by callers that explicitly requested a local fallback,
+  // which made the selected local provider unreachable for normal agent runs.
+  const includeLocalFallback = options.includeLocalFallback === true || localProviderPreferred;
   const agentName = String(options.agentName || '').trim().toLowerCase();
   const remoteProviders = REMOTE_PROVIDER_KEYS.filter(
     (providerKey) => settings[providerKey]?.enabled && settings[providerKey]?.apiKey
@@ -385,11 +411,12 @@ export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
     ...remoteProviders.filter((providerKey) => providerKey !== preferredProvider),
   ];
   const providerOrder = [
-    ...orderedRemoteProviders,
-    ...(includeLocalFallback && settings.ollama?.enabled !== false ? ['ollama'] : []),
+    ...(localProviderPreferred ? ['ollama'] : orderedRemoteProviders),
+    ...(localProviderPreferred ? orderedRemoteProviders : []),
+    ...(includeLocalFallback && !localProviderPreferred && localProviderEnabled ? ['ollama'] : []),
   ];
   const effectiveProviderPreference =
-    includeLocalFallback || settings.providerPreference !== 'ollama'
+    localProviderPreferred || includeLocalFallback || settings.providerPreference !== 'ollama'
       ? settings.providerPreference || 'auto'
       : preferredProvider || 'auto';
   const env = {
@@ -404,6 +431,7 @@ export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
     NVIDIA_MODEL: settings.nvidia?.model || DEFAULT_AI_SETTINGS.nvidia.model,
     ANTHROPIC_MODEL: settings.anthropic?.model || DEFAULT_AI_SETTINGS.anthropic.model,
     GROQ_MODEL: settings.groq?.model || DEFAULT_AI_SETTINGS.groq.model,
+    HF_MODEL: settings.huggingface?.model || DEFAULT_AI_SETTINGS.huggingface.model,
     OPENROUTER_MODEL: settings.openrouter?.model || DEFAULT_AI_SETTINGS.openrouter.model,
     OPENROUTER_MODEL_FALLBACKS: normalizeModelList(settings.openrouter?.fallbackModels).join(','),
   };
@@ -418,6 +446,7 @@ export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
   if (settings.nvidia?.enabled && settings.nvidia?.apiKey) env.NVIDIA_API_KEY = settings.nvidia.apiKey;
   if (settings.anthropic?.enabled && settings.anthropic?.apiKey) env.ANTHROPIC_API_KEY = settings.anthropic.apiKey;
   if (settings.groq?.enabled && settings.groq?.apiKey) env.GROQ_API_KEY = settings.groq.apiKey;
+  if (settings.huggingface?.enabled && settings.huggingface?.apiKey) env.HF_TOKEN = settings.huggingface.apiKey;
   if (settings.openrouter?.enabled && settings.openrouter?.apiKey) env.OPENROUTER_API_KEY = settings.openrouter.apiKey;
 
   return env;

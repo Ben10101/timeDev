@@ -43,7 +43,7 @@ export function createAgentRunLifecycle(req, res, agentRun, finishAgentRun, opti
     detachListener(res, 'close', handleResponseClose);
   };
 
-  const finalizeRun = async ({ status, result, errorMessage, usageMeta = null }) => {
+  const finalizeRun = async ({ status, result, errorMessage, diagnostic = null, usageMeta = null }) => {
     if (finalized) return false;
     finalized = true;
     detach();
@@ -51,6 +51,7 @@ export function createAgentRunLifecycle(req, res, agentRun, finishAgentRun, opti
       status,
       result,
       errorMessage,
+      diagnostic,
       usageMeta,
     });
     return true;
@@ -81,7 +82,7 @@ export function createAgentRunLifecycle(req, res, agentRun, finishAgentRun, opti
   return {
     finalizeSuccess: async ({ result, usageMeta = null }) =>
       finalizeRun({ status: 'completed', result, usageMeta }),
-    finalizeFailure: async ({ errorMessage, result = null }) => finalizeRun({ status: 'failed', errorMessage, result }),
+    finalizeFailure: async ({ errorMessage, result = null, diagnostic = null }) => finalizeRun({ status: 'failed', errorMessage, result, diagnostic }),
     isFinalized: () => finalized,
     wasAborted: () => aborted,
     dispose: detach,

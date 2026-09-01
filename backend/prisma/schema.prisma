@@ -343,6 +343,7 @@ model AgentRun {
   status           AgentRunStatus   @default(queued)
   startedByUserId  BigInt?          @map("started_by_user_id") @db.UnsignedBigInt
   errorMessage     String?          @map("error_message") @db.LongText
+  diagnostic       String?          @map("diagnostic") @db.LongText
   tokensInput      Int?             @map("tokens_input") @db.UnsignedInt
   tokensOutput     Int?             @map("tokens_output") @db.UnsignedInt
   costUsd          Decimal?         @map("cost_usd") @db.Decimal(12, 6)

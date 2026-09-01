@@ -1070,6 +1070,13 @@ REGRAS
         if inferred["entity_label"] == "solicitacao de credito":
             return self._generate_credit_core_pack_stories()
 
+        # Do not inject a catalogue of stories from another product shape.
+        # Generic packs (event, supplier, guest, budget) were previously used
+        # as a deterministic head for every non-credit domain, producing filler
+        # stories and corrupting domain coverage. For new domains the LLM and
+        # the challenger must derive the foundation from the actual briefing.
+        return []
+
         entity_label = inferred["entity_label"]
         entity_article = inferred["entity_article"]
         participant_label = inferred["participant_label"]
@@ -1243,6 +1250,12 @@ REGRAS
         ]
 
     def _build_deterministic_backlog(self, idea):
+        # A deterministic backlog is intentionally opt-in. Publishing a
+        # template-shaped backlog when the provider is unavailable violates
+        # evidence governance and makes new domains look complete when they
+        # are not. Keep this hook only for controlled local fixtures.
+        if os.getenv("PROJECT_MANAGER_ALLOW_DETERMINISTIC_FALLBACK", "0") != "1":
+            return None
         compact_briefing = self._compact_briefing(idea)
         inferred = self._infer_core_pack_terms(compact_briefing)
         entity_label = inferred["entity_label"]
@@ -1355,14 +1368,10 @@ REGRAS
             )
             consolidated = (head_blocks + remaining)[:max_stories]
             return consolidated[:max_stories]
-        else:
-            coverage = self._core_pack_coverage(consolidated)
-            missing_requirements = [item for item in self.CORE_PACK_REQUIREMENTS if item[0] not in coverage]
-            if missing_requirements:
-                core_pack_blocks = self._generate_core_pack_stories(base_context, consolidated, missing_requirements)
-                if core_pack_blocks:
-                    consolidated = self._dedupe_and_polish_stories(core_pack_blocks + consolidated, base_context)
-                    consolidated = self._prioritize_story_blocks(consolidated)
+
+        # No fixed pack means no synthetic core is allowed. Missing domain
+        # capabilities must be reported by the challenger as proposals or
+        # questions, never filled with unrelated template stories.
 
         front = [block for block in consolidated if not self._is_advanced_story(block)]
         tail = [block for block in consolidated if self._is_advanced_story(block)]
@@ -1663,6 +1672,7 @@ Gere APENAS esta secao em Markdown:
                 "reason": str(error),
             }, ensure_ascii=False), file=sys.stderr)
         raw_findings = report.get("findings", []) if isinstance(report, dict) else []
+        semantic_context = report.get("semantic_context", {}) if isinstance(report, dict) and isinstance(report.get("semantic_context", {}), dict) else {}
         findings, assumptions, questions = [], [], []
         valid_categories = {"missing_information", "ambiguity", "assumption", "contradiction"}
         for index, item in enumerate(raw_findings, start=1):
@@ -1709,6 +1719,7 @@ Gere APENAS esta secao em Markdown:
             "assumptions": assumptions, "questions": questions,
             "blocking_questions": blocking_questions, "findings": findings,
             "analysis_status": analysis_status,
+            "semantic_context": semantic_context,
             "decision": "BLOCK" if blocking_questions else "READY",
         }
 
@@ -2188,6 +2199,20 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
     def _validate_backlog_contract(self, contract, evidence_contract=None):
         if not isinstance(contract, dict):
             raise ValueError("Contrato de backlog deve ser um objeto JSON.")
+        # Providers occasionally omit the descriptive overview while returning
+        # an otherwise complete contract. Derive a concise, evidence-only
+        # summary so a formatting omission does not consume the retry budget.
+        # This is not a business fallback: it reuses the longest confirmed
+        # briefing fact and never introduces a new capability or rule.
+        if not str(contract.get("overview") or "").strip():
+            facts = [
+                str(item.get("text") or "").strip()
+                for item in (evidence_contract or {}).get("facts", [])
+                if isinstance(item, dict) and str(item.get("text") or "").strip()
+            ]
+            if facts:
+                summary = max(facts, key=len)
+                contract["overview"] = summary[:320].rstrip(" .,;:") + ("." if len(summary) <= 320 else "...")
         required_text = ("overview",)
         required_lists = ("capabilities", "epics", "releases", "stories")
         for key in required_text:
@@ -2212,6 +2237,31 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
             if isinstance(fact, dict) and fact.get("id")
         }
         evidence_ids = set(evidence_by_id)
+
+        # Normalize capabilities into stable, traceable objects. Older
+        # providers returned plain strings; keeping the normalization here
+        # makes the contract backward compatible while giving the Challenger
+        # deterministic IDs to validate.
+        normalized_capabilities = []
+        for index, raw_capability in enumerate(contract["capabilities"], start=1):
+            if isinstance(raw_capability, dict):
+                capability = dict(raw_capability)
+                name = str(capability.get("name") or capability.get("text") or "").strip()
+            else:
+                capability = {}
+                name = str(raw_capability or "").strip()
+            if not name:
+                continue
+            capability["id"] = str(capability.get("id") or f"CAP-{index:02d}").upper()
+            capability["name"] = name
+            explicit_sources = [str(item).strip() for item in capability.get("source_ids", []) if str(item).strip()]
+            capability["source_ids"] = [item for item in explicit_sources if item in evidence_ids]
+            capability["story_ids"] = [str(item).strip().upper() for item in capability.get("story_ids", []) if str(item).strip()]
+            normalized_capabilities.append(capability)
+        if not normalized_capabilities:
+            raise ValueError("Contrato sem capacidades validas.")
+        contract["capabilities"] = normalized_capabilities
+
         for story in stories:
             if not isinstance(story, dict):
                 raise ValueError("Historia do contrato deve ser um objeto.")
@@ -2237,6 +2287,11 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
             if not re.fullmatch(r"US-\d{2}", story_id) or story_id in seen_ids:
                 raise ValueError("IDs de historia devem ser unicos no formato US-XX.")
             seen_ids.add(story_id)
+            story["capability_ids"] = [
+                str(item).strip().upper()
+                for item in (story.get("capability_ids") or [])
+                if str(item).strip()
+            ]
             story = self._canonicalize_decision_outcomes(story)
             source_ids = [str(item).strip() for item in story.get("source_ids", []) if str(item).strip()]
             if any(source_id not in evidence_ids for source_id in source_ids):
@@ -2353,6 +2408,32 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
                 story["priority"] = self._story_priority_for_lane(story.get("lane"))
             story["release"] = str(story.get("release") or self._story_release_for_lane(story.get("lane"))).strip()
             story["refinement_context"] = refinement_context
+        # Complete the capability matrix after story IDs are canonicalized.
+        story_by_id = {str(story.get("id")).upper(): story for story in stories}
+        for capability in contract["capabilities"]:
+            cap_terms = self._semantic_terms(capability["name"])
+            if not capability["source_ids"] and cap_terms:
+                capability["source_ids"] = [
+                    source_id for source_id, source_text in evidence_by_id.items()
+                    if len(cap_terms & self._semantic_terms(source_text)) >= max(1, min(2, len(cap_terms)))
+                ][:6]
+            valid_cap_id = capability["id"]
+            linked = [
+                story_id for story_id, story in story_by_id.items()
+                if valid_cap_id in story.get("capability_ids", [])
+            ]
+            if not linked and cap_terms:
+                linked = [
+                    story_id for story_id, story in story_by_id.items()
+                    if len(cap_terms & self._semantic_terms(f"{story.get('goal', '')} {story.get('description', '')}"))
+                    >= max(1, min(2, len(cap_terms)))
+                ]
+            capability["story_ids"] = sorted(set(linked))
+            for story_id in linked:
+                story_by_id[story_id].setdefault("capability_ids", [])
+                if valid_cap_id not in story_by_id[story_id]["capability_ids"]:
+                    story_by_id[story_id]["capability_ids"].append(valid_cap_id)
+            capability["story_ids"] = sorted(set(capability["story_ids"]))
         self._normalize_release_dependencies(stories)
         foundation_count = sum(1 for story in stories if str(story.get("lane") or "").strip().lower() == "foundation")
         if foundation_count < 2:
@@ -2384,7 +2465,16 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
 
     def _render_backlog_contract(self, contract):
         def bullets(items):
-            return "\n".join(f"- {str(item).strip()}" for item in items if str(item).strip())
+            lines = []
+            for item in items:
+                if isinstance(item, dict):
+                    name = str(item.get("name") or item.get("text") or "").strip()
+                    identifier = str(item.get("id") or "").strip()
+                    if name:
+                        lines.append(f"- {identifier}: {name}" if identifier else f"- {name}")
+                elif str(item).strip():
+                    lines.append(f"- {str(item).strip()}")
+            return "\n".join(lines)
 
         release_lines = []
         for release in contract["releases"]:
@@ -2407,7 +2497,7 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
             benefit = re.sub(r"^para\s+", "", str(story["benefit"]).strip(), flags=re.IGNORECASE).rstrip(".")
             story_lines.extend([
                 f"- {str(story['id']).strip().upper()} | Como {actor}, eu quero {goal}, para {benefit}.",
-                f"  Descricao: {str(story['description']).strip()}",
+                f"  Descricao: {str(story['description']).strip()} [capacidades: {', '.join(story.get('capability_ids', [])) or 'pendente'}]",
             ])
             review_tags = [str(tag).strip() for tag in story.get("review_tags", []) if str(tag).strip()]
             open_questions = [str(question).strip() for question in story.get("open_questions", []) if str(question).strip()]
@@ -2451,7 +2541,7 @@ REGRAS DE CONFIABILIDADE
 - Quando uma decisao nao estiver definida, registre a necessidade na descricao sem apresentá-la como fato.
 - Gere somente a quantidade de historias necessaria para cobrir as jornadas e restricoes confirmadas: no minimo 8 e no maximo 25. Nao adicione historias para atingir uma quantidade-alvo e nao fragmente uma jornada sem ganho de negocio.
 - Distribua as historias entre os lanes foundation, operation, visibility e governance quando forem aplicaveis ao briefing.
-- Gere 4 a 6 capacidades concretas, com verbo, objeto e efeito de negocio; gere 4 a 6 epicos concretos.
+- Gere 4 a 6 capacidades concretas, com verbo, objeto e efeito de negocio. Cada capacidade deve ter id CAP-XX e source_ids com evidencias usadas; gere 4 a 6 epicos concretos.
 - Gere exatamente as fatias MVP, Fase 2 e Fase 3; cada uma deve ter focus (o que entra) e deferred (o que fica para depois).
 - Use pelo menos tres personas coerentes com o briefing e evite historias tecnicas internas.
 - Cada historia deve ter um resultado de negocio observavel e independente. Separe etapas sequenciais quando puderem ser entregues, testadas ou revisadas separadamente; por exemplo, submeter uma solicitacao, o sistema validar/registrar e um analista decidir nao devem virar uma unica historia.
@@ -2462,7 +2552,7 @@ REGRAS DE CONFIABILIDADE
 - Historias de governanca ou visibilidade devem declarar a decisao observavel que habilitam; "acompanhar a operacao geral" ou "assegurar conformidade" sem indicador, controle ou decisao deve receber REVIEW_SCOPE e uma open_question.
 - Declare priority (low, medium, high ou urgent) e release (MVP, Fase 2 ou Fase 3) por historia. Use prioridade alta para a fundacao do primeiro fluxo utilizavel e nao atribua a mesma prioridade a todo o backlog sem justificativa.
 - Cada descricao deve acrescentar contexto, regra, excecao, estado ou efeito observavel, sem escolher tecnologia, criptografia, painel, fila, filtro, API ou mecanismo de automacao se isso nao foi informado.
-- Cada historia deve declarar source_ids com IDs da lista de evidencias, status (confirmed, proposed ou question), review_tags e open_questions.
+- Cada historia deve declarar source_ids com IDs da lista de evidencias, capability_ids com os IDs CAP-XX que ela entrega, status (confirmed, proposed ou question), review_tags e open_questions.
 - Um source_id comprova somente o comportamento que ele menciona; ator, linguagem de dominio, familia de tela ou contexto geral nao comprovam fila, dashboard, configuracao, automacao, limite, calculo ou politica.
 - Use confirmed somente quando o goal e a descricao estiverem diretamente sustentados pelas evidencias citadas. Ideias uteis sem evidencia devem ser proposed com REVIEW_SCOPE e uma open_question objetiva; decisoes de alto impacto sem evidencia tambem recebem REVIEW_HIGH_IMPACT.
 - Declare coverage, relacionando cada evidencia efetivamente usada aos IDs das historias que a cobrem. Uma evidencia sem historia correspondente deve virar uma lacuna, nao uma historia inventada.
@@ -2470,10 +2560,10 @@ REGRAS DE CONFIABILIDADE
 RESPONDA SOMENTE JSON VALIDO, sem markdown e sem comentarios, no formato:
 {{
   "overview": "texto curto",
-  "capabilities": ["capacidade"],
+  "capabilities": [{{"id":"CAP-01","name":"capacidade","source_ids":["briefing.1"],"story_ids":["US-01"]}}],
   "epics": ["epico"],
   "releases": [{{"name":"MVP","focus":"...","deferred":"..."}}, {{"name":"Fase 2","focus":"...","deferred":"..."}}, {{"name":"Fase 3","focus":"...","deferred":"..."}}],
-  "stories": [{{"id":"US-01","actor":"persona","goal":"acao verificavel","benefit":"efeito de negocio","description":"contexto adicional","lane":"foundation","priority":"high","release":"MVP","source_ids":["briefing.1"],"status":"confirmed","review_tags":[],"open_questions":[],"refinement_context":{{"inputs":[],"outputs":[],"confirmed_rules":[],"constraints":[],"dependencies":[],"open_questions":[],"acceptance_hints":[],"acceptance_criteria":[{{"id":"US-01-CA-01","given":"precondicao","when":"acao","then":"resultado","source_ids":["briefing.1"],"status":"confirmed"}}]}}}}],
+  "stories": [{{"id":"US-01","actor":"persona","goal":"acao verificavel","benefit":"efeito de negocio","description":"contexto adicional","lane":"foundation","priority":"high","release":"MVP","source_ids":["briefing.1"],"capability_ids":["CAP-01"],"status":"confirmed","review_tags":[],"open_questions":[],"refinement_context":{{"inputs":[],"outputs":[],"confirmed_rules":[],"constraints":[],"dependencies":[],"open_questions":[],"acceptance_hints":[],"acceptance_criteria":[{{"id":"US-01-CA-01","given":"precondicao","when":"acao","then":"resultado","source_ids":["briefing.1"],"status":"confirmed"}}]}}}}],
   "coverage": [{{"source_id":"briefing.1","story_ids":["US-01"]}}]
 }}
 {repair_instruction}
@@ -2544,7 +2634,7 @@ Responda SOMENTE um objeto JSON valido exatamente neste formato:
                         "temperature": 0.1,
                         "num_predict": int(os.getenv("PROJECT_MANAGER_BACKLOG_NUM_PREDICT", "3400")),
                         "request_timeout_seconds": request_timeout,
-                        "transient_retries": 0,
+                        "transient_retries": 1,
                         "json_mode": True,
                         # Reject tiny/non-JSON provider replies before the
                         # router marks them successful, so another model can

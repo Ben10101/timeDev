@@ -328,30 +328,14 @@ function normalizeProjectLanguage(...values) {
 
 function inferDomainLanguage({ projectName, description, vision, templateKey }) {
   const vocabulary = normalizeProjectLanguage(projectName, description, vision, templateKey);
-  const prioritizedTerms = [
-    'evento',
-    'eventos',
-    'cronograma',
-    'fornecedor',
-    'fornecedores',
-    'convidado',
-    'convidados',
-    'orcamento',
-    'visita',
-    'visitante',
-    'recepcao',
-    'chamado',
-    'suporte',
-    'ticket',
-    'acesso',
-    'perfil',
-    'notificacao',
-    'operacao',
-    'operacional',
-  ];
-
-  const matches = prioritizedTerms.filter((term) => vocabulary.includes(term));
-  return matches.length ? matches : vocabulary.slice(0, 8);
+  const stopwords = new Set([
+    'a', 'o', 'as', 'os', 'um', 'uma', 'uns', 'umas', 'de', 'da', 'do', 'das', 'dos',
+    'e', 'ou', 'em', 'no', 'na', 'nos', 'nas', 'por', 'para', 'com', 'sem', 'que',
+    'como', 'se', 'ao', 'aos', 'mais', 'menos', 'uma', 'permitir', 'permite', 'garantir',
+    'sistema', 'plataforma', 'processo', 'forma', 'deve', 'devem', 'cliente', 'clientes',
+  ]);
+  const meaningfulVocabulary = vocabulary.filter((term) => term.length >= 4 && !stopwords.has(term));
+  return meaningfulVocabulary.slice(0, 12);
 }
 
 function inferProductMode({ templateKey, description, vision }) {
@@ -2635,7 +2619,10 @@ export async function publishBacklogTasks(projectUuid) {
   const project = await prisma.project.findUnique({ where: { uuid: projectUuid }, include: { creator: { select: { id: true } }, tasks: { select: { title: true, taskType: true } } } });
   const contract = project?.intakeConfig?.backlogContract;
   if (!project || !contract) throw new Error('Nenhum backlog aguardando aprovacao humana.');
-  if (contract.qualityReview?.decision !== 'PASS') throw new Error('O backlog precisa passar pela validacao de qualidade antes da publicacao.');
+  const qualityReview = contract.qualityReview || contract.quality_review;
+  if (qualityReview?.decision !== 'PASS') throw new Error('O backlog precisa passar pela validacao de qualidade antes da publicacao.');
+  const hasUnapprovedStory = (contract.stories || []).some((story) => !['approved', 'confirmed'].includes(String(story.reviewStatus || story.status || '').toLowerCase()));
+  if (hasUnapprovedStory) throw new Error('Aprove todas as stories antes de publicar o backlog.');
   const existing = new Set(project.tasks.filter((task) => task.taskType === 'story').map((task) => task.title.trim()));
   for (const [index, story] of (contract.stories || []).entries()) {
     if (!story?.title || existing.has(story.title.trim())) continue;
@@ -3389,7 +3376,7 @@ export async function createAgentRunStart(projectUuid, agentName, payload = {}) 
   return createdRun;
 }
 
-export async function finishAgentRun(agentRunId, { status, result, errorMessage, usageMeta = null }) {
+export async function finishAgentRun(agentRunId, { status, result, errorMessage, diagnostic = null, usageMeta = null }) {
   const existingRun = await prisma.agentRun.findUnique({
     where: { id: agentRunId },
     select: {
@@ -3407,6 +3394,9 @@ export async function finishAgentRun(agentRunId, { status, result, errorMessage,
       ? result
       : JSON.stringify(result, null, 2)
     : null;
+  const diagnosticText = diagnostic
+    ? (typeof diagnostic === 'string' ? diagnostic : JSON.stringify(diagnostic))
+    : null;
 
   const updatedRun = await prisma.agentRun.update({
     where: { id: agentRunId },
@@ -3420,6 +3410,18 @@ export async function finishAgentRun(agentRunId, { status, result, errorMessage,
       finishedAt: new Date(),
     },
   });
+
+  // Keep this raw update until every running backend has reloaded the Prisma
+  // client generated from the schema containing AgentRun.diagnostic. It also
+  // makes the operational record independent from a stale in-memory client
+  // during a rolling restart.
+  if (diagnosticText) {
+    await prisma.$executeRaw`
+      UPDATE agent_runs
+      SET diagnostic = ${diagnosticText}
+      WHERE id = ${agentRunId}
+    `;
+  }
 
   const durationSeconds = existingRun?.startedAt
     ? Math.max(0, Math.round((Date.now() - new Date(existingRun.startedAt).getTime()) / 1000))

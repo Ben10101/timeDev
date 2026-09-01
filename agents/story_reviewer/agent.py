@@ -58,6 +58,8 @@ OTHER STORIES:
 {json.dumps(payload.get('other_stories') or [], ensure_ascii=False)[:10000]}
 TARGET STORY:
 {json.dumps(story, ensure_ascii=False)[:10000]}
+RESPOSTAS DO USUARIO (use somente como contexto confirmado para atualizar a proposta):
+{json.dumps(payload.get('review_answers') or [], ensure_ascii=False)[:6000]}
 '''
         result = generate_text_from_llm(
             prompt,

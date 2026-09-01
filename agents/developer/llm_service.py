@@ -56,14 +56,18 @@ except Exception as e:
     CACHE = None
     CACHE_ENABLED = False
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=True)
+# The backend passes per-user provider settings to each agent process. Load
+# repository defaults only for variables that were not supplied at runtime;
+# otherwise an old .env model (for example gemma3:4b) overrides the model
+# selected in the Aligna UI.
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=False)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     if GEMINI_SDK == "google-generativeai":
         genai.configure(api_key=GEMINI_API_KEY)
 
-SUPPORTED_PROVIDERS = ("gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "openrouter", "ollama")
+SUPPORTED_PROVIDERS = ("gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "huggingface", "openrouter", "ollama")
 
 
 class ProviderRateLimitError(RuntimeError):
@@ -148,6 +152,15 @@ def get_provider_order():
                 seen.add(provider)
                 ordered.append(provider)
         if ordered:
+            # A ordem configurada define prioridade, mas não deve transformar
+            # uma falha temporária de um único provider em indisponibilidade
+            # total. Complementamos a cadeia com os defaults, a menos que a
+            # instalação peça explicitamente modo estrito.
+            append_defaults = str(os.getenv("AI_PROVIDER_ORDER_APPEND_DEFAULTS", "1")).lower() in ("1", "true", "yes")
+            if append_defaults:
+                for provider in ("gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "huggingface", "openrouter", "ollama"):
+                    if provider not in seen and not (disable_ollama_fallback and provider == "ollama"):
+                        ordered.append(provider)
             return ordered
 
     llm_provider = os.getenv("LLM_PROVIDER", "auto").lower()
@@ -163,7 +176,7 @@ def get_provider_order():
             return ["ollama"]
         return [llm_provider, *others] if disable_ollama_fallback else [llm_provider, *others, "ollama"]
 
-    fallback_order = ["gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "openrouter", "ollama"]
+    fallback_order = ["gemini", "huggingface", "groq", "openai", "deepseek", "nvidia", "anthropic", "openrouter", "ollama"]
     return [provider for provider in fallback_order if not (disable_ollama_fallback and provider == "ollama")]
 
 
@@ -372,12 +385,10 @@ def get_provider_timeout_seconds(provider, default_timeout=120, options_override
 def get_openrouter_model_candidates(primary_model):
     candidates = []
     for candidate in [primary_model, *parse_model_list(os.getenv("OPENROUTER_MODEL_FALLBACKS", ""))]:
-        if str(candidate).strip().lower() in {"openrouter/free", "qwen/qwen3-coder:free"}:
-            continue
         if candidate and candidate not in candidates:
             candidates.append(candidate)
     if not candidates:
-        candidates.append("openai/gpt-4.1-mini")
+        candidates.append("openrouter/free")
     return candidates
 
 
@@ -415,7 +426,11 @@ def generate_text_with_openrouter_model(prompt, model, api_key, options_override
         "temperature": (options_override or {}).get("temperature", 0.7),
         "max_tokens": max(64, int((options_override or {}).get("num_predict", 800))),
     }
-    if (options_override or {}).get("json_mode"):
+    # NVIDIA's OpenAI-compatible endpoint can require a JSON schema when
+    # response_format=json_object is sent. The caller already validates the
+    # returned JSON at the router boundary, so keep the prompt contract and
+    # omit this incompatible hint only for NVIDIA.
+    if (options_override or {}).get("json_mode") and provider != "nvidia":
         payload["response_format"] = {"type": "json_object"}
 
     attempts = [payload]
@@ -478,6 +493,7 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
         "nvidia": "https://integrate.api.nvidia.com/v1/chat/completions",
         "groq": "https://api.groq.com/openai/v1/chat/completions",
         "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+        "huggingface": "https://router.huggingface.co/v1/chat/completions",
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -499,12 +515,19 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
                     continue
                 raise RuntimeError(" | ".join(openrouter_errors))
 
+    max_tokens = max(64, int((options_override or {}).get("num_predict", 800)))
+    is_groq_gpt_oss = provider == "groq" and str(model).lower().startswith("openai/gpt-oss")
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": (options_override or {}).get("temperature", 0.7),
-        "max_tokens": max(64, int((options_override or {}).get("num_predict", 800))),
+        "temperature": (options_override or {}).get("temperature", 1 if is_groq_gpt_oss else 0.7),
     }
+    if is_groq_gpt_oss:
+        payload["max_completion_tokens"] = max_tokens
+        payload["reasoning_effort"] = (options_override or {}).get("reasoning_effort", "medium")
+        payload["top_p"] = (options_override or {}).get("top_p", 1)
+    else:
+        payload["max_tokens"] = max_tokens
     if (options_override or {}).get("json_mode"):
         payload["response_format"] = {"type": "json_object"}
 
@@ -565,9 +588,15 @@ def generate_text_from_provider(provider, prompt, options_override=None, model_o
         )
 
     if provider == "gemini":
+        configured_model = model_override or os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+        # Gemini retired/unstable aliases should not silently consume the
+        # entire provider chain. Keep the model configurable, but normalize
+        # the legacy lite alias to the supported 3.6 Flash model.
+        if str(configured_model).strip().lower() in {"gemini-3.5-flash-lite", "models/gemini-3.5-flash-lite"}:
+            configured_model = os.getenv("GEMINI_MODEL_FALLBACK", "gemini-3.6-flash")
         return generate_text_with_gemini(
             prompt,
-            model_override or os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+            configured_model,
             options_override,
         )
 
@@ -599,19 +628,36 @@ def generate_text_from_provider(provider, prompt, options_override=None, model_o
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             raise RuntimeError("GROQ_API_KEY nao configurada.")
-        model = model_override or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-        if str(model).lower() == "qwen/qwen3.6-27b":
-            model = "llama-3.3-70b-versatile"
-        return generate_text_with_openai_compatible("groq", prompt, model, api_key, options_override)
+        model = model_override or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        if str(model).strip().lower() in {"llama-3.3-70b-versatile", "qwen/qwen3.6-27b"}:
+            model = os.getenv("GROQ_MODEL_FALLBACK", "openai/gpt-oss-120b") if str(model).strip().lower().startswith("llama") else model
+        try:
+            return generate_text_with_openai_compatible("groq", prompt, model, api_key, options_override)
+        except ProviderRateLimitError:
+            raise
+        except Exception as error:
+            # Groq may expose a model in the account UI before it is enabled
+            # for a specific key (error 1010). Try the other current production
+            # model once, but never loop on quota/rate-limit responses.
+            message = str(error).lower()
+            alternate = "qwen/qwen3.6-27b" if str(model).strip().lower() != "qwen/qwen3.6-27b" else "openai/gpt-oss-120b"
+            if "1010" not in message and "model" not in message:
+                raise
+            return generate_text_with_openai_compatible("groq", prompt, alternate, api_key, options_override)
 
     if provider == "openrouter":
         api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
             raise RuntimeError("OPENROUTER_API_KEY nao configurada.")
-        model = model_override or os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
-        if str(model).lower() in {"openrouter/free", "qwen/qwen3-coder:free"}:
-            model = "openai/gpt-4.1-mini"
+        model = model_override or os.getenv("OPENROUTER_MODEL", "openrouter/free")
         return generate_text_with_openai_compatible("openrouter", prompt, model, api_key, options_override)
+
+    if provider == "huggingface":
+        api_key = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
+        if not api_key:
+            raise RuntimeError("HF_TOKEN nao configurada.")
+        model = model_override or os.getenv("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct:hf-inference")
+        return generate_text_with_openai_compatible("huggingface", prompt, model, api_key, options_override)
 
     raise RuntimeError(f"Provider nao suportado: {provider}")
 
@@ -705,6 +751,13 @@ def generate_text_from_llm(prompt: str, model: str = None, options_override: dic
             print(f"[LLM Service] Erro ao acessar cache: {e}", file=sys.stderr)
 
     provider_order = get_provider_order()
+    print(json.dumps({
+        "event": "provider_order_resolved",
+        "task": task or "text_generation",
+        "agent": str(os.getenv("AI_AGENT_NAME", "") or "").strip() or None,
+        "provider_order": provider_order,
+        "ollama_included": "ollama" in provider_order,
+    }, ensure_ascii=False), file=sys.stderr)
 
     from .model_router import execute_routed_text
 

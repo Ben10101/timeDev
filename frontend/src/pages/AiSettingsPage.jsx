@@ -11,6 +11,7 @@ const PROVIDER_OPTIONS = [
   { value: 'nvidia', label: 'NVIDIA' },
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'groq', label: 'Groq' },
+  { value: 'huggingface', label: 'Hugging Face' },
   { value: 'openrouter', label: 'OpenRouter' },
 ];
 
@@ -31,6 +32,7 @@ const EMPTY_SETTINGS = {
   nvidia: { enabled: false, apiKey: '', model: 'qwen/qwen3.5-122b-a10b' },
   anthropic: { enabled: false, apiKey: '', model: 'claude-3-5-sonnet-latest' },
   groq: { enabled: false, apiKey: '', model: 'llama-3.3-70b-versatile' },
+  huggingface: { enabled: false, apiKey: '', model: 'meta-llama/Llama-3.1-8B-Instruct:hf-inference' },
   openrouter: { enabled: false, apiKey: '', model: 'openai/gpt-4.1-mini', fallbackModels: [] },
 };
 
@@ -626,6 +628,30 @@ export default function AiSettingsPage() {
               </button>
             </div>
             <TestFeedback result={testResults.groq} />
+          </ProviderCard>
+
+          <ProviderCard title="Hugging Face Inference" description="Use uma HF_TOKEN para rotear modelos por provedores como Cerebras e Groq.">
+            <Toggle checked={Boolean(settings.huggingface?.enabled)} onChange={(value) => patchProvider('huggingface', 'enabled', value)} label={settings.huggingface?.enabled ? 'Ativo' : 'Inativo'} />
+            {renderStoredKeyState('huggingface')}
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="API Key (HF_TOKEN)">
+                <TextInput type="password" value={settings.huggingface?.apiKey || ''} onChange={(event) => patchProvider('huggingface', 'apiKey', event.target.value)} placeholder="hf_..." />
+              </Field>
+              <Field label="Modelo padrao" hint="Opcionalmente fixe o provedor com :cerebras ou :groq.">
+                <TextInput value={settings.huggingface?.model || ''} onChange={(event) => patchProvider('huggingface', 'model', event.target.value)} placeholder="meta-llama/Llama-3.1-8B-Instruct:hf-inference" />
+              </Field>
+            </div>
+            <div className="flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => handleTestProvider('huggingface')}
+                disabled={testingProvider === 'huggingface'}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {testingProvider === 'huggingface' ? 'Testando...' : 'Testar chave'}
+              </button>
+            </div>
+            <TestFeedback result={testResults.huggingface} />
           </ProviderCard>
 
           <ProviderCard title="OpenRouter" description="Area pronta para cadastrar chave e modelo do OpenRouter.">

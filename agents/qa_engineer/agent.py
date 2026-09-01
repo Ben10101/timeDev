@@ -464,6 +464,8 @@ class QAEngineer:
 
     def _infer_core_checks(self, requirement_summary, requirement_spec=None):
         fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        acceptance = self._extract_acceptance_lines(requirement_summary, requirement_spec)
+        ca_ref = "CA-01" if acceptance else "CA-A VALIDAR"
         constraints = self._extract_requirement_constraints(requirement_summary, requirement_spec)
         acceptance_lines = self._extract_acceptance_lines(requirement_summary, requirement_spec)
         checks = []
@@ -701,6 +703,16 @@ class QAEngineer:
         ]
 
     def _synthesize_scenarios(self, idea, requirement_summary, requirement_spec=None):
+        # Fallback governado: cenarios devem ser executaveis e rastreaveis,
+        # sem preencher uma quantidade fixa ou inventar limites.
+        fields = self._extract_text_fields(requirement_summary, requirement_spec)
+        primary = fields[0] if fields else "dados previstos no requisito"
+        return [
+            f"1. Caminho Feliz | Dado: {primary} valido | Acao: executar o fluxo principal | Resultado esperado: comportamento descrito no requisito e efeito observavel | CA relacionado: {ca_ref}.",
+            f"2. Caminho Feliz | Dado: resultado elegivel | Acao: consultar o resultado da operacao | Resultado esperado: informacao correspondente exibida ao usuario | CA relacionado: {ca_ref}.",
+            f"3. Excecao | Dado: entrada ausente ou invalida quando houver regra aplicavel | Acao: tentar concluir a operacao | Resultado esperado: sistema bloqueia ou informa a pendencia sem persistencia parcial | CA relacionado: {ca_ref}.",
+            f"4. Resiliencia | Dado: falha operacional durante a acao, somente se houver dependencia confirmada | Acao: repetir apos recuperacao | Resultado esperado: consistencia preservada sem duplicidade | CA relacionado: {ca_ref}.",
+        ]
         if re.search(r"\b(comprovante|arquivo|anexar|upload)\b", str(idea or ""), re.IGNORECASE):
             return [
                 "1. Caminho Feliz: anexar um comprovante PDF em uma solicitação em edição; sistema valida e vincula o arquivo.",
@@ -924,10 +936,18 @@ Resumo estrutural dos requisitos:
 Requirement Spec estruturado:
 {json.dumps(structured_requirement_spec, ensure_ascii=False) if structured_requirement_spec else "Nao informado."}
 
+Contrato semantico da LLM (somente contexto e evidencias; nao e regra adicional):
+{json.dumps((structured_requirement_spec or {}).get("semantic_context") or {}, ensure_ascii=False)}
+
 Regras gerais:
 - Responda em portugues.
 - Nao invente escopo fora da historia.
 - Nao invente comportamento de produto que nao esteja sustentado pelo requisito.
+- Use o contrato semantico apenas para localizar entidades, objetivos e estados
+  ja evidenciados. Nao crie cenarios para itens sem evidencia ou com baixa
+  confianca; registre a lacuna como risco/pergunta.
+- Cada caso funcional deve apontar para um criterio de aceite ou requisito
+  existente. Nunca crie um CA novo implicitamente no QA.
 - Se alguma regra nao estiver explicita no requisito, trate como ponto de verificacao ou risco, nunca como funcionalidade confirmada.
 - Nao transforme heuristica de QA em verdade do produto.
 - Nao introduza metas numericas arbitrarias, como cobertura de 80 por cento, sem fonte explicita.
@@ -959,13 +979,15 @@ Use exatamente estes titulos de secao, sem variações:
 - ## Riscos e metricas
 
 ## Estrategia de testes
-Inclua testes unitarios, integracao, API, UI e E2E em no maximo 6 bullets.
-- Cite explicitamente qual camada deve absorver o maior risco.
+Inclua somente as camadas aplicaveis ao requisito (unitario, integracao, API, UI ou E2E) em no maximo 6 bullets.
+- Nao mencione API, endpoint, contrato de transporte ou integracao se isso nao estiver explicitamente no requisito.
+- Cite explicitamente qual camada deve absorver o maior risco somente quando houver evidencia.
 - Diga quando algo e "Nao se aplica" em vez de inventar cobertura.
 - Cada bullet deve cobrir um angulo diferente da feature.
 
 ## Dados de teste
-Inclua dados validos, invalidos, limites e cenarios de falha em no maximo 5 bullets.
+Inclua dados validos, invalidos, limites e cenarios de falha em no maximo 5 bullets, somente quando aplicaveis.
+- Nao invente limites de tamanho, valor, formato ou quantidade. Se a fronteira nao estiver definida, registre uma pergunta ou risco.
 - Se o requisito nao mencionar duplicidade, permissao extra ou comportamento opcional, nao crie bullet de "ponto a verificar" para isso.
 - Dados de teste devem refletir o requisito atual, nao abrir novas decisoes de produto.
 

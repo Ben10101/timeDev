@@ -220,6 +220,18 @@ def validate_requirements_output(result):
     if len(rf_matches) < 1:
         return False, "Requisitos funcionais sem RFs estruturados."
 
+    generic_markers = [
+        "informa os dados necessarios",
+        "acessa a funcionalidade",
+        "o sistema valida e registra a operacao",
+        "comportamento esperado da funcionalidade",
+    ]
+    if any(marker in normalized for marker in generic_markers):
+        return False, "Requisito usa passos genericos sem entradas, processamento ou resultado observavel."
+
+    if re.search(r"permissoes e auditoria[\s\S]{0,180}nao se aplica", normalized) and re.search(r"\b(controle de acesso|acesso autorizado|protecao contra compartilhamento|permiss)\w*", normalized):
+        return False, "Controle de acesso foi citado, mas a secao de permissoes foi marcada como nao se aplica."
+
     if re.search(r'\beu quero\s+(cadastrar|criar|registrar|aprovar|atualizar)\b', normalized):
         has_secondary_rf = len(rf_matches) > 1
         derived_expansion_terms = [
@@ -284,7 +296,7 @@ def validate_requirements_output(result):
         # A visible pending decision is valid when the story has no evidence
         # for an access profile or audit mechanism.  Requiring the model to
         # invent one would be worse than preserving the gap for review.
-        r"(execut|aprova|visualiz|edit|audit|trilha|ponto a validar|nao se aplica)",
+        r"(execut|aprova|visualiz|edit|audit|trilha|acesso|autoriz|permiss|controle|ponto a validar|nao se aplica)",
         permissions_body,
         re.IGNORECASE,
     ):
@@ -574,6 +586,8 @@ def validate_qa_output(result):
     scenario_count = count_numbered_items(scenarios_section)
     if scenario_count < 3:
         return False, "Menos de 3 cenarios executaveis."
+    if not all(token in scenarios_section.lower() for token in ("dado:", "acao:", "resultado esperado:", "ca relacionado:")):
+        return False, "Cenarios sem estrutura executavel e rastreabilidade para criterio de aceite."
     if happy_count < 1:
         return False, "Cenario de caminho feliz ausente."
     if exception_count < 1 and re.search(r"valid|erro|falha|obrigat|inval", normalized):

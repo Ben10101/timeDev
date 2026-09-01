@@ -340,6 +340,25 @@ export async function testGroqConnection(settings) {
   }
 }
 
+export async function testHuggingFaceConnection(settings) {
+  const apiKey = settings?.huggingface?.apiKey;
+  const model = settings?.huggingface?.model || 'meta-llama/Llama-3.1-8B-Instruct:hf-inference';
+  if (!apiKey?.trim()) return failResult('Informe uma API key do Hugging Face para testar.');
+  try {
+    const response = await fetch('https://router.huggingface.co/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with OK only.' }], max_tokens: 10, temperature: 0.2 }),
+    });
+    const data = await readJsonSafe(response);
+    if (!response.ok) return failResult('Falha ao validar a chave do Hugging Face.', { status: response.status, detail: data?.error?.message || data?.raw || 'Sem detalhes.' });
+    const text = data?.choices?.[0]?.message?.content?.trim();
+    return okResult(`Hugging Face respondeu com sucesso usando ${model}.`, { responsePreview: text || 'Sem texto.' });
+  } catch (error) {
+    return failResult('Nao foi possivel testar a chave do Hugging Face.', { detail: error.message });
+  }
+}
+
 export async function testOpenRouterConnection(settings) {
   const apiKey = settings?.openrouter?.apiKey;
   const models = getOpenRouterCandidateModels(settings);
@@ -416,6 +435,8 @@ export async function testAiProviderConnection(provider, settings) {
       return testAnthropicConnection(settings);
     case 'groq':
       return testGroqConnection(settings);
+    case 'huggingface':
+      return testHuggingFaceConnection(settings);
     case 'openrouter':
       return testOpenRouterConnection(settings);
     default:

@@ -74,6 +74,52 @@ class BacklogChallenger:
             self._normalize(f"{story.get('goal', '')} {story.get('description', '')}")
             for story in stories if isinstance(story, dict)
         )
+
+        # Domain coverage is derived from the current contract, never from a
+        # fixed catalogue of product types. A capability is covered only when
+        # at least one story carries most of its meaningful terms; otherwise it
+        # becomes an explicit proposal for human confirmation.
+        capabilities = []
+        for source in (contract, evidence_contract or {}):
+            values = source.get("capabilities") if isinstance(source, dict) else None
+            if isinstance(values, list):
+                capabilities.extend(values)
+        stopwords = {"para", "com", "dos", "das", "uma", "um", "por", "de", "do", "da", "e", "ou", "ao", "na", "no"}
+        seen_capabilities = set()
+        for capability in capabilities:
+            if isinstance(capability, dict):
+                capability_id = str(capability.get("id") or "").strip()
+                capability_name = str(capability.get("name") or capability.get("text") or "").strip()
+            else:
+                capability_id = ""
+                capability_name = str(capability or "").strip()
+            key = self._normalize(capability_name)
+            if not capability_name or key in seen_capabilities:
+                continue
+            seen_capabilities.add(key)
+            terms = [term for term in re.findall(r"[a-z0-9]{4,}", key) if term not in stopwords]
+            if not terms:
+                continue
+            covered = any(
+                sum(1 for term in terms if term in self._normalize(f"{story.get('goal', '')} {story.get('description', '')}"))
+                >= max(1, (len(terms) + 1) // 2)
+                for story in stories if isinstance(story, dict)
+            )
+            if not covered:
+                proposals.append({
+                    "type": "story",
+                    "capability_id": capability_id or None,
+                    "capability": capability_name,
+                    "status": "proposed",
+                    "reason": "Capacidade declarada no briefing/backlog nao possui story rastreavel.",
+                    "requires_confirmation": True,
+                })
+                questions.append({
+                    "code": "missing_capability_decision",
+                    "question": f"O produto deve incluir explicitamente a capacidade '{capability_name}' no MVP?",
+                    "requires_confirmation": True,
+                })
+
         campaign_domain = bool(re.search(r"\b(campanh|cobran|devedor|inadimpl|recuperac)\b", evidence_text))
         domain = "credit_collection_campaign" if campaign_domain else "generic"
         if campaign_domain:

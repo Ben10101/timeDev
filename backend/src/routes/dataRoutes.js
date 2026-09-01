@@ -22,6 +22,7 @@ import {
   publishBacklogTasksController,
   updateBacklogStoryController,
   reviewBacklogStoryController,
+  applyBacklogStoryReviewController,
   decideBacklogProposalController,
   answerBacklogQuestionController,
   applyBacklogProposalsController,
@@ -62,6 +63,7 @@ router.post('/projects/:projectUuid/import-backlog', importBacklogTasksControlle
 router.post('/projects/:projectUuid/publish-backlog', publishBacklogTasksController);
 router.patch('/projects/:projectUuid/backlog-stories/:storyId', updateBacklogStoryController);
 router.post('/projects/:projectUuid/backlog-stories/:storyId/review', reviewBacklogStoryController);
+router.patch('/projects/:projectUuid/backlog-stories/:storyId/review', applyBacklogStoryReviewController);
 router.patch('/projects/:projectUuid/backlog-proposals/:proposalId', decideBacklogProposalController);
 router.patch('/projects/:projectUuid/backlog-questions/:questionId', answerBacklogQuestionController);
 router.post('/projects/:projectUuid/backlog-proposals/apply', applyBacklogProposalsController);
