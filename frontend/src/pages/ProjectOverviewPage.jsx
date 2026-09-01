@@ -7,8 +7,6 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import ProjectTaskBoard from '../components/ProjectTaskBoard';
 import ProjectStageNav from '../components/ProjectStageNav';
 import {
-  approveProjectArchitecture,
-  generateProjectArchitecture,
   generateProjectBacklog,
   publishProjectBacklog,
   updateProjectBacklogStory,
@@ -65,8 +63,6 @@ export default function ProjectOverviewPage() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [publishingBacklog, setPublishingBacklog] = useState(false);
-  const [generatingArchitecture, setGeneratingArchitecture] = useState(false);
-  const [approvingArchitecture, setApprovingArchitecture] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [statusDialog, setStatusDialog] = useState({ open: false, nextStatus: null });
@@ -124,36 +120,10 @@ export default function ProjectOverviewPage() {
       };
     }
 
-    if (!architectureStatus?.hasArchitecture) {
-      return {
-        stage: 'Arquitetura',
-        title: 'Gerar arquitetura do projeto',
-        message: 'O backlog já existe. O próximo passo é materializar a arquitetura para liberar implementação.',
-        tone: 'border-slate-200 bg-white text-slate-900',
-        ctaLabel: generatingArchitecture ?'Gerando arquitetura...' : 'Gerar arquitetura',
-        ctaAction: handleGenerateArchitecture,
-        ctaDisabled: loading || generatingArchitecture || !architectureStatus?.canGenerateArchitecture,
-        ctaType: 'button',
-      };
-    }
-
-    if (!architectureStatus?.architectureApproved) {
-      return {
-        stage: 'Aprovação',
-        title: 'Fazer aprovação humana da arquitetura',
-        message: 'A arquitetura já foi gerada, mas a implementação ainda depende dessa aprovação.',
-        tone: 'border-slate-200 bg-white text-slate-900',
-        ctaLabel: approvingArchitecture ?'Aprovando...' : 'Aprovar arquitetura',
-        ctaAction: handleApproveArchitecture,
-        ctaDisabled: loading || approvingArchitecture || !architectureStatus?.hasArchitecture || architectureStatus?.architectureApproved,
-        ctaType: 'button',
-      };
-    }
-
     return {
       stage: 'Board',
       title: 'Abrir o board do projeto refinado',
-      message: 'Briefing, backlog e arquitetura já estão prontos. Agora siga pelo board dentro do contexto do projeto refinado.',
+      message: 'Briefing e backlog já estão prontos. Agora siga pelo board dentro do contexto do projeto refinado.',
       tone: 'border-slate-200 bg-white text-slate-900',
       ctaLabel: 'Abrir board do projeto',
       ctaAction: scrollToRefinementBoard,
@@ -162,12 +132,9 @@ export default function ProjectOverviewPage() {
     };
   }, [
     hasPublishedStories,
-    architectureStatus,
     hasGeneratedStories,
     generating,
     loading,
-    generatingArchitecture,
-    approvingArchitecture,
     navigate,
     projectUuid,
     project?.name,
@@ -200,6 +167,7 @@ export default function ProjectOverviewPage() {
 
       setProject(projectData);
       setTasks(taskList);
+      setArchitectureStatus(nextArchitectureStatus);
       const pendingRequirements = projectData?.intakeConfig?.requirementsContract || null;
       const persistedClarifications = projectData?.intakeConfig?.backlogClarifications || pendingRequirements?.blocking_questions || [];
       setRequirementsContract(projectData?.intakeConfig?.backlogContract?.requirementsContract || pendingRequirements);
@@ -421,39 +389,6 @@ export default function ProjectOverviewPage() {
       setError(getApiErrorMessage(saveError, 'Não foi possível atualizar a story.'));
     } finally {
       setStorySaving(false);
-    }
-  }
-
-  async function handleGenerateArchitecture() {
-    setGeneratingArchitecture(true);
-    setError(null);
-    setSuccessMessage('');
-
-    try {
-      await generateProjectArchitecture(projectUuid);
-      const nextArchitectureStatus = await getProjectArchitectureStatus(projectUuid);
-      setArchitectureStatus(nextArchitectureStatus);
-      setSuccessMessage('Arquitetura do projeto gerada e estrutura base preparada para a implementação.');
-    } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Não foi possível gerar a arquitetura do projeto.'));
-    } finally {
-      setGeneratingArchitecture(false);
-    }
-  }
-
-  async function handleApproveArchitecture() {
-    setApprovingArchitecture(true);
-    setError(null);
-    setSuccessMessage('');
-
-    try {
-      const response = await approveProjectArchitecture(projectUuid);
-      setArchitectureStatus(response.architectureStatus);
-      setSuccessMessage('Arquitetura aprovada com sucesso. A implementação e a exportação final foram liberadas.');
-    } catch (approveError) {
-      setError(getApiErrorMessage(approveError, 'Não foi possível aprovar a arquitetura atual.'));
-    } finally {
-      setApprovingArchitecture(false);
     }
   }
 
@@ -686,31 +621,11 @@ export default function ProjectOverviewPage() {
           <div className="dashboard-panel-header">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Etapa 2</p>
-            <h3 className="mt-2 text-2xl font-bold text-slate-900">Arquitetura e aprovação</h3>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Etapa 2</p>
+                <h3 className="mt-2 text-2xl font-bold text-slate-900">Estado do projeto</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                  Gere a arquitetura só quando o backlog estiver maduro. Depois, faça a aprovação humana para liberar implementação e exportação final.
+                  O fluxo ativo continua focado em briefing, backlog e revisão de qualidade. A arquitetura e a implementação automatizadas foram removidas do produto principal.
                 </p>
-              </div>
-              <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-                <button
-                  type="button"
-                  onClick={handleApproveArchitecture}
-                  disabled={loading || approvingArchitecture || !architectureStatus?.hasArchitecture || architectureStatus?.architectureApproved}
-                  className="dashboard-button-secondary w-full sm:w-auto"
-                  title={!architectureStatus?.hasArchitecture ?'Gere a arquitetura antes de aprovar.' : architectureStatus?.architectureApproved ?'A arquitetura atual já foi aprovada.' : undefined}
-                >
-                  {approvingArchitecture ?'Aprovando...' : architectureStatus?.architectureApproved ?'Arquitetura aprovada' : 'Aprovar arquitetura'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleGenerateArchitecture}
-                  disabled={loading || generatingArchitecture || !architectureStatus?.canGenerateArchitecture}
-                  className="dashboard-button-primary w-full sm:w-auto"
-                  title={!architectureStatus?.canGenerateArchitecture ?architectureStatus?.blockers?.[0] : undefined}
-                >
-                  {generatingArchitecture ?'Gerando arquitetura...' : 'Gerar arquitetura do projeto'}
-                </button>
               </div>
             </div>
           </div>

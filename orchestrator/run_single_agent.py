@@ -8,17 +8,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.project_manager.agent import ProjectManager
 from agents.requirements_analyst.agent import RequirementsAnalyst
-from agents.architect.agent import Architect
-from agents.implementation_autonomous.agent import ImplementationAutonomousAgent
-from agents.developer.agent_new import Developer as NewDeveloper
-from agents.developer_backend.agent import DeveloperBackend
-from agents.developer_frontend.agent import DeveloperFrontend
 from agents.qa_engineer.agent import QAEngineer
 from agents.debug_agent.agent import DebugAgent
 from agents.schema_agent.agent import SchemaAgent
-from agents.backend_agent.agent import BackendAgent
-from agents.frontend_agent.agent import FrontendAgent
-from agents.ui_ux_specialist.agent import UiUxSpecialist
 from agents.alignment_semantic.agent import AlignmentSemanticAgent
 from agents.requirement_engine.agent import RequirementEngineAgent
 from agents.requirement_challenger.agent import RequirementChallenger
@@ -65,40 +57,6 @@ def main():
             agent = ArtifactRepairAgent(project_id)
             result = agent.process(payload)
 
-        elif agent_name == "architect":
-            requirements = payload.get("requirements")
-            if not requirements: raise ValueError("Faltando 'requirements' para o architect.")
-            project_context = payload.get("project_context")
-            agent = Architect(project_id)
-            result = agent.process(idea, requirements, project_context=project_context)
-
-        elif agent_name == "implementation_autonomous_agent":
-            implementation_manifest = payload.get("implementation_manifest")
-            technical_spec = payload.get("technical_spec")
-            if not implementation_manifest or not technical_spec:
-                raise ValueError("Faltando 'implementation_manifest' ou 'technical_spec' para o implementation_autonomous_agent.")
-            agent = ImplementationAutonomousAgent(project_id)
-            result = agent.process(payload)
-
-        elif agent_name == "developer":
-            architecture = payload.get("architecture")
-            if not architecture: raise ValueError("Faltando 'architecture' para o developer.")
-            agent = NewDeveloper(project_id)
-            result = agent.process(idea, architecture) # Retorna um dicionário
-
-        elif agent_name == "developer_backend":
-            architecture = payload.get("architecture")
-            if not architecture: raise ValueError("Faltando 'architecture' para o developer_backend.")
-            agent = DeveloperBackend(project_id)
-            result = agent.process(idea, architecture)
-
-        elif agent_name == "developer_frontend":
-            architecture = payload.get("architecture")
-            if not architecture: raise ValueError("Faltando 'architecture' para o developer_frontend.")
-            backend_output = payload.get("developer_backend_output")
-            agent = DeveloperFrontend(project_id)
-            result = agent.process(idea, architecture, backend_output)
-
         elif agent_name == "qa_engineer":
             developer_output = payload.get("developer_output")
             if not developer_output or 'code' not in developer_output:
@@ -136,15 +94,6 @@ def main():
             result = agent.process(payload)
         elif agent_name == "schema_agent":
             agent = SchemaAgent(project_id)
-            result = agent.process(payload)
-        elif agent_name == "backend_agent":
-            agent = BackendAgent(project_id)
-            result = agent.process(payload)
-        elif agent_name == "frontend_agent":
-            agent = FrontendAgent(project_id)
-            result = agent.process(payload)
-        elif agent_name == "ui_ux_specialist":
-            agent = UiUxSpecialist(project_id)
             result = agent.process(payload)
         elif agent_name == "alignment_semantic":
             agent = AlignmentSemanticAgent()

@@ -20,7 +20,6 @@ import {
   createTask,
   getApiErrorMessage,
   getProjectArchitectureStatus,
-  generateProjectArchitecture,
   listProjectTasks,
   runTaskImplementation,
   runTaskQa,
@@ -468,21 +467,6 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
     }
   }
 
-  async function handleGenerateArchitecture() {
-    if (!projectUuid) return;
-
-    setGeneratingArchitecture(true);
-    setError(null);
-    try {
-      await generateProjectArchitecture(projectUuid);
-      await refreshBoard();
-    } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'Não foi possível gerar a arquitetura do projeto.'));
-    } finally {
-      setGeneratingArchitecture(false);
-    }
-  }
-
   function handleOpenCodeStudio(taskUuid) {
     navigate(`/code-studio?project=${projectUuid}&task=${taskUuid}`);
   }
@@ -547,40 +531,19 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
         <div className="dashboard-panel-header">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Gate de arquitetura</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Gate do fluxo ativo</p>
               <p className="mt-2 text-sm text-slate-700">
-                {architectureStatus?.canGenerateCode
-                  ? 'Todas as histórias refinadas e a arquitetura estão prontas. A implementação por task foi liberada.'
-                  : architectureStatus?.blockers?.[0] || 'Refine todas as histórias para liberar a arquitetura do projeto.'}
+                O produto principal continua focado em briefing, refinamento de requisitos e validação de QA.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <span className="dashboard-badge bg-slate-100 text-slate-600">
-                  {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0} histórias refinadas
+                  {storyTasks.length} histórias no board
                 </span>
-                <span
-                  className={`dashboard-badge ${
-                    architectureStatus?.hasArchitecture && !architectureStatus?.architectureNeedsRefresh
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : 'bg-amber-50 text-amber-700'
-                  }`}
-                >
-                  {architectureStatus?.hasArchitecture
-                    ? architectureStatus?.architectureNeedsRefresh
-                      ? 'Arquitetura desatualizada'
-                      : 'Arquitetura pronta'
-                    : 'Arquitetura pendente'}
+                <span className="dashboard-badge bg-emerald-50 text-emerald-700">
+                  Fluxo PM + Requirements + QA
                 </span>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleGenerateArchitecture}
-              disabled={saving || generatingArchitecture || !architectureStatus?.canGenerateArchitecture}
-              className="dashboard-button-primary w-full lg:w-auto"
-              title={!architectureStatus?.canGenerateArchitecture ? architectureStatus?.blockers?.[0] : undefined}
-            >
-              {generatingArchitecture ? 'Gerando arquitetura...' : 'Gerar arquitetura'}
-            </button>
           </div>
         </div>
 

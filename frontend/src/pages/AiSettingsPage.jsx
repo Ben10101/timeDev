@@ -20,8 +20,6 @@ const EMPTY_SETTINGS = {
     project_manager: 'PM Agent',
     requirements_analyst: 'Requirements Agent',
     qa_engineer: 'QA Agent',
-    architect: 'Architect Agent',
-    developer: 'Developer Agent',
     implementation_architect: 'UI Agent',
   },
   ollama: { enabled: true, host: 'http://127.0.0.1:11434', model: 'gemma3:4b' },
@@ -401,26 +399,6 @@ export default function AiSettingsPage() {
                     agentAliases: { ...current.agentAliases, qa_engineer: event.target.value },
                   }))}
                   placeholder="QA Agent"
-                />
-              </Field>
-              <Field label="Architect">
-                <TextInput
-                  value={settings.agentAliases?.architect || ''}
-                  onChange={(event) => setSettings((current) => ({
-                    ...current,
-                    agentAliases: { ...current.agentAliases, architect: event.target.value },
-                  }))}
-                  placeholder="Architect Agent"
-                />
-              </Field>
-              <Field label="Developer">
-                <TextInput
-                  value={settings.agentAliases?.developer || ''}
-                  onChange={(event) => setSettings((current) => ({
-                    ...current,
-                    agentAliases: { ...current.agentAliases, developer: event.target.value },
-                  }))}
-                  placeholder="Developer Agent"
                 />
               </Field>
               <Field label="UI de Implementacao">

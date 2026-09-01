@@ -1,35 +1,34 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/authMiddleware.js';
 import {
-  bootstrapController,
-  createTaskArtifactController,
-  repairTaskArtifactController,
-  reviewTaskArtifactController,
-  createProjectController,
-  createTaskCommentController,
-  createTaskController,
-  approveProjectArchitectureController,
-  addProjectMemberController,
-  ensurePipelineProjectController,
-  generateProjectArchitectureController,
-  generateProjectBacklogController,
-  getProjectController,
-  getProjectArchitectureStatusController,
-  getProjectDocumentationBundleController,
-  getWorkspaceTeamSummaryController,
-  getTaskController,
-  importBacklogTasksController,
-  publishBacklogTasksController,
-  updateBacklogStoryController,
-  listProjectsController,
-  listProjectTasksController,
-  listAllTasksController,
-  deleteProjectController,
-  removeProjectMemberController,
-  updateProjectMemberController,
-  updateProjectBriefController,
-  updateProjectStatusController,
-  updateTaskController,
+    bootstrapController,
+    createTaskArtifactController,
+    repairTaskArtifactController,
+    reviewTaskArtifactController,
+    createProjectController,
+    createTaskCommentController,
+    createTaskController,
+    approveProjectArchitectureController,
+    addProjectMemberController,
+    ensurePipelineProjectController,
+    generateProjectBacklogController,
+    getProjectController,
+    getProjectArchitectureStatusController,
+    getProjectDocumentationBundleController,
+    getWorkspaceTeamSummaryController,
+    getTaskController,
+    importBacklogTasksController,
+    publishBacklogTasksController,
+    updateBacklogStoryController,
+    listProjectsController,
+    listProjectTasksController,
+    listAllTasksController,
+    deleteProjectController,
+    removeProjectMemberController,
+    updateProjectMemberController,
+    updateProjectBriefController,
+    updateProjectStatusController,
+    updateTaskController,
 } from '../controllers/projectDataController.js';
 
 const router = Router();
@@ -53,7 +52,6 @@ router.post('/projects/:projectUuid/architecture/approve', approveProjectArchite
 router.get('/projects/:projectUuid/tasks', listProjectTasksController);
 router.get('/tasks', listAllTasksController);
 router.post('/projects/:projectUuid/generate-backlog', generateProjectBacklogController);
-router.post('/projects/:projectUuid/generate-architecture', generateProjectArchitectureController);
 router.post('/projects/:projectUuid/import-backlog', importBacklogTasksController);
 router.post('/projects/:projectUuid/publish-backlog', publishBacklogTasksController);
 router.patch('/projects/:projectUuid/backlog-stories/:storyId', updateBacklogStoryController);
