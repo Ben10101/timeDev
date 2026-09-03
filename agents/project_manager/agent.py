@@ -1757,7 +1757,10 @@ Gere APENAS esta secao em Markdown:
             "temperature": 0.1,
             "num_predict": int(num_predict),
             "request_timeout_seconds": request_timeout,
-            "transient_retries": 0,
+            # Retry once when the provider sends an empty/tiny completion.
+            # Timeouts still never retry in the router, so a stalled request
+            # cannot double the batch latency.
+            "transient_retries": 1,
         }
         if min_response_chars:
             options["min_response_chars"] = int(min_response_chars)
@@ -3550,35 +3553,6 @@ REGRAS
                 seen_intents[intent] = index
         return issues
 
-    def _repair_epic_story_quality(self, execution_context, story_blocks):
-        """Replace only malformed or duplicated stories, preserving valid batches."""
-        repaired = list(story_blocks)
-        for index, reason in self._epic_story_quality_issues(repaired):
-            current = repaired[index]
-            accepted_titles = "\n".join(
-                f"- {self._story_seed_title(block)}"
-                for position, block in enumerate(repaired)
-                if position != index
-            )
-            print(json.dumps({
-                "event": "project_manager_story_quality_repair_started",
-                "story_index": index + 1,
-                "reason": reason,
-            }, ensure_ascii=False), file=sys.stderr)
-            replacement = self._generate_thematic_stories(
-                f"{execution_context}\n\nHISTORIAS ACEITAS (NAO REPITA):\n{accepted_titles}",
-                f"Reparo da historia {index + 1}",
-                (
-                    "Substitua somente a historia abaixo por uma historia de usuario distinta e utilizavel. "
-                    "Use uma persona humana, nao use 'Como sistema', e escreva uma descricao contextual propria. "
-                    f"Motivo do reparo: {reason}. Historia a substituir: {current}"
-                ),
-                target_range=(1, 1),
-            )
-            if replacement:
-                repaired[index] = replacement[0]
-        return repaired
-
     def _build_epic_backlog_contract(self, story_blocks, capabilities):
         """Attach deterministic planning metadata to the Markdown backlog."""
         evidence = self._build_evidence_contract(getattr(self, "_current_idea", ""))
@@ -4057,15 +4031,10 @@ Gere apenas user stories em Markdown.
         quality_issues = self._epic_story_quality_issues(story_blocks)
         if quality_issues:
             print(json.dumps({
-                "event": "project_manager_story_quality_repair_plan",
+                "event": "project_manager_story_quality_advisories",
                 "issue_count": len(quality_issues),
                 "reasons": [reason for _, reason in quality_issues],
             }, ensure_ascii=False), file=sys.stderr)
-            story_blocks = self._repair_epic_story_quality(execution_context, story_blocks)
-            remaining_issues = self._epic_story_quality_issues(story_blocks)
-            if remaining_issues:
-                reasons = ", ".join(reason for _, reason in remaining_issues)
-                raise RuntimeError(f"Curadoria do backlog encontrou historias invalidas apos reparo: {reasons}.")
         if len(story_blocks) < required_story_count:
             raise RuntimeError(
                 f"Blocos por epico geraram {len(story_blocks)} historias; minimo esperado: {required_story_count}."

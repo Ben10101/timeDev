@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import sys
 
 from agents.developer.llm_service import generate_text_from_llm, is_error_text_response
 
@@ -70,8 +71,21 @@ RESPOSTAS DO USUARIO (use somente como contexto confirmado para atualizar a prop
         if not result or is_error_text_response(result):
             raise RuntimeError('Agente de revisao nao retornou uma resposta valida.')
         review = parse_first_json_object(result)
-        if not isinstance(review, dict) or review.get('story_id') != story.get('id'):
-            raise ValueError('Resposta de revisao sem story_id correspondente.')
+        if not isinstance(review, dict):
+            raise ValueError('Agente de revisao retornou um objeto invalido.')
+
+        # The controller sends exactly one target story.  A model may omit the
+        # identifier or echo the example "..." from the schema; neither case
+        # changes the target selected by the authenticated request.
+        expected_story_id = str(story['id'])
+        received_story_id = str(review.get('story_id') or '').strip()
+        if received_story_id != expected_story_id:
+            print(json.dumps({
+                'event': 'story_reviewer_story_id_normalized',
+                'expected_story_id': expected_story_id,
+                'received_story_id': received_story_id or None,
+            }, ensure_ascii=False), file=sys.stderr)
+        review['story_id'] = expected_story_id
         review['questions'] = review.get('questions') if isinstance(review.get('questions'), list) else []
         review['requires_confirmation'] = True
         return review

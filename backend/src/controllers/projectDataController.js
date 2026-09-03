@@ -75,6 +75,21 @@ function normalizeBacklogStoryForReview(story = {}) {
   };
 }
 
+function mergeReviewAnswers(storedAnswers, submittedAnswers) {
+  const answerKey = (item = {}) => String(item.id || item.question || '').trim().toLowerCase();
+  const normalize = (values) => (Array.isArray(values) ? values : [])
+    .map((item) => ({
+      id: String(item?.id || '').trim(),
+      question: String(item?.question || '').trim(),
+      answer: String(item?.answer || '').trim(),
+    }))
+    .filter((item) => item.answer && answerKey(item));
+  const merged = new Map();
+  normalize(storedAnswers).forEach((item) => merged.set(answerKey(item), item));
+  normalize(submittedAnswers).forEach((item) => merged.set(answerKey(item), item));
+  return [...merged.values()].slice(0, 20);
+}
+
 function extractMarkdownSection(content, sectionTitle) {
   const normalized = compactWhitespace(content);
   if (!normalized) return '';
@@ -691,6 +706,7 @@ export async function reviewBacklogStoryController(req, res, next) {
     const storedStory = stories.find((item) => String(item?.id) === String(req.params.storyId));
     if (!storedStory) return res.status(404).json({ message: 'Story não encontrada.' });
     const story = normalizeBacklogStoryForReview(storedStory);
+    const reviewAnswers = mergeReviewAnswers(storedStory.reviewAnswers, req.body?.answers);
     if (!story.id || !story.title) {
       return res.status(422).json({ message: 'A story precisa ter um objetivo ou título antes da revisão.' });
     }
@@ -708,7 +724,7 @@ export async function reviewBacklogStoryController(req, res, next) {
       backlog_contract: contract,
       other_stories: stories.filter((item) => String(item?.id) !== String(story.id)).slice(0, 30),
       story,
-      review_answers: Array.isArray(req.body?.answers) ? req.body.answers.slice(0, 20) : [],
+      review_answers: reviewAnswers,
     }, { envOverrides });
     res.status(200).json(serializeBigInts({ success: true, review: result }));
   } catch (error) { next(error); }

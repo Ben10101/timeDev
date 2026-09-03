@@ -98,6 +98,10 @@ def _transient_retry_delay(error: Exception, retry_number: int) -> float | None:
             r"server overload|service overloaded|temporarily overloaded",
             message,
         ))
+        or bool(re.search(
+            r"resposta curta para contrato estruturado|resposta vazia ou inv[aá]lida",
+            message,
+        ))
     )
     if not is_transient:
         return None
