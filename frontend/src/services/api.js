@@ -279,6 +279,11 @@ export async function analyzeAlignment(input) {
   return response.data
 }
 
+export async function getPipelineQualityOverview(params = {}) {
+  const response = await apiClient.get('/observability/pipeline-quality', { params })
+  return response.data
+}
+
 export async function submitAlignmentClarifications(sessionUuid, answers) {
   const response = await apiClient.post(`/alignment/sessions/${sessionUuid}/clarifications`, { answers })
   return response.data
@@ -536,6 +541,7 @@ export default {
   getProductionReadiness,
   getAuditTrail,
   getGovernanceOverview,
+  getPipelineQualityOverview,
   getOperationalHistory,
   getActiveAlerts,
   analyzeAlignment,

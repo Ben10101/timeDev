@@ -1,1 +1,0 @@
-export * from './contracts/event-follow-up-notes'

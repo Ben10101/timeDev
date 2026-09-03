@@ -55,6 +55,13 @@ DEFAULT_PROVIDER_MODELS = {
     "ollama": ("OLLAMA_MODEL", "gemma3:4b"),
 }
 
+# A second Gemini model is useful when a newly released Flash endpoint is
+# temporarily saturated. This remains within the provider selected by the user
+# and can be overridden through GEMINI_MODEL_FALLBACK.
+DEFAULT_PROVIDER_MODEL_FALLBACKS = {
+    "gemini": ("GEMINI_MODEL_FALLBACK", "gemini-3.6-flash"),
+}
+
 _LAST_EXECUTION_METADATA = None
 
 
@@ -75,11 +82,18 @@ def _positive_int_env(name: str, default: int) -> int:
 
 def _transient_retry_delay(error: Exception, retry_number: int) -> float | None:
     """Return a bounded delay for a provider failure that may recover shortly."""
+    # A request timeout means the provider already consumed its full request
+    # budget. Retrying the same model immediately doubles latency and almost
+    # never changes the outcome; continue to the next candidate instead.
+    if isinstance(error, TimeoutError):
+        return None
+
     message = str(error or "").lower()
     is_transient = (
         getattr(error, "retry_after_seconds", None) is not None
         or bool(re.search(
-            r"\b429\b|\b504\b|too many requests|rate.?limit|temporarily unavailable|"
+            r"\b429\b|\b5(?:00|02|03|04)\b|too many requests|rate.?limit|"
+            r"temporarily unavailable|\bunavailable\b|high demand|"
             r"timeout|timed out|deadline\s*exceeded|deadlineexceeded|connection reset|"
             r"server overload|service overloaded|temporarily overloaded",
             message,
@@ -199,11 +213,21 @@ def build_default_registry(env: dict[str, str] | None = None) -> list[ModelDefin
         }
         if model.lower() in {item.lower() for item in invalid_models.get(provider, set())}:
             model = fallback_model
-        models.append(normalize_model_definition({
-            "id": f"{provider}:{model}", "provider": provider, "model": model,
-            "capabilities": sorted(DEFAULT_PROVIDER_CAPABILITIES[provider]), "context_limit": 32768,
-            "enabled": f"{provider}:{model}" not in disabled, "priority": priority,
-        }))
+        candidate_models = [model]
+        fallback_config = DEFAULT_PROVIDER_MODEL_FALLBACKS.get(provider)
+        if fallback_config:
+            fallback_env_key, fallback_default = fallback_config
+            fallback_model = str(source.get(fallback_env_key) or fallback_default).strip()
+            if fallback_model and fallback_model.lower() != model.lower():
+                candidate_models.append(fallback_model)
+
+        for model_offset, candidate_model in enumerate(candidate_models):
+            models.append(normalize_model_definition({
+                "id": f"{provider}:{candidate_model}", "provider": provider, "model": candidate_model,
+                "capabilities": sorted(DEFAULT_PROVIDER_CAPABILITIES[provider]), "context_limit": 32768,
+                "enabled": f"{provider}:{candidate_model}" not in disabled,
+                "priority": priority + model_offset,
+            }))
     return models
 
 
@@ -247,6 +271,9 @@ class ModelRouter:
     def __init__(self, registry: list[ModelDefinition], provider_order: list[str] | None = None, transient_retries: int | None = None):
         self.registry = list(registry)
         self.provider_order = [str(item).strip().lower() for item in (provider_order or []) if str(item).strip()]
+        # A 503 from managed providers is commonly a short demand spike. One
+        # bounded retry leaves room for a configured model fallback instead of
+        # keeping the request on an overloaded endpoint for too long.
         self.transient_retries = _positive_int_env("MODEL_ROUTER_TRANSIENT_RETRIES", 1) if transient_retries is None else max(0, transient_retries)
 
     def select_candidates(self, request: dict[str, Any]) -> list[ModelDefinition]:

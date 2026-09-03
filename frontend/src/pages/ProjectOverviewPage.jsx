@@ -108,6 +108,7 @@ export default function ProjectOverviewPage() {
     || project?.intakeConfig?.backlogContract?.qualityReview
     || null;
   const activeRequirementsContract = requirementsContract || project?.intakeConfig?.backlogContract?.requirementsContract || project?.intakeConfig?.requirementsContract || null;
+  const pmElicitation = project?.intakeConfig?.pmElicitation || project?.intakeConfig?.backlogContract?.elicitation || null;
   const pendingBacklogContract = project?.intakeConfig?.backlogContract;
   const backlogAwaitingApproval = Boolean(pendingBacklogContract?.stories?.length && pendingBacklogContract?.publicationStatus !== 'published');
   const ideaLength = form.idea.trim().length;
@@ -206,14 +207,15 @@ export default function ProjectOverviewPage() {
       setProject(projectData);
       setTasks(taskList);
       const pendingRequirements = projectData?.intakeConfig?.requirementsContract || null;
-      const persistedClarifications = projectData?.intakeConfig?.backlogClarifications || pendingRequirements?.blocking_questions || [];
+      const persistedElicitation = projectData?.intakeConfig?.pmElicitation || null;
+      const persistedClarifications = persistedElicitation?.open_questions || projectData?.intakeConfig?.backlogClarifications || pendingRequirements?.blocking_questions || [];
       setRequirementsContract(projectData?.intakeConfig?.backlogContract?.requirementsContract || pendingRequirements);
       setClarifications(Array.isArray(persistedClarifications) ? persistedClarifications : []);
-      const persistedAnswers = projectData?.intakeConfig?.answers?.clarifications || [];
+      const persistedAnswers = persistedElicitation?.answers || projectData?.intakeConfig?.answers?.clarifications || [];
       const answersByQuestion = Object.fromEntries(
-        (Array.isArray(persistedAnswers) ? persistedAnswers : [])
-          .filter((item) => item?.question && item?.answer)
-          .map((item) => [item.question, item.answer])
+        (Array.isArray(persistedAnswers) ? persistedAnswers : Object.entries(persistedAnswers || {}).map(([id, answer]) => ({ id, answer })))
+          .filter((item) => item?.answer)
+          .map((item) => [item.id || item.question, item.answer])
       );
       setClarificationAnswers(Object.fromEntries(
         (Array.isArray(persistedClarifications) ? persistedClarifications : []).map((item) => [
@@ -268,10 +270,12 @@ export default function ProjectOverviewPage() {
           mainFlows: form.mainFlows,
           constraints: form.constraints,
           clarifications: clarifications.map((item) => ({ question: item.question, answer: clarificationAnswers[item.id] || '' })),
+          elicitationAnswers: Object.fromEntries(clarifications.map((item) => [item.id, clarificationAnswers[item.id] || ''])),
         },
+        elicitation: project?.intakeConfig?.pmElicitation || null,
       });
 
-      if (response.result?.clarification_required) {
+      if (response.result?.clarification_required || response.result?.elicitation_required) {
         const questions = response.result.clarifications || [];
         setClarifications(questions);
         setClarificationAnswers(Object.fromEntries(questions.map((item) => [
@@ -279,6 +283,7 @@ export default function ProjectOverviewPage() {
           clarificationAnswers[item.id] || '',
         ])));
         setRequirementsContract(response.result.requirements_contract || null);
+        setProject(response.project || project);
         setSuccessMessage('O PM Agent precisa de algumas respostas antes de publicar as user stories.');
         return;
       }
@@ -1026,10 +1031,10 @@ export default function ProjectOverviewPage() {
                   <div className="max-w-3xl">
                     <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing do projeto</p>
                     <h3 className="mt-2 text-3xl font-bold text-slate-900">
-                      {clarifications.length ? 'Etapa 2 · Validar decisões de produto' : 'Etapa 1 · Analisar requisitos e gerar user stories'}
+                      {clarifications.length ? 'Descoberta · Validar decisões de maior impacto' : 'Descoberta · Analisar contexto e preparar o backlog'}
                     </h3>
                     <p className="mt-3 text-sm leading-7 text-slate-600">
-                      Descreva o produto com contexto suficiente e o PM Agent transforma isso em user stories acionáveis para o board.
+                      O PM usa os fatos informados, explicita lacunas e pergunta somente o que bloqueia uma decisão de produto antes de sintetizar as stories.
                     </p>
                   </div>
                   <button
@@ -1059,9 +1064,9 @@ export default function ProjectOverviewPage() {
               <div className="grid gap-4 px-6 py-6 lg:grid-cols-2">
                 <div className="lg:col-span-2 grid gap-3 sm:grid-cols-3">
                   {[
-                    ['1', 'Requisitos', activeRequirementsContract?.decision === 'READY' || clarifications.length ? 'Concluído' : 'Em análise'],
-                    ['2', 'Decisões', clarifications.length ? 'Sua ação' : 'Sem bloqueios'],
-                    ['3', 'Backlog', hasGeneratedStories ? 'Publicado' : 'Aguardando'],
+                    ['1', 'Contexto', pmElicitation?.known_facts?.length ? 'Mapeado' : 'Em análise'],
+                    ['2', 'Decisões', clarifications.length ? 'Sua ação' : pmElicitation?.readiness?.decision === 'READY' ? 'Pronto' : 'Sem bloqueios'],
+                    ['3', 'Síntese', hasGeneratedStories ? 'Publicado' : 'Aguardando'],
                   ].map(([step, label, state]) => (
                     <div key={step} className={`rounded-2xl border p-4 ${label === 'Decisões' && clarifications.length ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
                       <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Etapa {step}</p>
@@ -1073,10 +1078,13 @@ export default function ProjectOverviewPage() {
                 {clarifications.length > 0 && (
                   <div className="lg:col-span-2 rounded-2xl border border-amber-200 bg-amber-50 p-5">
                     <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-800">Esclarecimentos necessários</p>
-                    <h4 className="mt-2 text-xl font-bold text-slate-900">Responda antes de gerar as stories</h4>
-                    <p className="mt-2 text-sm leading-6 text-slate-700">As respostas entram no briefing; elas não aparecerão nas user stories finais.</p>
-                    {activeRequirementsContract?.assumptions?.length > 0 && (
-                      <p className="mt-3 text-sm leading-6 text-amber-900">Premissas identificadas: {activeRequirementsContract.assumptions.map((item) => item.text).join(' · ')}</p>
+                    <h4 className="mt-2 text-xl font-bold text-slate-900">Responda às decisões que bloqueiam a síntese</h4>
+                    <p className="mt-2 text-sm leading-6 text-slate-700">Rodada {pmElicitation?.metrics?.rounds || 1}. Suas respostas viram decisões rastreáveis no contexto do PM, não detalhes inventados nas stories.</p>
+                    {typeof pmElicitation?.confidence === 'number' && (
+                      <p className="mt-2 text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">Confiança do contexto: {Math.round(pmElicitation.confidence * 100)}% · {pmElicitation?.metrics?.blocking_questions || 0} bloqueio(s) em aberto</p>
+                    )}
+                    {(pmElicitation?.assumptions || activeRequirementsContract?.assumptions)?.length > 0 && (
+                      <p className="mt-3 text-sm leading-6 text-amber-900">Premissas identificadas: {(pmElicitation?.assumptions || activeRequirementsContract?.assumptions).map((item) => item.text).join(' · ')}</p>
                     )}
                     <div className="mt-5 grid gap-4">
                       {clarifications.map((item) => (

@@ -48,7 +48,11 @@ def main():
         
         if agent_name == "project_manager":
             agent = ProjectManager(project_id)
-            result = agent.process(idea)
+            result = agent.process(
+                idea,
+                elicitation_state=payload.get("elicitation"),
+                elicitation_answers=payload.get("elicitation_answers"),
+            )
         
         elif agent_name == "requirements_analyst":
             backlog = payload.get("backlog")

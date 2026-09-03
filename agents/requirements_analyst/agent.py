@@ -844,6 +844,7 @@ REFINAMENTO:\n{markdown}
                     "temperature": 0.0,
                     "num_predict": 900,
                     "request_timeout_seconds": max(30, int(os.getenv("REQUIREMENTS_REVIEW_TIMEOUT_SECONDS", "45"))),
+                    "transient_retries": 0,
                 },
                 use_cache=False,
                 task="requirements_judge",
@@ -1688,7 +1689,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
         return contract
 
     def _process_with_primary_contract(self, idea, backlog, project_context, expected_contract):
-        max_attempts = max(2, int(os.getenv("REQUIREMENTS_CONTRACT_MAX_RETRIES", "2")))
+        max_attempts = max(1, min(2, int(os.getenv("REQUIREMENTS_CONTRACT_MAX_RETRIES", "1"))))
         timeout = min(45, max(30, int(os.getenv("REQUIREMENTS_LLM_REQUEST_TIMEOUT_SECONDS", "45"))))
         last_reason = "sem detalhes"
         current_contract = None
@@ -1707,7 +1708,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                         "request_timeout_seconds": timeout,
                         # Retry transient gateway/deadline failures through the
                         # configured provider chain, never with synthetic text.
-                        "transient_retries": 1,
+                        "transient_retries": 0,
                     },
                     use_cache=False,
                     task="requirements_analysis",

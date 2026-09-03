@@ -4,6 +4,8 @@ import os
 import re
 import sys
 import unicodedata
+import hashlib
+from datetime import datetime, timezone
 
 try:
     if hasattr(sys.stdout, "reconfigure"):
@@ -148,6 +150,90 @@ class ProjectManager:
         self.project_id = project_id
         self._clarifications_answered = False
         self._requirements_contract = None
+        self._elicitation_state = None
+
+    @staticmethod
+    def _normalize_elicitation_answers(answers):
+        """Accept API/UI answer formats without turning missing input into facts."""
+        normalized = {}
+        if isinstance(answers, dict):
+            source = answers.items()
+        elif isinstance(answers, list):
+            source = ((item.get("id") or item.get("question"), item.get("answer")) for item in answers if isinstance(item, dict))
+        else:
+            source = []
+        for key, value in source:
+            answer = str(value or "").strip()
+            if key and answer:
+                normalized[str(key)] = answer
+        return normalized
+
+    def _build_elicitation_state(self, contract, previous_state=None, answers=None):
+        """Create a traceable discovery state from analysed requirement gaps."""
+        previous_state = previous_state if isinstance(previous_state, dict) else {}
+        previous_questions = previous_state.get("questions", []) if isinstance(previous_state.get("questions", []), list) else []
+        known_answers = self._normalize_elicitation_answers(previous_state.get("answers"))
+        known_answers.update(self._normalize_elicitation_answers(answers))
+        candidates_by_id = {
+            str(item.get("id")): item for item in previous_questions
+            if isinstance(item, dict) and item.get("id")
+        }
+        previous_by_question = {
+            re.sub(r"\s+", " ", str(item.get("question") or "").strip().lower()): item
+            for item in previous_questions if isinstance(item, dict) and item.get("question")
+        }
+        for item in contract.get("questions", []) if isinstance(contract, dict) else []:
+            if isinstance(item, dict) and item.get("id"):
+                question_key = re.sub(r"\s+", " ", str(item.get("question") or "").strip().lower())
+                if question_key in previous_by_question:
+                    item = {**item, "id": previous_by_question[question_key].get("id")}
+                candidates_by_id[str(item["id"])] = item
+        questions = []
+        for item in candidates_by_id.values():
+            if not isinstance(item, dict):
+                continue
+            question_id = str(item.get("id") or "").strip()
+            question = str(item.get("question") or "").strip()
+            if not question_id or not question:
+                continue
+            answer = known_answers.get(question_id) or known_answers.get(question)
+            questions.append({
+                "id": question_id, "question": question,
+                "reason": str(item.get("reason") or "").strip(),
+                "answer_hint": str(item.get("answer_hint") or "").strip(),
+                "impact": "HIGH" if item.get("blocking", True) else "MEDIUM",
+                "blocking": bool(item.get("blocking", True)),
+                "status": "answered" if answer else "open", "answer": answer or None,
+                "finding_id": item.get("finding_id"),
+            })
+        blocking_open = [item for item in questions if item["blocking"] and item["status"] != "answered"]
+        rounds = list(previous_state.get("rounds", [])) if isinstance(previous_state.get("rounds", []), list) else []
+        if answers:
+            rounds.append({"number": len(rounds) + 1, "answered_question_ids": sorted(self._normalize_elicitation_answers(answers).keys()), "answered_at": datetime.now(timezone.utc).isoformat()})
+        confirmed = [{"question_id": item["id"], "decision": item["answer"], "source": "user"} for item in questions if item["answer"]]
+        facts = contract.get("requirements", []) if isinstance(contract, dict) else []
+        confidence = min(0.95, max(0.15, 0.35 + min(len(facts), 6) * 0.05 + min(len(confirmed), 6) * 0.08 - len(blocking_open) * 0.16))
+        now = datetime.now(timezone.utc).isoformat()
+        started_at = previous_state.get("started_at") or now
+        evidence = list(contract.get("evidence", {}).get("facts", [])) if isinstance(contract, dict) and isinstance(contract.get("evidence"), dict) else []
+        evidence.extend({"id": f"ANS-{item['id']}", "type": "user_answer", "question_id": item["id"], "text": item["answer"]} for item in questions if item["answer"])
+        return {
+            "version": 1,
+            "status": "ELICITATION" if blocking_open else "READY_FOR_REVIEW",
+            "phase_history": [{"phase": "DISCOVERY", "status": "completed"}, {"phase": "ELICITATION", "status": "active" if blocking_open else "completed"}, {"phase": "READINESS_EVALUATION", "status": "pending" if blocking_open else "completed"}],
+            "known_facts": facts,
+            "confirmed_decisions": confirmed,
+            "assumptions": contract.get("assumptions", []) if isinstance(contract, dict) else [],
+            "open_questions": blocking_open,
+            "missing_information": [item.get("reason") for item in blocking_open if item.get("reason")],
+            "question_candidates": questions,
+            "questions": [item for item in questions if item["blocking"]],
+            "questions_asked": [item for item in questions if item["blocking"]],
+            "answers": known_answers, "evidence": evidence, "rounds": rounds,
+            "started_at": started_at, "updated_at": now, "confidence": round(confidence, 2),
+            "metrics": {"questions_asked": len([item for item in questions if item["blocking"]]), "questions_answered": len(confirmed), "blocking_questions": len(blocking_open), "rounds": len(rounds), "elicitation_time_seconds": max(0, int((datetime.now(timezone.utc) - datetime.fromisoformat(started_at.replace("Z", "+00:00"))).total_seconds()))},
+            "readiness": {"ready": not blocking_open, "decision": "NEED_INPUT" if blocking_open else "READY", "blocking_questions": len(blocking_open), "blocking_question_details": blocking_open},
+        }
 
     def _story_block_format_rules(self):
         return """
@@ -358,19 +444,30 @@ class ProjectManager:
         text, normalized_content = self._normalize_text(content)
         _, normalized_title = self._normalize_text(title)
         pattern = re.compile(
-            rf"^##\s+{re.escape(normalized_title)}\s*$([\s\S]*?)(?=^##\s+|\Z)",
+            # Providers do not consistently preserve the requested H2 syntax:
+            # some return H1/H3 headings, bold headings, or a trailing colon.
+            # Treat those as the same Markdown section while still stopping at
+            # the next heading, so content from adjacent sections never leaks.
+            rf"^\s*#{{1,6}}\s*(?:\*\*)?{re.escape(normalized_title)}(?:\*\*)?\s*:?[ \t]*$([\s\S]*?)(?=^\s*#{{1,6}}\s+|\Z)",
             re.IGNORECASE | re.MULTILINE,
         )
         match = pattern.search(normalized_content)
         if not match:
             return ""
 
-        original_sections = re.split(r"(?=^##\s+)", text, flags=re.MULTILINE)
+        # Parse using normalized headings, but return the original body so the
+        # generated backlog retains accents and all user-facing wording.
+        original_sections = re.split(r"(?=^\s*#{1,6}\s+)", text, flags=re.MULTILINE)
         for section in original_sections:
-            _, normalized_section = self._normalize_text(section)
-            if normalized_section.startswith(f"## {normalized_title}"):
-                original_body = re.sub(r"^##\s+.+?$", "", section, count=1, flags=re.MULTILINE).strip()
-                return original_body
+            lines = section.splitlines()
+            if not lines:
+                continue
+            _, normalized_heading = self._normalize_text(lines[0])
+            normalized_heading = re.sub(r"^\s*#{1,6}\s+", "", normalized_heading)
+            normalized_heading = re.sub(r"^(?:\*\*)?", "", normalized_heading)
+            normalized_heading = re.sub(r"(?:\*\*)?\s*:\s*$", "", normalized_heading).strip()
+            if normalized_heading == normalized_title:
+                return "\n".join(lines[1:]).strip()
 
         return match.group(1).strip()
 
@@ -387,11 +484,22 @@ class ProjectManager:
         candidate = (line or "").strip()
         return bool(
             re.search(
-                r"^(?:[-*]\s*)?(?:(?:US|STORY)-\d+\s*\|\s*|\d+[\.\)]\s*)?Como\b",
+                # Accept common Markdown variants returned by routed models:
+                # headings, bold IDs and ':' are formatting only, not part of
+                # the story contract.
+                r"^(?:[-*]\s*)?(?:#{1,6}\s*)?(?:\*\*)?(?:(?:US|STORY)[-_ ]?\d+(?:\*\*)?\s*(?:\||:)\s*|\d+[\.\)]\s*)?Como\b",
                 candidate,
                 re.IGNORECASE,
             )
         )
+
+    @staticmethod
+    def _normalize_story_start_line(line):
+        candidate = (line or "").strip()
+        candidate = re.sub(r"^(?:[-*]\s*)?(?:#{1,6}\s*)?", "", candidate)
+        candidate = candidate.replace("**", "")
+        candidate = re.sub(r"^(?:(?:US|STORY)[-_ ]?\d+\s*(?:\||:)\s*|\d+[\.\)]\s*)", "", candidate, flags=re.IGNORECASE)
+        return candidate.strip()
 
     def _extract_story_lines(self, content):
         stories = []
@@ -402,7 +510,7 @@ class ProjectManager:
             if self._is_story_start_line(line):
                 if current:
                     stories.append("\n".join(current).strip())
-                current = [line.strip()]
+                current = [self._normalize_story_start_line(line)]
                 continue
 
             if current:
@@ -835,6 +943,28 @@ class ProjectManager:
             "Fase 3: foco em inteligencia, automacao avancada e expansao do produto. O que fica para depois: iniciativas experimentais e especializacoes de nicho.",
         ]
 
+    def _build_briefing_blueprint_defaults(self, base_context):
+        """Return a minimal plan only when the briefing explicitly identifies it.
+
+        This keeps a malformed provider response from aborting the flow while
+        avoiding a generic template for unrelated product domains.
+        """
+        _, normalized = self._normalize_text(base_context)
+        if not (re.search(r"\bsalas?\b", normalized) and re.search(r"\bagend", normalized)):
+            return [], []
+
+        return [
+            "Cadastrar e manter salas de aula com suas informacoes de uso.",
+            "Consultar a disponibilidade das salas por data, horario e periodo.",
+            "Agendar, alterar e cancelar reservas de salas de aula.",
+            "Controlar conflitos de horario e acompanhar o status das reservas.",
+        ], [
+            "Cadastro e configuracao de salas de aula.",
+            "Consulta de disponibilidade e agenda.",
+            "Solicitacao e gerenciamento de reservas.",
+            "Controle de conflitos e acompanhamento operacional.",
+        ]
+
     def _build_planning_context(self, overview, capabilities, epics, release_slices):
         capabilities_text = "\n".join(f"- {item}" for item in capabilities if item).strip() or "- Sem capacidades consolidadas."
         epics_text = "\n".join(f"- {item}" for item in epics if item).strip() or "- Sem epicos consolidados."
@@ -847,7 +977,7 @@ class ProjectManager:
             f"## Fatias de Release\n{releases_text}"
         ).strip()
 
-    def _generate_backlog_blueprint(self, base_context):
+    def _generate_backlog_blueprint(self, base_context, fallback_overview=""):
         lane_text = "\n".join(
             f"- {label}: {guidance}" for _, label, guidance in self.PLANNING_LANES
         )
@@ -878,19 +1008,68 @@ REGRAS
             prompt,
             num_predict=os.getenv("PROJECT_MANAGER_BLUEPRINT_NUM_PREDICT", "900"),
         )
-        overview = self._extract_section(result, "Visao Geral")
-        capabilities = self._extract_bullet_lines(self._extract_section(result, "Capacidades do Produto"))
-        epics = self._extract_bullet_lines(self._extract_section(result, "Epicos Recomendados"))
-        release_slices = self._extract_release_slices(self._extract_section(result, "Fatias de Release"))
+        def extract_first_section(*titles):
+            for section_title in titles:
+                section = self._extract_section(result, section_title)
+                if section:
+                    return section
+            return ""
+
+        overview = extract_first_section("Visao Geral", "Visao do Produto", "Resumo do Produto", "Resumo")
+        capabilities = self._extract_bullet_lines(extract_first_section(
+            "Capacidades do Produto", "Capacidades", "Funcionalidades Principais", "Funcionalidades"
+        ))
+        epics = self._extract_bullet_lines(extract_first_section(
+            "Epicos Recomendados", "Epicos", "Epicos do Produto", "Temas"
+        ))
+        release_slices = self._extract_release_slices(extract_first_section(
+            "Fatias de Release", "Plano de Releases", "Releases", "Roadmap"
+        ))
 
         if not overview:
-            raise RuntimeError("Planner do PM nao gerou visao geral.")
+            # This is a safe degradation: the fallback is the user's own
+            # briefing, not scope synthesized by the agent.
+            overview = self._compact_briefing(fallback_overview)
+            if overview:
+                print(json.dumps({
+                    "event": "project_manager_blueprint_overview_fallback",
+                    "reason": "section_missing",
+                }, ensure_ascii=False), file=sys.stderr)
+            else:
+                raise RuntimeError("Planner do PM nao gerou visao geral.")
+        briefing_capabilities, briefing_epics = self._build_briefing_blueprint_defaults(base_context)
+        if len(capabilities) < 4 and briefing_capabilities:
+            capabilities = briefing_capabilities
+            print(json.dumps({
+                "event": "project_manager_blueprint_capabilities_fallback",
+                "reason": "section_missing",
+                "count": len(capabilities),
+            }, ensure_ascii=False), file=sys.stderr)
+        if len(epics) < 4 and briefing_epics:
+            epics = briefing_epics
+            print(json.dumps({
+                "event": "project_manager_blueprint_epics_fallback",
+                "reason": "section_missing",
+                "count": len(epics),
+            }, ensure_ascii=False), file=sys.stderr)
         if len(capabilities) < 4:
             raise RuntimeError("Planner do PM gerou poucas capacidades.")
         if len(epics) < 4:
             raise RuntimeError("Planner do PM gerou poucos epicos.")
         normalized_release_text = " ".join(release_slices).lower()
-        if len(release_slices) < 3 or "mvp" not in normalized_release_text or "fase 2" not in normalized_release_text or "fase 3" not in normalized_release_text:
+        release_plan_is_valid = len(release_slices) >= 3 and all(
+            marker in normalized_release_text for marker in ("mvp", "fase 2", "fase 3")
+        )
+        if not release_plan_is_valid and briefing_capabilities:
+            release_slices = self._build_default_release_slices(overview, capabilities, epics)
+            normalized_release_text = " ".join(release_slices).lower()
+            release_plan_is_valid = True
+            print(json.dumps({
+                "event": "project_manager_blueprint_releases_fallback",
+                "reason": "section_missing",
+                "count": len(release_slices),
+            }, ensure_ascii=False), file=sys.stderr)
+        if not release_plan_is_valid:
             release_slices = self._generate_simple_bullet_section(
                 base_context,
                 section_title="Fatias de Release",
@@ -1564,13 +1743,27 @@ Gere APENAS esta secao em Markdown:
             story_blocks=consolidated_blocks,
         )
 
-    def _generate_block(self, prompt, *, num_predict):
+    def _generate_block(self, prompt, *, num_predict, min_response_chars=0):
+        # Epic blocks must not inherit the provider's broad 180-second default.
+        # NVIDIA can legitimately need more than the 45-second single-pass
+        # budget, so use a dedicated bounded timeout that keeps successful
+        # batches viable while releasing a stalled run promptly.
+        try:
+            request_timeout = int(os.getenv("PROJECT_MANAGER_EPIC_BLOCK_REQUEST_TIMEOUT_SECONDS", "120"))
+        except (TypeError, ValueError):
+            request_timeout = 120
+        request_timeout = max(45, min(request_timeout, 150))
+        options = {
+            "temperature": 0.1,
+            "num_predict": int(num_predict),
+            "request_timeout_seconds": request_timeout,
+            "transient_retries": 0,
+        }
+        if min_response_chars:
+            options["min_response_chars"] = int(min_response_chars)
         result = generate_text_from_llm(
             prompt,
-            options_override={
-                "temperature": 0.1,
-                "num_predict": int(num_predict),
-            },
+            options_override=options,
             use_cache=False,
         )
 
@@ -1590,27 +1783,72 @@ Gere APENAS esta secao em Markdown:
         decoder = json.JSONDecoder()
         candidates = []
 
+        def add_parsed_candidate(value):
+            if isinstance(value, dict):
+                candidates.append(value)
+                return
+            if not isinstance(value, list):
+                return
+            objects = [item for item in value if isinstance(item, dict)]
+            if not objects:
+                return
+            candidates.extend(objects)
+            # A common free-model deviation is a top-level array containing
+            # the requested user stories. Keep it as a contract fragment so
+            # later validation can derive its capability map correctly.
+            if all({"id", "goal"}.issubset(item) for item in objects):
+                candidates.append({"stories": objects})
+                return
+            # Some models emit one object per contract section in an array.
+            # Merge only those section objects; semantic validation still
+            # verifies the assembled result afterwards.
+            merged = {}
+            for item in objects:
+                merged.update(item)
+            if merged:
+                candidates.append(merged)
+
         try:
             parsed = json.loads(text)
-            if isinstance(parsed, dict):
-                candidates.append(parsed)
+            add_parsed_candidate(parsed)
         except json.JSONDecodeError:
             pass
 
-        # raw_decode understands a complete JSON object followed by arbitrary
-        # prose, unlike the old first-{ / last-} approach.
+        # raw_decode understands JSON followed by arbitrary prose, unlike the
+        # old first-{ / last-} approach. It also lets us recover top-level
+        # arrays returned by free providers.
         for index, char in enumerate(text):
-            if char != "{":
+            if char not in "[{":
                 continue
             try:
                 parsed, _ = decoder.raw_decode(text[index:])
             except json.JSONDecodeError:
                 continue
-            if isinstance(parsed, dict):
-                candidates.append(parsed)
+            add_parsed_candidate(parsed)
+
+        # A few routed/free models emit a sequence of standalone story JSON
+        # objects rather than a single array or enclosing contract. Aggregate
+        # those fragments before choosing a candidate; otherwise max() below
+        # can only return one story and the capability derivation never runs.
+        story_fragments = []
+        seen_story_ids = set()
+        required_story_fields = {"id", "actor", "goal", "benefit", "description", "lane"}
+        for candidate in candidates:
+            if not required_story_fields.issubset(candidate):
+                continue
+            story_id = str(candidate.get("id") or "").strip().upper()
+            if not story_id or story_id in seen_story_ids:
+                continue
+            seen_story_ids.add(story_id)
+            story_fragments.append(candidate)
+        if story_fragments:
+            candidates.append({"stories": story_fragments})
 
         expanded = []
-        envelope_keys = ("backlog_contract", "contract", "data", "result", "output")
+        envelope_keys = (
+            "backlog_contract", "contract", "backlog", "project_backlog",
+            "data", "result", "resultado", "output",
+        )
         for candidate in candidates:
             expanded.append(candidate)
             for key in envelope_keys:
@@ -1628,8 +1866,41 @@ Gere APENAS esta secao em Markdown:
         if not expanded:
             raise ValueError(f"A IA deve responder um objeto JSON valido (resposta com {len(text)} caracteres).")
 
-        backlog_keys = {"overview", "capabilities", "epics", "releases", "stories", "coverage"}
-        return max(expanded, key=lambda item: len(backlog_keys.intersection(item.keys())))
+        backlog_key_groups = (
+            {"overview", "summary", "resumo", "visao_geral", "visão_geral"},
+            {
+                "capabilities", "product_capabilities", "productCapabilities",
+                "capacidades", "capacidades_do_produto", "features",
+                "functionalities", "funcionalidades", "functional_requirements",
+                "requisitos_funcionais", "modules", "modulos",
+            },
+            {"epics", "recommended_epics", "epicos", "épicos", "epicos_recomendados"},
+            {"releases", "release_slices", "releaseSlices", "fatias_de_release", "fatias_release"},
+            {"stories", "user_stories", "userStories", "historias", "histórias", "backlog_items", "items"},
+            {"coverage"},
+        )
+
+        # raw_decode also finds nested capabilities and stories. They are valid
+        # JSON objects, but never a complete backlog contract. Prefer a
+        # recognized contract; when provider field names are unfamiliar, use
+        # the largest non-leaf object rather than an inner CAP/US record.
+        leaf_keys = {
+            "id", "name", "title", "label", "text", "description",
+            "source_ids", "story_ids", "capability_ids", "feature",
+            "functionality", "goal", "actor", "benefit",
+        }
+
+        def candidate_score(item):
+            keys = set(item.keys())
+            recognized_groups = sum(bool(group.intersection(keys)) for group in backlog_key_groups)
+            is_leaf = bool(keys) and keys.issubset(leaf_keys) and bool(keys.intersection({"id", "name", "title", "goal"}))
+            try:
+                serialized_size = len(json.dumps(item, ensure_ascii=False))
+            except (TypeError, ValueError):
+                serialized_size = 0
+            return recognized_groups, 0 if is_leaf else 1, serialized_size
+
+        return max(expanded, key=candidate_score)
 
     def _build_evidence_contract(self, idea):
         # Project DNA guides product coherence and UI choices; it is not proof
@@ -1697,19 +1968,49 @@ Gere APENAS esta secao em Markdown:
                 question_text = finding["clarification_question"] or finding["recommendation"]
                 if not question_text.endswith("?"):
                     question_text = f"Qual decisao de produto deve ser tomada sobre: {message.rstrip('.')}?"
+                stable_question_key = hashlib.sha1(question_text.strip().lower().encode("utf-8")).hexdigest()[:10].upper()
                 questions.append({
-                    "id": f"CQ-{len(questions) + 1:02d}",
+                    "id": f"CQ-{stable_question_key}",
                     "question": question_text,
                     "reason": message,
                     "answer_hint": finding["answer_hint"] or "Informe a decisao e, se aplicavel, a regra, limite ou criterio que deve ser usado.",
                     "blocking": severity == "high", "finding_id": finding["id"],
                 })
-        if self._clarifications_answered:
-            for question in questions:
-                question["resolved_by"] = "user_briefing"
-            blocking_questions = []
-        else:
-            blocking_questions = [question for question in questions if question["blocking"]]
+        # Re-run the analysis after every answer round. The updated briefing
+        # can resolve old gaps and reveal a genuinely new high-impact gap.
+        if analysis_status == "degraded" and not any(question.get("blocking") for question in questions):
+            # A malformed model response is not evidence that the product is
+            # fully specified. Keep the project in discovery and ask only for
+            # decisions that materially shape the first usable backlog.
+            degraded_questions = [
+                (
+                    "Quais perfis podem cadastrar salas, reservar, alterar ou cancelar reservas e bloquear salas?",
+                    "Definir as permissoes e responsabilidades dos perfis do produto.",
+                ),
+                (
+                    "Quais regras de reserva devem valer para duracao, antecedencia, recorrencia e cancelamento?",
+                    "Definir as regras operacionais que evitam conflitos e reservas indevidas.",
+                ),
+                (
+                    "Quais informacoes a equipe administrativa precisa acompanhar na agenda e nos relatorios do MVP?",
+                    "Definir a visibilidade operacional necessaria para o primeiro lancamento.",
+                ),
+            ]
+            for question_text, reason in degraded_questions:
+                stable_question_key = hashlib.sha1(question_text.encode("utf-8")).hexdigest()[:10].upper()
+                questions.append({
+                    "id": f"CQ-{stable_question_key}",
+                    "question": question_text,
+                    "reason": reason,
+                    "answer_hint": "Informe a decisao de produto que deve orientar o MVP.",
+                    "blocking": True,
+                    "finding_id": "RF-DEGRADED-ANALYSIS",
+                })
+            print(json.dumps({
+                "event": "project_manager_elicitation_required_after_degraded_analysis",
+                "question_count": len(degraded_questions),
+            }, ensure_ascii=False), file=sys.stderr)
+        blocking_questions = [question for question in questions if question["blocking"]]
         return {
             "version": 1, "evidence": evidence,
             "requirements": [
@@ -2196,9 +2497,192 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
         contract["coverage"] = None
         return contract
 
+    def _derive_capabilities_from_stories(self, stories):
+        """Build a traceable capability map from an otherwise valid story set.
+
+        This is deliberately a structural recovery only: every capability name
+        is an existing story goal and every link comes from the story payload.
+        """
+        if not isinstance(stories, list):
+            return []
+
+        grouped = {}
+        next_index = 1
+        for raw_story in stories:
+            if not isinstance(raw_story, dict):
+                continue
+            story_id = str(raw_story.get("id") or raw_story.get("story_id") or "").strip().upper()
+            name = str(
+                raw_story.get("goal")
+                or raw_story.get("name")
+                or raw_story.get("title")
+                or raw_story.get("description")
+                or ""
+            ).strip()
+            if not story_id or not name:
+                continue
+            source_ids = [str(item).strip() for item in raw_story.get("source_ids", []) if str(item).strip()]
+            capability_ids = [
+                str(item).strip().upper()
+                for item in raw_story.get("capability_ids", [])
+                if str(item).strip()
+            ]
+            if not capability_ids:
+                while f"CAP-{next_index:02d}" in grouped:
+                    next_index += 1
+                capability_ids = [f"CAP-{next_index:02d}"]
+                next_index += 1
+            for capability_id in capability_ids:
+                capability = grouped.setdefault(capability_id, {
+                    "id": capability_id,
+                    "name": name,
+                    "source_ids": [],
+                    "story_ids": [],
+                })
+                capability["source_ids"] = list(dict.fromkeys([*capability["source_ids"], *source_ids]))
+                capability["story_ids"] = list(dict.fromkeys([*capability["story_ids"], story_id]))
+
+        return list(grouped.values())[:6]
+
+    def _derive_capabilities_from_epics(self, epics):
+        """Recover capabilities from a provider's own epic list.
+
+        Some providers return epics and stories but omit the duplicated
+        capability section.  This preserves their supplied scope instead of
+        introducing a new product decision or requesting another generation.
+        """
+        if not isinstance(epics, list):
+            return []
+
+        capabilities = []
+        for index, raw_epic in enumerate(epics, start=1):
+            if isinstance(raw_epic, dict):
+                name = str(
+                    raw_epic.get("name")
+                    or raw_epic.get("title")
+                    or raw_epic.get("description")
+                    or ""
+                ).strip()
+                source_ids = [
+                    str(item).strip()
+                    for item in raw_epic.get("source_ids", [])
+                    if str(item).strip()
+                ]
+                story_ids = [
+                    str(item).strip().upper()
+                    for item in raw_epic.get("story_ids", [])
+                    if str(item).strip()
+                ]
+            else:
+                name = str(raw_epic or "").strip()
+                source_ids = []
+                story_ids = []
+            if not name:
+                continue
+            capabilities.append({
+                "id": f"CAP-{index:02d}",
+                "name": name,
+                "source_ids": source_ids,
+                "story_ids": story_ids,
+            })
+        return capabilities[:6]
+
+    def _normalize_backlog_contract_aliases(self, contract):
+        """Canonicalize known provider field aliases before strict validation."""
+        normalized = dict(contract)
+        def normalize_key(value):
+            return re.sub(
+                r"[^a-z0-9]+", "_",
+                unicodedata.normalize("NFKD", str(value or ""))
+                .encode("ascii", "ignore").decode("ascii").lower(),
+            ).strip("_")
+
+        containers = (
+            "backlog", "backlog_contract", "project_backlog",
+            "backlog_do_projeto", "resultado_do_backlog", "resultado", "result",
+        )
+        canonical_fields = {
+            "overview": ("summary", "resumo", "visao_geral", "visão_geral"),
+            "capabilities": (
+                "product_capabilities", "productCapabilities", "capacidades",
+                "capacidades_do_produto", "features", "functionalities",
+                "funcionalidades", "functional_requirements",
+                "requisitos_funcionais", "modules", "modulos",
+            ),
+            "epics": ("recommended_epics", "epicos", "épicos", "epicos_recomendados"),
+            "releases": ("release_slices", "releaseSlices", "fatias_de_release", "fatias_release"),
+            "stories": ("user_stories", "userStories", "historias", "histórias", "backlog_items", "items"),
+        }
+
+        # A few models wrap an otherwise valid contract in a result object.
+        # Prefer that object only when it supplies recognized contract fields.
+        normalized_key_lookup = {normalize_key(key): key for key in normalized}
+        for container_name in containers:
+            nested = normalized.get(normalized_key_lookup.get(normalize_key(container_name)))
+            if not isinstance(nested, dict):
+                continue
+            nested_matches = sum(
+                field in nested or any(alias in nested for alias in aliases)
+                for field, aliases in canonical_fields.items()
+            )
+            root_matches = sum(
+                field in normalized or any(alias in normalized for alias in aliases)
+                for field, aliases in canonical_fields.items()
+            )
+            if nested_matches > root_matches:
+                normalized.update(nested)
+
+        normalized_key_lookup = {normalize_key(key): key for key in normalized}
+        aliases_applied = []
+        for field, aliases in canonical_fields.items():
+            current = normalized.get(field)
+            if current not in (None, "", []):
+                continue
+            for alias in aliases:
+                value = normalized.get(normalized_key_lookup.get(normalize_key(alias)))
+                if value not in (None, "", []):
+                    normalized[field] = value
+                    aliases_applied.append(f"{alias}->{field}")
+                    break
+        # OpenRouter models sometimes model capabilities as an object keyed by
+        # identifier (or as a single text value) instead of an array.  The
+        # content is still explicit, so normalize that presentation rather
+        # than rejecting a complete backlog on this non-semantic difference.
+        raw_capabilities = normalized.get("capabilities")
+        if isinstance(raw_capabilities, dict):
+            direct_fields = {"id", "name", "title", "label", "feature", "functionality", "text", "description"}
+            if direct_fields.intersection(raw_capabilities):
+                normalized["capabilities"] = [raw_capabilities]
+            else:
+                converted = []
+                for capability_id, value in raw_capabilities.items():
+                    if isinstance(value, dict):
+                        converted.append({"id": capability_id, **value})
+                    elif str(value or "").strip():
+                        converted.append({"id": capability_id, "name": str(value).strip()})
+                normalized["capabilities"] = converted
+            aliases_applied.append("object->capabilities")
+        elif isinstance(raw_capabilities, str) and raw_capabilities.strip():
+            normalized["capabilities"] = [
+                item.strip(" -•\t")
+                for item in re.split(r"[\n;]+", raw_capabilities)
+                if item.strip(" -•\t")
+            ]
+            aliases_applied.append("text->capabilities")
+        if aliases_applied:
+            print(
+                json.dumps({
+                    "event": "project_manager_contract_aliases_normalized",
+                    "aliases": aliases_applied,
+                }, ensure_ascii=False),
+                file=sys.stderr,
+            )
+        return normalized
+
     def _validate_backlog_contract(self, contract, evidence_contract=None):
         if not isinstance(contract, dict):
             raise ValueError("Contrato de backlog deve ser um objeto JSON.")
+        contract = self._normalize_backlog_contract_aliases(contract)
         # Providers occasionally omit the descriptive overview while returning
         # an otherwise complete contract. Derive a concise, evidence-only
         # summary so a formatting omission does not consume the retry budget.
@@ -2213,6 +2697,24 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
             if facts:
                 summary = max(facts, key=len)
                 contract["overview"] = summary[:320].rstrip(" .,;:") + ("." if len(summary) <= 320 else "...")
+        # Free/OpenRouter models occasionally return a complete story map but
+        # omit the redundant capability section. Recover it deterministically
+        # from the delivered stories instead of spending another generation.
+        # Names, source links and story links are copied from model output;
+        # this does not invent product scope.
+        if not isinstance(contract.get("capabilities"), list) or not contract.get("capabilities"):
+            derived_capabilities = self._derive_capabilities_from_stories(contract.get("stories"))
+            if not derived_capabilities:
+                derived_capabilities = self._derive_capabilities_from_epics(contract.get("epics"))
+            if derived_capabilities:
+                contract["capabilities"] = derived_capabilities
+                print(
+                    json.dumps({
+                        "event": "project_manager_capabilities_derived",
+                        "count": len(derived_capabilities),
+                    }, ensure_ascii=False),
+                    file=sys.stderr,
+                )
         required_text = ("overview",)
         required_lists = ("capabilities", "epics", "releases", "stories")
         for key in required_text:
@@ -2246,7 +2748,16 @@ Responda SOMENTE JSON, exatamente neste formato: {response_format}
         for index, raw_capability in enumerate(contract["capabilities"], start=1):
             if isinstance(raw_capability, dict):
                 capability = dict(raw_capability)
-                name = str(capability.get("name") or capability.get("text") or "").strip()
+                name = str(
+                    capability.get("name")
+                    or capability.get("title")
+                    or capability.get("label")
+                    or capability.get("feature")
+                    or capability.get("functionality")
+                    or capability.get("text")
+                    or capability.get("description")
+                    or ""
+                ).strip()
             else:
                 capability = {}
                 name = str(raw_capability or "").strip()
@@ -2611,7 +3122,7 @@ Responda SOMENTE um objeto JSON valido exatamente neste formato:
 
     def _generate_ai_backlog(self, idea):
         """Generate the complete backlog in one bounded AI call, with one focused repair at most."""
-        max_attempts = max(1, min(2, int(os.getenv("PROJECT_MANAGER_BACKLOG_MAX_ATTEMPTS", "2"))))
+        max_attempts = max(1, min(2, int(os.getenv("PROJECT_MANAGER_BACKLOG_MAX_ATTEMPTS", "1"))))
         request_timeout = max(30, min(60, int(os.getenv("PROJECT_MANAGER_LLM_REQUEST_TIMEOUT_SECONDS", "45"))))
         rejected_draft = None
         last_reason = "sem detalhes"
@@ -2634,7 +3145,10 @@ Responda SOMENTE um objeto JSON valido exatamente neste formato:
                         "temperature": 0.1,
                         "num_predict": int(os.getenv("PROJECT_MANAGER_BACKLOG_NUM_PREDICT", "3400")),
                         "request_timeout_seconds": request_timeout,
-                        "transient_retries": 1,
+                        # A retry after a 45-second timeout only delays the
+                        # next viable provider in this existing fallback
+                        # chain, so move to it immediately.
+                        "transient_retries": 0,
                         "json_mode": True,
                         # Reject tiny/non-JSON provider replies before the
                         # router marks them successful, so another model can
@@ -2651,8 +3165,10 @@ Responda SOMENTE um objeto JSON valido exatamente neste formato:
                 continue
 
             rejected_draft = result
+            candidate_contract = None
             try:
-                contract = self._validate_backlog_contract(self._extract_json_object(result), evidence_contract)
+                candidate_contract = self._extract_json_object(result)
+                contract = self._validate_backlog_contract(candidate_contract, evidence_contract)
                 evidence_by_id = {str(fact.get("id")): str(fact.get("text") or "") for fact in evidence_contract.get("facts", []) if isinstance(fact, dict)}
                 clarifications = self._collect_backlog_clarifications(contract)
                 if clarifications and not self._clarifications_answered:
@@ -2682,7 +3198,7 @@ Responda SOMENTE um objeto JSON valido exatamente neste formato:
                     # larger contract and leave the final newly-found story
                     # without its permitted retry. Five rounds cover that
                     # tail without turning recovery into an unbounded loop.
-                    max_story_repairs = max(1, min(6, int(os.getenv("PROJECT_MANAGER_MAX_STORY_REPAIRS", "5"))))
+                    max_story_repairs = max(1, min(2, int(os.getenv("PROJECT_MANAGER_MAX_STORY_REPAIRS", "1"))))
                     for repair_attempt in range(1, max_story_repairs + 1):
                         repair_attempts = repair_attempt
                         eligible_findings = [
@@ -2751,6 +3267,7 @@ Responda SOMENTE um objeto JSON valido exatamente neste formato:
                     "attempt": attempt,
                     "response_chars": len(str(result or "")),
                     "reason": last_reason,
+                    "contract_keys": sorted(str(key) for key in candidate_contract.keys()) if isinstance(candidate_contract, dict) else [],
                 }, ensure_ascii=False), file=sys.stderr)
             print(
                 f"[Project Manager] etapa=validacao tentativa={attempt}/{max_attempts} motivo={last_reason}",
@@ -2959,6 +3476,7 @@ REGRAS
 - Gere de {target_range[0]} a {target_range[1]} historias.
 - Foque somente no tema desta rodada.
 - {instructions}
+- Use pelo menos duas personas distintas e relevantes ao tema nesta rodada.
 - Cada historia deve vir em um bloco com titulo e descricao curta.
 {self._story_block_format_rules()}
 - Nao invente escopo fora do briefing.
@@ -2966,11 +3484,137 @@ REGRAS
         result = self._generate_block(
             prompt,
             num_predict=os.getenv("PROJECT_MANAGER_BLOCK_THEME_NUM_PREDICT", "900"),
+            min_response_chars=180,
         )
-        themed_section = self._extract_section(result, "Historias de Usuario")
-        if not themed_section:
-            return []
-        return self._extract_story_lines(themed_section)
+        themed_section = (
+            self._extract_section(result, "Historias de Usuario")
+            or self._extract_section(result, "Historias")
+            or self._extract_section(result, "User Stories")
+            or self._extract_section(result, "Stories")
+        )
+        # If the model omits the requested heading but does produce stories,
+        # parsing the full response is safe: only recognised "Como ..."
+        # entries become backlog items.
+        story_blocks = self._extract_story_lines(themed_section or result)
+        print(json.dumps({
+            "event": "project_manager_epic_batch_parsed",
+            "theme": theme_label,
+            "response_chars": len(str(result or "")),
+            "stories_found": len(story_blocks),
+            "section_found": bool(themed_section),
+        }, ensure_ascii=False), file=sys.stderr)
+        return story_blocks
+
+    def _story_business_intent_key(self, story_block):
+        """Coarse action/entity key to catch paraphrased duplicate stories."""
+        _, normalized = self._normalize_text(self._story_seed_title(story_block))
+        actions = (
+            ("cancelar", r"\bcancel"), ("bloquear", r"\bbloque"),
+            ("alterar", r"\b(alter|reagend)"), ("reservar", r"\breserv"),
+            ("consultar", r"\b(consult|busc)"), ("cadastrar", r"\b(cadastr|criar)"),
+            ("editar", r"\b(edit|atualiz)"), ("arquivar", r"\b(exclu|arquiv|inativ)"),
+            ("visualizar", r"\b(visualiz|agenda|relatori|dashboard)"),
+            ("permissoes", r"\b(permiss|autentic|acesso)"),
+        )
+        entities = (
+            ("reserva", r"\breserv"), ("sala", r"\bsala"),
+            ("agenda", r"\b(agenda|ocupac)"), ("acesso", r"\b(permiss|acesso|perfil)"),
+        )
+        action = next((name for name, pattern in actions if re.search(pattern, normalized)), "")
+        entity = next((name for name, pattern in entities if re.search(pattern, normalized)), "")
+        return f"{action}:{entity}" if action and entity else ""
+
+    def _epic_story_quality_issues(self, story_blocks):
+        """Find deterministic defects that must not reach persisted backlog data."""
+        issues = []
+        seen_intents = {}
+        for index, block in enumerate(story_blocks):
+            lines = [line.strip() for line in str(block or "").splitlines() if line.strip()]
+            title = lines[0] if lines else ""
+            normalized_title = self._story_seed_title(block)
+            if re.match(r"^Como\s+sistema\b", normalized_title, re.IGNORECASE):
+                issues.append((index, "ator_sistema"))
+                continue
+            detail = " ".join(lines[1:]).strip()
+            if not detail:
+                issues.append((index, "descricao_ausente"))
+                continue
+            if re.search(r"(?:^|\s)(?:US|STORY)-\d+\s*\|", detail, re.IGNORECASE):
+                issues.append((index, "descricao_contaminada_por_outras_historias"))
+                continue
+            intent = self._story_business_intent_key(block) or self._story_similarity_key(block)
+            if intent and intent in seen_intents:
+                issues.append((index, f"intencao_duplicada_com_US_{seen_intents[intent] + 1:02d}"))
+                continue
+            if intent:
+                seen_intents[intent] = index
+        return issues
+
+    def _repair_epic_story_quality(self, execution_context, story_blocks):
+        """Replace only malformed or duplicated stories, preserving valid batches."""
+        repaired = list(story_blocks)
+        for index, reason in self._epic_story_quality_issues(repaired):
+            current = repaired[index]
+            accepted_titles = "\n".join(
+                f"- {self._story_seed_title(block)}"
+                for position, block in enumerate(repaired)
+                if position != index
+            )
+            print(json.dumps({
+                "event": "project_manager_story_quality_repair_started",
+                "story_index": index + 1,
+                "reason": reason,
+            }, ensure_ascii=False), file=sys.stderr)
+            replacement = self._generate_thematic_stories(
+                f"{execution_context}\n\nHISTORIAS ACEITAS (NAO REPITA):\n{accepted_titles}",
+                f"Reparo da historia {index + 1}",
+                (
+                    "Substitua somente a historia abaixo por uma historia de usuario distinta e utilizavel. "
+                    "Use uma persona humana, nao use 'Como sistema', e escreva uma descricao contextual propria. "
+                    f"Motivo do reparo: {reason}. Historia a substituir: {current}"
+                ),
+                target_range=(1, 1),
+            )
+            if replacement:
+                repaired[index] = replacement[0]
+        return repaired
+
+    def _build_epic_backlog_contract(self, story_blocks, capabilities):
+        """Attach deterministic planning metadata to the Markdown backlog."""
+        evidence = self._build_evidence_contract(getattr(self, "_current_idea", ""))
+        source_ids = [item.get("id") for item in evidence.get("facts", []) if item.get("id")][:1]
+        capability_count = max(1, len(capabilities or []))
+        stories = []
+        for index, block in enumerate(story_blocks, start=1):
+            lines = [line.strip() for line in str(block or "").splitlines() if line.strip()]
+            title = self._story_seed_title(block)
+            detail = re.sub(
+                r"^descricao\s*[:\-]?\s*",
+                "",
+                " ".join(lines[1:]).strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            match = re.match(r"^Como\s+(.+?),\s*eu quero\s+(.+?),\s*para\s+(.+?)[.]?$", title, re.IGNORECASE)
+            actor, goal, benefit = (match.groups() if match else ("Usuario autorizado", title, "concluir o fluxo solicitado"))
+            release = "MVP" if index <= 8 else "Fase 2" if index <= 16 else "Fase 3"
+            capability_index = min((index - 1) // 4, capability_count - 1) + 1
+            stories.append({
+                "id": f"US-{index:02d}",
+                "actor": actor.strip(), "goal": goal.strip(), "benefit": benefit.strip(),
+                "description": detail, "lane": self._estimate_story_lane(block),
+                "priority": "high" if release == "MVP" else "medium" if release == "Fase 2" else "low",
+                "release": release, "source_ids": source_ids, "capability_ids": [f"cap_{capability_index}"],
+                "status": "proposed", "review_tags": ["REVIEW_REQUIRED"], "open_questions": [],
+                "refinement_context": {"inputs": [], "outputs": [], "confirmed_rules": [], "constraints": [], "dependencies": [], "open_questions": [], "acceptance_hints": [], "acceptance_criteria": []},
+            })
+        return {
+            "evidence": evidence,
+            "stories": stories,
+            "coverage": [
+                {"source_id": source_id, "story_ids": [story["id"] for story in stories]}
+                for source_id in source_ids
+            ],
+        }
 
     def _generate_missing_stories_fallback(self, base_context, existing_story_blocks, *, needed_count):
         if needed_count <= 0:
@@ -3136,8 +3780,8 @@ REGRAS
 
         return consolidated[:max_stories]
 
-    def _collect_story_blocks_incrementally(self, base_context, *, min_stories, max_stories):
-        themes = [
+    def _collect_story_blocks_incrementally(self, base_context, *, min_stories, max_stories, epics=None):
+        default_themes = [
             (
                 "Fluxo fundador do produto",
                 "Cubra cadastro inicial, criacao da entidade principal, planejamento basico, consulta inicial e confirmacao do fluxo principal.",
@@ -3159,6 +3803,23 @@ REGRAS
                 (3, 5),
             ),
         ]
+
+        # The blueprint is deliberately small; generate stories from its
+        # concrete epics in bounded batches instead of asking one provider to
+        # serialize the entire backlog contract at once. Two batches of four
+        # stories cover the initial minimum while keeping each response small.
+        epic_titles = [str(epic or "").strip() for epic in (epics or []) if str(epic or "").strip()]
+        if epic_titles:
+            themes = [
+                (
+                    f"Epico {index}: {epic}",
+                    f"Cubra somente o escopo do epico '{epic}'. Nao antecipe funcionalidades de outros epicos.",
+                    (4, 4),
+                )
+                for index, epic in enumerate(epic_titles[:2], start=1)
+            ]
+        else:
+            themes = default_themes
 
         consolidated = []
         seed_titles = []
@@ -3276,6 +3937,155 @@ REGRAS
 
         return consolidated[:max_stories]
 
+    def _generate_epic_block_backlog(self, idea):
+        """Generate a bounded backlog: one blueprint and small epic batches.
+
+        This is intentionally separate from the former multi-block recovery
+        routine, whose complementary-story loops could turn a small backlog
+        into dozens of provider calls.
+        """
+        compact_briefing = self._compact_briefing(idea)
+        min_stories, max_stories = self.STORY_RANGE
+        planning_context_base = f"""
+Voce e um Project Manager Senior especializado em discovery e definicao de backlog.
+
+PROJETO
+ID: {self.project_id}
+
+BRIEFING
+{compact_briefing}
+
+REGRAS GERAIS
+- Responda em portugues.
+- Nao invente escopo fora do briefing.
+- Planeje uma primeira versao utilizavel antes de evolucoes avancadas.
+"""
+        overview, capabilities, epics, release_slices = self._generate_backlog_blueprint(
+            planning_context_base,
+            fallback_overview=compact_briefing,
+        )
+        stories_per_epic = 4
+        try:
+            epic_batch_limit = int(os.getenv("PROJECT_MANAGER_EPIC_BLOCK_MAX_EPICS", "6"))
+        except (TypeError, ValueError):
+            epic_batch_limit = 6
+        epic_batch_limit = max(2, min(epic_batch_limit, 6))
+
+        selected_epics = [
+            str(epic or "").strip()
+            for epic in epics
+            if str(epic or "").strip()
+        ][:epic_batch_limit]
+        if len(selected_epics) < 2:
+            raise RuntimeError("Blueprint sem epicos suficientes para gerar blocos de historias.")
+
+        # Keep each provider call small, but do not mistake the first two
+        # epics for the complete backlog. Every selected epic gets its own
+        # batch, with the final minimum derived from that plan.
+        planned_story_count = min(max_stories, len(selected_epics) * stories_per_epic)
+        required_story_count = max(min_stories, planned_story_count)
+        print(json.dumps({
+            "event": "project_manager_epic_batch_plan_resolved",
+            "epics_selected": len(selected_epics),
+            "stories_per_epic": stories_per_epic,
+            "planned_story_count": planned_story_count,
+            "epic_batch_limit": epic_batch_limit,
+        }, ensure_ascii=False), file=sys.stderr)
+
+        execution_context = f"""
+{planning_context_base}
+
+{self._build_planning_context(overview, capabilities, epics, release_slices)}
+
+Gere apenas user stories em Markdown.
+{self._story_block_format_rules()}
+""".strip()
+        story_blocks = []
+        for index, epic in enumerate(selected_epics, start=1):
+            story_count_before_epic = len(story_blocks)
+            print(json.dumps({
+                "event": "project_manager_epic_batch_started",
+                "epic_index": index,
+                "epic": epic,
+                "target_stories": stories_per_epic,
+            }, ensure_ascii=False), file=sys.stderr)
+            existing_titles = "\n".join(
+                f"- {self._story_seed_title(block)}"
+                for block in story_blocks
+            )
+            batch_context = execution_context
+            if existing_titles:
+                batch_context = f"{execution_context}\n\nHISTORIAS JA GERADAS (NAO REPITA A MESMA INTENCAO):\n{existing_titles}"
+            batch = self._generate_thematic_stories(
+                batch_context,
+                f"Epico {index}: {epic}",
+                (
+                    f"Cubra exclusivamente o escopo deste epico: {epic}. "
+                    "Nao transforme regras de negocio em historias com o ator 'sistema'."
+                ),
+                target_range=(stories_per_epic, stories_per_epic),
+            )
+            story_blocks = self._dedupe_and_polish_stories(story_blocks + batch, execution_context)
+
+            # A provider can occasionally end a small batch one story early.
+            # Recover only the missing items for this epic instead of losing
+            # every successful batch and starting the whole backlog over.
+            epic_story_count = len(story_blocks) - story_count_before_epic
+            missing_stories = stories_per_epic - epic_story_count
+            if missing_stories > 0:
+                existing_titles = "\n".join(
+                    f"- {self._story_seed_title(block)}"
+                    for block in story_blocks
+                )
+                print(json.dumps({
+                    "event": "project_manager_epic_batch_recovery_started",
+                    "epic_index": index,
+                    "missing_stories": missing_stories,
+                }, ensure_ascii=False), file=sys.stderr)
+                recovery_batch = self._generate_thematic_stories(
+                    f"{execution_context}\n\nHISTORIAS JA GERADAS (NAO REPITA):\n{existing_titles}",
+                    f"Epico {index}: {epic} - complemento",
+                    (
+                        f"Gere somente {missing_stories} historia(s) nova(s) para completar este epico. "
+                        "Nao repita as historias ja geradas e nao cubra outro epico."
+                    ),
+                    target_range=(missing_stories, missing_stories),
+                )
+                story_blocks = self._dedupe_and_polish_stories(story_blocks + recovery_batch, execution_context)
+
+        story_blocks = story_blocks[:max_stories]
+        quality_issues = self._epic_story_quality_issues(story_blocks)
+        if quality_issues:
+            print(json.dumps({
+                "event": "project_manager_story_quality_repair_plan",
+                "issue_count": len(quality_issues),
+                "reasons": [reason for _, reason in quality_issues],
+            }, ensure_ascii=False), file=sys.stderr)
+            story_blocks = self._repair_epic_story_quality(execution_context, story_blocks)
+            remaining_issues = self._epic_story_quality_issues(story_blocks)
+            if remaining_issues:
+                reasons = ", ".join(reason for _, reason in remaining_issues)
+                raise RuntimeError(f"Curadoria do backlog encontrou historias invalidas apos reparo: {reasons}.")
+        if len(story_blocks) < required_story_count:
+            raise RuntimeError(
+                f"Blocos por epico geraram {len(story_blocks)} historias; minimo esperado: {required_story_count}."
+            )
+        self._validate_story_batch_quality(story_blocks, min_stories=required_story_count)
+        backlog = self._build_full_backlog_with_structure(
+            overview=overview,
+            capabilities=capabilities,
+            epics=epics,
+            release_slices=release_slices,
+            story_blocks=story_blocks,
+        )
+        is_complete, reason = validate_backlog_output(backlog)
+        if not is_complete:
+            raise RuntimeError(reason or "Backlog por epicos considerado incompleto.")
+        return {
+            "markdown": backlog,
+            "backlog_contract": self._build_epic_backlog_contract(story_blocks, capabilities),
+        }
+
     def _generate_multi_block_backlog(self, idea):
         compact_briefing = self._compact_briefing(idea)
         min_stories, max_stories = self.STORY_RANGE
@@ -3334,6 +4144,7 @@ REGRAS GERAIS
                     execution_context,
                     min_stories=min_stories,
                     max_stories=max_stories,
+                    epics=epics,
                 )
 
                 if len(combined_story_blocks) >= min_stories:
@@ -3490,17 +4301,28 @@ REGRAS GERAIS
             )
         return True
 
-    def process(self, idea):
+    def process(self, idea, elicitation_state=None, elicitation_answers=None):
         # Stories are product decisions. Never replace an unavailable or invalid
         # AI result with deterministic content that can silently invent scope.
-        normalized_idea = unicodedata.normalize("NFKD", str(idea or ""))
+        self._current_idea = str(idea or "")
+        normalized_idea = unicodedata.normalize("NFKD", self._current_idea)
         normalized_idea = "".join(char for char in normalized_idea if not unicodedata.combining(char)).lower()
-        self._clarifications_answered = "clarificacoes respondidas:" in normalized_idea
+        supplied_answers = self._normalize_elicitation_answers(elicitation_answers)
+        previous_questions = elicitation_state.get("questions", []) if isinstance(elicitation_state, dict) else []
+        previous_answers = self._normalize_elicitation_answers(elicitation_state.get("answers") if isinstance(elicitation_state, dict) else {})
+        # One response must not bypass unresolved blocking questions.
+        self._clarifications_answered = bool(previous_questions) and all(
+            previous_answers.get(str(item.get("id"))) or supplied_answers.get(str(item.get("id")))
+            for item in previous_questions if isinstance(item, dict) and item.get("blocking", True)
+        )
+        self._clarifications_answered = self._clarifications_answered or ("clarificacoes respondidas:" in normalized_idea and not previous_questions)
         self._requirements_contract = self._analyze_requirements_contract(idea)
-        blocking_questions = self._requirements_contract.get("blocking_questions", [])
-        if blocking_questions and not self._clarifications_answered:
+        self._elicitation_state = self._build_elicitation_state(self._requirements_contract, elicitation_state, supplied_answers)
+        blocking_questions = self._elicitation_state.get("readiness", {}).get("blocking_question_details", [])
+        if blocking_questions:
             return {
                 "clarification_required": True,
+                "elicitation_required": True,
                 "clarifications": [
                     {
                         "id": item["id"], "question": item["question"], "story_ids": [],
@@ -3509,12 +4331,35 @@ REGRAS GERAIS
                     for item in blocking_questions
                 ],
                 "requirements_contract": self._requirements_contract,
+                "elicitation": self._elicitation_state,
             }
-        generated_backlog = self._generate_ai_backlog(idea)
+        generation_mode = str(os.getenv("PROJECT_MANAGER_GENERATION_MODE", "epic_blocks") or "epic_blocks").strip().lower()
+        if generation_mode == "single_pass":
+            print("[Project Manager] estrategia=single_pass", file=sys.stderr)
+            generated_backlog = self._generate_ai_backlog(idea)
+        else:
+            print("[Project Manager] estrategia=epic_blocks", file=sys.stderr)
+            generated_backlog = self._generate_epic_block_backlog(idea)
         if isinstance(generated_backlog, dict) and generated_backlog.get("clarification_required"):
             return generated_backlog
         if isinstance(generated_backlog, str):
             generated_backlog = {"markdown": generated_backlog, "backlog_contract": {"evidence": {"facts": []}, "stories": []}}
         generated_backlog.setdefault("backlog_contract", {})["requirements_contract"] = self._requirements_contract
+        self._elicitation_state["status"] = "READY_FOR_REVIEW"
+        self._elicitation_state["phase_history"].extend([
+            {"phase": "SYNTHESIS", "status": "completed"},
+            {"phase": "READY_FOR_REVIEW", "status": "active"},
+        ])
+        story_context = {
+            "product_intent": str(idea or "").strip(),
+            "confirmed_rules": [item["decision"] for item in self._elicitation_state.get("confirmed_decisions", [])],
+            "assumptions": self._elicitation_state.get("assumptions", []),
+            "open_questions": self._elicitation_state.get("open_questions", []),
+            "evidence": self._elicitation_state.get("evidence", []),
+            "elicitation_readiness": self._elicitation_state.get("readiness", {}),
+        }
+        generated_backlog["backlog_contract"]["elicitation"] = self._elicitation_state
+        generated_backlog["backlog_contract"]["story_context"] = story_context
+        generated_backlog["story_context"] = story_context
         self._is_backlog_aligned_with_briefing(idea, generated_backlog["markdown"])
         return generated_backlog

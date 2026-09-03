@@ -497,7 +497,7 @@ export async function generateProjectBacklogController(req, res, next) {
 
   try {
     const { projectUuid } = req.params;
-    const { idea, answers, description, vision } = req.body;
+    const { idea, answers, description, vision, elicitation } = req.body;
 
     if (!idea?.trim()) {
       return res.status(400).json({ message: 'idea e obrigatorio.' });
@@ -519,6 +519,7 @@ export async function generateProjectBacklogController(req, res, next) {
         objective: answers?.objective || '',
         audience: answers?.audience || '',
         answers: answers || {},
+        ...(elicitation ? { pmElicitation: elicitation } : {}),
         lastGeneratedAt: new Date().toISOString(),
       },
     });
@@ -530,6 +531,8 @@ export async function generateProjectBacklogController(req, res, next) {
       project_id: projectUuid,
       idea: [compactBacklogInput(idea.trim(), answers || {}), projectDnaContext].filter(Boolean).join('\n\n'),
       answers: {},
+      elicitation: elicitation || refreshedProject?.intakeConfig?.pmElicitation || null,
+      elicitation_answers: answers?.elicitationAnswers || {},
     };
 
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'project_manager' });
@@ -547,13 +550,14 @@ export async function generateProjectBacklogController(req, res, next) {
       return;
     }
 
-    if (result?.clarification_required) {
+    if (result?.clarification_required || result?.elicitation_required) {
       // Keep the requirements gate recoverable after a browser refresh. No
       // backlog has been published here, so no stories/tasks are created.
       await updateProjectBrief(projectUuid, {
         intakeConfig: {
           requirementsContract: result.requirements_contract || null,
           backlogClarifications: result.clarifications || [],
+          pmElicitation: result.elicitation || null,
         },
       });
       const [project, tasks] = await Promise.all([
@@ -564,6 +568,15 @@ export async function generateProjectBacklogController(req, res, next) {
     }
 
     await persistAgentResult(projectUuid, 'project_manager', payloadWithRuntime, result);
+    // The successful contract carries the evaluated readiness state. Replace
+    // the pending discovery snapshot so a later page load does not revive an
+    // already answered question round.
+    await updateProjectBrief(projectUuid, {
+      intakeConfig: {
+        pmElicitation: result?.backlog_contract?.elicitation || null,
+        backlogClarifications: [],
+      },
+    });
 
     const [project, tasks] = await Promise.all([
       getProjectByUuid(projectUuid, req.authUser.uuid),

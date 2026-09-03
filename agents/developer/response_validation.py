@@ -90,11 +90,17 @@ def _backlog_story_has_description(story_block):
     if len(lines) < 2:
         return False
 
-    detail_text = " ".join(lines[1:]).strip()
-    if len(detail_text.split()) < 6:
-        return False
-
-    if re.fullmatch(r"(?:descricao|contexto|detalhe)\s*[:\-]?\s*", detail_text, re.IGNORECASE):
+    # A user story title already has its mandatory actor, goal and benefit.
+    # Providers frequently add concise, but useful, details such as
+    # "Descricao: validar conflito". Reject only an empty label; imposing a
+    # word count turns harmless formatting variance into a failed backlog.
+    detail_text = re.sub(
+        r"^(?:descricao|contexto|detalhe)\s*[:\-]?\s*",
+        "",
+        " ".join(lines[1:]).strip(),
+        flags=re.IGNORECASE,
+    ).strip()
+    if not detail_text:
         return False
 
     return True
@@ -697,7 +703,16 @@ def validate_backlog_output(result):
     if len(story_blocks) < len(story_lines):
         return False, "Historias com bloco estrutural incompleto."
 
-    incomplete_blocks = [block for block in story_blocks if not _backlog_story_has_description(block)]
+    # A complete user story already carries actor, goal and benefit in its
+    # title. Descriptions add useful context when supplied, but free/agentic
+    # models sometimes omit the optional second line. Do not discard a valid
+    # backlog for that formatting variance; still reject a malformed detail
+    # when the model starts one but leaves it empty or uninformative.
+    incomplete_blocks = [
+        block for block in story_blocks
+        if len([line for line in block.splitlines() if line.strip()]) > 1
+        and not _backlog_story_has_description(block)
+    ]
     if incomplete_blocks:
         return False, "Historias sem descricao contextual suficiente."
 

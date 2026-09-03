@@ -18,6 +18,7 @@ import {
   getGovernanceOverview,
   getOperationalHealth,
   getOperationalHistory,
+  getPipelineQualityOverview,
   getProductionReadiness,
 } from '../services/api';
 
@@ -129,6 +130,7 @@ export default function GovernancePage() {
   const [governance, setGovernance] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [auditTrail, setAuditTrail] = useState([]);
+  const [pipelineQuality, setPipelineQuality] = useState(null);
 
   async function refreshGovernanceDashboard({ silent = false } = {}) {
     try {
@@ -139,7 +141,7 @@ export default function GovernancePage() {
       }
       setError('');
 
-      const [healthData, operationsData, readinessData, historyData, governanceData, alertsData, auditData] =
+      const [healthData, operationsData, readinessData, historyData, governanceData, alertsData, auditData, pipelineQualityData] =
         await Promise.all([
           getOperationalHealth(),
           getAiOperationsOverview(),
@@ -148,6 +150,7 @@ export default function GovernancePage() {
           getGovernanceOverview(),
           getActiveAlerts(),
           getAuditTrail({ limit: 12 }),
+          getPipelineQualityOverview(),
         ]);
 
       setHealth(healthData);
@@ -157,6 +160,7 @@ export default function GovernancePage() {
       setGovernance(governanceData);
       setAlerts(Array.isArray(alertsData) ?alertsData : []);
       setAuditTrail(Array.isArray(auditData) ?auditData : []);
+      setPipelineQuality(pipelineQualityData);
     } catch (loadError) {
       setError(getApiErrorMessage(loadError, silent ?'Não foi possível atualizar os dados de governança.' : 'Não foi possível carregar a governança operacional.'));
     } finally {
@@ -194,6 +198,7 @@ export default function GovernancePage() {
   const topFailingAgents = operations?.reliability?.topFailingAgents || [];
   const summary = operations?.summary || {};
   const repairGovernance = governance?.repairGovernance || null;
+  const qualitySummary = pipelineQuality?.summary || null;
   const actionItems = useMemo(() => {
     const items = [];
 
@@ -387,6 +392,36 @@ export default function GovernancePage() {
             tone="slate"
           />
         </div>
+
+        {qualitySummary ?(
+          <motion.section {...fade(0.05)} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Qualidade PM → RA → QA</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-900">Métricas verificáveis da esteira</h2>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">Cobertura, qualidade e processo são calculados a partir dos contratos e revisões persistidos. Ausência de contrato gera finding, não uma estimativa de IA.</p>
+              </div>
+              <span className={`dashboard-badge ${qualitySummary.block > 0 ? 'bg-rose-100 text-rose-700' : qualitySummary.revise > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                Score {qualitySummary.quality_score ?? 0} · {qualitySummary.block > 0 ? 'BLOCK' : qualitySummary.revise > 0 ? 'REVISE' : 'PASS'}
+              </span>
+            </div>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <InsightCard label="Projetos avaliados" value={qualitySummary.projects || 0} hint={`${qualitySummary.findings || 0} findings rastreáveis`} />
+              <InsightCard label="Passaram" value={qualitySummary.pass || 0} hint={`${qualitySummary.revise || 0} precisam revisão`} />
+              <InsightCard label="Bloqueados" value={qualitySummary.block || 0} hint="Somente evidências críticas bloqueiam" />
+              <InsightCard label="Score consolidado" value={`${qualitySummary.quality_score ?? 0}/100`} hint="Threshold operacional: 85" />
+            </div>
+            <div className="mt-5 grid gap-3 xl:grid-cols-3">
+              {(pipelineQuality?.projects || []).slice(0, 6).map((item) => (
+                <div key={item.projectUuid} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-3"><p className="truncate text-sm font-bold text-slate-900">{item.projectName}</p><span className="text-xs font-semibold text-slate-600">{item.quality_gate?.decision}</span></div>
+                  <p className="mt-3 text-xs text-slate-600">Completude {item.metrics?.completeness ?? 0}% · Testabilidade {item.metrics?.testability ?? 0}% · Rastreabilidade {item.metrics?.traceability_coverage ?? 0}%</p>
+                  <p className="mt-2 text-xs text-slate-500">{item.findings?.length || 0} findings · {item.process_metrics?.agent_runs || 0} execuções</p>
+                </div>
+              ))}
+            </div>
+          </motion.section>
+        ) : null}
 
         {repairGovernance ?(
           <motion.section {...fade(0.06)} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">

@@ -16,23 +16,21 @@ try:
 except Exception:
     pass
 
-GEMINI_SDK = None
-genai = None
 google_genai = None
+google_genai_types = None
 
 try:
-    from google import genai as google_genai
-
-    GEMINI_SDK = "google-genai"
+    # Import the submodule directly. Some environments expose ``google`` as a
+    # namespace package without re-exporting ``genai``, making
+    # ``from google import genai`` fail even when google-genai is installed.
+    import google.genai as google_genai
+    from google.genai import types as google_genai_types
 except ImportError:
-    try:
-        import google.generativeai as genai
-
-        GEMINI_SDK = "google-generativeai"
-    except ImportError:
-        raise ImportError(
-            "Nenhuma biblioteca Gemini foi encontrada. Rode: pip install -r requirements.txt"
-        )
+    # The router must stay available to the other providers when the process
+    # is launched with an interpreter whose Gemini SDK has not been installed.
+    # The Gemini executor reports a provider-local error and the router can
+    # continue to the next configured provider.
+    pass
 
 from dotenv import load_dotenv
 
@@ -63,9 +61,7 @@ except Exception as e:
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=False)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    if GEMINI_SDK == "google-generativeai":
-        genai.configure(api_key=GEMINI_API_KEY)
+_gemini_client = None
 
 SUPPORTED_PROVIDERS = ("gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "huggingface", "openrouter", "ollama")
 
@@ -156,7 +152,9 @@ def get_provider_order():
             # uma falha temporária de um único provider em indisponibilidade
             # total. Complementamos a cadeia com os defaults, a menos que a
             # instalação peça explicitamente modo estrito.
-            append_defaults = str(os.getenv("AI_PROVIDER_ORDER_APPEND_DEFAULTS", "1")).lower() in ("1", "true", "yes")
+            # A configured order is an explicit cost/latency policy. Keep it
+            # strict by default; callers can opt into the broad provider chain.
+            append_defaults = str(os.getenv("AI_PROVIDER_ORDER_APPEND_DEFAULTS", "0")).lower() in ("1", "true", "yes")
             if append_defaults:
                 for provider in ("gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "huggingface", "openrouter", "ollama"):
                     if provider not in seen and not (disable_ollama_fallback and provider == "ollama"):
@@ -288,6 +286,11 @@ def generate_attributes_fallback(idea: str, error_message: str = "") -> list:
 def generate_text_with_gemini(prompt, model, options_override=None):
     if not os.getenv("GEMINI_API_KEY"):
         raise RuntimeError("GEMINI_API_KEY nao configurada.")
+    if google_genai is None or google_genai_types is None:
+        raise RuntimeError(
+            "SDK Google GenAI indisponivel neste interpretador Python. "
+            "Instale google-genai com o mesmo PYTHON_CMD usado pelo backend."
+        )
 
     options = options_override or {}
     generation_config = {"temperature": options.get("temperature", 0.7)}
@@ -296,31 +299,20 @@ def generate_text_with_gemini(prompt, model, options_override=None):
     if options.get("json_mode"):
         generation_config["response_mime_type"] = "application/json"
 
-    if GEMINI_SDK == "google-genai":
-        client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=generation_config,
-        )
-        text = getattr(response, "text", None)
-        if text and str(text).strip():
-            return str(text).strip()
-        raise RuntimeError("Resposta vazia do Gemini.")
+    global _gemini_client
+    if _gemini_client is None:
+        _gemini_client = google_genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-    model_instance = genai.GenerativeModel(model, generation_config=generation_config)
-    response = model_instance.generate_content(
-        prompt,
-        request_options={
-            "timeout": get_provider_timeout_seconds("gemini", 120, options_override),
-        },
+    timeout_ms = int(get_provider_timeout_seconds("gemini", 120, options_override) * 1000)
+    generation_config["http_options"] = google_genai_types.HttpOptions(timeout=timeout_ms)
+    response = _gemini_client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=google_genai_types.GenerateContentConfig(**generation_config),
     )
-
-    if response.prompt_feedback.block_reason:
-        raise RuntimeError(f"Prompt bloqueado: {response.prompt_feedback.block_reason.name}")
-
-    if response.candidates and response.candidates[0].content.parts:
-        return response.text
+    text = getattr(response, "text", None)
+    if text and str(text).strip():
+        return str(text).strip()
 
     raise RuntimeError("Resposta vazia do Gemini.")
 
@@ -389,6 +381,15 @@ def get_openrouter_model_candidates(primary_model):
             candidates.append(candidate)
     if not candidates:
         candidates.append("openrouter/free")
+    # The aggregate free route can occasionally return a terse refusal while
+    # another free endpoint is available. Keep a small built-in chain for
+    # this case so the application works before the UI fallback list is saved.
+    if str(primary_model or "").strip().lower() == "openrouter/free" and len(candidates) == 1:
+        candidates.extend([
+            "qwen/qwen3-coder:free",
+            "deepseek/deepseek-r1-0528-qwen3-8b:free",
+            "z-ai/glm-4.5-air:free",
+        ])
     return candidates
 
 
@@ -410,6 +411,8 @@ def should_fallback_openrouter_model(error_message):
         r"temporarily unavailable",
         r"no endpoints found",
         r"resposta vazia ou invalida",
+        r"resposta curta para contrato estruturado",
+        r"resposta sem objeto json completo",
     )
     return any(re.search(pattern, normalized, re.I) for pattern in patterns)
 
@@ -426,11 +429,7 @@ def generate_text_with_openrouter_model(prompt, model, api_key, options_override
         "temperature": (options_override or {}).get("temperature", 0.7),
         "max_tokens": max(64, int((options_override or {}).get("num_predict", 800))),
     }
-    # NVIDIA's OpenAI-compatible endpoint can require a JSON schema when
-    # response_format=json_object is sent. The caller already validates the
-    # returned JSON at the router boundary, so keep the prompt contract and
-    # omit this incompatible hint only for NVIDIA.
-    if (options_override or {}).get("json_mode") and provider != "nvidia":
+    if (options_override or {}).get("json_mode"):
         payload["response_format"] = {"type": "json_object"}
 
     attempts = [payload]
@@ -447,6 +446,9 @@ def generate_text_with_openrouter_model(prompt, model, api_key, options_override
         if status < 400:
             result = extract_text_from_openai_like(data)
             if result:
+                structured_error = validate_structured_response(result, options_override)
+                if structured_error:
+                    raise RuntimeError(structured_error)
                 return result
             raise RuntimeError("Resposta vazia ou invalida.")
 
@@ -528,7 +530,17 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
         payload["top_p"] = (options_override or {}).get("top_p", 1)
     else:
         payload["max_tokens"] = max_tokens
-    if (options_override or {}).get("json_mode"):
+    # Nemotron Lightning enables reasoning by default. On the NVIDIA
+    # OpenAI-compatible endpoint that can consume the token budget in an
+    # internal trace and leave an empty or non-contract final answer. Product
+    # backlog blocks need the final text, not a hidden chain of thought.
+    if provider == "nvidia" and str(model or "").strip().lower() == "nvidia/nemotron-3.5-lightning-30b-a3b":
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    # NVIDIA accepts OpenAI-style chat requests, but its endpoint can return
+    # prose instead of the requested JSON when response_format=json_object is
+    # used without a schema. The agent prompt plus the router's JSON gate keep
+    # the contract, while omitting the incompatible transport hint.
+    if (options_override or {}).get("json_mode") and provider != "nvidia":
         payload["response_format"] = {"type": "json_object"}
 
     status, data, response_headers = http_post_json(
@@ -589,11 +601,6 @@ def generate_text_from_provider(provider, prompt, options_override=None, model_o
 
     if provider == "gemini":
         configured_model = model_override or os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
-        # Gemini retired/unstable aliases should not silently consume the
-        # entire provider chain. Keep the model configurable, but normalize
-        # the legacy lite alias to the supported 3.6 Flash model.
-        if str(configured_model).strip().lower() in {"gemini-3.5-flash-lite", "models/gemini-3.5-flash-lite"}:
-            configured_model = os.getenv("GEMINI_MODEL_FALLBACK", "gemini-3.6-flash")
         return generate_text_with_gemini(
             prompt,
             configured_model,

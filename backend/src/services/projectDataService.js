@@ -2207,7 +2207,11 @@ function buildBacklogContract(backlogMarkdown, projectDna = null, generatedContr
     }
     return {
       ...story,
+      actor: metadata.actor || null,
+      goal: metadata.goal || null,
+      benefit: metadata.benefit || null,
       sourceIds: Array.isArray(metadata.source_ids) ? metadata.source_ids : [],
+      capabilityIds: Array.isArray(metadata.capability_ids) ? metadata.capability_ids : [],
       status: metadata.status || 'proposed',
       lane: metadata.lane || null,
       priority: ['low', 'medium', 'high', 'urgent'].includes(metadata.priority) ? metadata.priority : 'medium',
