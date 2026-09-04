@@ -2627,10 +2627,23 @@ export async function publishBacklogTasks(projectUuid) {
   if (qualityReview?.decision !== 'PASS') throw new Error('O backlog precisa passar pela validacao de qualidade antes da publicacao.');
   const hasUnapprovedStory = (contract.stories || []).some((story) => !['approved', 'confirmed'].includes(String(story.reviewStatus || story.status || '').toLowerCase()));
   if (hasUnapprovedStory) throw new Error('Aprove todas as stories antes de publicar o backlog.');
+  const hasUnreadyStory = (contract.stories || []).some((story) => String(story?.lastAgentReview?.assessment?.decision || '') !== 'READY');
+  if (hasUnreadyStory) throw new Error('Todas as stories precisam passar pelo Story Readiness Assessment antes da publicacao.');
   const existing = new Set(project.tasks.filter((task) => task.taskType === 'story').map((task) => task.title.trim()));
   for (const [index, story] of (contract.stories || []).entries()) {
     if (!story?.title || existing.has(story.title.trim())) continue;
-    await prisma.task.create({ data: { uuid: randomUUID(), projectId: project.id, title: story.title, description: story.description || null, taskType: 'story', status: 'backlog', priority: ['low', 'medium', 'high', 'urgent'].includes(story.priority) ? story.priority : 'medium', assigneeType: 'agent', assigneeAgentName: 'requirements_analyst', position: index, createdBy: project.creator.id, statusHistory: { create: { fromStatus: null, toStatus: 'backlog', changedByUserId: project.creator.id, note: 'Story publicada apos aprovacao humana' } } } });
+    const reviewSnapshot = {
+      storyId: story.id || null,
+      assessment: story.lastAgentReview?.assessment || null,
+      review: story.lastAgentReview?.review || null,
+      answers: Array.isArray(story.reviewAnswers) ? story.reviewAnswers : [],
+      reviewedAt: story.lastAgentReview?.generatedAt || story.lastAgentReview?.appliedAt || null,
+      appliedAt: story.lastAgentReview?.appliedAt || null,
+      approvedAt: Array.isArray(story.reviewHistory)
+        ? [...story.reviewHistory].reverse().find((entry) => entry?.status === 'approved')?.at || null
+        : null,
+    };
+    await prisma.task.create({ data: { uuid: randomUUID(), projectId: project.id, title: story.title, description: story.description || null, taskType: 'story', status: 'backlog', priority: ['low', 'medium', 'high', 'urgent'].includes(story.priority) ? story.priority : 'medium', assigneeType: 'agent', assigneeAgentName: 'requirements_analyst', position: index, createdBy: project.creator.id, statusHistory: { create: { fromStatus: null, toStatus: 'backlog', changedByUserId: project.creator.id, note: 'Story publicada apos aprovacao humana' } }, artifacts: { create: { uuid: randomUUID(), artifactType: 'review', artifactScope: 'refinement', title: `Story Readiness Review - ${story.title}`.slice(0, 255), content: JSON.stringify(reviewSnapshot), contentFormat: 'json', version: 1, isCurrent: true, isApproved: true, approvedAt: reviewSnapshot.approvedAt ? new Date(reviewSnapshot.approvedAt) : new Date(), createdByUserId: project.creator.id, createdByAgentName: 'story_reviewer' } } } });
   }
   await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, publicationStatus: 'published', publishedAt: new Date().toISOString() } } } });
   return listProjectTasks(projectUuid);
@@ -2656,6 +2669,12 @@ export async function updateBacklogStory(projectUuid, storyId, input = {}, actor
     if (!['approved', 'rejected', 'needs_review'].includes(reviewStatus)) throw new Error('Status de revisão inválido.');
     const comment = String(input.comment || '').trim();
     if (reviewStatus === 'rejected' && !comment) throw new Error('Comentário é obrigatório ao rejeitar uma story.');
+    if (reviewStatus === 'approved') {
+      const assessment = story.lastAgentReview?.assessment;
+      if (assessment?.decision !== 'READY') {
+        throw new Error('A story so pode ser aprovada quando o Story Readiness Assessment estiver READY, sem bloqueios.');
+      }
+    }
     story.reviewStatus = reviewStatus;
     story.reviewComment = comment || null;
     story.reviewHistory = Array.isArray(story.reviewHistory) ? story.reviewHistory : [];

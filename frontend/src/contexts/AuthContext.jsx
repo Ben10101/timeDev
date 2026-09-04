@@ -42,6 +42,10 @@ function getAccessTokenExpiry(token) {
   return Number.isFinite(exp) && exp > 0 ? exp * 1000 : 0
 }
 
+function isInvalidSessionError(error) {
+  return error?.response?.status === 401
+}
+
 function persistBootstrapContext(session) {
   if (!session?.user || !session?.workspace) {
     localStorage.removeItem('factory_bootstrap_context')
@@ -113,6 +117,9 @@ export function AuthProvider({ children }) {
           originalRequest.headers.Authorization = `Bearer ${restored.accessToken}`
           return axios(originalRequest)
         } catch (refreshError) {
+          if (!isInvalidSessionError(refreshError)) {
+            return Promise.reject(refreshError)
+          }
           clearApiAccessToken()
           setSession(null)
           persistBootstrapContext(null)
@@ -142,8 +149,8 @@ export function AuthProvider({ children }) {
           accessToken: restored.accessToken,
         })
         persistBootstrapContext(restored)
-      } catch (_error) {
-        if (cancelled) return
+      } catch (error) {
+        if (cancelled || !isInvalidSessionError(error)) return
         clearApiAccessToken()
         setSession(null)
         persistBootstrapContext(null)
@@ -204,8 +211,8 @@ export function AuthProvider({ children }) {
           accessToken: restored.accessToken,
         })
         persistBootstrapContext(restored)
-      } catch (_error) {
-        if (cancelled) return
+      } catch (error) {
+        if (cancelled || !isInvalidSessionError(error)) return
         clearApiAccessToken()
         setSession(null)
         persistBootstrapContext(null)

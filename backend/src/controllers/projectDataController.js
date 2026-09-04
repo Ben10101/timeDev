@@ -33,6 +33,7 @@ import {
   updateTask,
   reviewTaskArtifact,
 } from '../services/projectDataService.js';
+import { createHash } from 'node:crypto';
 import { evaluateArtifactQuality } from '../services/artifactQualityGateService.js';
 import { runSingleAgent } from '../services/orchestratorService.js';
 import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
@@ -88,6 +89,51 @@ function mergeReviewAnswers(storedAnswers, submittedAnswers) {
   normalize(storedAnswers).forEach((item) => merged.set(answerKey(item), item));
   normalize(submittedAnswers).forEach((item) => merged.set(answerKey(item), item));
   return [...merged.values()].slice(0, 20);
+}
+
+function normalizeReviewProposal(proposal = {}) {
+  const normalizeText = (value) => String(value || '').trim();
+  const normalizeCriterion = (criterion = {}) => ({
+    given: normalizeText(criterion.given),
+    when: normalizeText(criterion.when),
+    then: normalizeText(criterion.then),
+    status: normalizeText(criterion.status) || 'proposed',
+    source_ids: Array.isArray(criterion.source_ids || criterion.sourceIds)
+      ? [...new Set((criterion.source_ids || criterion.sourceIds).map(normalizeText).filter(Boolean))].sort()
+      : [],
+  });
+  return {
+    title: normalizeText(proposal.title),
+    description: normalizeText(proposal.description),
+    actor: normalizeText(proposal.actor),
+    benefit: normalizeText(proposal.benefit),
+    acceptance_criteria: Array.isArray(proposal.acceptance_criteria)
+      ? proposal.acceptance_criteria.map(normalizeCriterion)
+      : [],
+  };
+}
+
+function createReviewFingerprint(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function buildReviewSnapshot(review, answers) {
+  const proposal = normalizeReviewProposal(review?.proposed_story);
+  const normalizedAnswers = mergeReviewAnswers([], answers);
+  return {
+    proposalFingerprint: createReviewFingerprint(proposal),
+    answersFingerprint: createReviewFingerprint(normalizedAnswers),
+    assessment: review?.assessment || null,
+    // Keep the complete, user-facing result so reopening the modal never has
+    // to invoke an LLM merely to show a review that already exists.
+    review: {
+      proposed_story: proposal,
+      questions: Array.isArray(review?.questions) ? review.questions : [],
+      assessment: review?.assessment || null,
+      generation_degraded: Boolean(review?.generation_degraded),
+    },
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 function extractMarkdownSection(content, sectionTitle) {
@@ -697,6 +743,8 @@ export async function updateBacklogStoryController(req, res, next) {
 }
 
 export async function reviewBacklogStoryController(req, res, next) {
+  let agentRun = null;
+  let runLifecycle = null;
   try {
     const project = await getProjectByUuid(req.params.projectUuid, req.authUser.uuid);
     if (!project) return res.status(404).json({ message: 'Projeto não encontrado.' });
@@ -706,12 +754,34 @@ export async function reviewBacklogStoryController(req, res, next) {
     const storedStory = stories.find((item) => String(item?.id) === String(req.params.storyId));
     if (!storedStory) return res.status(404).json({ message: 'Story não encontrada.' });
     const story = normalizeBacklogStoryForReview(storedStory);
+    const draftProposal = req.body?.draftProposal && typeof req.body.draftProposal === 'object'
+      ? normalizeReviewProposal(req.body.draftProposal)
+      : null;
+    const currentRefinementContext = story.refinementContext || story.refinement_context || {};
+    const storyForReview = draftProposal
+      ? {
+          ...story,
+          title: draftProposal.title || story.title,
+          description: draftProposal.description || story.description,
+          actor: draftProposal.actor || story.actor,
+          benefit: draftProposal.benefit || story.benefit,
+          refinementContext: {
+            ...currentRefinementContext,
+            acceptanceCriteria: draftProposal.acceptance_criteria,
+            acceptance_criteria: draftProposal.acceptance_criteria,
+          },
+          refinement_context: {
+            ...currentRefinementContext,
+            acceptanceCriteria: draftProposal.acceptance_criteria,
+            acceptance_criteria: draftProposal.acceptance_criteria,
+          },
+        }
+      : story;
     const reviewAnswers = mergeReviewAnswers(storedStory.reviewAnswers, req.body?.answers);
-    if (!story.id || !story.title) {
+    if (!storyForReview.id || !storyForReview.title) {
       return res.status(422).json({ message: 'A story precisa ter um objetivo ou título antes da revisão.' });
     }
-    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'story_reviewer' });
-    const result = await runSingleAgent('story_reviewer', {
+    const payload = {
       project_id: project.uuid,
       idea: project.description || project.vision || project.name,
       briefing: {
@@ -722,12 +792,59 @@ export async function reviewBacklogStoryController(req, res, next) {
       },
       project_dna: project.projectDna || project.intakeConfig?.projectDna || {},
       backlog_contract: contract,
-      other_stories: stories.filter((item) => String(item?.id) !== String(story.id)).slice(0, 30),
-      story,
+      other_stories: stories.filter((item) => String(item?.id) !== String(storyForReview.id)).slice(0, 30),
+      story: storyForReview,
       review_answers: reviewAnswers,
-    }, { envOverrides });
+    };
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'story_reviewer' });
+    const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
+    agentRun = await createAgentRunStart(project.uuid, 'story_reviewer', payloadWithRuntime);
+    runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
+    const result = await runSingleAgent('story_reviewer', payloadWithRuntime, { envOverrides });
+
+    const finalized = await runLifecycle.finalizeSuccess({
+      result,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+    });
+    if (!finalized) return;
+
+    const reviewSnapshot = buildReviewSnapshot(result, reviewAnswers);
+    const updatedStories = stories.map((item) => (
+      String(item?.id) === String(storyForReview.id)
+        ? { ...item, reviewAnswers, pendingAgentReview: reviewSnapshot }
+        : item
+    ));
+    await updateProjectBrief(project.uuid, {
+      intakeConfig: { ...project.intakeConfig, backlogContract: { ...contract, stories: updatedStories } },
+    });
     res.status(200).json(serializeBigInts({ success: true, review: result }));
-  } catch (error) { next(error); }
+  } catch (error) {
+    if (runLifecycle?.isFinalized()) return;
+
+    if (runLifecycle) {
+      await runLifecycle.finalizeFailure({
+        errorMessage: error.message,
+        result: error.agentDiagnostic || null,
+      }).catch(() => null);
+    } else if (agentRun?.id) {
+      await finishAgentRun(agentRun.id, {
+        status: 'failed',
+        errorMessage: error.message,
+        diagnostic: error.agentDiagnostic || null,
+      }).catch(() => null);
+    }
+
+    if (runLifecycle?.wasAborted()) return;
+
+    if (isAgentRunConflictError(error)) {
+      return res.status(409).json({
+        message: error.message,
+        existingRunUuid: error.existingRunUuid || null,
+      });
+    }
+
+    next(error);
+  }
 }
 
 export async function applyBacklogStoryReviewController(req, res, next) {
@@ -745,20 +862,47 @@ export async function applyBacklogStoryReviewController(req, res, next) {
     const proposal = req.body?.proposedStory || {};
     const title = String(proposal.title || '').trim();
     if (!title) return res.status(400).json({ message: 'A proposta precisa ter um título.' });
-    const answers = Array.isArray(req.body?.answers) ? req.body.answers.slice(0, 20).map((item) => ({ id: String(item?.id || ''), question: String(item?.question || ''), answer: String(item?.answer || '').trim() })) : [];
+    const submittedAnswers = Array.isArray(req.body?.answers) ? req.body.answers.slice(0, 20) : [];
+    const current = stories[index];
+    const answers = mergeReviewAnswers(current.reviewAnswers, submittedAnswers);
     if (answers.some((item) => !item.answer)) return res.status(400).json({ message: 'Responda todas as perguntas antes de aplicar a proposta.' });
 
-    const current = stories[index];
-    const acceptanceCriteria = Array.isArray(proposal.acceptance_criteria) ? proposal.acceptance_criteria : [];
+    const normalizedProposal = normalizeReviewProposal(proposal);
+    const pendingReview = current.pendingAgentReview;
+    if (!pendingReview?.assessment) {
+      return res.status(409).json({ message: 'Execute uma nova revisão antes de aplicar a proposta.' });
+    }
+    if (
+      pendingReview.proposalFingerprint !== createReviewFingerprint(normalizedProposal)
+      || pendingReview.answersFingerprint !== createReviewFingerprint(answers)
+    ) {
+      return res.status(409).json({ message: 'A proposta ou as respostas foram alteradas desde a última revisão. Atualize a proposta com respostas e revise novamente.' });
+    }
+    const acceptanceCriteria = normalizedProposal.acceptance_criteria;
+    const assessment = pendingReview.assessment;
+    const currentRefinementContext = current.refinementContext || current.refinement_context || {};
+    const refinementContext = {
+      ...currentRefinementContext,
+      acceptanceCriteria,
+      acceptance_criteria: acceptanceCriteria,
+    };
+    const hasBlockingGate = Array.isArray(assessment?.gates) && assessment.gates.some((gate) => gate?.blocking);
+    const nextReviewStatus = hasBlockingGate ? 'needs_review' : current.reviewStatus;
     stories[index] = {
       ...current,
-      title,
-      description: String(proposal.description || current.description || '').trim(),
-      actor: String(proposal.actor || current.actor || '').trim() || null,
-      benefit: String(proposal.benefit || current.benefit || '').trim() || null,
-      refinementContext: { ...(current.refinementContext || {}), acceptanceCriteria },
+      title: normalizedProposal.title,
+      description: normalizedProposal.description || current.description || '',
+      actor: normalizedProposal.actor || current.actor || null,
+      benefit: normalizedProposal.benefit || current.benefit || null,
+      refinementContext,
+      refinement_context: refinementContext,
       reviewAnswers: answers,
-      lastAgentReview: { assessment: req.body?.assessment || null, appliedAt: new Date().toISOString(), appliedBy: req.authUser.uuid },
+      reviewStatus: nextReviewStatus,
+      // Preserve the review snapshot after applying it. The story becomes the
+      // source of truth for the proposal, while this retains the diagnosis and
+      // decisions for a later read-only reopening of the modal.
+      lastAgentReview: { ...pendingReview, assessment, appliedAt: new Date().toISOString(), appliedBy: req.authUser.uuid },
+      pendingAgentReview: null,
     };
     await updateProjectBrief(project.uuid, { intakeConfig: { ...config, backlogContract: { ...contract, stories } } });
     res.json(serializeBigInts({ success: true, story: stories[index] }));
