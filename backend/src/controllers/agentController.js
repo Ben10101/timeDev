@@ -71,7 +71,7 @@ function extractCompactRequirementSection(content = '', sectionTitle = '', maxLe
     .replace(/\n{3,}/g, '\n\n');
 
   const escaped = sectionTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = normalized.match(new RegExp(`##+\\s+${escaped}\\s*([\\s\\S]*?)(?=\\n##+\\s+|$)`, 'i'));
+  const match = normalized.match(new RegExp(`##+\\s+(?:\\d+\\.\\s+)?${escaped}\\s*([\\s\\S]*?)(?=\\n##+\\s+|$)`, 'i'));
   return compactText(match ? match[1] : '', maxLength);
 }
 
@@ -79,12 +79,113 @@ function isAgentRunConflictError(error) {
   return error?.statusCode === 409 || error?.code === 'AGENT_RUN_CONFLICT';
 }
 
+function getRequirementsUserFacingError(error) {
+  const detail = String(error?.message || '');
+  const normalized = normalizeArtifactText(detail);
+
+  if (normalized.includes('historia nao esta apta para refinamento') || normalized.includes('acoes independentes que precisam ser separadas')) {
+    return {
+      status: 422,
+      code: 'REQUIREMENTS_SCOPE_SPLIT',
+      message: 'Esta história reúne mais de uma jornada independente. Separe as ações em stories menores ou confirme o escopo antes de gerar os requisitos.',
+    };
+  }
+
+  if (normalized.includes('conflito entre ator') || normalized.includes('review_role')) {
+    return {
+      status: 422,
+      code: 'REQUIREMENTS_ROLE_CONFLICT',
+      message: 'A história tem conflito entre o ator e a ação descrita. Revise quem executa a ação antes de gerar os requisitos.',
+    };
+  }
+
+  if (normalized.includes('reparo do backlog pendente') || normalized.includes('review_blocked')) {
+    return {
+      status: 422,
+      code: 'REQUIREMENTS_BACKLOG_REVIEW_REQUIRED',
+      message: 'Esta história possui pendências da revisão do backlog. Resolva-as na tela de revisão antes de gerar os requisitos.',
+    };
+  }
+
+  if (normalized.includes('nenhum modelo do router concluiu') || normalized.includes('falha de provider')) {
+    return {
+      status: 503,
+      code: 'REQUIREMENTS_PROVIDER_UNAVAILABLE',
+      message: 'Nenhum provedor de IA disponível conseguiu concluir a geração. Verifique o Ollama ou a configuração dos provedores e tente novamente.',
+    };
+  }
+
+  if (normalized.includes('tempo limite excedido') || normalized.includes('deadline') || normalized.includes('timeout')) {
+    return {
+      status: 504,
+      code: 'REQUIREMENTS_GENERATION_TIMEOUT',
+      message: 'A geração de requisitos excedeu o tempo limite. Reduza o contexto da história ou tente novamente quando o modelo local estiver disponível.',
+    };
+  }
+
+  if (
+    normalized.includes('contrato valido apos')
+    || normalized.includes('resposta completa apos')
+    || normalized.includes('descoberta semantica')
+    || normalized.includes('classificacao semantica')
+    || normalized.includes('evidencia semantica')
+  ) {
+    return {
+      status: 422,
+      code: 'REQUIREMENTS_INSUFFICIENT_DETAIL',
+      message: 'Não foi possível gerar um requisito confiável com as informações atuais. Detalhe ator, ação, resultado esperado e regras relevantes, depois tente novamente.',
+    };
+  }
+
+  if (normalized.includes('artefato de requisitos') || normalized.includes('criterios de aceite bdd')) {
+    return {
+      status: 422,
+      code: 'REQUIREMENTS_ARTIFACT_INCOMPLETE',
+      message: 'O documento gerado ficou incompleto e não foi salvo. Tente novamente; se persistir, complemente a story com fluxo, regras e critérios de aceite.',
+    };
+  }
+
+  if (normalized.includes('texto aparentemente truncado')) {
+    return {
+      status: 422,
+      code: 'REQUIREMENTS_ARTIFACT_TRUNCATED',
+      message: 'O documento gerado terminou de forma incompleta e não foi publicado. Tente novamente; os detalhes técnicos ficaram registrados na execução.',
+    };
+  }
+
+  return {
+    status: 500,
+    code: 'REQUIREMENTS_GENERATION_FAILED',
+    message: 'Não foi possível gerar os requisitos desta história. Consulte os detalhes da execução e tente novamente.',
+  };
+}
+
+function buildAgentRunDiagnostic(error, result, executionDiagnostic = null) {
+  const diagnostic = {
+    ...(executionDiagnostic || {}),
+    ...(error?.agentDiagnostic || {}),
+  };
+
+  if (result !== null && result !== undefined) {
+    diagnostic.rejectedArtifact = true;
+    diagnostic.rejectedArtifactChars = typeof result === 'string'
+      ? result.length
+      : JSON.stringify(result).length;
+  }
+
+  return Object.keys(diagnostic).length ? diagnostic : null;
+}
+
 function buildQaRequirementSummary(requirementsContent = '') {
-  const userStory = extractCompactRequirementSection(requirementsContent, 'User Story Refinada', 180);
-  const functional = extractCompactRequirementSection(requirementsContent, 'Requisitos Funcionais', 360);
-  const mainFlow = extractCompactRequirementSection(requirementsContent, 'Fluxo Principal', 220);
+  const userStory = extractCompactRequirementSection(requirementsContent, 'User Story Refinada', 180)
+    || extractCompactRequirementSection(requirementsContent, 'User Story', 180);
+  const functional = extractCompactRequirementSection(requirementsContent, 'Requisitos Funcionais', 360)
+    || extractCompactRequirementSection(requirementsContent, 'Comportamento esperado', 360);
+  const mainFlow = extractCompactRequirementSection(requirementsContent, 'Fluxo Principal', 220)
+    || extractCompactRequirementSection(requirementsContent, 'Comportamento esperado', 220);
   const rules = extractCompactRequirementSection(requirementsContent, 'Regras de Negocio', 220);
-  const acceptance = extractCompactRequirementSection(requirementsContent, 'Criterios de Aceite (BDD)', 260);
+  const acceptance = extractCompactRequirementSection(requirementsContent, 'Criterios de Aceite (BDD)', 260)
+    || extractCompactRequirementSection(requirementsContent, 'Cenarios de aceitacao', 260);
 
   return [
     userStory ? `User Story Refinada:\n${userStory}` : null,
@@ -112,11 +213,88 @@ function buildCompactProjectDnaSummary(projectDna) {
     .join(' | ');
 }
 
+function compactRequirementStory(story) {
+  if (!story || typeof story !== 'object') return null;
+
+  const refinement = story.refinementContext || story.refinement_context || {};
+  return {
+    id: story.id || null,
+    title: compactText(story.title || story.goal || '', 180) || null,
+    description: compactText(story.description || '', 260) || null,
+    actor: compactText(story.actor || '', 100) || null,
+    benefit: compactText(story.benefit || '', 160) || null,
+    priority: compactText(story.priority || '', 40) || null,
+    status: story.status || null,
+    reviewTags: Array.isArray(story.reviewTags || story.review_tags) ? (story.reviewTags || story.review_tags).slice(0, 6) : [],
+    openQuestions: Array.isArray(story.openQuestions || story.open_questions) ? (story.openQuestions || story.open_questions).slice(0, 4) : [],
+    refinementContext: {
+      inputs: Array.isArray(refinement.inputs) ? refinement.inputs.slice(0, 5) : [],
+      outputs: Array.isArray(refinement.outputs) ? refinement.outputs.slice(0, 5) : [],
+      confirmed_rules: Array.isArray(refinement.confirmed_rules) ? refinement.confirmed_rules.slice(0, 6) : [],
+      constraints: Array.isArray(refinement.constraints) ? refinement.constraints.slice(0, 5) : [],
+      dependencies: Array.isArray(refinement.dependencies) ? refinement.dependencies.slice(0, 5) : [],
+      open_questions: Array.isArray(refinement.open_questions) ? refinement.open_questions.slice(0, 4) : [],
+      acceptance_criteria: Array.isArray(refinement.acceptance_criteria) ? refinement.acceptance_criteria.slice(0, 4) : [],
+    },
+  };
+}
+
+function buildCompactRequirementProjectContext(task) {
+  const intakeConfig = task.project?.intakeConfig || {};
+  const projectDna = intakeConfig.projectDna || {};
+  const backlogContract = intakeConfig.backlogContract || {};
+  const stories = Array.isArray(backlogContract.stories) ? backlogContract.stories : [];
+  const currentStory = stories.find((story) => String(story?.title || '').trim() === String(task.title || '').trim()) || null;
+  const relatedStories = stories
+    .filter((story) => story && story.id !== currentStory?.id)
+    .slice(0, 6)
+    .map(compactRequirementStory)
+    .filter(Boolean);
+
+  return {
+    taskPriority: task.priority || null,
+    description: compactText(task.project?.description, 180),
+    vision: compactText(task.project?.vision, 220),
+    projectDna: {
+      project: {
+        productMode: projectDna.project?.productMode || null,
+        experienceStyle: projectDna.project?.experienceStyle || null,
+        primaryActor: projectDna.project?.primaryActor || null,
+        domainLanguage: Array.isArray(projectDna.project?.domainLanguage) ? projectDna.project.domainLanguage.slice(0, 8) : [],
+      },
+      positioning: {
+        summary: compactText(projectDna.positioning?.summary, 220) || null,
+      },
+      coherenceRules: {
+        mustPreserve: Array.isArray(projectDna.coherenceRules?.mustPreserve) ? projectDna.coherenceRules.mustPreserve.slice(0, 6) : [],
+        forbiddenDrift: Array.isArray(projectDna.coherenceRules?.forbiddenDrift) ? projectDna.coherenceRules.forbiddenDrift.slice(0, 6) : [],
+      },
+    },
+    backlogContract: {
+      capabilities: Array.isArray(backlogContract.capabilities)
+        ? backlogContract.capabilities.slice(0, 6).map((item) => ({ id: item?.id || null, name: compactText(item?.name, 120) || null }))
+        : [],
+      releaseSlices: Array.isArray(backlogContract.releaseSlices)
+        ? backlogContract.releaseSlices.slice(0, 5).map((item) => ({ id: item?.id || null, name: compactText(item?.name, 100) || null, goal: compactText(item?.goal, 160) || null }))
+        : [],
+      stories: [currentStory, ...relatedStories].filter(Boolean).map((story) => compactRequirementStory(story)).filter(Boolean),
+    },
+    storyContext: {
+      currentStory: compactRequirementStory(currentStory),
+      relatedStories,
+    },
+  };
+}
+
 function hasBrokenEnding(content = '') {
   const text = (content || '').trimEnd();
   if (!text) return true;
-  if (text.endsWith('```') || text.endsWith('**')) return true;
-  return /[:|*_\-\/(\[{,;]$/.test(text);
+  const codeFenceCount = (text.match(/```/g) || []).length;
+  if (codeFenceCount % 2 !== 0) return true;
+  const boldMarkerCount = (text.match(/\*\*/g) || []).length;
+  if (boldMarkerCount % 2 !== 0) return true;
+  const lastLine = text.split(/\r?\n/).pop().trim();
+  return /^(?:[-*+]\s*|\d+[.)]\s*|\\)$/.test(lastLine);
 }
 
 function normalizeArtifactText(content = '') {
@@ -221,6 +399,8 @@ function assertArtifactCompleteness(agentName, content) {
 export async function runAgentController(req, res) {
   let agentRun = null;
   let runLifecycle = null;
+  let agentResult = null;
+  let executionDiagnostic = null;
   try {
     const { agent, payload } = req.body;
     const isFreeformWorkbench = payload?.request_mode === 'freeform_workbench';
@@ -243,13 +423,16 @@ export async function runAgentController(req, res) {
       runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
     }
 
-    const result = await runSingleAgent(agent, payloadWithRuntime, { envOverrides });
-    assertSharedArtifactCompleteness(agent, typeof result === 'string' ? result : JSON.stringify(result, null, 2));
+    agentResult = await runSingleAgent(agent, payloadWithRuntime, {
+      envOverrides,
+      diagnosticSink: (diagnostic) => { executionDiagnostic = diagnostic; },
+    });
+    assertSharedArtifactCompleteness(agent, typeof agentResult === 'string' ? agentResult : JSON.stringify(agentResult, null, 2));
 
     if (runLifecycle) {
       const finalized = await runLifecycle.finalizeSuccess({
-        result,
-        usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+        result: agentResult,
+        usageMeta: buildAgentRunUsage(payloadWithRuntime, agentResult, envOverrides),
       });
 
       if (!finalized) {
@@ -258,7 +441,7 @@ export async function runAgentController(req, res) {
     }
 
     if (payload.project_id) {
-      await persistAgentResult(payload.project_id, agent, payloadWithRuntime, result);
+      await persistAgentResult(payload.project_id, agent, payloadWithRuntime, agentResult);
     } else if (isFreeformWorkbench) {
       await appendWorkbenchArtifactForUser(req.authUser.uuid, {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -268,14 +451,14 @@ export async function runAgentController(req, res) {
         context: String(payload.context || '').trim(),
         projectId: '',
         timestamp: new Date().toISOString(),
-        output: result,
+        output: agentResult,
       });
     }
 
     res.status(200).json({
       success: true,
       project_id: hasProjectBinding ? payload.project_id : null,
-      data: result,
+      data: agentResult,
     });
   } catch (error) {
     if (runLifecycle?.isFinalized()) {
@@ -283,9 +466,9 @@ export async function runAgentController(req, res) {
     }
 
     if (runLifecycle) {
-      await runLifecycle.finalizeFailure({ errorMessage: error.message }).catch(() => null);
+      await runLifecycle.finalizeFailure({ errorMessage: error.message, result: agentResult, diagnostic: buildAgentRunDiagnostic(error, agentResult, executionDiagnostic) }).catch(() => null);
     } else if (agentRun?.id) {
-      await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);
+      await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message, result: agentResult, diagnostic: buildAgentRunDiagnostic(error, agentResult, executionDiagnostic) }).catch(() => null);
     }
 
     if (runLifecycle?.wasAborted()) {
@@ -318,6 +501,8 @@ export async function runRequirementsForTaskController(req, res) {
   let agentRun = null;
   let previousTaskState = null;
   let runLifecycle = null;
+  let agentResult = null;
+  let executionDiagnostic = null;
 
   try {
     const { taskUuid } = req.params;
@@ -363,39 +548,26 @@ export async function runRequirementsForTaskController(req, res) {
         task.description ? `\n\nContexto complementar da tarefa: ${task.description}` : ''
       }`,
       backlog: buildCompactRequirementBacklog(task),
-      backlog_contract: task.project?.intakeConfig?.backlogContract || null,
       project_name: task.project.name,
-      project_context: {
-        description: compactText(task.project.description, 180),
-        vision: compactText(task.project.vision, 220),
-        projectDna: task.project?.intakeConfig?.projectDna || null,
-        backlogContract: task.project?.intakeConfig?.backlogContract || null,
-        storyContext: (() => {
-          const stories = Array.isArray(task.project?.intakeConfig?.backlogContract?.stories)
-            ? task.project.intakeConfig.backlogContract.stories
-            : [];
-          const current = stories.find((story) => String(story?.title || '').trim() === String(task.title || '').trim()) || null;
-          return {
-            currentStory: current,
-            relatedStories: stories.filter((story) => story && story.id !== current?.id).slice(0, 6),
-          };
-        })(),
-      },
+      project_context: buildCompactRequirementProjectContext(task),
     };
 
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'requirements_analyst' });
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(task.project.uuid, 'requirements_analyst', payloadWithRuntime);
     runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
-    const result = await runSingleAgent('requirements_analyst', payloadWithRuntime, { envOverrides });
-    const content = typeof result === 'string'
-      ? result
-      : (typeof result?.markdown === 'string' ? result.markdown : JSON.stringify(result, null, 2));
+    agentResult = await runSingleAgent('requirements_analyst', payloadWithRuntime, {
+      envOverrides,
+      diagnosticSink: (diagnostic) => { executionDiagnostic = diagnostic; },
+    });
+    const content = typeof agentResult === 'string'
+      ? agentResult
+      : (typeof agentResult?.markdown === 'string' ? agentResult.markdown : JSON.stringify(agentResult, null, 2));
     assertSharedArtifactCompleteness('requirements_analyst', content);
 
     const finalized = await runLifecycle.finalizeSuccess({
-      result,
-      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+      result: agentResult,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, agentResult, envOverrides),
     });
 
     if (!finalized) {
@@ -408,7 +580,7 @@ export async function runRequirementsForTaskController(req, res) {
       contentFormat: 'markdown',
       createdByAgentName: 'requirements_analyst',
       agentRunId: agentRun.id,
-      requirementContract: result?.requirement_contract || result?.requirementContract || parseJsonArtifact(content)?.requirement_contract || parseJsonArtifact(content)?.requirementContract || null,
+      requirementContract: agentResult?.requirement_contract || agentResult?.requirementContract || parseJsonArtifact(content)?.requirement_contract || parseJsonArtifact(content)?.requirementContract || null,
     });
 
     const updatedTask = await updateTask(taskUuid, {
@@ -423,7 +595,7 @@ export async function runRequirementsForTaskController(req, res) {
       serializeBigInts({
         success: true,
         task: updatedTask,
-      data: result,
+      data: agentResult,
     })
   );
   } catch (error) {
@@ -432,9 +604,9 @@ export async function runRequirementsForTaskController(req, res) {
     }
 
     if (runLifecycle) {
-      await runLifecycle.finalizeFailure({ errorMessage: error.message }).catch(() => null);
+      await runLifecycle.finalizeFailure({ errorMessage: error.message, result: agentResult, diagnostic: buildAgentRunDiagnostic(error, agentResult, executionDiagnostic) }).catch(() => null);
     } else if (agentRun?.id) {
-      await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);
+      await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message, result: agentResult, diagnostic: buildAgentRunDiagnostic(error, agentResult, executionDiagnostic) }).catch(() => null);
     }
 
     if (runLifecycle?.wasAborted()) {
@@ -457,7 +629,11 @@ export async function runRequirementsForTaskController(req, res) {
       }).catch(() => null);
     }
     console.error(`[AgentController] Error running requirements for task: ${error.message}`);
-    res.status(500).json({ message: 'Erro ao executar o Analista de Requisitos', error: error.message });
+    const userFacingError = getRequirementsUserFacingError(error);
+    res.status(userFacingError.status).json({
+      ...userFacingError,
+      requestId: req.requestId || null,
+    });
   }
 }
 

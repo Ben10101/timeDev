@@ -1,7 +1,23 @@
 import json
-import re
 
 from agents.developer.llm_service import generate_text_from_llm, is_error_text_response
+
+
+def parse_first_json_object(raw):
+    """Decode the first complete JSON object and ignore model trailing text."""
+    text = str(raw or '').strip()
+    decoder = json.JSONDecoder()
+    start = text.find('{')
+    while start >= 0:
+        try:
+            value, _ = decoder.raw_decode(text[start:])
+            if isinstance(value, dict):
+                return value
+        except json.JSONDecodeError:
+            start = text.find('{', start + 1)
+            continue
+        break
+    raise ValueError('Agente de reparo retornou JSON invalido.')
 
 
 class ArtifactRepairAgent:
@@ -43,11 +59,7 @@ Artefato atual (somente contexto): {current[:12000]}
         )
         if not result or is_error_text_response(result):
             raise RuntimeError("Agente de reparo nao retornou uma resposta valida.")
-        raw = str(result).strip()
-        match = re.search(r"\{[\s\S]*\}", raw)
-        if not match:
-            raise ValueError("Agente de reparo retornou JSON invalido.")
-        patch = json.loads(match.group(0))
+        patch = parse_first_json_object(result)
         if not isinstance(patch, dict) or not patch.get("section") or not patch.get("content"):
             raise ValueError("Patch de reparo sem section ou content.")
         patch["status"] = patch.get("status") or "proposed"

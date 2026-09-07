@@ -97,7 +97,12 @@ export default function ProjectOverviewPage() {
     [project?.intakeConfig?.backlogContract?.stories?.length, tasks]
   );
   const hasPublishedStories = useMemo(() => tasks.some((task) => task.taskType === 'story'), [tasks]);
-  const backlogQualityReview = project?.intakeConfig?.backlogContract?.qualityReview || null;
+  // O PM persiste o contrato em snake_case; versões antigas usavam camelCase.
+  // Normalizamos aqui para que o resultado recém-gerado apareça no overview
+  // independentemente da versão do contrato retornada pela API.
+  const backlogQualityReview = project?.intakeConfig?.backlogContract?.quality_review
+    || project?.intakeConfig?.backlogContract?.qualityReview
+    || null;
   const activeRequirementsContract = requirementsContract || project?.intakeConfig?.backlogContract?.requirementsContract || project?.intakeConfig?.requirementsContract || null;
   const pendingBacklogContract = project?.intakeConfig?.backlogContract;
   const backlogAwaitingApproval = Boolean(pendingBacklogContract?.stories?.length && pendingBacklogContract?.publicationStatus !== 'published');
@@ -277,7 +282,8 @@ export default function ProjectOverviewPage() {
       });
       setClarifications([]);
       setClarificationAnswers({});
-      setSuccessMessage('User stories geradas com sucesso.');
+      setSuccessMessage('User stories geradas com sucesso. Abrindo a tela de revisão...');
+      navigate(`/projects/${projectUuid}/backlog-review`);
     } catch (submitError) {
       setError(getApiErrorMessage(submitError, 'Não foi possível gerar o backlog do projeto.'));
     } finally {

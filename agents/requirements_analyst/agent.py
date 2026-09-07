@@ -30,6 +30,7 @@ class RequirementsAnalyst:
         "simular", "iniciar", "enviar", "preencher", "informar", "cadastrar", "criar",
         "registrar", "consultar", "acompanhar", "validar", "aprovar", "reprovar",
         "solicitar", "corrigir", "revisar", "decidir", "cancelar", "editar",
+        "administrar", "gerenciar", "atualizar", "renovar", "alugar",
     )
     SECTION_TITLES = [
         "User Story Refinada",
@@ -80,6 +81,30 @@ class RequirementsAnalyst:
         text = "".join(char for char in text if not unicodedata.combining(char))
         return re.sub(r"\s+", " ", text)
 
+    def _normalize_semantic_label(self, value, fallback):
+        """Keep LLM classifications compact without letting prose fail refinement.
+
+        ``domain`` and ``intent`` are routing metadata for the refinement
+        contract, rather than evidence-bearing business requirements. Smaller
+        local models occasionally answer with prose such as "o dominio e
+        ecommerce" even when the requested schema is otherwise valid. Remove
+        that framing when it leaves a short label; otherwise use the
+        deterministic story classification already used by the agent.
+        """
+        normalized = self._normalize_text(value)
+        tokens = re.findall(r"[a-z0-9]+", normalized)
+        framing_tokens = {
+            "a", "as", "e", "eh", "o", "os",
+            "classificacao", "dominio", "historia", "intencao", "intent", "label", "rotulo",
+            "para", "que", "semantica", "semantico", "uma", "um",
+        }
+        label_tokens = [token for token in tokens if token not in framing_tokens]
+        label = "_".join(label_tokens)
+
+        if 1 <= len(label_tokens) <= 3 and len(label) <= 48:
+            return label
+        return fallback
+
     def _classify_story_type(self, idea):
         normalized = self._normalize_text(idea)
         if "definir escopo" in normalized:
@@ -90,6 +115,10 @@ class RequirementsAnalyst:
             return "create"
         if "registrar" in normalized:
             return "record"
+        if re.search(r"\b(renovar|alugar novamente|recontratar)\b", normalized):
+            return "renewal"
+        if re.search(r"\b(administrar|gerenciar|atualizar)\b", normalized):
+            return "manage"
         if "aprovar" in normalized or "reprovar" in normalized:
             return "approval"
         if "visualizar" in normalized or "consultar" in normalized:
@@ -100,6 +129,12 @@ class RequirementsAnalyst:
 
     def _classify_domain(self, idea, backlog, project_context=None):
         source = self._normalize_text(f"{idea} {backlog} {project_context or ''}")
+        # Prefer the concrete product vocabulary of the current story over
+        # unrelated words that may appear in neighbouring backlog stories or
+        # generic project examples. This prevents video-rental stories from
+        # inheriting the credit domain guardrails.
+        if re.search(r"\b(locac(?:ao|oes)|video|catalogo|streaming|conteudo alugado)\b", source):
+            return "video_rental"
         if re.search(r"\b(credito|emprestimo|financiamento|score|bureau)\b", source):
             return "credit"
         return "generic"
@@ -115,22 +150,51 @@ class RequirementsAnalyst:
             return "simulation"
         return self._classify_story_type(idea)
 
-    def _assess_scope(self, idea):
-        """Identify multiple top-level journeys without deciding their split."""
+    def _assess_scope(self, idea, semantic_context=None):
+        """Identify multiple top-level journeys using semantic actions."""
         normalized = self._normalize_text(idea)
+        # Browsing a collection and opening an item's details are sequential
+        # steps of one discovery journey, not independent deliveries. A model
+        # may mark both as primary actions, so reconcile that classification
+        # against the story wording before blocking the refinement.
+        is_navigation_to_detail_journey = (
+            bool(re.search(r"\b(navegar|explorar|listar|consultar)\b", normalized))
+            and bool(re.search(r"\b(visualizar|ver)\b", normalized))
+            and bool(re.search(r"\bdetalh", normalized))
+        )
+        if is_navigation_to_detail_journey:
+            return {
+                "status": "atomic",
+                "actions": ["navegar e visualizar detalhes"],
+                "action_phrase": "navegar para visualizar detalhes",
+            }
+        semantic_actions = [str(item.get("text") or "").strip() for item in (semantic_context or {}).get("actions", []) if isinstance(item, dict) and str(item.get("text") or "").strip() and str(item.get("role") or "primary").strip().lower() == "primary"]
+        semantic_goals = [str(item.get("text") or "").strip() for item in (semantic_context or {}).get("goals", []) if isinstance(item, dict) and str(item.get("text") or "").strip() and str(item.get("role") or "primary").strip().lower() == "primary"]
+        if semantic_actions or semantic_goals:
+            actions = semantic_goals or semantic_actions
+            return {"status": "needs_split" if len(actions) > 1 else "atomic", "actions": actions, "action_phrase": " | ".join(actions)}
         action_match = re.search(r"\b(?:eu\s+)?quero\s+([^,.\n]+)", normalized)
         action_phrase = action_match.group(1) if action_match else normalized
         actions = []
         for action in self.SCOPE_ACTIONS:
             if re.search(rf"\b{re.escape(action)}\b", action_phrase) and action not in actions:
                 actions.append(action)
+        # Administration stories commonly hide several independent journeys
+        # behind one verb. Treat each explicitly named catalog concern as a
+        # separate action so the PM/RA pipeline asks for a split decision.
+        if re.search(r"\b(administrar|gerenciar)\b", action_phrase):
+            for concern in ("titulos", "metadados", "precos", "disponibilidade"):
+                if re.search(rf"\b{concern}\b", action_phrase) and concern not in actions:
+                    actions.append(concern)
+            if len(actions) == 1 and re.search(r"\b(catalogo|videos?)\b", action_phrase):
+                actions.append("catalogo")
         return {
             "status": "needs_split" if len(actions) > 1 else "atomic",
             "actions": actions,
             "action_phrase": action_phrase,
         }
 
-    def _feature_profile(self, idea, project_context=None):
+    def _feature_profile(self, idea, project_context=None, semantic_context=None):
         # Classify only the current story.  The project context intentionally
         # contains related backlog stories, so using it wholesale would make a
         # simple consultation inherit document/form guardrails from another task.
@@ -146,6 +210,12 @@ class RequirementsAnalyst:
         has_form = bool(re.search(r"\b(formulario|preench|dado pessoal|dado financeiro|cadastro)\b", source))
         has_input = has_document or has_form or bool(re.search(r"\b(valor|prazo|parcela|informar)\b", source))
         has_sensitive_data = has_document or bool(re.search(r"\b(dado pessoal|dado financeiro|credito|renda|cpf|privacidade|lgpd)\b", source))
+        semantic = semantic_context if isinstance(semantic_context, dict) else {}
+        if all(isinstance(semantic.get(key), bool) for key in ("has_input", "has_document", "has_form", "has_sensitive_data")):
+            has_input = semantic["has_input"]
+            has_document = semantic["has_document"]
+            has_form = semantic["has_form"]
+            has_sensitive_data = semantic["has_sensitive_data"]
         return {
             "has_input": has_input,
             "has_document": has_document,
@@ -187,8 +257,9 @@ class RequirementsAnalyst:
         }
 
     def _build_refinement_contract(self, idea, backlog, project_context=None):
-        domain = self._classify_domain(idea, backlog, project_context)
-        intent = self._classify_intent(idea)
+        semantic_context = self._discover_semantic_context(idea, backlog, project_context)
+        domain = semantic_context.get("domain") or "generic"
+        intent = semantic_context.get("intent") or "generic"
         # This is a traceability envelope, not a catalogue of business rules.  In
         # particular, do not encode domain defaults here: the model must derive
         # business meaning from the story and the supplied project sources.
@@ -199,13 +270,26 @@ class RequirementsAnalyst:
             "outputs": [],
             "confirmed_rules": [],
             "assumptions": [],
-            "open_questions": [],
+            "open_questions": [
+                {
+                    "id": str(item.get("id") or f"OQ-{index + 1:02d}"),
+                    "text": str(item.get("question") or "").strip(),
+                    "category": str(item.get("category") or "fluxo").strip(),
+                    "priority": str(item.get("priority") or "medium").strip(),
+                    "decision_needed": str(item.get("decision_needed") or "").strip(),
+                    "impact": str(item.get("impact") or "").strip(),
+                }
+                for index, item in enumerate(semantic_context.get("clarifying_questions", []))
+                if isinstance(item, dict) and str(item.get("question") or "").strip()
+            ],
             "dependencies": [],
             "acceptance_criteria": [],
             "evidence_sources": self._evidence_sources(idea, backlog, project_context),
-            "feature_profile": self._feature_profile(idea, project_context),
-            "scope_assessment": self._assess_scope(idea),
+            "feature_profile": self._feature_profile(idea, project_context, semantic_context),
+            "scope_assessment": self._assess_scope(idea, semantic_context),
             "upstream_context": ((project_context or {}).get("storyContext") or {}).get("currentStory", {}).get("refinementContext", {}) if isinstance(project_context, dict) else {},
+            "semantic_context": semantic_context,
+            "compact_context": self._compact_project_context(project_context),
         }
         current_story = ((project_context or {}).get("storyContext") or {}).get("currentStory") if isinstance(project_context, dict) else {}
         if isinstance(current_story, dict):
@@ -219,6 +303,94 @@ class RequirementsAnalyst:
         # changing the persisted Markdown artifact contract.
         json.dumps(contract, ensure_ascii=False)
         return contract
+
+    def _discover_semantic_context(self, idea, backlog, project_context=None):
+        """Extract project-specific semantics using the LLM, not code lists."""
+        compact = self._compact_project_context(project_context)
+        prompt = ("Voce e analista senior de Requirements Engineering. Extraia o contexto semantico desta user story usando somente as fontes fornecidas. "
+                  "Retorne APENAS um objeto JSON valido, sem Markdown. Inclua TODAS as chaves: domain, intent, has_input, has_document, has_form, has_sensitive_data, actors, entities, goals, actions, states, ambiguities e clarifying_questions. Os campos has_input, has_document, has_form e has_sensitive_data devem ser os booleanos JSON true ou false, sem aspas e nunca null. "
+                  "actors, entities, states e ambiguities devem ser sempre listas de objetos {text, evidence, confidence}; goals e actions devem ser sempre listas de objetos {text, evidence, confidence, role}; clarifying_questions deve ser sempre uma lista. Quando nao houver evidencia, retorne [] — nunca null, string ou objeto isolado. "
+                  "Cada goal/action deve ter role=primary ou supporting. Filtros, ordenacao, selecao e preenchimento que apenas qualificam uma consulta sao supporting e nao criam nova jornada. "
+                  "Cada clarifying_question deve ter id, question (pergunta direta e contextualizada), decision_needed, impact, category e priority. "
+                  "domain e intent devem ser rotulos curtos (uma a tres palavras, sem frases ou evidencias), por exemplo domain=ecommerce e intent=add_to_cart. Nunca escreva 'o dominio e ...' ou 'a intencao e ...'. Cada item deve ter text, evidence literal da fonte e confidence entre 0 e 1. Se nao estiver presente, use lista vazia. "
+                  f"USER STORY: {idea}\nBACKLOG: {backlog}\nCONTEXTO: {json.dumps(compact, ensure_ascii=False)}")
+        result = generate_text_from_llm(
+            prompt,
+            options_override={
+                "temperature": 0.0,
+                "num_predict": 900,
+                "request_timeout_seconds": 35,
+                "transient_retries": 1,
+                "json_mode": True,
+                # JSON mode is a provider hint. Require an actual complete
+                # object at the router boundary so invalid free-model output
+                # triggers a fallback instead of failing inside the RA.
+                "require_json_object": True,
+            },
+            use_cache=False,
+            task="requirements_analysis",
+        )
+        semantic = self._extract_json_object(result)
+        if not isinstance(semantic, dict):
+            raise RuntimeError("Descoberta semantica retornou JSON invalido.")
+        source_corpus = self._normalize_text(f"{idea} {backlog} {json.dumps(compact, ensure_ascii=False)}")
+        for key in ("actors", "entities", "goals", "actions", "states", "ambiguities"):
+            values = semantic.get(key)
+            # Some providers represent an empty extracted category as null or
+            # omit it. Both mean the same as the contract's required empty
+            # list and are safe to normalize; malformed non-list values remain
+            # rejected below to preserve the evidence contract.
+            if values is None:
+                values = []
+                semantic[key] = values
+            if not isinstance(values, list):
+                raise RuntimeError(f"Descoberta semantica sem lista valida em {key}.")
+            for item in values:
+                if not isinstance(item, dict) or not str(item.get("text") or "").strip() or not str(item.get("evidence") or "").strip():
+                    raise RuntimeError(f"Descoberta semantica sem evidencia em {key}.")
+                evidence = self._normalize_text(item.get("evidence"))
+                if evidence not in source_corpus:
+                    raise RuntimeError(f"Evidencia semantica nao encontrada nas fontes em {key}.")
+                try:
+                    confidence = float(item.get("confidence", 0))
+                except (TypeError, ValueError) as error:
+                    raise RuntimeError(f"Confianca invalida em {key}.") from error
+                if not 0 <= confidence <= 1:
+                    raise RuntimeError(f"Confianca invalida em {key}.")
+                if key in {"goals", "actions"} and str(item.get("role") or "primary").strip().lower() not in {"primary", "supporting"}:
+                    raise RuntimeError(f"Papel semantico invalido em {key}.")
+        questions = semantic.get("clarifying_questions", [])
+        if questions is None:
+            questions = []
+            semantic["clarifying_questions"] = questions
+        if not isinstance(questions, list):
+            raise RuntimeError("Descoberta semantica sem clarifying_questions valido.")
+        for question in questions:
+            if not isinstance(question, dict) or not all(str(question.get(key) or "").strip() for key in ("question", "decision_needed", "impact", "category", "priority")):
+                raise RuntimeError("Pergunta sem contexto especialista completo.")
+            if not str(question["question"]).strip().endswith("?"):
+                raise RuntimeError("Pergunta sem pontuacao final valida.")
+        semantic["domain"] = self._normalize_semantic_label(
+            semantic.get("domain"),
+            self._classify_domain(idea, backlog, project_context),
+        )
+        semantic["intent"] = self._normalize_semantic_label(
+            semantic.get("intent"),
+            self._classify_intent(idea),
+        )
+        fallback_profile = self._feature_profile(idea, project_context)
+        for key in ("has_input", "has_document", "has_form", "has_sensitive_data"):
+            value = semantic.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+                semantic[key] = value.strip().lower() == "true"
+                continue
+            # These fields are classification flags, not business facts. When
+            # a provider omits or malforms one, derive it from the current
+            # story only instead of aborting an otherwise valid refinement.
+            semantic[key] = fallback_profile[key]
+        return semantic
 
     def _apply_contract_guardrails(self, contract, expected):
         """Carry upstream review state and feature-critical gaps into the AI contract.
@@ -271,7 +443,7 @@ class RequirementsAnalyst:
         if scope.get("status") == "needs_split":
             action_labels = ", ".join(scope.get("actions") or [])
             required_questions.append(("escopo", f"A historia reune as acoes '{action_labels}'. Confirmar se devem ser refinadas e entregues como jornadas independentes."))
-        if profile.get("has_input"):
+        if profile.get("has_input") and expected.get("intent") not in {"view", "summary"}:
             required_questions.append(("validacao", "Definir obrigatoriedade, formato, consistencia e comportamento para dados ausentes ou invalidos."))
         if profile.get("has_document"):
             required_questions.append(("documentos", "Definir politica de documentos: tipos aceitos, tamanho, quantidade, falha de envio, substituicao e validacao."))
@@ -280,6 +452,94 @@ class RequirementsAnalyst:
         for category, text in required_questions:
             if self._normalize_text(text) not in self._normalize_text(existing):
                 questions.append({"id": f"OQ-{len(questions) + 1:02d}", "text": text, "category": category, "priority": "high"})
+
+        # A consultation story is only implementable when the displayed data
+        # and classification rules are explicit. Keep these as decisions to be
+        # answered, never as inferred product behaviour.
+        if expected.get("intent") in {"view", "summary"}:
+            view_questions = [
+                ("dados", "Quais campos devem ser exibidos em cada locacao (por exemplo titulo, status, inicio, expiracao e tempo restante)?", "high"),
+                ("regra-de-negocio", "Qual regra determina se uma locacao e considerada ativa ou expirada, incluindo a referencia de data e hora?", "high"),
+                ("fluxo", "Como a tela deve se comportar quando o cliente nao possui locacoes?", "medium"),
+                ("dados", "A consulta precisa de ordenacao, filtros ou paginacao? Se sim, quais opcoes?", "medium"),
+            ]
+            for category, text, priority in view_questions:
+                if self._normalize_text(text) not in self._normalize_text(" ".join(str(item.get("text") or "") for item in questions if isinstance(item, dict))):
+                    questions.append({"id": f"OQ-{len(questions) + 1:02d}", "text": text, "category": category, "priority": priority})
+
+            # Authentication/ownership/audit are sensitive decisions. They can
+            # only remain confirmed when the source explicitly states them.
+            source_text = self._normalize_text(" ".join(
+                str(item.get("text") or "") for item in expected.get("evidence_sources", [])
+                if isinstance(item, dict)
+            ))
+            permissions = contract.get("permissions_audit") if isinstance(contract.get("permissions_audit"), list) else []
+            unsupported_permission = any(
+                isinstance(item, dict)
+                and re.search(r"\b(autentic|login|proprio|titular|perfil|historico|auditoria|permiss)", self._normalize_text(item.get("text")))
+                and not re.search(r"\b(autentic|login|proprio|titular|perfil|historico|auditoria|permiss)", source_text)
+                for item in permissions
+            )
+            if unsupported_permission:
+                contract["permissions_audit"] = []
+                questions.append({
+                    "id": f"OQ-{len(questions) + 1:02d}",
+                    "text": "Confirmar quais permissoes e regras de titularidade devem proteger a consulta das locacoes.",
+                    "category": "permissao",
+                    "priority": "high",
+                })
+            # A model may place an unsupported access claim in a flow, rule or
+            # acceptance criterion instead of the permissions section. Remove
+            # those claims from confirmed lists so the artifact cannot present
+            # an invented policy as fact.
+            permission_pattern = re.compile(r"\b(controle de acesso|acesso autorizado|protecao contra compartilhamento|somente o proprio|apenas o proprio|perfil de administrador|autenticacao obrigatoria|login obrigatorio)\b", re.IGNORECASE)
+            has_permission_source = bool(re.search(r"\b(controle de acesso|acesso autorizado|protecao contra compartilhamento|autenticacao|login|permiss)\b", source_text))
+            if not has_permission_source:
+                for key in ("actors", "inputs", "outputs", "confirmed_rules", "main_flow", "alternative_flows", "exception_flows", "interface_feedback", "validation_data", "dependencies", "acceptance_criteria"):
+                    values = contract.get(key)
+                    if not isinstance(values, list):
+                        continue
+                    kept = []
+                    removed = False
+                    for value in values:
+                        text = str((value or {}).get("text") or (value or {}).get("then") or "") if isinstance(value, dict) else str(value or "")
+                        if permission_pattern.search(text):
+                            removed = True
+                        else:
+                            kept.append(value)
+                    contract[key] = kept
+                    if removed:
+                        questions.append({"id": f"OQ-{len(questions) + 1:02d}", "text": "Confirmar se existe alguma regra de autenticação, titularidade ou controle de acesso para esta operação.", "category": "permissao", "priority": "high"})
+
+        # Apply the same evidence guard to every intent. A provider can emit an
+        # access policy even when the story is classified as browse/search.
+        source_text = self._normalize_text(" ".join(str(item.get("text") or "") for item in expected.get("evidence_sources", []) if isinstance(item, dict)))
+        permission_pattern = re.compile(r"\b(controle de acesso|acesso autorizado|protecao contra compartilhamento|somente o proprio|apenas o proprio|perfil de administrador|autenticacao obrigatoria|login obrigatorio)\b", re.IGNORECASE)
+        if not re.search(r"\b(controle de acesso|acesso autorizado|protecao contra compartilhamento|autenticacao|login|permiss)\b", source_text):
+            for key in ("actors", "inputs", "outputs", "confirmed_rules", "main_flow", "alternative_flows", "exception_flows", "interface_feedback", "validation_data", "dependencies", "acceptance_criteria"):
+                values = contract.get(key)
+                if not isinstance(values, list):
+                    continue
+                kept = []
+                removed = False
+                for value in values:
+                    value_text = str((value or {}).get("text") or (value or {}).get("then") or "") if isinstance(value, dict) else str(value or "")
+                    if permission_pattern.search(value_text):
+                        removed = True
+                    else:
+                        kept.append(value)
+                contract[key] = kept
+                if removed:
+                    questions.append({"id": f"OQ-{len(questions) + 1:02d}", "text": "Confirmar se existe alguma regra de autenticacao, titularidade ou controle de acesso para esta operacao.", "category": "permissao", "priority": "high"})
+
+        if expected.get("intent") in {"manage", "renewal"}:
+            for category, text, priority in [
+                ("escopo", "Quais acoes independentes fazem parte desta story e devem ser entregues separadamente?", "high"),
+                ("validacao", "Quais campos, regras de obrigatoriedade e validacoes devem ser aplicados antes de salvar ou iniciar a operacao?", "high"),
+                ("fluxo", "O que deve acontecer quando a operacao for cancelada, recusada ou nao puder ser concluida?", "medium"),
+            ]:
+                if self._normalize_text(text) not in self._normalize_text(" ".join(str(item.get("text") or "") for item in questions if isinstance(item, dict))):
+                    questions.append({"id": f"OQ-{len(questions) + 1:02d}", "text": text, "category": category, "priority": priority})
         upstream = contract["upstream_review"]
         if str(upstream.get("status") or "").lower() in {"proposed", "question"} or upstream.get("tags"):
             for question in upstream.get("questions") or []:
@@ -325,7 +585,7 @@ class RequirementsAnalyst:
             for item in criteria
         ).lower()
         negative_pattern = r"\b(?:invalid\w*|ausent\w*|incomplet\w*|recus\w*|falh\w*|erro\w*)"
-        if profile.get("has_input") and default_source_ids and (
+        if profile.get("has_input") and expected.get("intent") not in {"view", "summary"} and default_source_ids and (
             len(criteria) < 2 or not re.search(negative_pattern, bdd_text)
         ):
             criteria.append({
@@ -567,6 +827,7 @@ Nao complete o requisito, nao use boas praticas como fonte e nao invente regra. 
 se estiver explicitamente dita ou for consequencia direta e inevitavel de uma fonte. Ser plausivel nao basta.
 Se uma lacuna virou RF, fluxo, excecao, validacao, permissao, estado de interface, regra ou ENTAO de BDD, marque REVISE.
 Uma lacuna explicitamente escrita em "Premissas e Pontos a Validar" nao e erro.
+Itens identificados como "[PROPOSTO - VALIDAR]" sao deliberadamente pendentes e tambem nao sao erro: nao os reporte como afirmacoes sem fonte.
 
 Retorne SOMENTE JSON neste formato:
 {{"decision":"PASS|REVISE","findings":[{{"evidence":"trecho literal do refinamento","reason":"...","severity":"low|medium|high","question":"...","source_id":"user_story|backlog|project_dna|backlog_contract|null","source_excerpt":"trecho literal da fonte ou null"}}]}}.
@@ -610,15 +871,26 @@ REFINAMENTO:\n{markdown}
                     source_id = finding.get("source_id")
                     source_excerpt = str(finding.get("source_excerpt") or "").strip()
                     source_ids = {item.get("id") for item in sources if isinstance(item, dict)}
+                    source_is_verified = False
                     if source_id not in source_ids:
                         source_id = None
                         source_excerpt = ""
-                    elif source_excerpt and source_excerpt not in next(
-                        (str(item.get("text") or "") for item in sources if item.get("id") == source_id), ""
-                    ):
-                        # A reviewer may not claim a source it cannot quote.
-                        source_id = None
-                        source_excerpt = ""
+                    elif source_excerpt:
+                        source_text = next(
+                            (str(item.get("text") or "") for item in sources if item.get("id") == source_id), ""
+                        )
+                        if source_excerpt in source_text:
+                            # The review protocol reserves a source excerpt for
+                            # claims that have evidence. A finding with a
+                            # verified excerpt is contradictory and must not
+                            # trigger a repair loop.
+                            source_is_verified = True
+                        else:
+                            # A reviewer may not claim a source it cannot quote.
+                            source_id = None
+                            source_excerpt = ""
+                    if source_is_verified:
+                        continue
                     accepted.append({
                         "evidence": evidence,
                         "reason": str(finding.get("reason") or "").strip(),
@@ -1026,9 +1298,12 @@ Quando domain=credit e intent=simulation, inclua literalmente que a simulacao ap
 Perfil da feature atual: {json.dumps(expected_contract.get('feature_profile') or {}, ensure_ascii=False)}.
 Analise de escopo da historia: {json.dumps(expected_contract.get('scope_assessment') or {}, ensure_ascii=False)}. Se status=needs_split, cubra cada acao em RF, fluxo e BDD quando a fonte permitir; caso contrario, mantenha uma pergunta de revisao de escopo. Nunca finja que uma acao foi coberta quando apenas outra foi detalhada.
 Contexto estruturado produzido pelo PM para esta story: {json.dumps(expected_contract.get('upstream_context') or {}, ensure_ascii=False)}. Use entradas, saidas, regras, restricoes, dependencias e dicas de aceite apenas quando estiverem presentes; itens vazios significam que a decisao continua aberta.
-Se has_input=true, produza ao menos dois criterios BDD: um para o caminho suportado pela fonte e outro para dado ausente, invalido, incompleto ou envio recusado. Nao invente formato, limite ou mensagem; quando a fonte nao os definir, descreva o comportamento pendente em open_questions.
+Descoberta semantica da LLM: {json.dumps(expected_contract.get('semantic_context') or {}, ensure_ascii=False)}. Use-a para organizar o requisito, mas confirme cada afirmacao contra a evidencia original; itens com baixa confianca ou sem fonte devem permanecer como perguntas.
+Se has_input=true e a intencao nao for view/summary, produza ao menos dois criterios BDD: um para o caminho suportado pela fonte e outro para dado ausente, invalido, incompleto ou envio recusado. Para consultas com filtros, nao crie cenario negativo de entrada; pergunte apenas regras de filtro e resultado vazio. Nao invente formato, limite ou mensagem; quando a fonte nao os definir, descreva o comportamento pendente em open_questions.
 Se has_document=true ou has_form=true, nao use "nao se aplica" para validacao, feedback ou excecao como forma de ocultar a lacuna: deixe a lista confirmada vazia e registre a definicao pendente em open_questions. Se has_sensitive_data=true, registre tambem a pendencia de acesso, finalidade, retencao e rastreabilidade.
+Para intent=view ou intent=summary, descreva somente os dados de consulta explicitamente presentes nas fontes. Se a fonte nao listar campos, classificacao de status, ordenacao, filtros, paginacao ou comportamento de lista vazia, mantenha esses itens fora das listas confirmadas e crie perguntas objetivas em open_questions. Nao invente autenticacao, titularidade, login, permissao ou auditoria; esses itens so podem ser confirmados se aparecerem literalmente em uma fonte.
 Revisao recebida da historia do backlog: {json.dumps(expected_contract.get('upstream_review') or {}, ensure_ascii=False)}. Perguntas de revisao upstream permanecem abertas; nunca as transforme em regra confirmada.
+Quando as fontes nao definirem prioridade, dependencia externa, requisito nao funcional, metrica, viabilidade, responsavel pela validacao ou impacto em historias relacionadas, mantenha esses assuntos como perguntas objetivas em open_questions. Nao invente valores, SLAs, integracoes, responsaveis ou decisoes tecnicas.
 
 Fontes rastreaveis: {json.dumps(expected_contract['evidence_sources'], ensure_ascii=False)}
 Contexto compacto: {json.dumps(self._compact_project_context(project_context), ensure_ascii=False)}
@@ -1089,7 +1364,20 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                 return False, "Criterio de aceite sem estrutura DADO/QUANDO/ENTAO."
             if not set(criterion.get("source_ids") or []).issubset(valid_sources) or not criterion.get("source_ids"):
                 return False, "Criterio de aceite sem fonte rastreavel valida."
-        if (expected.get("feature_profile") or {}).get("has_input"):
+        # Consultation requirements need enough operational detail to be
+        # implementable, while keeping unspecified choices as explicit
+        # questions. This prevents a generic "the system displays the list"
+        # contract from passing as a complete refinement.
+        if expected.get("intent") in {"view", "summary"}:
+            if len(contract["acceptance_criteria"]) < 2:
+                return False, "Consulta precisa de pelo menos dois criterios de aceite observaveis."
+            question_text = self._normalize_text(" ".join(
+                str(item.get("text") or "") for item in contract.get("open_questions", [])
+                if isinstance(item, dict)
+            ))
+            if "campo" not in question_text or not re.search(r"ativw*.*expirw*|expirw*.*ativw*", question_text):
+                return False, "Consulta sem perguntas objetivas sobre campos exibidos e classificacao ativa/expirada."
+        if (expected.get("feature_profile") or {}).get("has_input") and expected.get("intent") not in {"view", "summary"}:
             bdd_text = " ".join(
                 f"{item.get('given', '')} {item.get('when', '')} {item.get('then', '')}"
                 for item in contract.get("acceptance_criteria", []) if isinstance(item, dict)
@@ -1153,7 +1441,14 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
             question_id = str(question.get("id") or f"OQ-{index:02d}").upper()
             category = str(question.get("category") or "uncategorized").lower()
             priority = str(question.get("priority") or "medium").lower()
-            questions.append(f"- [REVISAR][{question_id}][{category}][{priority}] {question['text']}")
+            detail = str(question.get("text") or "").strip()
+            decision = str(question.get("decision_needed") or "").strip()
+            impact = str(question.get("impact") or "").strip()
+            if decision:
+                detail += f" Decisao necessaria: {decision}."
+            if impact:
+                detail += f" Impacto: {impact}."
+            questions.append(f"- [REVISAR][{question_id}][{category}][{priority}] {detail}")
         for assumption in contract.get("assumptions", []):
             if isinstance(assumption, dict) and str(assumption.get("text") or "").strip():
                 questions.append(f"- [REVISAR][ASM-{len(questions) + 1:02d}][premissa][medio] {assumption['text']}")
@@ -1171,6 +1466,165 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
             "Premissas e Pontos a Validar": "\n".join(questions) if questions else "Nao se aplica. Nenhuma lacuna foi identificada nas fontes fornecidas.",
         }
         return self._build_document(sections)
+
+    def _build_engineering_quality_profile(self, contract, expected):
+        """Expose engineering-quality gaps without turning them into AI blockers.
+
+        The primary contract already protects the hard requirements: atomic
+        scope, traceable evidence and executable BDD. This profile covers the
+        decisions normally needed before implementation planning, but whose
+        absence must be visible to the product owner rather than make a valid
+        refinement fail.
+        """
+        compact_context = expected.get("compact_context") or {}
+        priority = compact_context.get("taskPriority")
+        upstream_status = str((expected.get("upstream_review") or {}).get("status") or "").strip().lower()
+        related_stories = compact_context.get("related_stories") or []
+        dependencies = contract.get("dependencies") if isinstance(contract.get("dependencies"), list) else []
+        source_text = self._normalize_text(" ".join(
+            str(item.get("text") or item.get("name") or "")
+            for key in ("confirmed_rules", "main_flow", "alternative_flows", "exception_flows", "validation_data", "permissions_audit")
+            for item in (contract.get(key) or [])
+            if isinstance(item, dict)
+        ))
+        bdd_text = self._normalize_text(" ".join(
+            f"{item.get('given', '')} {item.get('when', '')} {item.get('then', '')}"
+            for item in contract.get("acceptance_criteria", [])
+            if isinstance(item, dict)
+        ))
+        nfr_pattern = r"\b(desempenho|performance|seguranca|privacidade|acessibilidade|disponibilidade|escalabilidade|retencao|latencia|sla)\b"
+        metric_pattern = r"\b\d+(?:[,.]\d+)?\s*(?:ms|s|segundos?|minutos?|horas?|dias?|%|por cento|usuarios?|itens?)\b"
+        source_ids = [
+            item.get("id") for item in expected.get("evidence_sources", [])
+            if isinstance(item, dict) and item.get("id")
+        ]
+
+        return [
+            {
+                "id": "EQ-TRACEABILITY", "status": "confirmed", "area": "rastreabilidade",
+                "message": "Os comportamentos confirmados foram vinculados a fontes rastreaveis do projeto.",
+                "source_ids": source_ids,
+            },
+            {
+                "id": "EQ-PRIORITY", "status": "confirmed" if str(priority or "").strip() else "pending", "area": "prioridade",
+                "message": f"Prioridade registrada para a historia: {priority}." if str(priority or "").strip() else "Definir a prioridade desta historia para orientar o planejamento e a ordem de entrega.",
+            },
+            {
+                "id": "EQ-DEPENDENCIES", "status": "confirmed" if dependencies else "pending", "area": "dependencias",
+                "message": "Dependencias identificadas no requisito." if dependencies else "Confirmar dependencias externas, integracoes, dados, equipes ou pre-requisitos necessarios para esta entrega.",
+            },
+            {
+                "id": "EQ-NFR", "status": "confirmed" if re.search(nfr_pattern, source_text) else "pending", "area": "requisitos nao funcionais",
+                "message": "Ha requisitos nao funcionais descritos nas fontes do requisito." if re.search(nfr_pattern, source_text) else "Definir requisitos nao funcionais aplicaveis, como seguranca, privacidade, desempenho, acessibilidade ou disponibilidade.",
+            },
+            {
+                "id": "EQ-MEASURABILITY", "status": "confirmed" if re.search(metric_pattern, bdd_text) else "pending", "area": "mensurabilidade",
+                "message": "Os criterios incluem uma medida observavel de aceite." if re.search(metric_pattern, bdd_text) else "Definir metricas ou limites observaveis para validar o resultado quando forem relevantes.",
+            },
+            {
+                "id": "EQ-FEASIBILITY", "status": "pending", "area": "viabilidade",
+                "message": "Avaliar viabilidade tecnica, custo e riscos antes de iniciar a implementacao.",
+            },
+            {
+                "id": "EQ-VALIDATION_OWNER", "status": "confirmed" if upstream_status in {"approved", "confirmed", "validated"} else "pending", "area": "validacao humana",
+                "message": "A historia possui validacao upstream registrada." if upstream_status in {"approved", "confirmed", "validated"} else "Definir quem valida este requisito e registrar a decisao de negocio antes da implementacao.",
+            },
+            {
+                "id": "EQ-CHANGE_IMPACT", "status": "pending" if related_stories else "not_applicable", "area": "impacto de mudanca",
+                "message": "Avaliar o impacto desta entrega nas historias relacionadas, contratos e dados existentes." if related_stories else "Nao ha historias relacionadas identificadas para analise de impacto.",
+            },
+        ]
+
+    def _render_public_requirements_document(self, contract):
+        """Render the validated internal contract in the product-facing format.
+
+        The agent still validates its richer traceability contract internally.
+        This method is deliberately a final projection, so presentation choices
+        never weaken evidence, scope, or BDD validation during generation.
+        """
+        def text_items(key, field="text"):
+            return [
+                str(item.get(field) or "").strip()
+                for item in contract.get(key, [])
+                if isinstance(item, dict) and str(item.get(field) or "").strip()
+            ]
+
+        story = str((contract.get("refined_story") or {}).get("text") or "").strip()
+        actor = self._extract_actor(story) or "o usuario"
+        action_match = re.search(r"\bquero\s+(.+?)(?:\s*,\s*para\s+|\.$|$)", story, re.IGNORECASE)
+        objective = f"Permitir que {actor} {action_match.group(1).strip()}." if action_match else story
+
+        behavior = text_items("main_flow")
+        for item in text_items("alternative_flows"):
+            behavior.append(f"Fluxo alternativo: {item}")
+        for item in text_items("exception_flows"):
+            behavior.append(f"Excecao: {item}")
+
+        rules = text_items("confirmed_rules")
+        rules.extend(f"Permissoes e auditoria: {item}" for item in text_items("permissions_audit"))
+        states = text_items("interface_feedback")
+
+        criteria = []
+        for index, criterion in enumerate(contract.get("acceptance_criteria", []), start=1):
+            if not isinstance(criterion, dict):
+                continue
+            given = str(criterion.get("given") or "").strip()
+            when = str(criterion.get("when") or "").strip()
+            then = str(criterion.get("then") or "").strip()
+            if given and when and then:
+                given_text = re.sub(r"^\s*que\s+", "", given, flags=re.IGNORECASE)
+                criteria.append(
+                    f"### Cenario {index}\n\n"
+                    f"**DADO** que {given_text}\\\n"
+                    f"**QUANDO** {when}\\\n"
+                    f"**ENTAO** {then}"
+                )
+
+        pending = []
+        for index, question in enumerate(contract.get("open_questions", []), start=1):
+            if not isinstance(question, dict):
+                continue
+            detail = str(question.get("text") or "").strip()
+            if not detail:
+                continue
+            decision = str(question.get("decision_needed") or "").strip()
+            impact = str(question.get("impact") or "").strip()
+            if decision:
+                detail += f" Decisao necessaria: {decision}."
+            if impact:
+                detail += f" Impacto: {impact}."
+            pending.append(f"- {detail}")
+        pending.extend(
+            f"- {str(item.get('text') or '').strip()}"
+            for item in contract.get("assumptions", [])
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        )
+        existing_pending = self._normalize_text(" ".join(pending))
+        for item in contract.get("engineering_quality", []):
+            if not isinstance(item, dict) or item.get("status") != "pending":
+                continue
+            detail = str(item.get("message") or "").strip()
+            if detail and self._normalize_text(detail) not in existing_pending:
+                pending.append(f"- {detail}")
+                existing_pending = self._normalize_text(f"{existing_pending} {detail}")
+
+        def bullets(items, empty):
+            return "\n".join(f"- {item}" for item in items) if items else f"- {empty}"
+
+        status = "PENDENTE DE VALIDACAO" if pending else "PRONTO PARA VALIDACAO"
+        criteria_text = "\n\n".join(criteria) if criteria else "- Criterios de aceite pendentes de definicao."
+        pending_text = "\n".join(pending) if pending else "- Nenhuma pendencia identificada."
+        return (
+            "# Requisito Refinado\n\n"
+            f"## 1. Objetivo\n\n{objective}\n\n"
+            f"## 2. User Story\n\n{story}\n\n"
+            f"## 3. Comportamento esperado\n\n{bullets(behavior, 'Comportamento detalhado no contrato interno.') }\n\n"
+            f"## 4. Regras de negocio\n\n{bullets(rules, 'Nenhuma regra confirmada nas fontes fornecidas.') }\n\n"
+            f"## 5. Estados\n\n{bullets(states, 'Estados e feedback pendentes de definicao.') }\n\n"
+            f"## 6. Cenarios de aceitacao\n\n{criteria_text}\n\n"
+            f"## 7. Pendencias\n\n{pending_text}\n\n"
+            f"## 8. Status do requisito\n\n**{status}**"
+        )
 
     def _build_provider_fallback_contract(self, idea, expected):
         """Build a conservative, fully traceable contract when every LLM provider is unavailable."""
@@ -1245,21 +1699,26 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                 current_contract=current_contract,
             )
             try:
-                result = generate_text_from_llm(prompt, options_override={"temperature": 0.1, "num_predict": 1400, "request_timeout_seconds": timeout}, use_cache=False, task="requirements_analysis")
+                result = generate_text_from_llm(
+                    prompt,
+                    options_override={
+                        "temperature": 0.1,
+                        "num_predict": 1400,
+                        "request_timeout_seconds": timeout,
+                        # Retry transient gateway/deadline failures through the
+                        # configured provider chain, never with synthetic text.
+                        "transient_retries": 1,
+                    },
+                    use_cache=False,
+                    task="requirements_analysis",
+                )
             except Exception as error:
                 if "Nenhum modelo do router concluiu" in str(error):
-                    fallback_contract = self._build_provider_fallback_contract(idea, expected_contract)
-                    fallback_contract = self._apply_contract_guardrails(fallback_contract, expected_contract)
-                    valid, fallback_reason = self._validate_primary_contract(fallback_contract, expected_contract)
-                    if valid:
-                        markdown = self._render_contract_markdown(fallback_contract)
-                        complete, _ = validate_requirements_output(markdown)
-                        if complete:
-                            self.last_refinement_contract = fallback_contract
-                            self.last_evidence_report = {"status": "degraded", "decision": "REVIEW", "findings": [{"reason": "Contrato gerado sem LLM por indisponibilidade dos provedores."}]}
-                            print(json.dumps({"event": "requirements_provider_fallback", "project_id": self.project_id, "reason": str(error)}, ensure_ascii=False), file=sys.stderr)
-                            return markdown
-                    raise RuntimeError(f"Falha de provider ao gerar contrato de requisitos e fallback invalido: {fallback_reason}") from error
+                    # Do not fabricate a requirements contract when providers
+                    # are unavailable. The artifact must always represent an
+                    # actual LLM response; fail explicitly so the task can be
+                    # retried without persisting synthetic requirements.
+                    raise RuntimeError(f"Falha de provider ao gerar contrato de requisitos: {error}") from error
                 raise RuntimeError(f"Falha de provider ao gerar contrato de requisitos: {error}") from error
             current_contract = self._extract_json_object(result)
             if not current_contract:
@@ -1270,7 +1729,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
             if not valid:
                 print(json.dumps({"event": "requirements_contract_repair", "project_id": self.project_id, "attempt": attempt, "reason": last_reason}, ensure_ascii=False), file=sys.stderr)
                 continue
-            markdown = self._render_contract_markdown(current_contract)
+            markdown = self._normalize_permission_section(self._render_contract_markdown(current_contract))
             complete, last_reason = validate_requirements_output(markdown)
             if not complete:
                 continue
@@ -1301,8 +1760,9 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                 if attempt < max_attempts:
                     continue
                 break
+            current_contract["engineering_quality"] = self._build_engineering_quality_profile(current_contract, expected_contract)
             self.last_refinement_contract = current_contract
-            return markdown
+            return self._render_public_requirements_document(current_contract)
         raise RuntimeError(f"O agente requirements_analyst nao conseguiu gerar um contrato valido apos {max_attempts} tentativas. Ultimo motivo: {last_reason}")
 
     def process(self, idea, backlog, project_context=None):
@@ -1397,7 +1857,9 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                 last_reason = contract_reason
                 continue
 
-            sanitized = self._apply_story_type_guardrails(self._sanitize_requirements(envelope["markdown"]), idea)
+            sanitized = self._normalize_permission_section(
+                self._apply_story_type_guardrails(self._sanitize_requirements(envelope["markdown"]), idea)
+            )
             is_complete, reason = validate_requirements_output(sanitized)
             if is_complete:
                 semantic_ok, semantic_reason = self._validate_credit_simulation_semantics(sanitized, generated_contract)
@@ -1436,7 +1898,9 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                         )
                         parsed_revision, revision_reason = self._parse_ai_refinement_response(revision, expected_contract)
                         if parsed_revision:
-                            sanitized = self._apply_story_type_guardrails(self._sanitize_requirements(parsed_revision["markdown"]), idea)
+                            sanitized = self._normalize_permission_section(
+                                self._apply_story_type_guardrails(self._sanitize_requirements(parsed_revision["markdown"]), idea)
+                            )
                             complete, revision_reason = validate_requirements_output(sanitized)
                             revised_contract = self._contract_from_markdown(sanitized, expected_contract)
                             semantic_ok, semantic_reason = self._validate_credit_simulation_semantics(sanitized, revised_contract)
@@ -1486,8 +1950,10 @@ REGRAS CRITICAS:
 - Seja direto, tecnico e implementavel
 - Explicite ambiguidades como perguntas; nao as resolva por conta propria
 - O documento deve separar fatos comprovados de lacunas de decisao
-- Uma secao pode dizer "Nao se aplica" quando a fonte nao confirmar comportamento para ela; nao a preencha para parecer completa
-- Descreva formato, obrigatoriedade, limites, permissoes, auditoria e BDD somente quando a fonte os sustentar; caso contrario, registre uma pergunta objetiva
+- Use "Nao se aplica" somente quando a secao for realmente incompatível com a acao da story. Quando houver entrada, decisao, estado ou efeito observavel relacionado, detalhe-o; se faltar a regra, registre a pergunta em Premissas.
+- Descreva formato, obrigatoriedade, limites, permissoes, auditoria e BDD somente quando a fonte os sustentar; caso contrario, registre uma pergunta objetiva.
+- O requisito nao pode ser apenas uma repeticao da User Story: decomponha ator, entradas, processamento, saidas, pre-condicoes, pos-condicoes e evidencias confirmadas.
+- Para qualquer story com entrada ou alteracao de dados, inclua caminho feliz e dado ausente/invalido quando essa possibilidade existir; detalhes nao confirmados viram lacunas.
 - Use exatamente os titulos de secao abaixo, sem variacoes, abreviacoes ou sinônimos:
   - ## User Story Refinada
   - ## Requisitos Funcionais
@@ -1594,13 +2060,16 @@ SECAO OPCIONAL:
 - Entradas:
 - Processamento:
 - Saidas:
+- Pre-condicoes:
+- Pos-condicoes:
+- Evidencias:
 
 (Adicionar quantos RFs forem necessarios, sem extrapolar escopo)
 
 ---
 
 ## Fluxo Principal
-(Inclua somente os passos confirmados. Se a historia confirmar apenas uma regra de bloqueio, descreva somente o passo necessario para essa regra.)
+(Descreva o fluxo passo a passo, incluindo entrada, processamento e saida observavel. Nao repita apenas a frase da User Story.)
 
 ---
 
@@ -1625,13 +2094,14 @@ SECAO OPCIONAL:
 ---
 
 ## Validacoes e Dados
-- Liste campos, validacoes, formatos, obrigatoriedades, consistencia e "Ponto a validar" quando faltar evidência.
+- Liste campos, validacoes, formatos, obrigatoriedades e consistencia. Para cada lacuna, inclua uma pergunta objetiva em vez de inventar.
 - Se a historia nao exigir entrada de dados, escreva "Nao se aplica" e justifique em uma linha.
 
 ---
 
 ## Permissoes e Auditoria
-- Liste somente permissoes e auditoria confirmadas; titularidade, login, perfis, historico e timestamp nao podem ser deduzidos. Use "Nao se aplica" quando nao houver fonte.
+- Liste somente permissoes e auditoria confirmadas; titularidade, login, perfis, historico e timestamp nao podem ser deduzidos.
+- Se a historia mencionar acesso, identificacao, autenticacao ou dados pessoais, mas a fonte nao definir a politica, escreva "Pendente de definicao" e formule uma pergunta objetiva. Use "Nao se aplica" somente quando nao houver qualquer mencao a acesso ou protecao.
 
 ---
 
@@ -1641,7 +2111,7 @@ DADO que ...
 QUANDO ...
 ENTAO ...
 
-(Inclua somente cenarios comprovados. Nao crie cenario negativo, erro tecnico, seguranca ou edge case para preencher a secao.)
+(Inclua criterios suficientes para validar o comportamento. Para entradas ou alteracoes, cubra caminho feliz e dado ausente/invalido quando essa possibilidade fizer parte do fluxo; se a regra nao estiver confirmada, marque como proposto e abra uma pergunta.)
 
 ---
 
@@ -1889,6 +2359,31 @@ Secoes para reparar:
         text = re.sub(r"\n{3,}", "\n\n", text)
 
         return text
+
+    @staticmethod
+    def _normalize_permission_section(markdown):
+        """Expose undefined access policy as a decision, never as N/A."""
+        if not isinstance(markdown, str):
+            return markdown
+        normalized = re.sub(r"[^a-z0-9]+", " ", markdown.lower())
+        access_mentioned = bool(re.search(
+            r"\b(controle de acesso|acesso autorizado|autenticacao|login|permiss(?:ao|oes)|identificacao do usuario|titularidade)\b",
+            normalized,
+        ))
+        if not access_mentioned:
+            return markdown
+        pattern = re.compile(r"(?ims)(^##\s*permissoes\s+e\s+auditoria\s*$)(.*?)(?=^##\s+|\Z)")
+        match = pattern.search(markdown)
+        if not match or not re.search(r"n[aã]o\s+se\s+aplica", match.group(2), re.IGNORECASE):
+            return markdown
+        replacement = (
+            f"{match.group(1)}\n"
+            "- Pendente de definição: o briefing menciona acesso/identificação, "
+            "mas não define perfis, titularidade ou regras de autorização.\n"
+            "- Decisão necessária: confirmar quais perfis podem executar a operação "
+            "e quais registros de auditoria são obrigatórios.\n"
+        )
+        return markdown[:match.start()] + replacement + markdown[match.end():]
 
     def _apply_story_type_guardrails(self, content, idea):
         text = (content or "").strip()

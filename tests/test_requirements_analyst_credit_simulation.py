@@ -52,6 +52,40 @@ class RequirementsAnalystCreditSimulationTests(unittest.TestCase):
         self.assertIn("backlog.story_2", source_ids)
         self.assertIn("backlog.story_1", source_ids)
 
+    def test_semantic_discovery_normalizes_null_categories_and_requests_json(self):
+        response = {
+            "domain": "generic", "intent": "view",
+            "has_input": "false", "has_document": None, "has_form": False, "has_sensitive_data": False,
+            "actors": None, "entities": [], "goals": [], "actions": [], "states": [], "ambiguities": [],
+            "clarifying_questions": [],
+        }
+
+        with patch("agents.requirements_analyst.agent.generate_text_from_llm", return_value=json.dumps(response)) as mocked:
+            semantic = self.agent._discover_semantic_context("Como cliente, quero consultar produtos.", "", {})
+
+        self.assertEqual([], semantic["actors"])
+        self.assertFalse(semantic["has_input"])
+        self.assertFalse(semantic["has_document"])
+        self.assertTrue(mocked.call_args.kwargs["options_override"]["json_mode"])
+        self.assertTrue(mocked.call_args.kwargs["options_override"]["require_json_object"])
+
+    def test_semantic_discovery_normalizes_prose_classification_labels(self):
+        response = {
+            "domain": "O dominio e ecommerce de moda.",
+            "intent": "A intencao e adicionar ao carrinho.",
+            "has_input": False, "has_document": False, "has_form": False, "has_sensitive_data": False,
+            "actors": [], "entities": [], "goals": [], "actions": [], "states": [], "ambiguities": [],
+            "clarifying_questions": [],
+        }
+
+        with patch("agents.requirements_analyst.agent.generate_text_from_llm", return_value=json.dumps(response)):
+            semantic = self.agent._discover_semantic_context(
+                "Como cliente, quero adicionar uma roupa ao carrinho.", "", {}
+            )
+
+        self.assertEqual("ecommerce_de_moda", semantic["domain"])
+        self.assertEqual("adicionar_ao_carrinho", semantic["intent"])
+
     def test_requirements_agent_marks_compound_story_for_scope_review(self):
         story = "Como cliente, quero simular credito e iniciar uma solicitacao, para seguir com a proposta."
         expected = self.agent._build_refinement_contract(story, "Backlog", self.context)
@@ -60,6 +94,21 @@ class RequirementsAnalystCreditSimulationTests(unittest.TestCase):
         self.assertEqual("needs_split", expected["scope_assessment"]["status"])
         self.assertEqual(["simular", "iniciar"], expected["scope_assessment"]["actions"])
         self.assertTrue(any(item["category"] == "escopo" for item in guarded["open_questions"]))
+
+    def test_catalog_navigation_and_details_are_one_discovery_journey(self):
+        story = "Como cliente, quero navegar pelo catalogo e visualizar os detalhes de cada item, para escolher o produto correto."
+        semantic = {
+            "actions": [
+                {"text": "navegar pelo catalogo", "role": "primary"},
+                {"text": "visualizar detalhes do item", "role": "primary"},
+            ],
+            "goals": [],
+        }
+
+        scope = self.agent._assess_scope(story, semantic)
+
+        self.assertEqual("atomic", scope["status"])
+        self.assertEqual(["navegar e visualizar detalhes"], scope["actions"])
 
     def test_requirements_agent_blocks_story_with_upstream_role_conflict(self):
         context = {
@@ -153,9 +202,34 @@ class RequirementsAnalystCreditSimulationTests(unittest.TestCase):
         with patch("agents.requirements_analyst.agent.generate_text_from_llm", side_effect=responses) as mocked:
             result = self.agent._process_with_primary_contract(story, "", {}, expected)
 
-        self.assertIn("## Fluxo Principal", result)
-        self.assertIn("## Criterios de Aceite (BDD)", result)
+        self.assertIn("## 3. Comportamento esperado", result)
+        self.assertIn("## 6. Cenarios de aceitacao", result)
         self.assertEqual(3, mocked.call_count)
+
+    def test_public_document_exposes_non_blocking_engineering_quality_gaps(self):
+        expected = {
+            "evidence_sources": [{"id": "user_story", "text": "Como cliente, quero consultar meus pedidos."}],
+            "compact_context": {"taskPriority": None, "related_stories": []},
+            "upstream_review": {},
+        }
+        contract = {
+            "refined_story": {"text": "Como cliente, quero consultar meus pedidos.", "source_ids": ["user_story"]},
+            "actors": [{"name": "cliente", "source_ids": ["user_story"]}],
+            "inputs": [], "outputs": [{"text": "lista de pedidos", "source_ids": ["user_story"]}],
+            "confirmed_rules": [], "main_flow": [{"text": "O cliente consulta os pedidos.", "source_ids": ["user_story"]}],
+            "alternative_flows": [], "exception_flows": [], "interface_feedback": [],
+            "validation_data": [], "permissions_audit": [], "dependencies": [],
+            "assumptions": [], "open_questions": [],
+            "acceptance_criteria": [{"given": "o cliente possui pedidos", "when": "consulta seus pedidos", "then": "o sistema apresenta a lista", "source_ids": ["user_story"]}],
+        }
+        contract["engineering_quality"] = self.agent._build_engineering_quality_profile(contract, expected)
+
+        document = self.agent._render_public_requirements_document(contract)
+
+        self.assertIn("Definir a prioridade desta historia", document)
+        self.assertIn("Definir requisitos nao funcionais aplicaveis", document)
+        self.assertIn("Avaliar viabilidade tecnica", document)
+        self.assertIn("**PENDENTE DE VALIDACAO**", document)
 
     def test_rejects_unsupported_installment_calculation(self):
         contract = self.agent._build_refinement_contract(self.STORY, "Backlog de credito", self.context)

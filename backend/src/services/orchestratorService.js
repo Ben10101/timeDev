@@ -38,6 +38,34 @@ function assertObjectPayload(payload, label) {
   }
 }
 
+function extractProviderDiagnostic(stderrData = '') {
+  const allowedKeys = [
+    'event', 'task', 'agent', 'provider', 'model', 'provider_order',
+    'ollama_included', 'success', 'failure', 'retry', 'provider_retry',
+    'fallback', 'will_retry', 'latency_ms', 'delay_seconds',
+  ];
+  const events = [];
+
+  for (const line of String(stderrData).split(/\r?\n/)) {
+    const payload = line.replace(/^\[Model Router\]\s*/, '').trim();
+    if (!payload.startsWith('{')) continue;
+
+    try {
+      const parsed = JSON.parse(payload);
+      if (!parsed?.event && !Object.prototype.hasOwnProperty.call(parsed, 'provider')) continue;
+      const event = {};
+      for (const key of allowedKeys) {
+        if (Object.prototype.hasOwnProperty.call(parsed, key)) event[key] = parsed[key];
+      }
+      events.push(event);
+    } catch {
+      // stderr can contain non-JSON diagnostics; they must not break a run.
+    }
+  }
+
+  return events.length ? { providerAttempts: events.slice(-30) } : null;
+}
+
 /**
  * Executa o pipeline completo de geração de projetos (funcionalidade antiga).
  */
@@ -107,6 +135,14 @@ export function runSingleAgent(agent, payload, options = {}) {
     let timeoutError = null;
     let settled = false;
 
+    const emitDiagnostic = () => {
+      const diagnostic = extractProviderDiagnostic(stderrData);
+      if (diagnostic && typeof options.diagnosticSink === 'function') {
+        options.diagnosticSink(diagnostic);
+      }
+      return diagnostic;
+    };
+
     const cleanup = () => {
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
@@ -150,7 +186,9 @@ export function runSingleAgent(agent, payload, options = {}) {
     }, timeoutMs);
 
     pythonProcess.on('close', (code, signal) => {
+      const providerDiagnostic = emitDiagnostic();
       if (timeoutError) {
+        timeoutError.agentDiagnostic = providerDiagnostic;
         return settle(reject, timeoutError);
       }
 
@@ -177,7 +215,7 @@ export function runSingleAgent(agent, payload, options = {}) {
           detailedError = `Processo Python finalizou com code=${code ?? 'null'} signal=${signal ?? 'null'} (sem saída em stdout/stderr)`;
         }
         const agentError = new Error(`Erro ao executar agente ${agent}: ${detailedError}`);
-        agentError.agentDiagnostic = diagnostic;
+        agentError.agentDiagnostic = diagnostic || providerDiagnostic;
         return settle(reject, agentError);
       }
       try {
@@ -185,10 +223,14 @@ export function runSingleAgent(agent, payload, options = {}) {
         if (result.success) {
           settle(resolve, result.data);
         } else {
-          settle(reject, new Error(`Erro no script do agente ${agent}: ${result.error}`));
+          const agentError = new Error(`Erro no script do agente ${agent}: ${result.error}`);
+          agentError.agentDiagnostic = providerDiagnostic;
+          settle(reject, agentError);
         }
       } catch (e) {
-        settle(reject, new Error(`Falha ao analisar JSON do agente ${agent}: ${e.message}. Output: ${stdoutData}`));
+        const agentError = new Error(`Falha ao analisar JSON do agente ${agent}: ${e.message}. Output: ${stdoutData}`);
+        agentError.agentDiagnostic = providerDiagnostic;
+        settle(reject, agentError);
       }
     });
 

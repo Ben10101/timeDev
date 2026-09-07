@@ -2,6 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Mantém o diálogo de revisão rigorosamente centralizado, inclusive em telas
+   baixas ou quando o conteúdo exige rolagem. */
+[role='dialog'] {
+  display: grid;
+  place-items: center;
+}
+
+[role='dialog'] > div {
+  width: min(100%, 42rem);
+  max-height: calc(100vh - 2rem);
+}
+
+/* Diff de artefatos segue o tema claro do produto. */
+pre.bg-slate-950 {
+  background-color: #f8fafc !important;
+  color: #334155 !important;
+  border: 1px solid #e2e8f0;
+}
+
 :root {
   /* Premium HSL Palette */
   --primary-h: 226;

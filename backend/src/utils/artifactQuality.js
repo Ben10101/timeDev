@@ -44,8 +44,18 @@ function countNumberedItems(section = '') {
 function hasBrokenEnding(content = '') {
   const text = String(content || '').trimEnd();
   if (!text) return true;
-  if (text.endsWith('```') || text.endsWith('**')) return true;
-  return /[:|*_\-\/(\[{,;]$/.test(text);
+
+  // A closing fence (```) and a closing bold marker (**) naturally appear at
+  // the end of valid Markdown. The previous suffix-only rule rejected the
+  // public requirements format because its status is intentionally bold.
+  const codeFenceCount = (text.match(/```/g) || []).length;
+  if (codeFenceCount % 2 !== 0) return true;
+
+  const boldMarkerCount = (text.match(/\*\*/g) || []).length;
+  if (boldMarkerCount % 2 !== 0) return true;
+
+  const lastLine = text.split(/\r?\n/).pop().trim();
+  return /^(?:[-*+]\s*|\d+[.)]\s*|\\)$/.test(lastLine);
 }
 
 function assertRequirementsCompleteness(content) {
@@ -55,7 +65,7 @@ function assertRequirementsCompleteness(content) {
     throw new Error('O agente requirements_analyst retornou um artefato vazio.');
   }
 
-  const requiredSections = [
+  const legacyRequiredSections = [
     'user story refinada',
     'requisitos funcionais',
     'fluxo principal',
@@ -65,6 +75,20 @@ function assertRequirementsCompleteness(content) {
     'criterios de aceite',
   ];
 
+  const publicRequiredSections = [
+    'objetivo',
+    'user story',
+    'comportamento esperado',
+    'regras de negocio',
+    'estados',
+    'cenarios de aceitacao',
+    'pendencias',
+    'status do requisito',
+  ];
+
+  const requiredSections = normalized.includes('requisito refinado')
+    ? publicRequiredSections
+    : legacyRequiredSections;
   for (const section of requiredSections) {
     if (!normalized.includes(section)) {
       throw new Error(`O artefato de requisitos foi retornado de forma incompleta: secao ausente (${section}).`);
