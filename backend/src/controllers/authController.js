@@ -60,7 +60,7 @@ export async function refreshController(req, res, next) {
 
 export async function logoutController(req, res, next) {
   try {
-    await logoutUser(req.authUser?.uuid);
+    await logoutUser(req.authUser?.uuid, readRefreshTokenFromRequest(req));
     res.clearCookie(getRefreshCookieName(), {
       ...getRefreshCookieOptions(),
       maxAge: undefined,

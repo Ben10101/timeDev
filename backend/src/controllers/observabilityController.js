@@ -6,6 +6,7 @@ import {
   getOperationalHistory,
   getOperationalHealth,
   getPipelineCoherenceOverview,
+  getPipelineQualityOverview,
   getRuntimeOperationsStatus,
   getProductionReadiness,
 } from '../services/observabilityService.js';
@@ -99,6 +100,17 @@ export async function activeAlertsController(req, res, next) {
 export async function pipelineCoherenceController(req, res, next) {
   try {
     const overview = await getPipelineCoherenceOverview(req.authUser.uuid, {
+      projectUuid: req.query.projectUuid || null,
+    });
+    res.json(serializeBigInts(overview));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function pipelineQualityController(req, res, next) {
+  try {
+    const overview = await getPipelineQualityOverview(req.authUser.uuid, {
       projectUuid: req.query.projectUuid || null,
     });
     res.json(serializeBigInts(overview));

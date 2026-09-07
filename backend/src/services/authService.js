@@ -94,15 +94,26 @@ async function buildAuthResponse(userRecord) {
   };
 }
 
+function getRefreshTokenExpiry() {
+  return new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000);
+}
+
 async function persistRefreshToken(userId, refreshToken) {
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      refreshTokenHash: hashToken(refreshToken),
-      refreshTokenExpiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000),
-      lastLoginAt: new Date(),
-    },
-  });
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.authSession.create({
+      data: {
+        userId,
+        refreshTokenHash: hashToken(refreshToken),
+        expiresAt: getRefreshTokenExpiry(),
+        lastUsedAt: now,
+      },
+    }),
+    prisma.user.update({
+      where: { id: userId },
+      data: { lastLoginAt: now },
+    }),
+  ]);
 }
 
 function createAccessToken(user) {
@@ -180,36 +191,57 @@ export async function refreshAccessToken(refreshToken) {
     throw createAuthError('Refresh token ausente.', 401);
   }
 
-  const user = await prisma.user.findFirst({
-    where: {
-      refreshTokenHash: hashToken(refreshToken),
-      refreshTokenExpiresAt: { gt: new Date() },
-    },
+  const refreshTokenHash = hashToken(refreshToken);
+  const now = new Date();
+  const session = await prisma.authSession.findFirst({
+    where: { refreshTokenHash, expiresAt: { gt: now } },
+    include: { user: true },
   });
+
+  // Preserve sessions issued before the auth_sessions migration. Once used,
+  // they are moved to the per-device session store without forcing a logout.
+  const legacyUser = session ? null : await prisma.user.findFirst({
+    where: { refreshTokenHash, refreshTokenExpiresAt: { gt: now } },
+  });
+  const user = session?.user || legacyUser;
 
   if (!user) {
     throw createAuthError('Sessao invalida.', 401);
   }
 
-  const nextRefreshToken = createRefreshToken();
-  await persistRefreshToken(user.id, nextRefreshToken);
+  const expiresAt = getRefreshTokenExpiry();
+  if (session) {
+    await prisma.authSession.update({ where: { id: session.id }, data: { expiresAt, lastUsedAt: now } });
+  } else {
+    await prisma.$transaction([
+      prisma.authSession.upsert({
+        where: { refreshTokenHash },
+        create: { userId: user.id, refreshTokenHash, expiresAt, lastUsedAt: now },
+        update: { expiresAt, lastUsedAt: now },
+      }),
+      prisma.user.update({ where: { id: user.id }, data: { refreshTokenHash: null, refreshTokenExpiresAt: null } }),
+    ]);
+  }
 
   return {
     accessToken: createAccessToken(user),
-    refreshToken: nextRefreshToken,
+    refreshToken,
     authContext: await buildAuthResponse(user),
   };
 }
 
-export async function logoutUser(userUuid) {
+export async function logoutUser(userUuid, refreshToken = null) {
   if (!userUuid) return;
-  await prisma.user.updateMany({
-    where: { uuid: userUuid },
-    data: {
-      refreshTokenHash: null,
-      refreshTokenExpiresAt: null,
-    },
-  });
+  const refreshTokenHash = refreshToken ? hashToken(refreshToken) : null;
+  await prisma.$transaction([
+    prisma.authSession.deleteMany({
+      where: { user: { is: { uuid: userUuid } }, ...(refreshTokenHash ? { refreshTokenHash } : {}) },
+    }),
+    prisma.user.updateMany({
+      where: { uuid: userUuid, ...(refreshTokenHash ? { refreshTokenHash } : {}) },
+      data: { refreshTokenHash: null, refreshTokenExpiresAt: null },
+    }),
+  ]);
 }
 
 export async function getAuthUser(accessToken) {

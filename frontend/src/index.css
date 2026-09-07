@@ -14,6 +14,13 @@
   max-height: calc(100vh - 2rem);
 }
 
+/* A revisão de backlog trabalha com diagnóstico e proposta lado a lado; ela
+   precisa usar a largura disponível em vez do limite dos diálogos compactos. */
+[role='dialog'].backlog-review-dialog > div {
+  width: min(100%, 1500px);
+  max-height: calc(100vh - 2rem);
+}
+
 /* Diff de artefatos segue o tema claro do produto. */
 pre.bg-slate-950 {
   background-color: #f8fafc !important;

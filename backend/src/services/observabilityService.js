@@ -1606,6 +1606,176 @@ export async function getPipelineCoherenceOverview(userUuid, { projectUuid = nul
   };
 }
 
+function qualityFinding(code, severity, description, evidence = {}) {
+  return { code, severity, description, confidence: 1, evidence };
+}
+
+function artifactReportFindings(artifacts = []) {
+  return artifacts.flatMap((artifact) =>
+    (artifact.reviews || []).flatMap((review) => {
+      const report = review.qualityReport && typeof review.qualityReport === 'object' ? review.qualityReport : {};
+      return (Array.isArray(report.findings) ? report.findings : []).map((finding) => ({
+        code: finding.code || 'quality_finding',
+        severity: finding.severity || 'medium',
+        description: finding.message || 'Finding registrado pelo Quality Gate.',
+        confidence: 1,
+        evidence: { artifactUuid: artifact.uuid, artifactType: artifact.artifactType },
+      }));
+    })
+  );
+}
+
+export async function getPipelineQualityOverview(userUuid, { projectUuid = null } = {}) {
+  const projects = await prisma.project.findMany({
+    where: {
+      workspace: { ownerUser: { uuid: userUuid } },
+      ...(projectUuid ? { uuid: projectUuid } : {}),
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      uuid: true,
+      name: true,
+      intakeConfig: true,
+      tasks: {
+        where: { taskType: { not: 'agent_job' } },
+        select: {
+          uuid: true,
+          title: true,
+          artifacts: {
+            where: { isCurrent: true },
+            select: {
+              uuid: true, title: true, content: true, artifactType: true, version: true,
+              createdByUserId: true,
+              reviews: { select: { decision: true, reviewedBy: true, qualityReport: true } },
+            },
+          },
+        },
+      },
+      agentRuns: { select: { agentName: true, status: true, startedAt: true, finishedAt: true } },
+    },
+  });
+
+  const snapshots = projects.map((project) => {
+    const contract = project.intakeConfig?.backlogContract || {};
+    const stories = Array.isArray(contract.stories) ? contract.stories : [];
+    const tasks = project.tasks || [];
+    const findings = [];
+    let requirementSpecs = 0;
+    let testSpecs = 0;
+    let completeRequirementSpecs = 0;
+    let testableRequirementSpecs = 0;
+    let acceptanceCriteria = 0;
+    let tracedAcceptanceCriteria = 0;
+    let scenarios = 0;
+    let functionalCases = 0;
+    let humanReviews = 0;
+    let automatedRejections = 0;
+    let humanRejections = 0;
+    let repairs = 0;
+    let qualityEvaluations = 0;
+
+    for (const task of tasks) {
+      const requirementArtifact = task.artifacts.find((artifact) => artifact.title === '[SYSTEM] Requirement Spec');
+      const testArtifact = task.artifacts.find((artifact) => artifact.title === '[SYSTEM] Test Spec');
+      const requirement = parseJsonContent(requirementArtifact?.content);
+      const test = parseJsonContent(testArtifact?.content);
+      if (requirementArtifact) requirementSpecs += 1;
+      if (testArtifact) testSpecs += 1;
+      const functional = Array.isArray(requirement?.functionalRequirements) ? requirement.functionalRequirements : [];
+      const criteria = Array.isArray(requirement?.acceptanceCriteria) ? requirement.acceptanceCriteria : [];
+      const flows = requirement?.flows || {};
+      if (requirementArtifact && functional.length && criteria.length && Array.isArray(flows.main) && flows.main.length) completeRequirementSpecs += 1;
+      if (requirementArtifact && criteria.length) testableRequirementSpecs += 1;
+      acceptanceCriteria += criteria.length;
+      const traces = Array.isArray(test?.acceptanceTraceability) ? test.acceptanceTraceability : [];
+      tracedAcceptanceCriteria += Math.min(criteria.length, traces.length);
+      scenarios += Array.isArray(test?.scenarios) ? test.scenarios.length : 0;
+      functionalCases += Array.isArray(test?.functionalCases) ? test.functionalCases.length : 0;
+      if (requirementArtifact && !criteria.length) findings.push(qualityFinding('completeness_gap', 'high', 'Requirement Spec sem critérios de aceite.', { taskUuid: task.uuid }));
+      if (requirementArtifact && !functional.length) findings.push(qualityFinding('completeness_gap', 'high', 'Requirement Spec sem requisitos funcionais.', { taskUuid: task.uuid }));
+      if (testArtifact && !traces.length) findings.push(qualityFinding('acceptance_coverage_gap', 'high', 'Test Spec sem rastreabilidade de critérios de aceite.', { taskUuid: task.uuid }));
+      if (testArtifact && !scenarios.length) findings.push(qualityFinding('scenario_coverage_gap', 'high', 'Test Spec sem cenários de teste.', { taskUuid: task.uuid }));
+      for (const artifact of task.artifacts) {
+        repairs += Math.max(0, Number(artifact.version || 1) - 1);
+        for (const review of artifact.reviews || []) {
+          if (review.qualityReport && typeof review.qualityReport === 'object') qualityEvaluations += 1;
+          if (review.reviewedBy) humanReviews += 1;
+          if (String(review.decision || '').toLowerCase() === 'rejected') {
+            if (review.reviewedBy) humanRejections += 1;
+            else automatedRejections += 1;
+          }
+        }
+      }
+      findings.push(...artifactReportFindings(task.artifacts));
+    }
+
+    const storyCount = stories.length || tasks.length;
+    const storiesWithSource = stories.filter((story) => Array.isArray(story?.source_ids) && story.source_ids.length).length;
+    const completedRuns = project.agentRuns.filter((run) => run.status === 'completed');
+    const failedRuns = project.agentRuns.filter((run) => run.status === 'failed');
+    const durations = completedRuns
+      .filter((run) => run.startedAt && run.finishedAt)
+      .map((run) => new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime())
+      .filter((value) => value >= 0);
+    const unsupported = findings.filter((finding) => /invented|unsupported/i.test(finding.code)).length;
+    const ambiguity = findings.filter((finding) => /ambigu|open_question/i.test(finding.code)).length;
+    const contradiction = findings.filter((finding) => /contradict/i.test(finding.code)).length;
+    const inconsistency = findings.filter((finding) => /inconsisten/i.test(finding.code)).length;
+    const analysed = Math.max(1, requirementSpecs + testSpecs);
+    const measuredRate = (value) => (qualityEvaluations ? percent(value, analysed) : null);
+    const metrics = {
+      ambiguity_rate: measuredRate(ambiguity),
+      contradiction_rate: measuredRate(contradiction),
+      inconsistency_rate: measuredRate(inconsistency),
+      unsupported_content_rate: measuredRate(unsupported),
+      completeness: percent(completeRequirementSpecs, requirementSpecs),
+      testability: percent(testableRequirementSpecs, requirementSpecs),
+      requirement_coverage: percent(requirementSpecs, storyCount),
+      acceptance_criteria_coverage: percent(tracedAcceptanceCriteria, acceptanceCriteria),
+      scenario_coverage: percent(functionalCases, scenarios),
+      traceability_coverage: percent(storiesWithSource + requirementSpecs + testSpecs, storyCount * 3),
+    };
+    const scoreInputs = [metrics.completeness, metrics.testability, metrics.requirement_coverage, metrics.acceptance_criteria_coverage, metrics.scenario_coverage, metrics.traceability_coverage];
+    if (metrics.unsupported_content_rate !== null) scoreInputs.push(100 - metrics.unsupported_content_rate);
+    const score = average(scoreInputs);
+    const hasBlocker = findings.some((finding) => finding.severity === 'critical');
+    const hasRevision = findings.some((finding) => finding.severity === 'high') || score < 85;
+    return {
+      projectUuid: project.uuid,
+      projectName: project.name,
+      metrics,
+      process_metrics: {
+        human_revision_rate: percent(humanReviews, Math.max(1, requirementSpecs + testSpecs)),
+        repair_rate: percent(repairs, Math.max(1, requirementSpecs + testSpecs)),
+        rejection_rate: percent(automatedRejections + humanRejections, Math.max(1, requirementSpecs + testSpecs)),
+        automated_rejection_rate: percent(automatedRejections, Math.max(1, requirementSpecs + testSpecs)),
+        human_rejection_rate: percent(humanRejections, Math.max(1, requirementSpecs + testSpecs)),
+        generation_time_ms: average(durations),
+        agent_runs: project.agentRuns.length,
+        failed_agent_runs: failedRuns.length,
+      },
+      quality_gate: { score, threshold: 85, decision: hasBlocker ? 'BLOCK' : hasRevision ? 'REVISE' : 'PASS' },
+      findings: findings.slice(0, 50),
+      evidence: { stories: storyCount, requirement_specs: requirementSpecs, test_specs: testSpecs, acceptance_criteria: acceptanceCriteria, scenarios, quality_evaluations: qualityEvaluations },
+    };
+  });
+
+  const allFindings = snapshots.flatMap((snapshot) => snapshot.findings);
+  return {
+    evaluation_version: '1.0',
+    evaluated_at: new Date().toISOString(),
+    summary: {
+      projects: snapshots.length,
+      quality_score: average(snapshots.map((snapshot) => snapshot.quality_gate.score)),
+      pass: snapshots.filter((snapshot) => snapshot.quality_gate.decision === 'PASS').length,
+      revise: snapshots.filter((snapshot) => snapshot.quality_gate.decision === 'REVISE').length,
+      block: snapshots.filter((snapshot) => snapshot.quality_gate.decision === 'BLOCK').length,
+      findings: allFindings.length,
+    },
+    projects: snapshots,
+  };
+}
+
 export function buildBudgetPreview(agentName, payload) {
   const budgets = buildBudgetConfig();
   const estimatedInputTokens = estimateTokenCount(payload);

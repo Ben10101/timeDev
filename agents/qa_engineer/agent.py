@@ -914,6 +914,7 @@ class QAEngineer:
             options_override={
                 "temperature": 0.1,
                 "num_predict": int(num_predict),
+                "transient_retries": 0,
             },
             use_cache=False,
             task="qa_generation",
@@ -924,7 +925,61 @@ class QAEngineer:
 
         return result
 
+    def _generate_single_pass_plan(self, idea, requirement_summary, qa_model, requirement_spec=None):
+        """One complete QA draft, then deterministic stabilization and validation.
+
+        The previous implementation sent the same context in four independent
+        calls. A single structured draft has the same source evidence while
+        avoiding four provider round-trips; missing weak sections are filled
+        only by the existing traceable deterministic helpers.
+        """
+        structured_requirement_spec = self._parse_requirement_spec(requirement_spec)
+        headings = "\n".join(f"- ## {title}" for title in self.QA_SECTIONS)
+        prompt = f"""
+Historia:
+{idea}
+
+Resumo estrutural dos requisitos:
+{requirement_summary}
+
+Requirement Spec:
+{json.dumps(structured_requirement_spec, ensure_ascii=False) if structured_requirement_spec else 'Nao informado.'}
+
+Gere um unico plano de testes em portugues, usando exatamente estes titulos:
+{headings}
+
+Regras: use apenas fatos e criterios confirmados; nao invente endpoints, limites, tempos, permissoes ou regras de produto. Todo cenario e caso funcional deve apontar para um CA existente. Inclua somente cenarios verificaveis, sem introducao ou conclusao. Quando faltar evidencia, registre risco ou ponto a validar, nunca uma regra confirmada.
+""".strip()
+        try:
+            draft = self._generate_block(
+                prompt,
+                qa_model,
+                num_predict=os.getenv("QA_SINGLE_PASS_NUM_PREDICT", "1600"),
+            )
+            sections = {title: self._extract_section(draft, title) for title in self.QA_SECTIONS}
+            plan = self._stabilize_plan(self._build_full_plan(sections), idea, requirement_summary, requirement_spec)
+            complete, _reason = validate_qa_output(plan)
+            if complete:
+                return plan
+        except Exception as error:
+            print(f"[QA Engineer] single_pass_rejected: {error}", file=sys.stderr)
+
+        fallback_sections = {
+            "Estrategia de testes": "- Validar o caminho principal, regras confirmadas, erros recuperaveis e persistencia observavel.",
+            "Dados de teste": "\n".join(self._synthesize_test_data_lines(idea, requirement_summary, requirement_spec)),
+            "Riscos e metricas": "\n".join(self._synthesize_risk_lines(idea, requirement_summary, requirement_spec)),
+            "Qualidade nao funcional": self._synthesize_quality_section("Qualidade nao funcional", idea, requirement_summary, requirement_spec),
+            "Usabilidade e acessibilidade": self._synthesize_quality_section("Usabilidade e acessibilidade", idea, requirement_summary, requirement_spec),
+            "Rastreabilidade dos Criterios de Aceite": self._synthesize_traceability_lines(idea, requirement_summary, requirement_spec),
+            "Smoke Minimo da Feature": "\n".join(self._synthesize_smoke_lines(idea, requirement_summary, requirement_spec)),
+            "Cenarios de teste": "\n".join(self._synthesize_scenarios(idea, requirement_summary, requirement_spec)),
+            "Casos de teste funcionais": self._synthesize_functional_cases(idea, requirement_summary, requirement_spec),
+        }
+        return self._stabilize_plan(self._build_full_plan(fallback_sections), idea, requirement_summary, requirement_spec)
+
     def _generate_multi_block_plan(self, idea, requirement_summary, qa_model, requirement_spec=None):
+        if str(os.getenv("QA_GENERATION_MODE", "single_pass")).strip().lower() != "multi_block":
+            return self._generate_single_pass_plan(idea, requirement_summary, qa_model, requirement_spec)
         structured_requirement_spec = self._parse_requirement_spec(requirement_spec)
         base_context = f"""
 Historia:
