@@ -297,6 +297,7 @@ class RequirementsAnalyst:
                 "status": current_story.get("status"),
                 "tags": current_story.get("reviewTags") or [],
                 "questions": current_story.get("openQuestions") or [],
+                "assessment": (current_story.get("lastAgentReview") or {}).get("assessment") or {},
             }
         self.last_refinement_contract = contract
         # This is intentionally serializable: consumers can inspect it during a run without
@@ -416,6 +417,27 @@ class RequirementsAnalyst:
         contract["upstream_review"] = expected.get("upstream_review") or {}
         contract["scope_assessment"] = expected.get("scope_assessment") or {"status": "atomic", "actions": []}
         contract["upstream_context"] = expected.get("upstream_context") or {}
+
+        # A provider can occasionally emit replacement characters.  Never
+        # persist them as requirements: authoritative upstream criteria are
+        # promoted below and provide the safe equivalent fact when available.
+        asserted_keys = (
+            "actors", "inputs", "outputs", "confirmed_rules", "main_flow",
+            "alternative_flows", "exception_flows", "interface_feedback",
+            "validation_data", "permissions_audit", "dependencies",
+        )
+        for key in asserted_keys:
+            values = contract.get(key)
+            if isinstance(values, list):
+                contract[key] = [
+                    item for item in values
+                    if isinstance(item, dict) and "\ufffd" not in str(item.get("text") or item.get("name") or "")
+                ]
+        if isinstance(contract.get("acceptance_criteria"), list):
+            contract["acceptance_criteria"] = [
+                item for item in contract["acceptance_criteria"]
+                if isinstance(item, dict) and "\ufffd" not in " ".join(str(item.get(field) or "") for field in ("given", "when", "then"))
+            ]
         valid_source_ids = {
             item.get("id") for item in expected.get("evidence_sources", [])
             if isinstance(item, dict) and item.get("id")
@@ -446,6 +468,27 @@ class RequirementsAnalyst:
             if notice not in notices:
                 notices.append(notice)
         questions = contract.setdefault("open_questions", [])
+        upstream_context = contract["upstream_context"] if isinstance(contract["upstream_context"], dict) else {}
+        upstream_criteria_for_questions = upstream_context.get("acceptance_criteria") or upstream_context.get("acceptanceCriteria") or []
+        upstream_then_text = self._normalize_text(" ".join(
+            str(item.get("then") or "") for item in upstream_criteria_for_questions if isinstance(item, dict)
+        ))
+        upstream_source_text = self._normalize_text(json.dumps(upstream_context, ensure_ascii=False))
+
+        def is_product_question(item):
+            text = self._normalize_text(item.get("text") or "") if isinstance(item, dict) else ""
+            if not text:
+                return False
+            if re.search(r"\b(mecanismo|tecnologia|infraestrutura|banco de dados|endpoint|api|implementacao|verificacao de status)\b", text):
+                return False
+            # The exact user-facing message is already a resolved decision.
+            if "motivo" in text and "manutencao" in text and "mensagem" in upstream_then_text:
+                return False
+            if re.search(r"\b(obrigatoriedade|formato|consistencia|dados ausentes|dados invalidos)\b", text) and not re.search(r"\b(campo|formulario|dados? informado|preench|matricula|senha)\b", upstream_source_text):
+                return False
+            return True
+
+        questions[:] = [item for item in questions if is_product_question(item)]
         existing = " ".join(str(item.get("text") or "") for item in questions if isinstance(item, dict)).lower()
         profile = contract["feature_profile"]
         required_questions = []
@@ -456,7 +499,11 @@ class RequirementsAnalyst:
         if scope.get("status") == "needs_split":
             action_labels = ", ".join(scope.get("actions") or [])
             required_questions.append(("escopo", f"A historia reune as acoes '{action_labels}'. Confirmar se devem ser refinadas e entregues como jornadas independentes."))
-        if profile.get("has_input") and expected.get("intent") not in {"view", "summary"}:
+        evidence_text = self._normalize_text(" ".join(
+            str(item.get("text") or "") for item in expected.get("evidence_sources", []) if isinstance(item, dict)
+        ))
+        has_explicit_data_entry = bool(re.search(r"\b(campo|formulario|formulario|dados? informado|preench|matricula|senha)\b", evidence_text))
+        if profile.get("has_input") and has_explicit_data_entry and expected.get("intent") not in {"view", "summary"}:
             required_questions.append(("validacao", "Definir obrigatoriedade, formato, consistencia e comportamento para dados ausentes ou invalidos."))
         if profile.get("has_document"):
             required_questions.append(("documentos", "Definir politica de documentos: tipos aceitos, tamanho, quantidade, falha de envio, substituicao e validacao."))
@@ -465,6 +512,7 @@ class RequirementsAnalyst:
         for category, text in required_questions:
             if self._normalize_text(text) not in self._normalize_text(existing):
                 questions.append({"id": f"OQ-{len(questions) + 1:02d}", "text": text, "category": category, "priority": "high"})
+        questions[:] = [item for item in questions if is_product_question(item)]
 
         # A consultation story is only implementable when the displayed data
         # and classification rules are explicit. Keep these as decisions to be
@@ -564,6 +612,57 @@ class RequirementsAnalyst:
         # deixar essa lacuna para uma nova chamada torna o contrato instável e
         # pode consumir todas as tentativas de reparo. Complemente o contrato
         # usando a mesma evidência já fornecida, sem inventar regra de negócio.
+        # Approved upstream criteria are evidence, not optional hints. Promote
+        # them to flows/rules and keep them in BDD so the public document uses
+        # every relevant fact already refined in the backlog.
+        upstream_context = contract.get("upstream_context") if isinstance(contract.get("upstream_context"), dict) else {}
+        upstream_criteria = upstream_context.get("acceptance_criteria") or upstream_context.get("acceptanceCriteria") or []
+        upstream_story_source = next(
+            (source_id for source_id in valid_source_ids if str(source_id).startswith("backlog.")),
+            "user_story" if "user_story" in valid_source_ids else next(iter(valid_source_ids), ""),
+        )
+
+        def append_confirmed(key, text):
+            if not text:
+                return
+            entries = contract.setdefault(key, [])
+            normalized_text = self._normalize_text(text)
+            if any(self._normalize_text(item.get("text") or "") == normalized_text for item in entries if isinstance(item, dict)):
+                return
+            entries.append({"text": text, "source_ids": [upstream_story_source]})
+
+        canonical_upstream_criteria = []
+        for criterion in upstream_criteria if isinstance(upstream_criteria, list) else []:
+            if not isinstance(criterion, dict):
+                continue
+            given = str(criterion.get("given") or "").strip()
+            when = str(criterion.get("when") or "").strip()
+            then = str(criterion.get("then") or "").strip()
+            if not (given and when and then):
+                continue
+            canonical_upstream_criteria.append({
+                "id": str(criterion.get("id") or f"AC-UP-{len(canonical_upstream_criteria) + 1:02d}"),
+                "given": given,
+                "when": when,
+                "then": then,
+                "source_ids": [upstream_story_source],
+                "status": str(criterion.get("status") or "confirmed"),
+            })
+
+            fact = f"Quando {when}, {then}"
+            normalized_fact = self._normalize_text(f"{given} {when} {then}")
+            is_exception = bool(re.search(r"\b(erro|falha|inval|ausent|recusa|nega|impede|bloqueia|nao disponibiliza|nao permit|sem acesso|indispon)\w*", normalized_fact))
+            append_confirmed("exception_flows" if is_exception else "main_flow", fact)
+            if re.search(r"\b(permiss|somente leitura|read-only|nao disponibiliza|nao permit|bloqueia)\b", normalized_fact):
+                append_confirmed("permissions_audit", then)
+                append_confirmed("confirmed_rules", then)
+
+        if canonical_upstream_criteria:
+            # The upstream review is the canonical decision record. Keeping a
+            # parallel model-generated variant creates duplicate scenarios and
+            # can reintroduce unsupported generic exceptions.
+            contract["acceptance_criteria"] = canonical_upstream_criteria
+
         criteria = contract.get("acceptance_criteria")
         if not isinstance(criteria, list):
             criteria = []
@@ -1311,7 +1410,7 @@ Quando domain=credit e intent=simulation, inclua literalmente que a simulacao ap
 
 Perfil da feature atual: {json.dumps(expected_contract.get('feature_profile') or {}, ensure_ascii=False)}.
 Analise de escopo da historia: {json.dumps(expected_contract.get('scope_assessment') or {}, ensure_ascii=False)}. Se status=needs_split, cubra cada acao em RF, fluxo e BDD quando a fonte permitir; caso contrario, mantenha uma pergunta de revisao de escopo. Nunca finja que uma acao foi coberta quando apenas outra foi detalhada.
-Contexto estruturado produzido pelo PM para esta story: {json.dumps(expected_contract.get('upstream_context') or {}, ensure_ascii=False)}. Use entradas, saidas, regras, restricoes, dependencias e dicas de aceite apenas quando estiverem presentes; itens vazios significam que a decisao continua aberta.
+Contexto estruturado produzido pelo PM para esta story: {json.dumps(expected_contract.get('upstream_context') or {}, ensure_ascii=False)}. Use entradas, saidas, regras, restricoes, dependencias e dicas de aceite apenas quando estiverem presentes; itens vazios significam que a decisao continua aberta. Os acceptance_criteria desse contexto sao fatos ja refinados: preserve todos no contrato e promova seus resultados para main_flow, exception_flows, confirmed_rules ou permissions_audit conforme o sentido. Nao deixe comportamento ou regras vazios quando esses criterios trouxerem fatos observaveis.
 Descoberta semantica da LLM: {json.dumps(expected_contract.get('semantic_context') or {}, ensure_ascii=False)}. Use-a para organizar o requisito, mas confirme cada afirmacao contra a evidencia original; itens com baixa confianca ou sem fonte devem permanecer como perguntas.
 Se has_input=true e a intencao nao for view/summary, produza ao menos dois criterios BDD: um para o caminho suportado pela fonte e outro para dado ausente, invalido, incompleto ou envio recusado. Para consultas com filtros, nao crie cenario negativo de entrada; pergunte apenas regras de filtro e resultado vazio. Nao invente formato, limite ou mensagem; quando a fonte nao os definir, descreva o comportamento pendente em open_questions.
 Se has_document=true ou has_form=true, nao use "nao se aplica" para validacao, feedback ou excecao como forma de ocultar a lacuna: deixe a lista confirmada vazia e registre a definicao pendente em open_questions. Se has_sensitive_data=true, registre tambem a pendencia de acesso, finalidade, retencao e rastreabilidade.
@@ -1391,7 +1490,11 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
             ))
             if "campo" not in question_text or not re.search(r"ativw*.*expirw*|expirw*.*ativw*", question_text):
                 return False, "Consulta sem perguntas objetivas sobre campos exibidos e classificacao ativa/expirada."
-        if (expected.get("feature_profile") or {}).get("has_input") and expected.get("intent") not in {"view", "summary"}:
+        evidence_text = self._normalize_text(" ".join(
+            str(item.get("text") or "") for item in expected.get("evidence_sources", []) if isinstance(item, dict)
+        ))
+        requires_data_validation = bool(re.search(r"\b(campo|formulario|dados? informado|preench|matricula|senha)\b", evidence_text))
+        if (expected.get("feature_profile") or {}).get("has_input") and requires_data_validation and expected.get("intent") not in {"view", "summary"}:
             bdd_text = " ".join(
                 f"{item.get('given', '')} {item.get('when', '')} {item.get('then', '')}"
                 for item in contract.get("acceptance_criteria", []) if isinstance(item, dict)
@@ -1576,9 +1679,23 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
 
         rules = text_items("confirmed_rules")
         rules.extend(f"Permissoes e auditoria: {item}" for item in text_items("permissions_audit"))
-        states = text_items("interface_feedback")
+        behavior.extend(f"Feedback: {item}" for item in text_items("interface_feedback"))
 
-        criteria = []
+        def unique_items(items):
+            unique = []
+            seen = set()
+            for item in items:
+                key = self._normalize_text(item)
+                if key and key not in seen:
+                    unique.append(item)
+                    seen.add(key)
+            return unique
+
+        behavior = unique_items(behavior)
+        rules = unique_items(rules)
+
+        success_criteria = []
+        exception_criteria = []
         for index, criterion in enumerate(contract.get("acceptance_criteria", []), start=1):
             if not isinstance(criterion, dict):
                 continue
@@ -1587,12 +1704,17 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
             then = str(criterion.get("then") or "").strip()
             if given and when and then:
                 given_text = re.sub(r"^\s*que\s+", "", given, flags=re.IGNORECASE)
-                criteria.append(
+                scenario = (
                     f"### Cenario {index}\n\n"
                     f"**DADO** que {given_text}\\\n"
                     f"**QUANDO** {when}\\\n"
                     f"**ENTAO** {then}"
                 )
+                scenario_text = self._normalize_text(f"{given} {when} {then}")
+                if re.search(r"\b(erro|falha|inval|ausent|recusa|nega|impede|bloqueia|nao disponibiliza|indispon|sem acesso|nao permit)\w*", scenario_text):
+                    exception_criteria.append(scenario)
+                else:
+                    success_criteria.append(scenario)
 
         pending = []
         for index, question in enumerate(contract.get("open_questions", []), start=1):
@@ -1613,31 +1735,26 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
             for item in contract.get("assumptions", [])
             if isinstance(item, dict) and str(item.get("text") or "").strip()
         )
-        existing_pending = self._normalize_text(" ".join(pending))
-        for item in contract.get("engineering_quality", []):
-            if not isinstance(item, dict) or item.get("status") != "pending":
-                continue
-            detail = str(item.get("message") or "").strip()
-            if detail and self._normalize_text(detail) not in existing_pending:
-                pending.append(f"- {detail}")
-                existing_pending = self._normalize_text(f"{existing_pending} {detail}")
+        # Engineering-quality items remain available in the internal contract
+        # for planning, but are not user decisions about this requirement.
 
         def bullets(items, empty):
             return "\n".join(f"- {item}" for item in items) if items else f"- {empty}"
 
         status = "PENDENTE DE VALIDACAO" if pending else "PRONTO PARA VALIDACAO"
-        criteria_text = "\n\n".join(criteria) if criteria else "- Criterios de aceite pendentes de definicao."
+        success_text = "\n\n".join(success_criteria) if success_criteria else "- Nenhum cenario de sucesso confirmado nas fontes."
+        exception_text = "\n\n".join(exception_criteria) if exception_criteria else "- Nenhum cenario de excecao confirmado nas fontes."
         pending_text = "\n".join(pending) if pending else "- Nenhuma pendencia identificada."
         return (
             "# Requisito Refinado\n\n"
-            f"## 1. Objetivo\n\n{objective}\n\n"
-            f"## 2. User Story\n\n{story}\n\n"
-            f"## 3. Comportamento esperado\n\n{bullets(behavior, 'Comportamento detalhado no contrato interno.') }\n\n"
-            f"## 4. Regras de negocio\n\n{bullets(rules, 'Nenhuma regra confirmada nas fontes fornecidas.') }\n\n"
-            f"## 5. Estados\n\n{bullets(states, 'Estados e feedback pendentes de definicao.') }\n\n"
-            f"## 6. Cenarios de aceitacao\n\n{criteria_text}\n\n"
-            f"## 7. Pendencias\n\n{pending_text}\n\n"
-            f"## 8. Status do requisito\n\n**{status}**"
+            f"## Historia e objetivo\n\n{story}\n\n- Objetivo: {objective}\n\n"
+            f"## Comportamento e regras confirmadas\n\n"
+            f"### Comportamento\n\n{bullets(behavior, 'Comportamento pendente de definicao nas fontes.') }\n\n"
+            f"### Regras\n\n{bullets(rules, 'Nenhuma regra confirmada nas fontes fornecidas.') }\n\n"
+            f"## Cenarios de aceite\n\n### Sucesso\n\n{success_text}\n\n"
+            f"### Excecoes\n\n{exception_text}\n\n"
+            f"## Decisoes pendentes\n\n{pending_text}\n\n"
+            f"## Status\n\n**{status}**"
         )
 
     def _build_provider_fallback_contract(self, idea, expected):
@@ -1720,7 +1837,10 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                     prompt,
                     options_override={
                         "temperature": 0.1,
-                        "num_predict": 1400,
+                        # O artefato público é compacto; limitar o contrato
+                        # interno evita uma resposta excessivamente longa no
+                        # provedor remoto sem abrir mão das chaves obrigatórias.
+                        "num_predict": int(os.getenv("REQUIREMENTS_CONTRACT_NUM_PREDICT", "1100")),
                         "request_timeout_seconds": timeout,
                         # Retry transient gateway/deadline failures through the
                         # configured provider chain, never with synthetic text.
@@ -1786,6 +1906,18 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
         expected_contract = self._build_refinement_contract(idea, backlog, project_context)
         upstream = expected_contract.get("upstream_review") or {}
         blocking_tags = {str(tag).strip() for tag in upstream.get("tags") or []}
+        upstream_assessment = upstream.get("assessment") if isinstance(upstream.get("assessment"), dict) else {}
+        upstream_ready = str(upstream_assessment.get("decision") or "").strip().upper() == "READY"
+        if upstream_ready and expected_contract.get("scope_assessment", {}).get("status") == "needs_split":
+            # A previously approved story review is stronger evidence than an
+            # opportunistic semantic classification.  This avoids blocking a
+            # single journey when the model mistakes its expected outcome
+            # (message, validation or blocked action) for another delivery.
+            expected_contract["scope_assessment"] = {
+                "status": "atomic",
+                "actions": ["jornada aprovada no backlog"],
+                "action_phrase": "jornada aprovada no backlog",
+            }
         if expected_contract.get("scope_assessment", {}).get("status") == "needs_split" or blocking_tags.intersection({"REVIEW_ROLE", "REVIEW_BLOCKED"}):
             reasons = []
             if expected_contract.get("scope_assessment", {}).get("status") == "needs_split":

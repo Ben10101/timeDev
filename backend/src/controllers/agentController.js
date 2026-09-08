@@ -326,7 +326,7 @@ function assertArtifactCompleteness(agentName, content) {
   }
 
   if (agentName === 'requirements_analyst') {
-    const requiredSections = [
+    const legacyRequiredSections = [
       'user story refinada',
       'requisitos funcionais',
       'fluxo principal',
@@ -335,6 +335,16 @@ function assertArtifactCompleteness(agentName, content) {
       'regras de negocio',
       'criterios de aceite',
     ];
+    const publicRequiredSections = [
+      'historia e objetivo',
+      'comportamento e regras confirmadas',
+      'cenarios de aceite',
+      'decisoes pendentes',
+      'status',
+    ];
+    const requiredSections = normalized.includes('requisito refinado')
+      ? publicRequiredSections
+      : legacyRequiredSections;
 
     for (const section of requiredSections) {
       if (!normalized.includes(section)) {

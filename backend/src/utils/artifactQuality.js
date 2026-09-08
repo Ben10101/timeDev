@@ -76,14 +76,11 @@ function assertRequirementsCompleteness(content) {
   ];
 
   const publicRequiredSections = [
-    'objetivo',
-    'user story',
-    'comportamento esperado',
-    'regras de negocio',
-    'estados',
-    'cenarios de aceitacao',
-    'pendencias',
-    'status do requisito',
+    'historia e objetivo',
+    'comportamento e regras confirmadas',
+    'cenarios de aceite',
+    'decisoes pendentes',
+    'status',
   ];
 
   const requiredSections = normalized.includes('requisito refinado')

@@ -118,6 +118,7 @@ async function refreshAuthSession() {
       )
       .then((response) => {
         setApiAccessToken(response.data.accessToken)
+        window.dispatchEvent(new CustomEvent('factory:session-refreshed', { detail: response.data }))
         return response.data
       })
       .finally(() => {
@@ -165,6 +166,9 @@ apiClient.interceptors.response.use(
       return apiClient(originalRequest)
     } catch (refreshError) {
       clearApiAccessToken()
+      if (refreshError?.response?.status === 401) {
+        window.dispatchEvent(new Event('factory:session-invalid'))
+      }
       return Promise.reject(refreshError)
     }
   }

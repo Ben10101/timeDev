@@ -2803,7 +2803,12 @@ export async function createSystemTaskArtifact(taskUuid, input) {
 export async function reviewTaskArtifact(taskUuid, artifactUuid, { approved, comment = '', userUuid }) {
   const task = await getTaskContextByUuid(taskUuid, userUuid);
   const artifact = task?.artifacts?.find((item) => item.uuid === artifactUuid && item.isCurrent);
-  if (!artifact) throw new Error('Artefato atual não encontrado.');
+  if (!artifact) {
+    const error = new Error('Esta versão do artefato não é mais a atual. A tela foi atualizada com a versão mais recente.');
+    error.statusCode = 409;
+    error.code = 'ARTIFACT_VERSION_STALE';
+    throw error;
+  }
   if (!approved && !String(comment).trim()) throw new Error('Informe um comentário ao rejeitar o artefato.');
   let qualityReport = null;
   if (approved && ['requirements', 'test_plan'].includes(artifact.artifactType)) {

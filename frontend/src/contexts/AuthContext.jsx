@@ -74,6 +74,26 @@ export function AuthProvider({ children }) {
   }, [])
 
   useEffect(() => {
+    const syncRefreshedSession = (event) => {
+      const restored = event.detail
+      if (!restored?.accessToken || !restored?.user) return
+      setSession({ user: restored.user, workspace: restored.workspace, accessToken: restored.accessToken })
+      persistBootstrapContext(restored)
+    }
+    const clearInvalidSession = () => {
+      clearApiAccessToken()
+      setSession(null)
+      persistBootstrapContext(null)
+    }
+    window.addEventListener('factory:session-refreshed', syncRefreshedSession)
+    window.addEventListener('factory:session-invalid', clearInvalidSession)
+    return () => {
+      window.removeEventListener('factory:session-refreshed', syncRefreshedSession)
+      window.removeEventListener('factory:session-invalid', clearInvalidSession)
+    }
+  }, [])
+
+  useEffect(() => {
     axios.defaults.withCredentials = true
 
     const requestInterceptor = axios.interceptors.request.use((config) => {

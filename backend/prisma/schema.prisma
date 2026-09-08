@@ -117,6 +117,7 @@ enum ContentFormat {
 enum ArtifactScope {
   refinement
   implementation
+  review_decisions
 }
 
 enum GeneratedAppStatus {

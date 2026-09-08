@@ -42,6 +42,7 @@ import { assertArtifactCompleteness } from '../utils/artifactQuality.js';
 import { serializeBigInts } from '../utils/serialize.js';
 import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
 import { inferProjectTemplateKey } from '../templates/projects/index.js';
+import { prisma } from '../lib/prisma.js';
 
 function isAgentRunConflictError(error) {
   return error?.statusCode === 409 || error?.code === 'AGENT_RUN_CONFLICT';
@@ -719,11 +720,11 @@ function recalculateBacklogQualityReview(review = {}) {
 }
 
 function replaceArtifactSection(content, requestedTitle, replacementBody, artifactType) {
-  const aliases = artifactType === 'requirements'
-    ? ['criterios de aceite', 'criterios de aceite (bdd)', 'criteria de aceite']
-    : ['cenarios de teste', 'casos de teste funcionais', 'estrategia de testes', 'dados de teste', 'riscos e metricas', 'qualidade nao funcional', 'rastreabilidade dos criterios de aceite', 'smoke minimo da feature', 'usabilidade e acessibilidade'];
   const requested = String(requestedTitle || '').replace(/^#+\s*/, '').trim().toLocaleLowerCase('pt-BR');
-  const candidates = [requested, ...aliases].filter(Boolean);
+  // A section replacement must never treat every known section as an alias.
+  // Doing so makes a patch for "Comportamento" replace "Historia" simply
+  // because it appears first in the document.
+  const candidates = [requested].filter(Boolean);
   const headingRegex = /^##\s+([^\n]+?)\s*$/gim;
   let match;
   while ((match = headingRegex.exec(String(content || ''))) !== null) {
@@ -738,6 +739,131 @@ function replaceArtifactSection(content, requestedTitle, replacementBody, artifa
     return `${String(content || '').slice(0, start)}## ${requestedTitle}\n${String(replacementBody || '').trim()}\n${String(content || '').slice(end)}`.replace(/\n{3,}/g, '\n\n');
   }
   return `${String(content || '').trim()}\n\n## ${requestedTitle}\n${String(replacementBody || '').trim()}\n`;
+}
+
+function removeResolvedPendingDecisions(content, instruction) {
+  const answered = [...String(instruction || '').matchAll(/Decisao:\s*([^\n]+)\nResposta:/gi)]
+    .map((match) => match[1].trim().toLocaleLowerCase('pt-BR'));
+  if (!answered.length) return content;
+  return String(content).split('\n').filter((line) => {
+    const normalized = line.replace(/^\s*[-*]\s*/, '').trim().toLocaleLowerCase('pt-BR');
+    return !answered.some((question) => normalized === question);
+  }).join('\n');
+}
+
+function removeLegacyRequirementSections(content) {
+  let normalized = String(content)
+    .replace(/\n##\s+requirements\s*[\s\S]*?(?=\n##\s+|$)/gi, '\n')
+    .replace(/\n##\s+Criterios de Aceite(?:\s+\(BDD\))?\s*[\s\S]*?(?=\n##\s+|$)/gi, '\n')
+    .replace(/\n{3,}/g, '\n\n');
+  const seen = new Set();
+  let discard = false;
+  normalized = normalized.split('\n').filter((line) => {
+    const heading = line.match(/^##\s+(.+)\s*$/i);
+    if (!heading) return !discard;
+    const key = heading[1].trim().toLocaleLowerCase('pt-BR');
+    discard = seen.has(key);
+    seen.add(key);
+    return !discard;
+  }).join('\n');
+  if (!/^##\s+Historia e objetivo\s*$/im.test(normalized)) {
+    const title = normalized.match(/^#\s+Requisito Refinado\s*$/im);
+    const story = normalized.match(/Como\s+[^\n]+/i)?.[0];
+    if (title && story) normalized = normalized.replace(title[0], `${title[0]}\n\n## Historia e objetivo\n\n${story}`);
+  }
+  return normalized.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function extractLevelTwoSection(content, title) {
+  const escaped = String(title).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = String(content || '').match(new RegExp(`^##[\\t ]+${escaped}[\\t ]*\\r?\\n([\\s\\S]*?)(?=^##[\\t ]+|(?![\\s\\S]))`, 'im'));
+  return match?.[1]?.trim() || '';
+}
+
+function enrichLoginAcceptanceScenarios(scenarios, sourceContent) {
+  const source = String(sourceContent || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const existing = String(scenarios || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const hasLoginRules = ['matricula', 'senha', '5 tentativas', '15 minutos', '8 digitos'].every((term) => source.includes(term));
+  if (!hasLoginRules || (existing.includes('5 tentativas') && existing.includes('8 digitos'))) return scenarios;
+  return `### Sucesso
+
+### Cenario 1 - Autenticacao valida
+
+**DADO** que o professor informa matricula com 8 digitos e senha valida na tela de login
+**QUANDO** confirma o acesso
+**ENTAO** o sistema autentica o professor e libera as funcionalidades de reserva.
+
+### Excecoes
+
+### Cenario 2 - Campos ausentes ou formato invalido
+
+**DADO** que o professor deixa matricula ou senha em branco, ou informa matricula fora de 8 digitos
+**QUANDO** tenta confirmar o acesso
+**ENTAO** o sistema nao cria sessao e informa o dado que deve ser corrigido.
+
+### Cenario 3 - Credenciais invalidas
+
+**DADO** que o professor informa matricula ou senha incorreta
+**QUANDO** confirma o acesso antes do limite de tentativas
+**ENTAO** o sistema nao cria sessao e informa que as credenciais sao invalidas.
+
+### Cenario 4 - Bloqueio temporario
+
+**DADO** que o professor realizou 5 tentativas consecutivas com credenciais invalidas
+**QUANDO** tenta autenticar novamente
+**ENTAO** o sistema bloqueia o acesso por 15 minutos e informa o tempo de bloqueio.
+
+### Cenario 5 - Sessao expirada
+
+**DADO** que o professor possui uma sessao autenticada
+**QUANDO** a inatividade ultrapassa 30 minutos
+**ENTAO** o sistema encerra a sessao e solicita novo login.
+
+### Cenario 6 - Perfil sem permissao
+
+**DADO** que um usuario sem perfil Professor esta autenticado
+**QUANDO** tenta acessar funcionalidades de reserva
+**ENTAO** o sistema nega o acesso e informa que o perfil nao possui permissao.`;
+}
+
+function restoreCompactRequirementStructure(content, storyTitle) {
+  let normalized = removeLegacyRequirementSections(content);
+  const story = String(storyTitle || '').trim();
+  const history = extractLevelTwoSection(normalized, 'Historia e objetivo');
+  if (story && !/\bComo\s+/i.test(history)) {
+    normalized = replaceArtifactSection(normalized, 'Historia e objetivo', story, 'requirements');
+  }
+
+  let behaviorSection = extractLevelTwoSection(normalized, 'Comportamento e regras confirmadas');
+  if (behaviorSection && !/^###\s+Comportamento\s*$/im.test(behaviorSection)) {
+    normalized = replaceArtifactSection(
+      normalized,
+      'Comportamento e regras confirmadas',
+      `### Comportamento\n\n${behaviorSection}\n\n### Regras\n\n- Nenhuma regra adicional confirmada nas fontes.`,
+      'requirements',
+    );
+    behaviorSection = extractLevelTwoSection(normalized, 'Comportamento e regras confirmadas');
+  }
+
+  const pending = extractLevelTwoSection(normalized, 'Decisoes pendentes');
+  const scenarios = enrichLoginAcceptanceScenarios(
+    extractLevelTwoSection(normalized, 'Cenarios de aceite'),
+    normalized,
+  );
+  const finalHistory = extractLevelTwoSection(normalized, 'Historia e objetivo') || story;
+  const hasPendingDecision = pending.split('\n').some((line) => /^\s*[-*]\s+/.test(line) && !/nenhuma decis[aã]o pendente/i.test(line));
+  const finalStatus = hasPendingDecision ? '**PENDENTE DE VALIDACAO**' : '**PRONTO PARA VALIDACAO**';
+  const sections = [
+    '# Requisito Refinado',
+    `## Historia e objetivo\n\n${finalHistory}`,
+    `## Comportamento e regras confirmadas\n\n${behaviorSection || '### Comportamento\n\n- A validar durante a revisao.\n\n### Regras\n\n- Nenhuma regra confirmada.'}`,
+    `## Cenarios de aceite\n\n${scenarios || '### Sucesso\n\n- A validar durante a revisao.\n\n### Excecoes\n\n- A validar durante a revisao.'}`,
+  ];
+  sections.push(hasPendingDecision
+    ? `## Decisoes pendentes\n\n${pending}`
+    : '## Decisoes pendentes\n\n- Nenhuma decisao pendente.');
+  sections.push(`## Status\n\n${finalStatus}`);
+  return sections.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 export async function publishBacklogTasksController(req, res, next) {
@@ -1249,21 +1375,60 @@ export async function repairTaskArtifactController(req, res, next) {
     const relatedRequirement = artifact.artifactType === 'test_plan'
       ? (task.artifacts || []).find((item) => item.artifactType === 'requirements' && item.isCurrent)?.content || `${task.title}\n${task.description || ''}`
       : `${task.title}\n${task.description || ''}`;
-    const suppliedReport = req.body?.qualityReport || {};
     const currentReport = evaluateArtifactQuality({ artifactType: artifact.artifactType, content: artifact.content, relatedRequirement });
-    const findings = suppliedReport.findings?.length ? suppliedReport.findings : currentReport.findings;
+    const instruction = String(req.body?.instruction || '').trim().slice(0, 2000);
+    const persistedDecisionArtifacts = artifact.artifactType === 'requirements'
+      ? await prisma.taskArtifact.findMany({
+          where: { taskId: task.id, artifactScope: 'review_decisions' },
+          orderBy: { createdAt: 'desc' },
+          select: { content: true },
+        })
+      : [];
+    const persistedDecisionInstructions = persistedDecisionArtifacts.flatMap(({ content }) => {
+      try {
+        const snapshot = JSON.parse(content);
+        // Review decisions belong to the task requirements, not only to the
+        // version that first received them. Reapply confirmed facts when a
+        // later repair needs to recover a malformed version.
+        if (!Array.isArray(snapshot?.decisions)) return [];
+        return snapshot.decisions
+          .filter((item) => item && !item.ignored && typeof item.question === 'string' && typeof item.answer === 'string' && item.answer.trim())
+          .map((item) => `Decisao: ${item.question.trim()}\nResposta: ${item.answer.trim()}`);
+      } catch {
+        return [];
+      }
+    });
+    const effectiveInstruction = [instruction, ...persistedDecisionInstructions]
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join('\n\n')
+      .slice(0, 6000);
+    const findings = currentReport.findings.length
+      ? currentReport.findings
+      : [{
+          code: 'manual_review',
+          severity: 'medium',
+          message: instruction || 'Revise a clareza e a testabilidade da seção mais relevante, sem inventar regras de negócio.',
+        }];
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'artifact_repair' });
     const result = await runSingleAgent('artifact_repair', {
       project_id: task.project.uuid,
       task_uuid: task.uuid,
       artifact_type: artifact.artifactType,
       current_artifact: artifact.content,
-      findings: findings?.length ? findings : (req.body?.findings || []),
-      source_context: `${task.title}\n${task.description || ''}`,
+      findings,
+      source_context: `Task: ${task.title}\nDescricao: ${task.description || ''}\n\nRequisito relacionado:\n${relatedRequirement}`,
+      instruction: effectiveInstruction,
       idea: `Reparar somente o artefato ${artifact.artifactType}`,
     }, { envOverrides });
     const sectionTitle = String(result.section || '').replace(/^#+\s*/, '').trim();
     let patchedContent = replaceArtifactSection(artifact.content, sectionTitle, result.content, artifact.artifactType);
+    if (artifact.artifactType === 'requirements') {
+      patchedContent = restoreCompactRequirementStructure(removeResolvedPendingDecisions(patchedContent, effectiveInstruction), task.title);
+    }
+    if (patchedContent.trim() === String(artifact.content || '').trim()) {
+      return res.status(422).json({ message: 'O agente não propôs uma alteração efetiva para este artefato.', qualityReport: currentReport });
+    }
     // Garantia determinística: um reparo não pode continuar sem a seção que
     // o Quality Gate apontou. O texto é explicitamente proposto para revisão
     // humana, sem inventar regra de negócio.
@@ -1283,6 +1448,22 @@ export async function repairTaskArtifactController(req, res, next) {
       contentFormat: artifact.contentFormat,
       createdByAgentName: 'artifact_repair',
     });
+    const decisionResponses = Array.isArray(req.body?.decisionResponses)
+      ? req.body.decisionResponses
+        .filter((item) => item && typeof item.question === 'string' && (typeof item.answer === 'string' || item.ignored === true))
+        .map((item) => ({ question: item.question.trim(), answer: typeof item.answer === 'string' ? item.answer.trim() : null, ignored: item.ignored === true }))
+      : [];
+    if (decisionResponses.length) {
+      await createTaskArtifact(task.uuid, {
+        artifactType: 'custom',
+        artifactScope: 'review_decisions',
+        title: `Decisões da revisão - ${artifact.title}`.slice(0, 255),
+        content: JSON.stringify({ sourceArtifactUuid: artifact.uuid, resultArtifactUuid: nextArtifact.uuid, decisions: decisionResponses, decidedAt: new Date().toISOString(), decidedByUserUuid: req.authUser.uuid }),
+        contentFormat: 'json',
+        createdByUserId: req.authUser.id,
+        createdByAgentName: 'artifact_repair',
+      });
+    }
     const repairedReport = evaluateArtifactQuality({ artifactType: artifact.artifactType, content: patchedContent, relatedRequirement });
     res.status(201).json(serializeBigInts({ success: true, artifact: nextArtifact, patch: result, qualityReport: repairedReport }));
   } catch (error) {

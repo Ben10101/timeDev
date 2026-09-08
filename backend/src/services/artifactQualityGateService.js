@@ -38,7 +38,11 @@ export function evaluateArtifactQuality({ artifactType, content, relatedRequirem
 
   if (!text.trim()) findings.push({ code: 'empty_artifact', severity: 'critical', message: 'Artefato vazio.' });
   if (artifactType === 'requirements') {
-    for (const required of ['User Story Refinada', 'Requisitos Funcionais', 'Criterios de Aceite']) {
+    const compactFormat = Boolean(section(text, 'Historia e objetivo'));
+    const requiredSections = compactFormat
+      ? ['Historia e objetivo', 'Comportamento e regras confirmadas', 'Cenarios de aceite', 'Decisoes pendentes', 'Status']
+      : ['User Story Refinada', 'Requisitos Funcionais', 'Criterios de Aceite'];
+    for (const required of requiredSections) {
       if (!section(text, required)) findings.push({ code: 'missing_section', severity: 'high', message: `Seção obrigatória ausente: ${required}.` });
     }
     if (hasAny(text, ['status inicial pendente', 'status previsto no requisito']) && !hasAny(requirementText, ['pendente', 'status'])) {
@@ -94,4 +98,3 @@ export function assertArtifactQuality(args) {
   }
   return report;
 }
-
