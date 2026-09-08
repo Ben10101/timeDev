@@ -113,6 +113,21 @@ function normalizeReviewProposal(proposal = {}) {
   };
 }
 
+function validateReviewProposalGenerationRules(proposal) {
+  const title = String(proposal?.title || '').replace(/\s+/g, ' ').trim();
+  const description = String(proposal?.description || '').replace(/\s+/g, ' ').trim();
+  if (!/^Como\s+.+?,\s*eu quero\s+.+?,\s*para\s+.+[.!?]?$/i.test(title)) {
+    return 'O título precisa seguir o formato "Como ..., eu quero ..., para ...".';
+  }
+  if (title.length > 320) return 'O título excede o tamanho aceito para uma user story.';
+  if (!description) return 'A descrição da story é obrigatória.';
+  const cleanDescription = description.replace(/^(?:descrição|descricao|contexto|detalhe)\s*[:\-]?\s*/i, '').trim();
+  const sentenceCount = cleanDescription.split(/(?<=[.!?])\s+/).filter(Boolean).length;
+  if (!cleanDescription || sentenceCount > 2) return 'A descrição precisa ser objetiva e ter uma ou duas frases.';
+  if (cleanDescription.toLocaleLowerCase() === title.toLocaleLowerCase()) return 'A descrição deve acrescentar contexto, regra ou exceção, sem repetir o título.';
+  return null;
+}
+
 function createReviewFingerprint(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
@@ -868,6 +883,8 @@ export async function applyBacklogStoryReviewController(req, res, next) {
     if (answers.some((item) => !item.answer)) return res.status(400).json({ message: 'Responda todas as perguntas antes de aplicar a proposta.' });
 
     const normalizedProposal = normalizeReviewProposal(proposal);
+    const proposalValidationError = validateReviewProposalGenerationRules(normalizedProposal);
+    if (proposalValidationError) return res.status(400).json({ message: proposalValidationError });
     const pendingReview = current.pendingAgentReview;
     if (!pendingReview?.assessment) {
       return res.status(409).json({ message: 'Execute uma nova revisão antes de aplicar a proposta.' });
@@ -887,7 +904,12 @@ export async function applyBacklogStoryReviewController(req, res, next) {
       acceptance_criteria: acceptanceCriteria,
     };
     const hasBlockingGate = Array.isArray(assessment?.gates) && assessment.gates.some((gate) => gate?.blocking);
-    const nextReviewStatus = hasBlockingGate ? 'needs_review' : current.reviewStatus;
+    if (assessment?.decision !== 'READY' || hasBlockingGate) {
+      return res.status(409).json({
+        message: 'A story ainda precisa de refinamento. Responda as próximas decisões e execute nova revisão até atingir a prontidão mínima.',
+        assessment,
+      });
+    }
     stories[index] = {
       ...current,
       title: normalizedProposal.title,
@@ -897,7 +919,7 @@ export async function applyBacklogStoryReviewController(req, res, next) {
       refinementContext,
       refinement_context: refinementContext,
       reviewAnswers: answers,
-      reviewStatus: nextReviewStatus,
+      reviewStatus: current.reviewStatus,
       // Preserve the review snapshot after applying it. The story becomes the
       // source of truth for the proposal, while this retains the diagnosis and
       // decisions for a later read-only reopening of the modal.

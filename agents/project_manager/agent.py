@@ -37,7 +37,7 @@ class ProjectManager:
     # A backlog is complete when it covers the confirmed journeys, not when it
     # reaches an arbitrary number.  The range only protects the initial
     # generation from being too shallow or unmanageably broad.
-    STORY_RANGE = (8, 25)
+    STORY_RANGE = (18, 24)
     PLANNING_LANES = [
         ("fundacao", "fundacao do produto", "cadastro inicial, configuracao basica, entidade principal e primeiro fluxo utilizavel"),
         ("operacao", "operacao principal", "acompanhamento, execucao, atualizacao de status, filas e trabalho do dia a dia"),
@@ -912,6 +912,22 @@ class ProjectManager:
                 current_lines = []
                 continue
 
+            # Some providers return a compact release plan without Markdown
+            # headings or bullets, for example "MVP: ...". It is still a
+            # valid response to the release-planning prompt and should not be
+            # rejected solely for its presentation format.
+            inline_match = re.match(
+                r"^(?:[-*]\s*)?(?:\*\*)?(MVP|Fase\s+2|Fase\s+3)(?:\*\*)?\s*[:\-]\s*(.*)$",
+                line,
+                re.IGNORECASE,
+            )
+            if inline_match:
+                flush_current()
+                current_title = re.sub(r"\s+", " ", inline_match.group(1)).strip()
+                inline_body = inline_match.group(2).strip()
+                current_lines = [inline_body] if inline_body else []
+                continue
+
             if current_title and line:
                 current_lines.append(line)
 
@@ -1509,48 +1525,8 @@ REGRAS
         consolidated = self._dedupe_and_polish_stories(story_blocks, base_context)
         consolidated = self._prioritize_story_blocks(consolidated)
 
-        fixed_core_pack = self._generate_fixed_core_pack_stories(base_context)
-        if fixed_core_pack and len(fixed_core_pack) >= 6:
-            head_blocks = self._dedupe_and_polish_stories(fixed_core_pack, base_context)[:8]
-            tail_candidates = []
-            core_keys = {self._story_similarity_key(block) for block in head_blocks}
-            for block in consolidated:
-                key = self._story_similarity_key(block)
-                if not key or key in core_keys:
-                    continue
-                tail_candidates.append(block)
-            tail_non_advanced = [block for block in tail_candidates if not self._is_advanced_story(block)]
-            tail_advanced = [block for block in tail_candidates if self._is_advanced_story(block)]
-            consolidated = self._dedupe_and_polish_stories(head_blocks + tail_non_advanced + tail_advanced, base_context)
-            consolidated = self._ensure_minimum_story_count(
-                base_context,
-                consolidated,
-                min_stories=min_stories,
-                max_stories=max_stories,
-            )
-            # Preserve the deterministic head even after count repair.
-            remaining = []
-            head_keys = {self._story_similarity_key(block) for block in head_blocks}
-            for block in consolidated:
-                key = self._story_similarity_key(block)
-                if key in head_keys:
-                    continue
-                remaining.append(block)
-            remaining = sorted(
-                remaining,
-                key=lambda block: (
-                    self._is_advanced_story(block),
-                    self._story_stage_rank(block),
-                    -self._story_priority_score(block),
-                    self._story_seed_title(block),
-                ),
-            )
-            consolidated = (head_blocks + remaining)[:max_stories]
-            return consolidated[:max_stories]
-
-        # No fixed pack means no synthetic core is allowed. Missing domain
-        # capabilities must be reported by the challenger as proposals or
-        # questions, never filled with unrelated template stories.
+        # The project context and the LLM define the product scope. Never
+        # prepend a deterministic story template from another domain.
 
         front = [block for block in consolidated if not self._is_advanced_story(block)]
         tail = [block for block in consolidated if self._is_advanced_story(block)]
@@ -1607,6 +1583,13 @@ REGRAS
 """
         result = self._generate_block(prompt, num_predict=num_predict)
         section = self._extract_section(result, section_title)
+        if not section and section_title.strip().lower() == "fatias de release":
+            # The release prompt asks for a single section. Accept a direct
+            # MVP/Fase 2/Fase 3 plan even when the model omits the optional
+            # Markdown heading; no content is synthesized here.
+            direct_slices = self._extract_release_slices(result)
+            if direct_slices:
+                return direct_slices
         if not section:
             raise RuntimeError(f"Secao {section_title} vazia.")
         if section_title.strip().lower() == "fatias de release":
@@ -1979,39 +1962,15 @@ Gere APENAS esta secao em Markdown:
                     "answer_hint": finding["answer_hint"] or "Informe a decisao e, se aplicavel, a regra, limite ou criterio que deve ser usado.",
                     "blocking": severity == "high", "finding_id": finding["id"],
                 })
-        # Re-run the analysis after every answer round. The updated briefing
-        # can resolve old gaps and reveal a genuinely new high-impact gap.
-        if analysis_status == "degraded" and not any(question.get("blocking") for question in questions):
-            # A malformed model response is not evidence that the product is
-            # fully specified. Keep the project in discovery and ask only for
-            # decisions that materially shape the first usable backlog.
-            degraded_questions = [
-                (
-                    "Quais perfis podem cadastrar salas, reservar, alterar ou cancelar reservas e bloquear salas?",
-                    "Definir as permissoes e responsabilidades dos perfis do produto.",
-                ),
-                (
-                    "Quais regras de reserva devem valer para duracao, antecedencia, recorrencia e cancelamento?",
-                    "Definir as regras operacionais que evitam conflitos e reservas indevidas.",
-                ),
-                (
-                    "Quais informacoes a equipe administrativa precisa acompanhar na agenda e nos relatorios do MVP?",
-                    "Definir a visibilidade operacional necessaria para o primeiro lancamento.",
-                ),
-            ]
-            for question_text, reason in degraded_questions:
-                stable_question_key = hashlib.sha1(question_text.encode("utf-8")).hexdigest()[:10].upper()
-                questions.append({
-                    "id": f"CQ-{stable_question_key}",
-                    "question": question_text,
-                    "reason": reason,
-                    "answer_hint": "Informe a decisao de produto que deve orientar o MVP.",
-                    "blocking": True,
-                    "finding_id": "RF-DEGRADED-ANALYSIS",
-                })
+        # Questions must be grounded in LLM findings for this briefing. If the
+        # requirements analysis degrades, do not inject a domain-specific
+        # template: that would leak unrelated product language into the
+        # project. The caller can continue with the available evidence or
+        # retry once an AI provider is available.
+        if analysis_status == "degraded" and not questions:
             print(json.dumps({
-                "event": "project_manager_elicitation_required_after_degraded_analysis",
-                "question_count": len(degraded_questions),
+                "event": "project_manager_elicitation_skipped_after_degraded_analysis",
+                "reason": "No LLM-grounded clarification questions were available.",
             }, ensure_ascii=False), file=sys.stderr)
         blocking_questions = [question for question in questions if question["blocking"]]
         return {
@@ -3953,11 +3912,12 @@ REGRAS GERAIS
         if len(selected_epics) < 2:
             raise RuntimeError("Blueprint sem epicos suficientes para gerar blocos de historias.")
 
-        # Keep each provider call small, but do not mistake the first two
-        # epics for the complete backlog. Every selected epic gets its own
-        # batch, with the final minimum derived from that plan.
+        # Keep each provider call small, but do not turn the number of
+        # selected epics into a mandatory story count. A coherent backlog may
+        # legitimately contain fewer than four stories per epic; quality is
+        # bounded by STORY_RANGE, not by a fixed 24-story target.
         planned_story_count = min(max_stories, len(selected_epics) * stories_per_epic)
-        required_story_count = max(min_stories, planned_story_count)
+        required_story_count = min_stories
         print(json.dumps({
             "event": "project_manager_epic_batch_plan_resolved",
             "epics_selected": len(selected_epics),
@@ -4232,44 +4192,6 @@ REGRAS GERAIS
             f"Ultimo motivo: {last_reason}"
         )
 
-    def _is_backlog_aligned_with_briefing(self, idea, backlog):
-        """Reject structurally valid but domain-generic AI output before it is persisted."""
-        _, briefing = self._normalize_text(idea)
-        _, generated = self._normalize_text(backlog)
-        is_credit_domain = bool(re.search(r"\b(credito|emprestimo|financiamento|score|bureau)\b", briefing))
-        if not is_credit_domain:
-            return True
-
-        is_collection_campaign = bool(re.search(r"\b(campanh|cobran[cç]|inadimpl|devedor|recupera[cç][aã]o)\b", briefing))
-        if is_collection_campaign:
-            required_capabilities = {
-                "campanha": r"\bcampanh",
-                "segmentacao": r"\bsegment",
-                "cobranca": r"\bcobran[cç]",
-                "aprovacao": r"\b(aprov|reprov|decis[aã]o)",
-                "acompanhamento": r"\b(status|acompanhar|andamento|resultado|m[eé]trica)",
-            }
-        else:
-            required_capabilities = {
-                "simulacao": r"\bsimul",
-                "proposta": r"\bpropost",
-                "documentos": r"\bdocument",
-                "analise": r"\banalis[ea].{0,30}\bcredit|\banalista de credito\b",
-                "decisao": r"\b(aprovar|reprovar|decisao)\b",
-                "acompanhamento": r"\b(status|acompanhar|andamento)\b",
-            }
-        missing = [
-            capability
-            for capability, pattern in required_capabilities.items()
-            if not re.search(pattern, generated, re.IGNORECASE)
-        ]
-        if missing:
-            raise RuntimeError(
-                "Backlog gerado por IA nao cobriu capacidades obrigatorias do dominio: "
-                + ", ".join(missing)
-            )
-        return True
-
     def process(self, idea, elicitation_state=None, elicitation_answers=None):
         # Stories are product decisions. Never replace an unavailable or invalid
         # AI result with deterministic content that can silently invent scope.
@@ -4330,5 +4252,4 @@ REGRAS GERAIS
         generated_backlog["backlog_contract"]["elicitation"] = self._elicitation_state
         generated_backlog["backlog_contract"]["story_context"] = story_context
         generated_backlog["story_context"] = story_context
-        self._is_backlog_aligned_with_briefing(idea, generated_backlog["markdown"])
         return generated_backlog

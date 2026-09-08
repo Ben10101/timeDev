@@ -32,13 +32,37 @@ def _normalize_review_payload(value):
     if not isinstance(value, dict):
         return value
 
-    for wrapper in ('review', 'result', 'data'):
+    for wrapper in ('review', 'result', 'data', 'output', 'response', 'content', 'message', 'payload'):
         nested = value.get(wrapper)
+        if isinstance(nested, str):
+            try:
+                nested = parse_first_json_object(nested)
+            except ValueError:
+                nested = None
         if isinstance(nested, dict) and any(
             key in nested for key in ('assessment', 'quality_evidence', 'questions', 'proposed_story', 'proposedStory')
         ):
             value = nested
             break
+
+    # OpenAI-compatible providers sometimes retain the JSON answer inside the
+    # first choice/message wrapper. Accept it only when it contains a review
+    # payload; plain explanatory text is still rejected by the validator.
+    if isinstance(value.get('choices'), list):
+        for choice in value['choices']:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get('message') if isinstance(choice.get('message'), dict) else choice
+            content = message.get('content') if isinstance(message, dict) else None
+            if not isinstance(content, str):
+                continue
+            try:
+                nested = parse_first_json_object(content)
+            except ValueError:
+                continue
+            if any(key in nested for key in ('assessment', 'quality_evidence', 'questions', 'proposed_story', 'proposedStory')):
+                value = nested
+                break
 
     normalized = dict(value)
     if not isinstance(normalized.get('proposed_story'), dict) and isinstance(normalized.get('proposedStory'), dict):
@@ -64,9 +88,53 @@ def _validate_review_json(raw):
         return False, str(error)
     if not isinstance(value, dict):
         return False, 'A resposta precisa conter um objeto JSON.'
-    # The provider can legally return an empty/minimal JSON object despite the
-    # prompt.  It is safer to complete that response deterministically from
-    # the target story than to fail a user action that has a usable fallback.
+    has_review_content = (
+        isinstance(value.get('proposed_story'), dict)
+        or isinstance(value.get('proposedStory'), dict)
+        or isinstance(value.get('questions'), list)
+        or isinstance(value.get('quality_evidence'), dict)
+    )
+    if not has_review_content:
+        return False, 'A resposta da LLM nao contem proposta, perguntas ou evidencias de revisao.'
+    return True, None
+
+
+def _validate_review_with_answer_application(raw, answers):
+    """Require the LLM to acknowledge every confirmed decision it receives."""
+    is_valid, reason = _validate_review_json(raw)
+    if not is_valid:
+        return is_valid, reason
+    try:
+        review = _normalize_review_payload(parse_first_json_object(raw))
+    except ValueError as error:
+        return False, str(error)
+
+    required_ids = {
+        str(item.get('id') or '').strip()
+        for item in answers
+        if isinstance(item, dict) and _has_text(item.get('answer')) and str(item.get('id') or '').strip()
+    }
+    if not required_ids:
+        return True, None
+
+    applications = review.get('decision_application') if isinstance(review, dict) else None
+    applied_ids = {
+        str(item.get('answer_id') or '').strip()
+        for item in applications
+        if isinstance(item, dict) and _has_text(item.get('applied_change'))
+    } if isinstance(applications, list) else set()
+    missing = sorted(required_ids.difference(applied_ids))
+    if missing:
+        # Some otherwise valid providers omit this optional audit field. The
+        # proposal itself is still reviewed for task-generation rules below;
+        # do not turn a formatting omission into a failed user action.
+        print(json.dumps({
+            'event': 'story_reviewer_decision_application_missing',
+            'answer_ids': missing,
+        }, ensure_ascii=False), file=sys.stderr)
+    proposal_ok, proposal_reason = _proposal_respects_task_generation_rules(review.get('proposed_story'))
+    if not proposal_ok:
+        return False, proposal_reason
     return True, None
 
 
@@ -100,6 +168,26 @@ def _status(value, fallback='partial'):
 
 def _has_text(value):
     return bool(str(value or '').strip())
+
+
+def _proposal_respects_task_generation_rules(proposal):
+    """Apply the concise user-story shape required by the PM generator."""
+    if not isinstance(proposal, dict):
+        return True, None
+    title = re.sub(r'\s+', ' ', str(proposal.get('title') or '')).strip()
+    description = re.sub(r'\s+', ' ', str(proposal.get('description') or '')).strip()
+    if title and not re.match(r'^Como\s+.+?,\s*eu quero\s+.+?,\s*para\s+.+[.!?]?$', title, re.IGNORECASE):
+        return False, 'O titulo precisa seguir o formato "Como ..., eu quero ..., para ...".'
+    if title and len(title) > 320:
+        return False, 'O titulo da story esta longo demais para o padrao de geracao.'
+    if description:
+        cleaned = re.sub(r'^(?:descricao|contexto|detalhe)\s*[:\-]?\s*', '', description, flags=re.IGNORECASE).strip()
+        sentence_count = len([item for item in re.split(r'(?<=[.!?])\s+', cleaned) if item.strip()])
+        if not cleaned or sentence_count > 2:
+            return False, 'A descricao precisa ser objetiva e ter uma ou duas frases.'
+        if cleaned.casefold() == title.casefold():
+            return False, 'A descricao deve acrescentar contexto, regra ou excecao, sem repetir o titulo.'
+    return True, None
 
 
 def _acceptance_criteria(proposal):
@@ -176,7 +264,10 @@ def _normalized_proposed_story(story, proposal):
     """Keep the editable story visible even when a provider omits proposal fields."""
     proposal = proposal if isinstance(proposal, dict) else {}
     context = story.get('refinement_context') or story.get('refinementContext') or {}
-    existing_criteria = context.get('acceptance_criteria') or context.get('acceptanceCriteria') or []
+    existing_criteria = (
+        story.get('acceptance_criteria') or story.get('acceptanceCriteria')
+        or context.get('acceptance_criteria') or context.get('acceptanceCriteria') or []
+    )
     criteria = proposal.get('acceptance_criteria')
     return {
         'title': str(proposal.get('title') or story.get('title') or story.get('goal') or '').strip(),
@@ -187,86 +278,94 @@ def _normalized_proposed_story(story, proposal):
     }
 
 
-def _apply_answered_criterion_updates(proposal, answers):
-    """Apply answers to the criterion that generated the question, even if the model omits the rewrite."""
-    criteria = proposal.get('acceptance_criteria') if isinstance(proposal, dict) else []
-    if not isinstance(criteria, list):
-        return proposal
-    updated = {**proposal, 'acceptance_criteria': [dict(item) if isinstance(item, dict) else item for item in criteria]}
-    for answer in answers if isinstance(answers, list) else []:
-        if not isinstance(answer, dict) or not _has_text(answer.get('answer')):
-            continue
-        match = re.fullmatch(r'RQ-ACCEPTANCE-CRITERION-(\d+)', str(answer.get('id') or '').strip())
-        if not match:
-            continue
-        index = int(match.group(1)) - 1
-        if index < 0 or index >= len(updated['acceptance_criteria']) or not isinstance(updated['acceptance_criteria'][index], dict):
-            continue
-        criterion = updated['acceptance_criteria'][index]
-        response = str(answer['answer']).strip()
-        criterion_text = ' '.join(str(criterion.get(field) or '') for field in ('given', 'when', 'then')).casefold()
-        if 'limite definido' in criterion_text:
-            for field in ('given', 'when', 'then'):
-                criterion[field] = re.sub(r'\b(?:o|a)\s+limite definido\b|\blimite definido\b', response, str(criterion.get(field) or ''), flags=re.IGNORECASE)
-        elif 'conforme perfil' in criterion_text:
-            criterion['then'] = f'O sistema libera ao perfil Professor somente as funcionalidades: {response}'
-        else:
-            for field in ('given', 'when', 'then'):
-                if not _has_text(criterion.get(field)):
-                    criterion[field] = response
-                    break
-        source_ids = criterion.get('source_ids') if isinstance(criterion.get('source_ids'), list) else []
-        criterion['source_ids'] = list(dict.fromkeys([*source_ids, str(answer.get('id') or '').strip()]))
-    return updated
-
-
-def _answer_for(answers, question_id):
-    for answer in answers if isinstance(answers, list) else []:
-        if isinstance(answer, dict) and str(answer.get('id') or '').strip() == question_id and _has_text(answer.get('answer')):
-            return str(answer['answer']).strip()
-    return ''
-
-
-def _is_affirmative(answer):
-    return str(answer or '').strip().casefold() in {'sim', 's', 'yes', 'y'}
-
-
-def _apply_answered_story_decisions(proposal, answers):
-    """Apply confirmed scope/clarity decisions to the editable proposal.
-
-    These decisions previously disappeared after the question was answered:
-    only acceptance-criterion answers affected the proposal.  The user must
-    be able to see and approve the resulting story before it is persisted.
-    """
-    if not isinstance(proposal, dict):
-        return proposal
-    updated = {
-        **proposal,
-        'acceptance_criteria': [dict(item) if isinstance(item, dict) else item for item in proposal.get('acceptance_criteria', [])],
+def _answered_decision_ids(answers):
+    return {
+        str(answer.get('id') or '').strip()
+        for answer in answers if isinstance(answer, dict)
+        and _has_text(answer.get('answer')) and str(answer.get('id') or '').strip()
     }
-    scope_answer = _answer_for(answers, 'RQ-SCOPE-CONSULTATION-RESERVATION')
-    if _is_affirmative(scope_answer):
-        updated['description'] = (
-            'O sistema deve permitir ao professor consultar salas disponiveis por data, horario e capacidade. '
-            'A validacao e o bloqueio da reserva serao tratados em uma story especifica.'
-        )
-        updated['acceptance_criteria'] = [
-            criterion for criterion in updated['acceptance_criteria']
-            if not (
-                isinstance(criterion, dict)
-                and 'reserv' in ' '.join(str(criterion.get(field) or '') for field in ('given', 'when', 'then')).casefold()
-            )
-        ]
 
-    clarity_answer = _answer_for(answers, 'RQ-CLARITY-CAPACITY-LIMIT')
-    if _is_affirmative(clarity_answer):
-        updated['description'] = re.sub(
-            r'\s*se\s+o\s+numero\s+de\s+alunos\s+exceder\s+o\s+limite\s+definido,?\s*',
-            ' ',
-            str(updated.get('description') or ''),
-            flags=re.IGNORECASE,
-        ).strip()
-    return updated
+
+def _validate_decision_reconciliation(raw, answers):
+    """Validate the small, focused LLM pass that applies user decisions.
+
+    This is deliberately domain-neutral: the LLM receives the actual question
+    and answer instead of code trying to infer business rules from question IDs.
+    """
+    try:
+        value = _normalize_review_payload(parse_first_json_object(raw))
+    except ValueError as error:
+        return False, str(error)
+    if not isinstance(value, dict) or not isinstance(value.get('proposed_story'), dict):
+        return False, 'A reconciliacao precisa retornar proposed_story em JSON.'
+
+    proposal_ok, proposal_reason = _proposal_respects_task_generation_rules(value['proposed_story'])
+    if not proposal_ok:
+        return False, proposal_reason
+
+    required_ids = _answered_decision_ids(answers)
+    applications = value.get('decision_application')
+    applied_ids = {
+        str(item.get('answer_id') or '').strip()
+        for item in applications if isinstance(item, dict) and _has_text(item.get('applied_change'))
+    } if isinstance(applications, list) else set()
+    missing = sorted(required_ids.difference(applied_ids))
+    if missing:
+        return False, f'Reconciliacao sem aplicacao comprovada para: {", ".join(missing)}.'
+    return True, None
+
+
+def _reconcile_answered_story_decisions(story, proposal, answers):
+    """Use a constrained LLM pass to incorporate every confirmed decision.
+
+    A broad review may identify evidence correctly but still leave old wording
+    in the proposed story.  This focused pass makes the decisions the source
+    of truth and returns an auditable mapping for each answer.
+    """
+    if not _answered_decision_ids(answers):
+        return proposal, []
+
+    prompt = f'''
+Voce e o reconciliador de decisoes de uma user story. Reescreva SOMENTE a
+proposta abaixo para obedecer integralmente as decisoes confirmadas pelo usuario.
+As decisoes sao fonte de verdade: remova da proposta e dos criterios toda
+capacidade, fase, ator, integracao ou comportamento que uma decisao excluir.
+Nao trate decisao confirmada como opcional, futura ou pergunta em aberto.
+Nao invente regra de negocio alem das decisoes e do contexto fornecido.
+
+Retorne apenas este JSON:
+{{
+  "proposed_story": {{
+    "title": "Como ..., eu quero ..., para ...",
+    "description": "Uma ou duas frases objetivas.",
+    "actor": "...",
+    "benefit": "...",
+    "acceptance_criteria": [{{"given":"...", "when":"...", "then":"...", "status":"proposed", "source_ids":["Q-01"]}}]
+  }},
+  "decision_application": [{{"answer_id":"Q-01", "applied_change":"mudanca concreta feita na proposta"}}]
+}}
+
+Regras obrigatorias: o titulo deve seguir exatamente "Como ..., eu quero ...,
+para ..."; a descricao nao pode repetir o titulo, deve ter uma ou duas frases,
+e os criterios devem refletir as decisoes. Inclua uma entrada em
+decision_application para CADA resposta recebida.
+
+STORY ORIGINAL:
+{json.dumps(story, ensure_ascii=False)[:8000]}
+PROPOSTA A RECONCILIAR:
+{json.dumps(proposal, ensure_ascii=False)[:8000]}
+DECISOES CONFIRMADAS:
+{json.dumps(answers, ensure_ascii=False)[:6000]}
+'''
+    result = generate_complete_text(
+        prompt,
+        agent_label='requirements_analysis',
+        validator=lambda raw: _validate_decision_reconciliation(raw, answers),
+        options_override={'temperature': 0.0, 'num_predict': 1000, 'json_mode': True, 'require_json_object': False},
+        max_retries=3,
+    )
+    reconciliation = _normalize_review_payload(parse_first_json_object(result))
+    return reconciliation['proposed_story'], reconciliation.get('decision_application') or []
 
 
 def _prune_orphaned_question_sources(proposal, answers):
@@ -378,9 +477,11 @@ def _readiness_assessment(story, review):
 
     if any(gate['blocking'] for gate in gates):
         decision = 'BLOCKED'
-    elif score >= 85:
-        decision = 'READY'
+    # A story is eligible for human approval at 70/100 (7/10). Blocking
+    # gates remain non-negotiable regardless of the numeric score.
     elif score >= 70:
+        decision = 'READY'
+    elif score >= 50:
         decision = 'HUMAN_REVIEW'
     else:
         decision = 'REFINE'
@@ -506,6 +607,7 @@ class StoryReviewer:
         story = payload.get('story') or {}
         if not story.get('id') or not story.get('title'):
             raise ValueError('Revisao de story exige id e title.')
+        review_answers = payload.get('review_answers') if isinstance(payload.get('review_answers'), list) else []
         prompt = f'''
 Voce e o Story Review Agent, parte da governanca do PM. Analise UMA historia usando o briefing,
 DNA do produto, contrato do backlog e demais historias como contexto. Seu objetivo e fechar lacunas
@@ -525,6 +627,7 @@ Retorne SOMENTE JSON valido com:
     "dependencies": {{"status":"pass|partial|fail", "evidence":[]}}
   }},
   "questions": [{{"id":"Q-01", "question":"...", "why":"...", "blocking":true}}],
+  "decision_application": [{{"answer_id":"Q-01", "applied_change":"mudanca concreta aplicada na proposta"}}],
   "proposed_story": {{"title":"...", "description":"...", "actor":"...", "benefit":"...", "acceptance_criteria": [{{"given":"...", "when":"...", "then":"...", "status":"proposed", "source_ids":[]}}]}},
   "source_ids": [],
   "requires_confirmation": true
@@ -543,6 +646,16 @@ resultado observavel. Perguntas devem ser especificas e respondiveis,
 nao genericas. Sempre retorne proposed_story completo, os seis objetos de quality_evidence e assessment;
 Se nao houver melhoria, copie a story alvo integralmente em proposed_story e retorne questions vazio.
 Nao omita proposed_story: ele e a proposta editavel que sera exibida ao usuario.
+REGRAS DE GERACAO DE TASKS PARA proposed_story:
+- title deve ser uma unica user story no formato exato "Como ..., eu quero ..., para ...".
+- description deve ter uma ou duas frases objetivas e acrescentar contexto, regra, excecao ou expectativa;
+  nao repita o title, nao use detalhes de implementacao e nao introduza escopo fora das evidencias.
+- Preserve ator, beneficio, release, prioridade e rastreabilidade da story original, salvo decisao confirmada.
+Se, considerando a proposta e as respostas recebidas, a story ainda nao puder ficar pronta para aprovacao,
+retorne pelo menos uma pergunta bloqueante, concreta e baseada em um elemento da story que precisa de decisao.
+As respostas anteriores devem ser incorporadas na proposta; pergunte somente pela proxima lacuna ainda aberta.
+Para cada resposta recebida, preencha decision_application com o ID da resposta e a mudanca concreta
+efetivamente feita em title, description ou acceptance_criteria. Se nao houver respostas, retorne [].
 
 BRIEFING:
 {json.dumps(payload.get('briefing') or {}, ensure_ascii=False)[:12000]}
@@ -554,15 +667,21 @@ OTHER STORIES:
 {json.dumps(payload.get('other_stories') or [], ensure_ascii=False)[:10000]}
 TARGET STORY:
 {json.dumps(story, ensure_ascii=False)[:10000]}
-RESPOSTAS DO USUARIO (use somente como contexto confirmado para atualizar a proposta):
-{json.dumps(payload.get('review_answers') or [], ensure_ascii=False)[:6000]}
+DECISOES DO USUARIO — REGRAS OBRIGATORIAS:
+As respostas abaixo ja foram confirmadas pelo usuario. Reescreva a proposed_story e seus criterios
+para obedecer a cada decisao aplicavel. Se uma resposta excluir uma capacidade, fase, integracao,
+ator ou comportamento, remova-o da proposta e dos criterios; nunca o mantenha como opcao,
+dependencia futura ou texto condicional. Nao repita uma pergunta ja respondida e nao marque como
+lacuna uma decisao confirmada. Antes de responder, confira explicitamente que title, description e
+acceptance_criteria nao contradizem essas respostas.
+{json.dumps(review_answers, ensure_ascii=False)[:6000]}
 '''
         result = generate_complete_text(
             prompt,
             agent_label='requirements_analysis',
-            validator=_validate_review_json,
+            validator=lambda raw: _validate_review_with_answer_application(raw, review_answers),
             options_override={'temperature': 0.0, 'num_predict': 1200, 'json_mode': True, 'require_json_object': False},
-            max_retries=2,
+            max_retries=3,
         )
         review = _normalize_review_payload(parse_first_json_object(result))
         if not isinstance(review, dict):
@@ -586,16 +705,20 @@ RESPOSTAS DO USUARIO (use somente como contexto confirmado para atualizar a prop
                 'received_story_id': received_story_id or None,
             }, ensure_ascii=False), file=sys.stderr)
         review['story_id'] = expected_story_id
-        review['review_answers'] = payload.get('review_answers') if isinstance(payload.get('review_answers'), list) else []
+        review['review_answers'] = review_answers
         raw_proposal = review.get('proposed_story')
         review['generation_degraded'] = not _proposal_is_meaningful(raw_proposal)
-        review['proposed_story'] = _prune_orphaned_question_sources(_apply_answered_story_decisions(
-            _apply_answered_criterion_updates(
-                _normalized_proposed_story(story, raw_proposal),
-                review['review_answers'],
-            ),
+        base_proposal = _normalized_proposed_story(story, raw_proposal)
+        reconciled_proposal, decision_application = _reconcile_answered_story_decisions(
+            story,
+            base_proposal,
             review['review_answers'],
-        ), review['review_answers'])
+        )
+        review['decision_application'] = decision_application
+        review['proposed_story'] = _prune_orphaned_question_sources(
+            _normalized_proposed_story(base_proposal, reconciled_proposal),
+            review['review_answers'],
+        )
         review['questions'] = review.get('questions') if isinstance(review.get('questions'), list) else []
         review['questions'] = [question for question in review['questions'] if not _question_has_answer(question, review)]
         initial_assessment = _readiness_assessment(story, review)

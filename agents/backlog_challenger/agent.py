@@ -120,49 +120,9 @@ class BacklogChallenger:
                     "requires_confirmation": True,
                 })
 
-        campaign_domain = bool(re.search(r"\b(campanh|cobran|devedor|inadimpl|recuperac)\b", evidence_text))
-        domain = "credit_collection_campaign" if campaign_domain else "generic"
-        if campaign_domain:
-            capability_rules = {
-                "segmentacao": r"segment",
-                "aprovacao": r"aprov|reprov|decis",
-                "execucao": r"execut|dispar|envio",
-                "resultado": r"resultado|pagamento|recuperac|metrica",
-            }
-            for capability, pattern in capability_rules.items():
-                if not re.search(pattern, backlog_text):
-                    proposals.append({
-                        "type": "story",
-                        "capability": capability,
-                        "status": "proposed",
-                        "reason": "Capacidade relevante do dominio nao esta coberta pelo backlog.",
-                        "requires_confirmation": True,
-                    })
-                    questions.append({
-                        "code": "missing_domain_decision",
-                        "question": f"A campanha deve incluir explicitamente a capacidade de {capability}?",
-                        "requires_confirmation": True,
-                    })
-        complement_pattern = r"\bsolicit\w*\s+complement\w*\b"
-        if re.search(complement_pattern, evidence_text) and not re.search(complement_pattern, backlog_text):
-            decision_story = next((story for story in stories if "decis" in self._normalize(story.get("goal"))), stories[-1] if stories else {})
-            findings.append({
-                "story_id": str(decision_story.get("id") or "").upper(),
-                "code": "missing_confirmed_flow",
-                "reason": "O fluxo confirmado de solicitar complementos nao esta coberto por uma historia.",
-                "severity": "high",
-            })
-        if re.search(r"\b(bureau|score|integrac)\w*\b", evidence_text) and not re.search(r"\b(bureau|score|integrac)\w*\b", backlog_text):
-            governance_story = next(
-                (story for story in stories if self._normalize(story.get("lane")) == "governance"),
-                stories[-1] if stories else {},
-            )
-            findings.append({
-                "story_id": str(governance_story.get("id") or "").upper(),
-                "code": "unplanned_confirmed_integration",
-                "reason": "A integracao externa confirmada no briefing nao possui historia ou lacuna planejada no backlog.",
-                "severity": "medium",
-            })
+        # Coverage is traceable to the capabilities of the current project.
+        # Do not inject assumptions or questions tied to a fixed domain.
+        domain = "contextual"
         critical = sum(1 for item in findings if item.get("severity") == "critical")
         high = sum(1 for item in findings if item.get("severity") == "high")
         medium = sum(1 for item in findings if item.get("severity") == "medium")

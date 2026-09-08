@@ -21,6 +21,22 @@ function matchesSensitiveRoute(req) {
   );
 }
 
+function normalizeRateLimitPath(path) {
+  return String(path || '')
+    .replace(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/gi, ':id')
+    .replace(/\/\d+(?=\/|$)/g, '/:id');
+}
+
+function getRateLimitScope(req, sensitive) {
+  if (!sensitive) return 'default';
+
+  // Authentication, AI settings and expensive agent runs used to share the
+  // same `sensitive` bucket. A normal local workflow could then exhaust the
+  // login allowance merely by opening settings or generating a backlog.
+  // Keep the rate limit, but isolate it by protected operation.
+  return `sensitive:${req.method}:${normalizeRateLimitPath(req.path)}`;
+}
+
 export function getRateLimitConfig(sensitive = false) {
   return {
     windowMs: sensitive ? 60_000 : 15_000,
@@ -53,8 +69,10 @@ export function applySecurityHeaders(req, res, next) {
 
 export function apiRateLimiter(req, res, next) {
   const now = Date.now();
-  const key = `${getClientKey(req)}:${matchesSensitiveRoute(req) ? 'sensitive' : 'default'}`;
-  const rateConfig = getRateLimitConfig(matchesSensitiveRoute(req));
+  const sensitive = matchesSensitiveRoute(req);
+  const principal = req.authUser?.uuid ? `user:${req.authUser.uuid}` : `ip:${getClientKey(req)}`;
+  const key = `${principal}:${getRateLimitScope(req, sensitive)}`;
+  const rateConfig = getRateLimitConfig(sensitive);
   const { windowMs, limit } = rateConfig;
 
   const bucket = buckets.get(key);
