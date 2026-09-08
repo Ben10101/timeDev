@@ -87,7 +87,9 @@ export function getApiErrorMessage(error, fallback = 'Não foi possível conclui
   }
 
   if (status === 409) {
-    return RESOURCE_CONFLICT_MESSAGE
+    return typeof data?.message === 'string' && data.message.trim()
+      ? data.message
+      : RESOURCE_CONFLICT_MESSAGE
   }
 
   if (typeof data?.message === 'string' && data.message.trim()) {

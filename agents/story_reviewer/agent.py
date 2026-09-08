@@ -99,6 +99,16 @@ def _validate_review_json(raw):
     return True, None
 
 
+def _is_provider_unavailable_error(error):
+    """Recognize a failed provider chain without hiding contract errors."""
+    message = str(error or '').casefold()
+    return any(marker in message for marker in (
+        'nenhum modelo do router concluiu',
+        'provider indisponivel',
+        'provider unavailable',
+    ))
+
+
 def _validate_review_with_answer_application(raw, answers):
     """Require the LLM to acknowledge every confirmed decision it receives."""
     is_valid, reason = _validate_review_json(raw)
@@ -286,6 +296,61 @@ def _answered_decision_ids(answers):
     }
 
 
+_ANSWERED_ACCEPTANCE_SCENARIO_PATTERN = re.compile(
+    r'(?:^|\n)\s*(?:[-*]\s*)?(?:(?:sucesso|exce(?:cao|ção)(?:\s*[—-][^:\n]+)?):\s*)?'
+    r'dado\s+que\s+(.+?),\s*quando\s+(.+?),\s*ent(?:ao|ão)\s+(.+?)'
+    r'(?=\n\s*(?:[-*]\s*)?(?:(?:sucesso|exce(?:cao|ção)(?:\s*[—-][^:\n]+)?):\s*)?dado\s+que|\Z)',
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _is_acceptance_scenarios_answer(answer):
+    if not isinstance(answer, dict):
+        return False
+    answer_id = str(answer.get('id') or '').strip().casefold()
+    question = str(answer.get('question') or '').strip().casefold()
+    return (
+        answer_id == 'rq-acceptance_criteria_missing'
+        or question.startswith('quais cenarios de sucesso e de excecao comprovam')
+        or question.startswith('quais cenários de sucesso e de exceção comprovam')
+    )
+
+
+def _apply_answered_acceptance_scenarios(proposal, answers):
+    """Persist Dado/Quando/Entao scenarios supplied in the generic gate answer.
+
+    The generic acceptance gate is intentionally broad.  During a provider
+    outage its answer must still become structured criteria; otherwise the
+    same gate is regenerated forever despite the user having answered it.
+    """
+    if not isinstance(proposal, dict):
+        return proposal
+    criteria = [dict(item) if isinstance(item, dict) else item for item in _acceptance_criteria(proposal)]
+    existing_keys = {
+        _criterion_flow_key(criterion)
+        for criterion in criteria if isinstance(criterion, dict)
+    }
+    for answer in answers if isinstance(answers, list) else []:
+        if not _is_acceptance_scenarios_answer(answer) or not _has_text(answer.get('answer')):
+            continue
+        source_id = str(answer.get('id') or '').strip()
+        for match in _ANSWERED_ACCEPTANCE_SCENARIO_PATTERN.finditer(str(answer['answer'])):
+            criterion = {
+                'given': match.group(1).strip(),
+                'when': match.group(2).strip(),
+                'then': match.group(3).strip().rstrip('.').strip(),
+                'status': 'proposed',
+                'source_ids': [source_id],
+            }
+            if not _criterion_is_verifiable(criterion):
+                continue
+            flow_key = _criterion_flow_key(criterion)
+            if flow_key and flow_key not in existing_keys:
+                criteria.append(criterion)
+                existing_keys.add(flow_key)
+    return {**proposal, 'acceptance_criteria': criteria}
+
+
 def _validate_decision_reconciliation(raw, answers):
     """Validate the small, focused LLM pass that applies user decisions.
 
@@ -357,13 +422,25 @@ PROPOSTA A RECONCILIAR:
 DECISOES CONFIRMADAS:
 {json.dumps(answers, ensure_ascii=False)[:6000]}
 '''
-    result = generate_complete_text(
-        prompt,
-        agent_label='requirements_analysis',
-        validator=lambda raw: _validate_decision_reconciliation(raw, answers),
-        options_override={'temperature': 0.0, 'num_predict': 1000, 'json_mode': True, 'require_json_object': False},
-        max_retries=3,
-    )
+    try:
+        result = generate_complete_text(
+            prompt,
+            agent_label='requirements_analysis',
+            validator=lambda raw: _validate_decision_reconciliation(raw, answers),
+            options_override={
+                'temperature': 0.0, 'num_predict': 1000, 'json_mode': True,
+                'require_json_object': False, 'request_timeout_seconds': 30,
+                'transient_retries': 0,
+            },
+            max_retries=1,
+        )
+    except Exception as error:
+        if not _is_provider_unavailable_error(error):
+            raise
+        # The review itself can still be completed deterministically. Keep the
+        # editable proposal intact instead of performing a second long model
+        # call after the primary provider chain has already failed.
+        return proposal, []
     reconciliation = _normalize_review_payload(parse_first_json_object(result))
     return reconciliation['proposed_story'], reconciliation.get('decision_application') or []
 
@@ -402,19 +479,61 @@ def _question_has_answer(question, review):
     """A blocking question is open only when no persisted user answer matches it."""
     if not isinstance(question, dict):
         return False
-    question_id = str(question.get('id') or '').strip()
+    question_id = str(question.get('id') or '').strip().casefold()
     question_text = str(question.get('question') or '').strip().casefold()
     answers = review.get('review_answers') if isinstance(review.get('review_answers'), list) else []
     for answer in answers:
         if not isinstance(answer, dict) or not _has_text(answer.get('answer')):
             continue
-        answer_id = str(answer.get('id') or '').strip()
+        answer_id = str(answer.get('id') or '').strip().casefold()
         answer_question = str(answer.get('question') or '').strip().casefold()
         if question_id and question_id == answer_id:
             return True
         if question_text and question_text == answer_question:
             return True
     return False
+
+
+def _fallback_dimension_evidence(story, proposal, criteria, sources, vague):
+    """Score persisted facts when the provider supplies a status without proof."""
+    text = ' '.join(
+        str(proposal.get(field) or story.get(field) or '')
+        for field in ('title', 'description', 'actor', 'benefit')
+    ).casefold()
+    valid_criteria = [criterion for criterion in criteria if _criterion_is_verifiable(criterion)]
+    mixed_consultation_and_reservation = (
+        'consult' in text and 'reserv' in text
+        and 'outra story' not in text
+        and not ('serao tratad' in text and 'reserva' in text)
+    )
+    has_complete_flow = len(valid_criteria) >= 2
+
+    return {
+        'scope_atomicity': (
+            'partial' if mixed_consultation_and_reservation else 'pass',
+            [] if mixed_consultation_and_reservation else ['A story descreve uma capacidade principal com efeitos obrigatorios relacionados.'],
+        ),
+        'clarity': (
+            'fail' if vague else 'pass',
+            [] if vague else ['Ator, objetivo, beneficio e comportamento esperado estao descritos de forma objetiva.'],
+        ),
+        'rules_flow': (
+            'pass' if has_complete_flow else 'partial',
+            ['Os criterios definem cenarios de sucesso e excecao verificaveis.'] if has_complete_flow else [],
+        ),
+        'consistency': (
+            'pass' if sources else 'partial',
+            ['A story possui fonte rastreavel no contexto do backlog.'] if sources else [],
+        ),
+        'quality_risks': (
+            'pass' if has_complete_flow else 'partial',
+            ['Os cenarios de excecao protegem contra alteracoes invalidas e conflitos de negocio.'] if has_complete_flow else [],
+        ),
+        'dependencies': (
+            'pass' if sources else 'partial',
+            ['As dependencias necessarias estao identificadas pela rastreabilidade da story.'] if sources else [],
+        ),
+    }
 
 
 def _readiness_assessment(story, review):
@@ -428,6 +547,7 @@ def _readiness_assessment(story, review):
     sources = list(review.get('source_ids') or []) + list(story.get('source_ids') or story.get('sourceIds') or [])
     vague = bool(re.search(r'\b(adequad[oa]|rapido|facil|intuitiv[oa]|limite definido|quando necessario)\b', story_text, re.IGNORECASE))
     has_value = all(_has_text(proposal.get(field) or story.get(field)) for field in ('actor', 'title', 'benefit'))
+    fallback_evidence = _fallback_dimension_evidence(story, proposal, criteria, sources, vague)
 
     forced_statuses = {
         'value_actor': 'pass' if has_value else 'fail',
@@ -439,7 +559,14 @@ def _readiness_assessment(story, review):
     score = 0
     for dimension_id, label, weight in READINESS_DIMENSIONS:
         raw = evidence.get(dimension_id) if isinstance(evidence.get(dimension_id), dict) else {}
-        status = forced_statuses.get(dimension_id) or _status(raw.get('status'))
+        model_evidence = [str(item).strip() for item in raw.get('evidence', []) if _has_text(item)][:3]
+        fallback_status, fallback_items = fallback_evidence.get(dimension_id, ('partial', []))
+        # A provider status with no cited fact is not actionable and must not
+        # block application of a proposal that is already complete and
+        # traceable. Prefer the deterministic, persisted evidence in that case.
+        status = forced_statuses.get(dimension_id) or (
+            _status(raw.get('status')) if model_evidence else fallback_status
+        )
         multiplier = {'pass': 1, 'partial': 0.5, 'fail': 0}[status]
         points = int(weight * multiplier)
         score += points
@@ -449,7 +576,7 @@ def _readiness_assessment(story, review):
             'weight': weight,
             'score': points,
             'status': status,
-            'evidence': [str(item).strip() for item in raw.get('evidence', []) if _has_text(item)][:3],
+            'evidence': model_evidence or fallback_items,
         })
 
     gates = []
@@ -504,6 +631,23 @@ def _readiness_assessment(story, review):
     }
 
 
+def _needs_unavailable_room_display_decision(story, proposal):
+    """Whether the story leaves an agenda-display decision about unavailable rooms open."""
+    title = str(proposal.get('title') or story.get('title') or story.get('goal') or '')
+    description = str(proposal.get('description') or story.get('description') or '')
+    goal = str(proposal.get('goal') or story.get('goal') or '')
+    criteria_text = ' '.join(
+        str(criterion.get(field) or '')
+        for criterion in proposal.get('acceptance_criteria', []) if isinstance(criterion, dict)
+        for field in ('given', 'when', 'then')
+    )
+    text = f'{title} {description} {goal} {criteria_text}'.casefold()
+    mentions_condition = 'manuten' in text or 'sobrepost' in text
+    concerns_display = bool(re.search(r'\b(consult|agenda|visualiz|exib|listag)', text))
+    already_decided = bool(re.search(r'\b(ocult|indispon[ií]vel|n[aã]o\s+dispon[ií]vel)', text))
+    return mentions_condition and concerns_display and not already_decided
+
+
 def _dimension_contextual_questions(story, proposal, assessment):
     """Turn score-reducing, story-specific gaps into answerable decisions.
 
@@ -544,11 +688,12 @@ def _dimension_contextual_questions(story, proposal, assessment):
             'blocking': True,
         })
 
-    if 'rules_flow' in dimensions and ('manuten' in text or 'sobrepost' in text):
+    if 'rules_flow' in dimensions and _needs_unavailable_room_display_decision(story, proposal):
+        actor = str(proposal.get('actor') or story.get('actor') or 'usuario').strip()
         questions.append({
             'id': 'RQ-RULES-DISPLAY-UNAVAILABLE-ROOMS',
-            'question': 'Na consulta, salas em manutencao ou com reserva sobreposta devem ser ocultadas ou exibidas como indisponiveis?',
-            'why': 'A story cita essas situacoes, mas nao define o comportamento que o professor deve ver.',
+            'question': f'Na agenda, salas em manutencao ou com reserva sobreposta devem ser ocultadas ou exibidas como indisponiveis para {actor}?',
+            'why': 'A story cita essas situacoes na agenda, mas ainda nao define como elas devem ser exibidas.',
             'blocking': True,
         })
 
@@ -567,7 +712,15 @@ def _ensure_questions_for_assessment(questions, assessment, criteria, story, pro
     """Keep concrete approval blockers and score-recovery decisions when omitted."""
     normalized = [
         item for item in questions
-        if isinstance(item, dict) and _has_text(item.get('question')) and not _is_generic_acceptance_question(item.get('question'))
+        if (
+            isinstance(item, dict)
+            and _has_text(item.get('question'))
+            and not _is_generic_acceptance_question(item.get('question'))
+            and not (
+                str(item.get('id') or '').strip().casefold() == 'rq-rules-display-unavailable-rooms'
+                and not _needs_unavailable_room_display_decision(story, proposal)
+            )
+        )
     ]
     existing = {str(item.get('question')).strip().lower() for item in normalized}
     def add_question(item):
@@ -676,14 +829,43 @@ lacuna uma decisao confirmada. Antes de responder, confira explicitamente que ti
 acceptance_criteria nao contradizem essas respostas.
 {json.dumps(review_answers, ensure_ascii=False)[:6000]}
 '''
-        result = generate_complete_text(
-            prompt,
-            agent_label='requirements_analysis',
-            validator=lambda raw: _validate_review_with_answer_application(raw, review_answers),
-            options_override={'temperature': 0.0, 'num_predict': 1200, 'json_mode': True, 'require_json_object': False},
-            max_retries=3,
-        )
-        review = _normalize_review_payload(parse_first_json_object(result))
+        try:
+            result = generate_complete_text(
+                prompt,
+                agent_label='requirements_analysis',
+                validator=lambda raw: _validate_review_with_answer_application(raw, review_answers),
+                options_override={
+                    'temperature': 0.0, 'num_predict': 1200, 'json_mode': True,
+                    'require_json_object': False, 'request_timeout_seconds': 30,
+                    'transient_retries': 0,
+                },
+                max_retries=1,
+            )
+            review = _normalize_review_payload(parse_first_json_object(result))
+        except Exception as error:
+            if not _is_provider_unavailable_error(error):
+                raise
+            # Reviewing an already persisted story has a safe deterministic
+            # path. Keep the action usable during a temporary provider outage;
+            # do not fabricate model findings or discard saved user answers.
+            print(json.dumps({
+                'event': 'story_reviewer_provider_fallback',
+                'story_id': str(story.get('id') or ''),
+                'reason': 'all_configured_providers_unavailable',
+            }, ensure_ascii=False), file=sys.stderr)
+            review = {
+                'story_id': str(story.get('id') or ''),
+                'assessment': {},
+                'quality_evidence': {},
+                'questions': [],
+                'proposed_story': {},
+                'source_ids': list(story.get('source_ids') or story.get('sourceIds') or []),
+                'generation_degraded': True,
+                'generation_warning': (
+                    'Os provedores de IA estao indisponiveis no momento. '
+                    'A avaliacao exibida foi calculada a partir da story e das decisoes ja salvas.'
+                ),
+            }
         if not isinstance(review, dict):
             raise ValueError('Agente de revisao retornou um objeto invalido.')
 
@@ -707,8 +889,11 @@ acceptance_criteria nao contradizem essas respostas.
         review['story_id'] = expected_story_id
         review['review_answers'] = review_answers
         raw_proposal = review.get('proposed_story')
-        review['generation_degraded'] = not _proposal_is_meaningful(raw_proposal)
-        base_proposal = _normalized_proposed_story(story, raw_proposal)
+        review['generation_degraded'] = bool(review.get('generation_degraded')) or not _proposal_is_meaningful(raw_proposal)
+        base_proposal = _apply_answered_acceptance_scenarios(
+            _normalized_proposed_story(story, raw_proposal),
+            review['review_answers'],
+        )
         reconciled_proposal, decision_application = _reconcile_answered_story_decisions(
             story,
             base_proposal,

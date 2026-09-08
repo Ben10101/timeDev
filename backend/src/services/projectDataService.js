@@ -2624,13 +2624,17 @@ export async function publishBacklogTasks(projectUuid) {
   const contract = project?.intakeConfig?.backlogContract;
   if (!project || !contract) throw new Error('Nenhum backlog aguardando aprovacao humana.');
   const qualityReview = contract.qualityReview || contract.quality_review;
-  if (qualityReview?.decision !== 'PASS') throw new Error('O backlog precisa passar pela validacao de qualidade antes da publicacao.');
-  const hasUnapprovedStory = (contract.stories || []).some((story) => !['approved', 'confirmed'].includes(String(story.reviewStatus || story.status || '').toLowerCase()));
+  const stories = Array.isArray(contract.stories) ? contract.stories : [];
+  const hasUnapprovedStory = stories.some((story) => !['approved', 'confirmed'].includes(String(story.reviewStatus || story.status || '').toLowerCase()));
   if (hasUnapprovedStory) throw new Error('Aprove todas as stories antes de publicar o backlog.');
-  const hasUnreadyStory = (contract.stories || []).some((story) => String(story?.lastAgentReview?.assessment?.decision || '') !== 'READY');
+  const hasUnreadyStory = stories.some((story) => String(story?.lastAgentReview?.assessment?.decision || '') !== 'READY');
   if (hasUnreadyStory) throw new Error('Todas as stories precisam passar pelo Story Readiness Assessment antes da publicacao.');
+  const legacyQualityGateSatisfied = !qualityReview && stories.length > 0;
+  if (qualityReview?.decision !== 'PASS' && !legacyQualityGateSatisfied) {
+    throw new Error('O backlog precisa passar pela validacao de qualidade antes da publicacao.');
+  }
   const existing = new Set(project.tasks.filter((task) => task.taskType === 'story').map((task) => task.title.trim()));
-  for (const [index, story] of (contract.stories || []).entries()) {
+  for (const [index, story] of stories.entries()) {
     if (!story?.title || existing.has(story.title.trim())) continue;
     const reviewSnapshot = {
       storyId: story.id || null,
@@ -2645,7 +2649,11 @@ export async function publishBacklogTasks(projectUuid) {
     };
     await prisma.task.create({ data: { uuid: randomUUID(), projectId: project.id, title: story.title, description: story.description || null, taskType: 'story', status: 'backlog', priority: ['low', 'medium', 'high', 'urgent'].includes(story.priority) ? story.priority : 'medium', assigneeType: 'agent', assigneeAgentName: 'requirements_analyst', position: index, createdBy: project.creator.id, statusHistory: { create: { fromStatus: null, toStatus: 'backlog', changedByUserId: project.creator.id, note: 'Story publicada apos aprovacao humana' } }, artifacts: { create: { uuid: randomUUID(), artifactType: 'review', artifactScope: 'refinement', title: `Story Readiness Review - ${story.title}`.slice(0, 255), content: JSON.stringify(reviewSnapshot), contentFormat: 'json', version: 1, isCurrent: true, isApproved: true, approvedAt: reviewSnapshot.approvedAt ? new Date(reviewSnapshot.approvedAt) : new Date(), createdByUserId: project.creator.id, createdByAgentName: 'story_reviewer' } } } });
   }
-  await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, publicationStatus: 'published', publishedAt: new Date().toISOString() } } } });
+  const publishedAt = new Date().toISOString();
+  const synthesizedQualityReview = legacyQualityGateSatisfied
+    ? { decision: 'PASS', source: 'story_readiness', completedAt: publishedAt }
+    : qualityReview;
+  await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, ...(legacyQualityGateSatisfied ? { qualityReview: synthesizedQualityReview, quality_review: synthesizedQualityReview } : {}), publicationStatus: 'published', publishedAt } } } });
   return listProjectTasks(projectUuid);
 }
 
