@@ -641,7 +641,7 @@ export default function ProjectOverviewPage() {
             </div>
           </div>
 
-          <div className="grid gap-3 border-t border-slate-100 px-6 py-4 sm:grid-cols-4">
+          <div className="grid gap-3 border-t border-slate-100 px-6 py-4 sm:grid-cols-2">
             <div className="rounded-xl bg-slate-50 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Histórias refinadas</p>
               <p className="mt-3 text-3xl font-bold text-slate-900">
@@ -649,40 +649,12 @@ export default function ProjectOverviewPage() {
               </p>
             </div>
             <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Arquitetura</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Qualidade do backlog</p>
               <p className="mt-3 text-lg font-bold text-slate-900">
-                {architectureStatus?.hasArchitecture
-                  ?architectureStatus?.architectureApproved
-                    ?'Aprovada'
-                    : 'Pendente de aprovação'
-                  : 'Pendente'}
-              </p>
-            </div>
-            <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Implementação</p>
-              <p className="mt-3 text-lg font-bold text-slate-900">
-                {architectureStatus?.canGenerateCode ?'Liberada' : 'Bloqueada'}
-              </p>
-            </div>
-            <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Aprovação humana</p>
-              <p className="mt-3 text-lg font-bold text-slate-900">
-                {architectureStatus?.hasArchitecture
-                  ?architectureStatus?.architectureApproved
-                    ?'Aprovada'
-                    : 'Pendente'
-                  : 'Aguardando'}
+                {architectureStatus?.refinedStories === architectureStatus?.totalStories && architectureStatus?.totalStories > 0 ? 'Concluída' : 'Em andamento'}
               </p>
             </div>
           </div>
-
-          {!!architectureStatus?.blockers?.length && (
-            <div className="px-6 pb-6">
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                {architectureStatus.blockers[0]}
-              </div>
-            </div>
-          )}
         </section>
 
         <details className="dashboard-panel group" id="project-refinement-board">

@@ -100,10 +100,6 @@ function formatExecutorLabel(value) {
   if (!normalized) return 'n/a';
 
   const labels = {
-    implementation_autonomous_agent: 'autonomous',
-    frontend_agent: 'frontend',
-    backend_agent: 'backend',
-    schema_agent: 'schema',
     sub_agent_pipeline: 'sub-agent pipeline',
   };
 
@@ -555,11 +551,6 @@ export default function GovernancePage() {
               <EventCard
                 title={`v${readiness?.release?.version || 'n/a'} · ${readiness?.release?.channel || 'n/a'}`}
                 subtitle="Release em operação"
-              />
-              <EventCard
-                title={readiness?.governance?.implementationRemoteOnly ?'Somente APIs remotas' : 'Fallback local permitido'}
-                subtitle="Política de execução da IA"
-                tone="amber"
               />
               <EventCard
                 title={readiness?.security?.authSecretConfigured ?'Segredo de auth configurado' : 'Segredo de auth ausente'}

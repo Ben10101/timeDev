@@ -2,7 +2,6 @@ export const DEFAULT_AGENT_LABELS = {
     project_manager: 'PM Agent',
     requirements_analyst: 'Requirements Agent',
     qa_engineer: 'QA Agent',
-    implementation_architect: 'UI Agent',
 }
 
 export function getAgentLabel(agentName, fallback = 'Agente') {

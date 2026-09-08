@@ -423,36 +423,6 @@ export const runTaskQa = async (taskUuid, payload = {}) => {
   return response.data
 }
 
-export const bootstrapGeneratedApp = async (projectUuid, payload = {}) => {
-  const response = await apiClient.post(`/projects/${projectUuid}/generated-app/bootstrap`, payload)
-  return response.data
-}
-
-export const getGeneratedApp = async (projectUuid) => {
-  const response = await apiClient.get(`/projects/${projectUuid}/generated-app`)
-  return response.data
-}
-
-export const getProjectImplementationOverview = async (projectUuid) => {
-  const response = await apiClient.get(`/projects/${projectUuid}/implementation/overview`)
-  return response.data
-}
-
-export const runTaskImplementation = async (taskUuid, payload = {}) => {
-  const response = await apiClient.post(`/tasks/${taskUuid}/implementation/run`, payload)
-  return response.data
-}
-
-export const planTaskImplementation = async (taskUuid, payload = {}) => {
-  const response = await apiClient.post(`/tasks/${taskUuid}/implementation/plan`, payload)
-  return response.data
-}
-
-export const getTaskImplementationStatus = async (taskUuid) => {
-  const response = await apiClient.get(`/tasks/${taskUuid}/implementation/status`)
-  return response.data
-}
-
 export const updateTask = async (taskUuid, payload) => {
   const response = await apiClient.patch(`/tasks/${taskUuid}`, payload)
   return response.data
@@ -565,16 +535,10 @@ export default {
   createProject,
   generateProjectBacklog,
   getProjectArchitectureStatus,
-  getProjectImplementationOverview,
   generateProjectArchitecture,
   createTask,
   runTaskRequirements,
   runTaskQa,
-  bootstrapGeneratedApp,
-  planTaskImplementation,
-  getGeneratedApp,
-  runTaskImplementation,
-  getTaskImplementationStatus,
   updateTask,
   getTask,
   createTaskComment,

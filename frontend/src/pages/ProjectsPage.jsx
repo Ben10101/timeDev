@@ -136,7 +136,7 @@ function ProjectCard({
         </div>
 
         <p className="mt-4 text-sm leading-6 text-slate-500">
-          Clique para abrir o projeto e seguir para o board, a equipe ou a implementação.
+          Clique para abrir o projeto e seguir para o board, a equipe ou a revisão de qualidade.
         </p>
       </button>
 

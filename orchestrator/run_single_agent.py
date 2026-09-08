@@ -9,8 +9,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.project_manager.agent import ProjectManager
 from agents.requirements_analyst.agent import RequirementsAnalyst
 from agents.qa_engineer.agent import QAEngineer
-from agents.debug_agent.agent import DebugAgent
-from agents.schema_agent.agent import SchemaAgent
 from agents.alignment_semantic.agent import AlignmentSemanticAgent
 from agents.requirement_engine.agent import RequirementEngineAgent
 from agents.requirement_challenger.agent import RequirementChallenger
@@ -19,7 +17,6 @@ from agents.artifact_repair.agent import ArtifactRepairAgent
 from agents.backlog_challenger.agent import BacklogChallenger
 from agents.backlog_judge.agent import BacklogJudge
 from agents.story_reviewer.agent import StoryReviewer
-from orchestrator.projectBuilder import ProjectBuilder
 
 def main():
     try:

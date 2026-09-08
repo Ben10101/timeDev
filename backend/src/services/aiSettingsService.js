@@ -15,11 +15,6 @@ const DEFAULT_AI_SETTINGS = {
     requirements_analyst: 'Requirements Agent',
     qa_engineer: 'QA Agent',
     architect: 'Architect Agent',
-    developer: 'Developer Agent',
-    developer_backend: 'Developer Backend',
-    developer_frontend: 'Developer Frontend',
-    implementation_architect: 'UI Agent',
-    implementation_autonomous_agent: 'Implementation Autonomous Agent',
   },
   ollama: {
     enabled: false,
@@ -397,9 +392,7 @@ export async function buildRuntimeAiEnvForUser(userUuid, options = {}) {
   const remoteProviders = REMOTE_PROVIDER_KEYS.filter(
     (providerKey) => settings[providerKey]?.enabled && settings[providerKey]?.apiKey
   );
-  const agentForcesNvidia =
-    ['implementation_autonomous_agent', 'implementation_architect'].includes(agentName) &&
-    remoteProviders.includes('nvidia');
+  const agentForcesNvidia = false;
   const preferredProvider =
     agentForcesNvidia
       ? 'nvidia'

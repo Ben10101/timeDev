@@ -16,8 +16,7 @@ function matchesSensitiveRoute(req) {
     req.path.includes('/generate-backlog') ||
     req.path.includes('/generate-architecture') ||
     req.path.includes('/requirements/run') ||
-    req.path.includes('/qa/run') ||
-    req.path.includes('/implementation/run')
+    req.path.includes('/qa/run')
   );
 }
 

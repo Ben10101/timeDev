@@ -15,13 +15,11 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
-  bootstrapGeneratedApp,
   AGENT_RUN_CONFLICT_MESSAGE,
   createTask,
   getApiErrorMessage,
   getProjectArchitectureStatus,
   listProjectTasks,
-  runTaskImplementation,
   runTaskQa,
   runTaskRequirements,
 } from '../services/api';
@@ -79,13 +77,10 @@ function TaskCard({
   task,
   onRequirements,
   onQa,
-  onOpenCodeStudio,
   onOpenDetail,
   onReview,
   onExportArtifacts,
   busy,
-  implementationUnlocked,
-  implementationBlockReason,
 }) {
   const hasRequirements = hasCurrentArtifact(task, 'requirements');
   const hasApprovedRequirements = (task?.artifacts || []).some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent && artifact.isApproved);
@@ -103,7 +98,6 @@ function TaskCard({
   const taskHasActiveRun = requirementsRunning || qaRunning;
   const canRunRequirements = isStory && !isBlocked && (!hasRequirements || !hasApprovedRequirements) && !requirementsRunning;
   const canRunQa = isStory && !isBlocked && hasApprovedRequirements && !hasTestPlan && !qaRunning;
-  const canRunImplementation = Boolean(implementationUnlocked);
 
   const priorityColors = {
     high: 'bg-rose-50 text-rose-700',
@@ -226,15 +220,6 @@ function TaskCard({
           </div>
         )}
 
-        {isDone && !canRunImplementation && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-600">Implementação bloqueada</p>
-            <p className="mt-1 text-sm font-medium text-amber-800">
-              {implementationBlockReason || 'Gere a arquitetura do projeto depois que todas as histórias estiverem refinadas.'}
-            </p>
-          </div>
-        )}
-
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Tipo</p>
@@ -303,12 +288,11 @@ function TaskCard({
         ) : (
           <>
             <button
-              onClick={() => onOpenCodeStudio(task.uuid)}
-              disabled={busy}
+              onClick={() => onOpenDetail(task.uuid)}
               className="dashboard-button-primary flex-1"
             >
-              <Sparkles className="h-4 w-4" />
-              Ir para código
+              <FileText className="h-4 w-4" />
+              Ver artefatos
             </button>
             <button
               onClick={() => onExportArtifacts(task)}
@@ -390,8 +374,6 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
     [tasks]
   );
 
-  const implementationUnlocked = Boolean(architectureStatus?.canGenerateCode);
-  const implementationBlockReason = architectureStatus?.blockers?.[0] || null;
   const storyTasks = tasks.filter((task) => (task.taskType || 'story') === 'story');
   const canCreateTask = Boolean(projectUuid);
 
@@ -449,26 +431,6 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
     } finally {
       setSaving(false);
     }
-  }
-
-  async function handleGenerateCode(taskUuid) {
-    if (!projectUuid) return;
-
-    setSaving(true);
-    setError(null);
-    try {
-      await bootstrapGeneratedApp(projectUuid);
-      await runTaskImplementation(taskUuid);
-      await refreshBoard();
-    } catch (submitError) {
-      setError(getApiErrorMessage(submitError, 'A geração de código falhou.'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function handleOpenCodeStudio(taskUuid) {
-    navigate(`/code-studio?project=${projectUuid}&task=${taskUuid}`);
   }
 
   function handleOpenDetail(taskUuid) {
@@ -618,12 +580,9 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
                               busy={saving}
                               onRequirements={handleRunRequirements}
                               onQa={handleRunQa}
-                              onOpenCodeStudio={handleOpenCodeStudio}
                               onExportArtifacts={handleExportArtifacts}
                               onOpenDetail={handleOpenDetail}
                               onReview={(taskUuid) => navigate(`/tasks/${taskUuid}/artifacts`)}
-                              implementationUnlocked={implementationUnlocked}
-                              implementationBlockReason={implementationBlockReason}
                             />
                           </motion.div>
                         ))}

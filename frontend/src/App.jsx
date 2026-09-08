@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
+import AppErrorBoundary from './components/AppErrorBoundary';
 
 const AuthPage = lazy(() => import('./pages/AuthPage'));
 const ProjectOverviewPage = lazy(() => import('./pages/ProjectOverviewPage'));
@@ -16,7 +17,6 @@ const ResultsPage = lazy(() => import('./pages/ResultsPage'));
 const BacklogKanban = lazy(() => import('./pages/BacklogKanban'));
 const GlobalBacklogPage = lazy(() => import('./pages/GlobalBacklogPage'));
 const AiSettingsPage = lazy(() => import('./pages/AiSettingsPage'));
-const CodeStudioPage = lazy(() => import('./pages/CodeStudioPage'));
 const AgentWorkbenchPage = lazy(() => import('./pages/AgentWorkbenchPage'));
 const GovernancePage = lazy(() => import('./pages/GovernancePage'));
 
@@ -34,7 +34,7 @@ function RouteLoadingFallback() {
 function App() {
   return (
     <Router>
-      <Suspense fallback={<RouteLoadingFallback />}>
+      <AppErrorBoundary><Suspense fallback={<RouteLoadingFallback />}>
         <div className="min-h-screen">
           <Routes>
             <Route
@@ -107,14 +107,6 @@ function App() {
               path="/projects/:projectUuid/tasks/:taskUuid"
               element={<ProtectedRoute><Navigate to="../../" replace /></ProtectedRoute>}
             />
-            <Route
-              path="/code-studio"
-              element={
-                <ProtectedRoute>
-                  <CodeStudioPage />
-                </ProtectedRoute>
-              }
-            />
             <Route path="/tasks/:taskUuid/artifacts" element={<ProtectedRoute><TaskArtifactReviewPage /></ProtectedRoute>} />
             <Route path="/projects/:projectUuid/backlog-review" element={<ProtectedRoute><BacklogReviewPage /></ProtectedRoute>} />
             <Route
@@ -167,7 +159,7 @@ function App() {
             />
           </Routes>
         </div>
-      </Suspense>
+      </Suspense></AppErrorBoundary>
     </Router>
   );
 }

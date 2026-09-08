@@ -37,7 +37,6 @@ import { createHash } from 'node:crypto';
 import { evaluateArtifactQuality } from '../services/artifactQualityGateService.js';
 import { runSingleAgent } from '../services/orchestratorService.js';
 import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
-import { bootstrapGeneratedApp } from '../services/implementationService.js';
 import { createAgentRunLifecycle } from '../utils/agentRunLifecycle.js';
 import { assertArtifactCompleteness } from '../utils/artifactQuality.js';
 import { serializeBigInts } from '../utils/serialize.js';
@@ -1180,14 +1179,12 @@ export async function generateProjectArchitectureController(req, res, next) {
     }
 
     await persistAgentResult(projectUuid, 'architect', payloadWithRuntime, result);
-    const generatedApp = await bootstrapGeneratedApp(projectUuid);
     const updatedArchitectureStatus = await getProjectArchitectureStatus(projectUuid, req.authUser.uuid);
 
     res.status(201).json(
       serializeBigInts({
         success: true,
         architectureStatus: updatedArchitectureStatus,
-        generatedApp,
         data: result,
       })
     );

@@ -7,12 +7,10 @@ import { prisma } from './lib/prisma.js';
 import projectRoutes from './routes/projectRoutes.js';
 import agentRoutes from './routes/agentRoutes.js';
 import dataRoutes from './routes/dataRoutes.js';
-import implementationRoutes from './routes/implementationRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import observabilityRoutes from './routes/observabilityRoutes.js';
 import alignmentRoutes from './routes/alignmentRoutes.js';
 import { recoverStaleAgentRuns } from './services/agentRunRecoveryService.js';
-import { recoverStaleGeneratedAppRuns } from './services/generatedAppRunRecoveryService.js';
 import { attachAuthUser } from './middleware/authMiddleware.js';
 import { apiAuditLogger } from './middleware/auditMiddleware.js';
 import { apiRateLimiter, applySecurityHeaders, attachRequestContext } from './middleware/securityMiddleware.js';
@@ -147,7 +145,6 @@ app.use('/api', alignmentRoutes);
 app.use('/api', projectRoutes);
 app.use('/api', agentRoutes);
 app.use('/api', dataRoutes);
-app.use('/api', implementationRoutes);
 
 app.use((err, _req, res, _next) => {
   logError('http_request_failed', {
@@ -188,9 +185,6 @@ async function startServer() {
       maxAgeSeconds: startupRecoveryWindowSeconds,
       reason: 'Execucao interrompida pela reinicializacao do backend local.',
     });
-    const generatedRunRecoveryResult = await recoverStaleGeneratedAppRuns({
-      maxAgeSeconds: startupRecoveryWindowSeconds,
-    });
 
     if (recoveryResult.recoveredCount > 0) {
       logWarn('backend_startup_recovered_runs', {
@@ -198,34 +192,16 @@ async function startServer() {
         recoveryWindowSeconds: startupRecoveryWindowSeconds,
       });
     }
-    if (generatedRunRecoveryResult.recoveredCount > 0) {
-      logWarn('backend_startup_recovered_generated_runs', {
-        recoveredCount: generatedRunRecoveryResult.recoveredCount,
-        recoveryWindowSeconds: startupRecoveryWindowSeconds,
-      });
-    }
 
     recoveryIntervalHandle = setInterval(async () => {
       try {
-        const [result, generatedResult] = await Promise.all([
-          recoverStaleAgentRuns({
-            maxAgeSeconds: recoveryWindowSeconds,
-            reason: 'Execucao marcada como falha por watchdog de recuperacao do backend.',
-          }),
-          recoverStaleGeneratedAppRuns({
-            maxAgeSeconds: recoveryWindowSeconds,
-            reason: 'Execucao marcada como falha por watchdog de recuperacao do backend.',
-          }),
-        ]);
+        const result = await recoverStaleAgentRuns({
+          maxAgeSeconds: recoveryWindowSeconds,
+          reason: 'Execucao marcada como falha por watchdog de recuperacao do backend.',
+        });
         if (result.recoveredCount > 0) {
           logWarn('agent_run_watchdog_recovered_runs', {
             recoveredCount: result.recoveredCount,
-            recoveryWindowSeconds,
-          });
-        }
-        if (generatedResult.recoveredCount > 0) {
-          logWarn('generated_app_run_watchdog_recovered_runs', {
-            recoveredCount: generatedResult.recoveredCount,
             recoveryWindowSeconds,
           });
         }

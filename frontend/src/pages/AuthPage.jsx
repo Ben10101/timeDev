@@ -302,10 +302,10 @@ export default function AuthPage() {
             </div>
             <h2 className="mb-5 text-[2.5rem] font-bold tracking-tight drop-shadow-md lg:text-[3rem] xl:text-[3.5rem]">
               Inteligência que <br />
-              <span className="bg-gradient-to-r from-blue-300 to-blue-100 bg-clip-text text-transparent">escala seu código.</span>
+              <span className="bg-gradient-to-r from-blue-300 to-blue-100 bg-clip-text text-transparent">organiza seu produto.</span>
             </h2>
             <p className="max-w-[480px] text-lg font-medium leading-relaxed tracking-wide text-blue-50/80">
-              Gerencie requisitos de negócio, orquestre times e acompanhe a evolução do seu produto do front ao backend.
+              Gerencie requisitos de negócio, alinhe decisões e acompanhe a evolução do seu produto.
             </p>
           </motion.div>
 
