@@ -30,6 +30,7 @@
     "test:alignment-clarification:smoke": "node scripts/alignment-clarification-smoke.mjs",
     "test:visual-requirement:smoke": "node scripts/visual-requirement-smoke.mjs",
     "test:artifact-review:transition": "node scripts/artifact-review-transition-test.mjs",
+    "test:backlog-reconciliation:smoke": "node scripts/backlog-final-reconciliation-smoke.mjs",
     "test:requirement-engine:smoke": "node scripts/requirement-engine-smoke.mjs",
     "test:requirement-challenger:smoke": "node scripts/requirement-challenger-smoke.mjs",
     "test:requirement-judge:smoke": "node scripts/requirement-judge-smoke.mjs",

@@ -134,7 +134,7 @@ function mapTasksToStories(tasks, stageName) {
         (artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent && artifact.isApproved
       );
       const qaArtifact = task.artifacts?.find(
-        (artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent && artifact.isApproved
+        (artifact) => ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType) && artifact.isCurrent && artifact.isApproved
       );
 
       if (stageName === 'qa' && !requirementsArtifact) {
@@ -407,8 +407,8 @@ export default function BacklogKanban({
 
       if (isPersistentStage) {
         await createTaskArtifact(storyId, {
-          artifactType: stageName === 'requirements' ?'requirements' : 'test_plan',
-          title: stageName === 'requirements' ?`Requisitos - ${draggedStory.text}` : `Plano de Testes - ${draggedStory.text}`,
+          artifactType: stageName === 'requirements' ?'requirements' : 'qa_validation_cases',
+          title: stageName === 'requirements' ?`Requisitos - ${draggedStory.text}` : `Casos de validação - ${draggedStory.text}`,
           content,
           createdByAgentName: agent,
           contentFormat: 'markdown',

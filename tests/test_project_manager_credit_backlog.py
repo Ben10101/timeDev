@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
 import unittest
 import json
+import os
 from unittest.mock import patch
 
 from agents.developer.response_validation import validate_backlog_output
 from agents.backlog_challenger.agent import BacklogChallenger
 from agents.backlog_judge.agent import BacklogJudge
 from agents.project_manager.agent import ProjectManager
+from agents.developer import llm_service
 from agents.developer.llm_service import validate_structured_response
 
 
 class ProjectManagerCreditBacklogTests(unittest.TestCase):
     @staticmethod
-    def backlog_contract(story_count=16):
+    def backlog_contract(story_count=8):
         return {
             "overview": "Backlog para uma jornada de credito.",
             "capabilities": [
@@ -38,10 +40,127 @@ class ProjectManagerCreditBacklogTests(unittest.TestCase):
                     "goal": f"realizar a etapa {index}", "benefit": "acompanhar sua solicitacao",
                     "description": "A etapa deve informar o resultado observavel ao cliente.",
                     "lane": "foundation" if index <= 4 else "operation",
+                    "refinement_context": {"acceptance_criteria": [{
+                        "id": f"US-{index:02d}-CA-01", "given": "dados disponiveis",
+                        "when": f"realizar a etapa {index}", "then": "resultado informado",
+                    }]},
                 }
                 for index in range(1, story_count + 1)
             ],
         }
+
+    def test_lint_blocks_compound_administration_story_and_duplicate_cancellation(self):
+        manager = ProjectManager("scope-lint-test")
+        contract = {
+            "stories": [
+                {
+                    "id": "US-01", "actor": "administrador",
+                    "goal": "acessar o painel, cadastrar, editar ou bloquear salas e gerenciar reservas",
+                    "description": "Administrar recursos e reservas.", "review_tags": [],
+                    "refinement_context": {"dependencies": []}, "release": "MVP",
+                },
+                {
+                    "id": "US-02", "actor": "professor", "goal": "cancelar uma reserva com registro de motivo",
+                    "description": "Libera a sala para outro uso.", "review_tags": [],
+                    "refinement_context": {"dependencies": []}, "release": "MVP",
+                },
+                {
+                    "id": "US-03", "actor": "professor", "goal": "cancelar uma reserva com registro obrigatório de motivo",
+                    "description": "Libera a sala imediatamente.", "review_tags": [],
+                    "refinement_context": {"dependencies": []}, "release": "MVP",
+                },
+            ],
+        }
+
+        findings = manager._lint_backlog_contract(contract, {})
+
+        self.assertIn(("US-01", "needs_split_or_scope"), {(item["story_id"], item["code"]) for item in findings})
+        self.assertIn(("US-03", "duplicate_story"), {(item["story_id"], item["code"]) for item in findings})
+
+    def test_epic_blocks_remove_semantic_duplicate_before_contract_review(self):
+        manager = ProjectManager("epic-dedup-test")
+        blocks = [
+            "Como administrador, eu quero bloquear uma sala para manutenção, para impedir reservas durante o período de serviço.\nDescrição: marca a sala como indisponível.",
+            "Como administrador, eu quero bloquear uma sala para manutenção programada, definindo um período de início e fim, para impedir novas reservas nesse intervalo.\nDescrição: impede novos agendamentos.",
+            "Como professor, eu quero consultar a disponibilidade de salas, para escolher um espaço adequado.\nDescrição: mostra salas compatíveis.",
+        ]
+
+        filtered, removed = manager._deduplicate_epic_story_blocks(blocks)
+
+        self.assertEqual(2, len(filtered))
+        self.assertEqual(1, len(removed))
+        self.assertIn("consultar a disponibilidade", filtered[1])
+
+    def test_epic_blocks_without_explicit_acceptance_criteria_are_blocked(self):
+        manager = ProjectManager("epic-quality-gate-test")
+        manager.STORY_RANGE = (8, 9)
+        batch_one = [
+            "Como administrador, eu quero cadastrar uma sala, para manter o catálogo.\nDescrição: registra capacidade e recursos.",
+            "Como administrador, eu quero editar uma sala, para atualizar seus dados.\nDescrição: altera capacidade e recursos.",
+            "Como professor, eu quero visualizar as salas, para escolher um ambiente.\nDescrição: lista capacidade e recursos.",
+            "Como administrador, eu quero arquivar uma sala, para retirar espaços inativos.\nDescrição: preserva o histórico.",
+        ]
+        batch_two = [
+            "Como professor, eu quero reservar uma sala, para garantir o espaço.\nDescrição: confirma o agendamento.",
+            "Como professor, eu quero cancelar uma reserva, para liberar a sala.\nDescrição: registra o cancelamento.",
+            "Como professor, eu quero cancelar uma reserva com registro obrigatório, para liberar a sala.\nDescrição: registra o cancelamento.",
+            "Como administrador, eu quero bloquear uma sala para manutenção, para impedir reservas.\nDescrição: marca a indisponibilidade.",
+            "Como professor, eu quero visualizar minha agenda, para acompanhar minhas reservas.\nDescrição: exibe reservas futuras.",
+            "Como administrador, eu quero gerar um relatório de ocupação, para analisar o uso das salas.\nDescrição: consolida reservas por período.",
+        ]
+        with patch.object(manager, "_generate_backlog_blueprint", return_value=("Visão", ["Salas"], ["Catálogo", "Reservas"], [])), \
+             patch.object(manager, "_generate_thematic_stories", side_effect=[batch_one, batch_two]), \
+             patch.object(manager, "_build_full_backlog_with_structure", return_value="backlog"), \
+             patch("agents.project_manager.agent.validate_backlog_output", return_value=(True, None)):
+            with self.assertRaisesRegex(RuntimeError, "Quality Gate"):
+                manager._generate_epic_block_backlog("Sistema de reserva de salas")
+
+    def test_lint_blocks_typo_duplicate_and_contaminated_or_malformed_story(self):
+        manager = ProjectManager("contract-safety-test")
+        contract = {
+            "stories": [
+                {"id": "US-01", "actor": "professor", "goal": "cancelar uma reserva", "description": "Registra o motivo.", "review_tags": [], "refinement_context": {"dependencies": []}, "release": "MVP"},
+                {"id": "US-02", "actor": "profesor", "goal": "cancelar uma reserva", "description": "Registra o motivo.", "review_tags": [], "refinement_context": {"dependencies": []}, "release": "MVP"},
+                {"id": "US-03", "actor": "Usuario autorizado", "goal": "Como administrador, eu quero alterar uma reserva", "description": "</think>## Historias de Usuario", "review_tags": [], "refinement_context": {"dependencies": []}, "release": "MVP"},
+            ],
+        }
+
+        findings = {(item["story_id"], item["code"]) for item in manager._lint_backlog_contract(contract, {})}
+
+        self.assertIn(("US-02", "duplicate_story"), findings)
+        self.assertIn(("US-03", "generic_actor"), findings)
+        self.assertIn(("US-03", "malformed_story_goal"), findings)
+        self.assertIn(("US-03", "contaminated_story_content"), findings)
+
+    def test_quality_gate_blocks_missing_acceptance_criteria(self):
+        report = BacklogChallenger().process({"stories": [{
+            "id": "US-01", "actor": "professor", "goal": "consultar salas", "description": "Exibe salas.",
+            "source_ids": ["briefing.1"], "refinement_context": {"acceptance_criteria": []},
+        }]})
+
+        self.assertEqual(0, report["dimensions"]["testability"])
+        self.assertLess(report["score"], report["threshold"])
+        self.assertIn("missing_acceptance_criteria", {item["code"] for item in report["findings"]})
+
+    def test_epic_title_parser_accepts_supported_alternate_connector(self):
+        parsed = ProjectManager("title-parser-test")._parse_story_title(
+            "Como administrador, eu quero alterar o horário de uma reserva, garantindo que não haja conflitos."
+        )
+
+        self.assertEqual(
+            ("administrador", "alterar o horário de uma reserva", "que não haja conflitos"),
+            parsed,
+        )
+
+    def test_epic_contract_does_not_infer_dependencies_or_acceptance_criteria(self):
+        manager = ProjectManager("no-inference-test")
+        contract = manager._build_epic_backlog_contract([
+            "Como professor autenticado, eu quero reservar uma sala, para garantir o espaço.\nDescrição: reserva vinculada ao usuário.",
+            "Como administrador, eu quero definir permissões por perfil, para controlar o acesso.\nDescrição: somente administradores configuram permissões.",
+        ], ["Reservas"])
+
+        self.assertEqual([], contract["stories"][0]["refinement_context"]["dependencies"])
+        self.assertEqual([], contract["stories"][0]["refinement_context"]["acceptance_criteria"])
 
     def test_credit_briefing_generates_credit_domain_backlog(self):
         briefing = """
@@ -69,14 +188,14 @@ class ProjectManagerCreditBacklogTests(unittest.TestCase):
 
     def test_ai_generation_is_the_only_runtime_source_of_backlog_stories(self):
         manager = ProjectManager("credit-backlog-test")
-        ai_backlog = manager._build_deterministic_backlog("plataforma de credito")
+        ai_backlog = {"markdown": "backlog estruturado", "backlog_contract": {"stories": []}}
 
         with patch.object(manager, "_analyze_requirements_contract", return_value={"blocking_questions": []}), \
              patch.object(manager, "_generate_ai_backlog", return_value=ai_backlog) as generate_ai, \
              patch.object(manager, "_build_deterministic_backlog") as fallback:
             result = manager.process("plataforma de credito")
 
-        self.assertEqual(ai_backlog, result["markdown"])
+        self.assertEqual(ai_backlog["markdown"], result["markdown"])
         generate_ai.assert_called_once()
         fallback.assert_not_called()
 
@@ -130,22 +249,139 @@ class ProjectManagerCreditBacklogTests(unittest.TestCase):
 
         self.assertIsNone(error)
 
+    def test_structured_response_rejects_nested_object_inside_truncated_contract(self):
+        error = validate_structured_response(
+            '{"overview":"Backlog","releases":{"name":"MVP"}',
+            {"min_response_chars": 10, "require_json_object": True},
+        )
+
+        self.assertEqual("Resposta JSON incompleta ou invalida.", error)
+
+    def test_validation_derives_missing_epics_from_explicit_capabilities(self):
+        manager = ProjectManager("credit-backlog-test")
+        contract = self.backlog_contract(story_count=8)
+        expected_epics = list(contract["capabilities"])
+        del contract["epics"]
+
+        validated = manager._validate_backlog_contract(contract)
+
+        self.assertEqual(expected_epics, validated["epics"])
+
+    def test_validation_inferrs_unsupported_lane_from_story_action(self):
+        manager = ProjectManager("credit-backlog-test")
+        contract = self.backlog_contract(story_count=8)
+        contract["stories"][0].update({"lane": "workspace", "goal": "consultar disponibilidade de salas"})
+
+        validated = manager._validate_backlog_contract(contract)
+
+        self.assertEqual("visibility", validated["stories"][0]["lane"])
+
+    def test_validation_normalizes_empty_last_release_without_inventing_scope(self):
+        manager = ProjectManager("credit-backlog-test")
+        contract = self.backlog_contract(story_count=8)
+        contract["releases"][2].update({"focus": "", "deferred": ""})
+
+        validated = manager._validate_backlog_contract(contract)
+
+        self.assertEqual("Nenhuma entrega foi classificada para esta fase.", validated["releases"][2]["focus"])
+        self.assertEqual("Nenhuma entrega posterior foi definida no briefing.", validated["releases"][2]["deferred"])
+
+    def test_validation_maps_requirement_id_to_its_briefing_evidence(self):
+        manager = ProjectManager("credit-backlog-test")
+        contract = self.backlog_contract(story_count=8)
+        contract["stories"][0]["source_ids"] = ["REQ-01"]
+        evidence = {"facts": [{"id": "briefing.1", "text": "Professor consulta salas disponíveis.", "type": "briefing"}]}
+
+        validated = manager._validate_backlog_contract(contract, evidence)
+
+        self.assertEqual(["briefing.1"], validated["stories"][0]["source_ids"])
+
+    @patch("agents.developer.llm_service.http_post_json")
+    def test_nemotron_super_disables_thinking_for_structured_backlog_output(self, http_post_json):
+        http_post_json.return_value = (200, {
+            "choices": [{"message": {"content": "{\"stories\": []}"}}],
+        }, {})
+
+        llm_service.generate_text_with_openai_compatible(
+            "nvidia",
+            "gere o contrato",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "test-key",
+            {"json_mode": True, "num_predict": 300},
+        )
+
+        sent_payload = http_post_json.call_args.args[1]
+        self.assertEqual({"enable_thinking": False}, sent_payload["chat_template_kwargs"])
+        self.assertNotIn("response_format", sent_payload)
+
     @patch("agents.project_manager.agent.generate_text_from_llm")
     def test_single_pass_generation_has_bounded_provider_call(self, generate_text):
         manager = ProjectManager("credit-backlog-test")
-        generate_text.return_value = __import__("json").dumps(self.backlog_contract())
+        generate_text.return_value = __import__("json").dumps(self.backlog_contract(story_count=8))
 
-        with patch.object(manager, "_render_backlog_contract", return_value="rendered"):
+        with patch.dict(os.environ, {"PROJECT_MANAGER_BACKLOG_STRATEGY": "single_pass"}), \
+             patch.object(manager, "_render_backlog_contract", return_value="rendered"):
             result = manager._generate_ai_backlog("plataforma de credito")
 
         self.assertEqual("rendered", result["markdown"])
         self.assertIn("evidence", result["backlog_contract"])
         generate_text.assert_called_once()
+        self.assertEqual(4000, generate_text.call_args.kwargs["options_override"]["num_predict"])
         _, kwargs = generate_text.call_args
         self.assertEqual("requirements_analysis", kwargs["task"])
         self.assertFalse(kwargs["use_cache"])
-        self.assertEqual(45, kwargs["options_override"]["request_timeout_seconds"])
+        self.assertEqual(60, kwargs["options_override"]["request_timeout_seconds"])
         self.assertEqual(0, kwargs["options_override"]["transient_retries"])
+
+    @patch("agents.project_manager.agent.generate_text_from_llm")
+    def test_incremental_generation_uses_plan_and_two_story_batches(self, generate_text):
+        manager = ProjectManager("credit-backlog-test")
+        full_contract = self.backlog_contract(story_count=8)
+        plan = {key: full_contract[key] for key in ("overview", "capabilities", "epics", "releases")}
+        first_batch = {"stories": full_contract["stories"][:4]}
+        second_batch = {"stories": full_contract["stories"][4:]}
+        generate_text.side_effect = [json.dumps(plan), json.dumps(first_batch), json.dumps(second_batch)]
+        passing_review = {"decision": "PASS", "domain": "generic", "score": 100, "threshold": 80, "dimensions": {}, "proposals": [], "questions": []}
+
+        with patch.dict(os.environ, {"PROJECT_MANAGER_BACKLOG_STRATEGY": "incremental"}), \
+             patch.object(manager, "_review_backlog_contract", return_value=passing_review), \
+             patch.object(manager, "_render_backlog_contract", return_value="rendered"):
+            result = manager._generate_ai_backlog("plataforma de credito")
+
+        self.assertEqual("rendered", result["markdown"])
+        self.assertEqual(3, generate_text.call_count)
+        self.assertEqual([1200, 1800, 1800], [call.kwargs["options_override"]["num_predict"] for call in generate_text.call_args_list])
+
+    @patch("agents.project_manager.agent.RequirementEngineAgent")
+    def test_provider_failure_in_advisory_requirements_analysis_does_not_abort_pm(self, engine_class):
+        engine_class.return_value.process.side_effect = RuntimeError(
+            "Nenhum modelo do router concluiu a solicitação."
+        )
+
+        with patch.dict(os.environ, {"PROJECT_MANAGER_REQUIREMENTS_PREFLIGHT_ENABLED": "1"}):
+            contract = ProjectManager("credit-backlog-test")._analyze_requirements_contract(
+                "Plataforma para reservar salas de aula."
+            )
+
+        self.assertEqual("degraded", contract["analysis_status"])
+        self.assertTrue(contract["requirements"])
+
+    def test_requirements_preflight_is_skipped_by_default(self):
+        with patch.dict(os.environ, {}, clear=True):
+            contract = ProjectManager("credit-backlog-test")._analyze_requirements_contract(
+                "Plataforma para reservar salas de aula."
+            )
+
+        self.assertEqual("skipped", contract["analysis_status"])
+        self.assertTrue(contract["requirements"])
+
+    def test_single_pass_prompt_puts_releases_before_verbose_story_payload(self):
+        prompt = ProjectManager("credit-backlog-test")._build_single_pass_backlog_prompt(
+            "Criar uma plataforma.", {"facts": []},
+        )
+
+        self.assertLess(prompt.index('"releases"'), prompt.index('"stories"'))
+        self.assertIn("Mantenha o contrato compacto", prompt)
 
     @patch("agents.project_manager.agent.generate_text_from_llm")
     def test_generation_returns_clarifications_instead_of_publishing_questions_in_stories(self, generate_text):
@@ -727,6 +963,15 @@ class ProjectManagerCreditBacklogTests(unittest.TestCase):
         report = BacklogChallenger().process(contract)
 
         self.assertNotIn("duplicate_open_questions", {item["code"] for item in report["findings"]})
+
+    def test_backlog_challenger_accepts_explicit_capability_traceability(self):
+        contract = self.backlog_contract(story_count=8)
+        contract["capabilities"] = [{"id": "CAP-01", "name": "Gestao de Infraestrutura de Salas"}]
+        contract["stories"][0]["capability_ids"] = ["CAP-01"]
+
+        report = BacklogChallenger().process(contract)
+
+        self.assertEqual([], report["proposals"])
 
     def test_backlog_judge_requires_scope_findings_to_be_repaired(self):
         decision = BacklogJudge().process([

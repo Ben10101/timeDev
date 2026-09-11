@@ -291,6 +291,85 @@ def patch_from_decisions(artifact_type, current, instruction):
     }
 
 
+def patch_acceptance_from_confirmed_decisions(artifact_type, current, source, instruction, findings):
+    """Create deterministic BDD coverage from explicit review decisions.
+
+    This path is intentionally domain-neutral: it repeats only the confirmed
+    answer and derives actor/goal from the story supplied by the controller.
+    It avoids relying on a model to return a non-empty acceptance patch.
+    """
+    finding_codes = {
+        str(item.get('code') or '').strip()
+        for item in findings if isinstance(item, dict)
+    }
+    if artifact_type != 'requirements' or not finding_codes.intersection({
+        'answered_decision_requires_acceptance_coverage',
+        'acceptance_placeholder',
+        'missing_bdd_acceptance_criteria',
+    }):
+        return None
+
+    source_text = str(source or '')
+    decisions_match = re.search(r'Decis[õo]es confirmadas:\s*\n([\s\S]*)\Z', source_text, flags=re.IGNORECASE)
+    answers = [
+        re.sub(r'^\s*-\s*', '', line).strip()
+        for line in (decisions_match.group(1).splitlines() if decisions_match else [])
+        if re.match(r'^\s*-\s*\S+', line)
+    ]
+    if not answers:
+        answers = [
+            ' '.join(match.group(1).split())
+            for match in re.finditer(
+                r'^\s*Resposta:\s*([\s\S]*?)(?=^\s*Decisao:|\Z)',
+                str(instruction or ''),
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+            if match.group(1).strip()
+        ]
+    if not answers:
+        return None
+
+    story_match = re.search(r'^Task:\s*(.+)$', source_text, flags=re.IGNORECASE | re.MULTILINE)
+    story = story_match.group(1).strip() if story_match else 'a história atual'
+    actor_match = re.search(r'^Como\s+(.+?),\s*eu quero\s+', story, flags=re.IGNORECASE)
+    actor = actor_match.group(1).strip() if actor_match else 'a pessoa responsável'
+    goal_match = re.search(r'eu quero\s+(.+?)(?:,\s*para\s+|\.$)', story, flags=re.IGNORECASE)
+    goal = goal_match.group(1).strip() if goal_match else 'executar a ação descrita na história'
+
+    acceptance = _extract_section(current, 'Cenarios de aceite')
+    acceptance_normalized = re.sub(r'\s+', ' ', acceptance).casefold()
+    scenario_number = len(re.findall(r'^###\s+Cen[aá]rio\b', acceptance, flags=re.IGNORECASE | re.MULTILINE))
+    scenarios = []
+    for answer in answers:
+        normalized_answer = re.sub(r'\s+', ' ', answer).strip().rstrip('.').casefold()
+        if not normalized_answer or normalized_answer in acceptance_normalized:
+            continue
+        scenario_number += 1
+        scenarios.append(
+            f'### Cenario {scenario_number} - Aplicacao de decisao confirmada\n\n'
+            f'**DADO** que {actor} esta no fluxo para {goal}\n'
+            f'**QUANDO** informa ou seleciona os dados relacionados a decisao confirmada\n'
+            f'**ENTAO** o sistema aplica a regra confirmada: {answer}'
+        )
+    if not scenarios:
+        existing_scenarios = re.findall(
+            r'^###\s+Cen[aá]rio\b[^\n]*\r?\n[\s\S]*?(?=^###\s+Cen[aá]rio\b|\Z)',
+            acceptance,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        if not existing_scenarios:
+            return None
+        scenarios = [existing_scenarios[0].strip()]
+    return {
+        'section': 'Cenarios de aceite',
+        'content': '\n\n'.join(scenarios),
+        'changes': ['Criados cenarios BDD rastreaveis para decisoes confirmadas.'],
+        'source_ids': [],
+        'status': 'proposed',
+        'requires_confirmation': False,
+    }
+
+
 class ArtifactRepairAgent:
     """Repairs only the sections named by the Quality Gate."""
 
@@ -324,7 +403,8 @@ Quando faltar evidencia, marque o item como proposed e registre requires_confirm
 Responda apenas JSON valido com as chaves: section, content, changes, source_ids, status, requires_confirmation.
 O objeto nao pode ser vazio. Use exatamente este formato, sem envelope: {{"section":"Comportamento e regras confirmadas","content":"texto completo que substitui apenas a secao","changes":["resumo"],"source_ids":[],"status":"proposed","requires_confirmation":false}}
 Escolha uma secao de nivel ## existente. Para requisitos no formato compacto, use somente: Historia e objetivo, Comportamento e regras confirmadas, Cenarios de aceite, Decisoes pendentes ou Status.
-Preserve exatamente o formato compacto. Nunca crie as secoes legadas "requirements", "User Story Refinada", "Requisitos Funcionais" ou "Criterios de Aceite". Se a orientacao contiver respostas para decisoes, incorpore somente fatos respondidos e nao repita as perguntas resolvidas.
+Preserve exatamente o formato compacto. Nunca crie as secoes legadas "requirements", "User Story Refinada", "Requisitos Funcionais" ou "Criterios de Aceite". Se a orientacao contiver respostas para decisoes, use-as como evidencia obrigatoria e incorpore somente os fatos respondidos, sem repetir as perguntas resolvidas.
+Quando o achado tiver o codigo "answered_decision_requires_acceptance_coverage", responda obrigatoriamente com section="Cenarios de aceite". Redija cenarios BDD concretos e naturais para a interface e o fluxo descritos na decisao, sem assumir mensagens, persistencia ou regra adicional. O content deve conter ao menos um bloco no formato: "### Cenario N - titulo", seguido de DADO, QUANDO e ENTAO (podem estar em negrito). O QUANDO deve descrever a interacao especifica da decisao e o ENTAO deve descrever o resultado observavel; nao use expressoes genericas como "dados relacionados a decisao" ou "aplica a regra confirmada". Nunca use "A validar durante a revisao", listas vazias ou texto de orientacao como cenario.
 Se o documento estiver incompleto ou misturar formatos, priorize restaurar "Historia e objetivo" usando a fonte aprovada; a infraestrutura removera automaticamente duplicacoes e secoes legadas.
 
 Tipo: {artifact_type}

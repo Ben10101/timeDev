@@ -473,6 +473,14 @@ export const updateProjectBacklogStory = async (projectUuid, storyId, payload) =
   const response = await apiClient.patch(`/projects/${projectUuid}/backlog-stories/${storyId}`, payload)
   return response.data
 }
+export const consolidateProjectBacklogStories = async (projectUuid, payload) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/backlog-stories/consolidate`, payload)
+  return response.data
+}
+export const moveProjectBacklogAcceptanceCriterion = async (projectUuid, payload) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/backlog-stories/move-criterion`, payload)
+  return response.data
+}
 
 export const reviewProjectBacklogStory = async (projectUuid, storyId, payload = {}) => {
   const response = await apiClient.post(`/projects/${projectUuid}/backlog-stories/${storyId}/review`, payload)

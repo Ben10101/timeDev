@@ -26,7 +26,7 @@ const EMPTY_SETTINGS = {
   gemini: { enabled: false, apiKey: '', model: 'gemini-3.6-flash' },
   openai: { enabled: false, apiKey: '', model: 'gpt-4.1-mini' },
   deepseek: { enabled: false, apiKey: '', model: 'deepseek-chat' },
-  nvidia: { enabled: false, apiKey: '', model: 'qwen/qwen3.5-122b-a10b' },
+  nvidia: { enabled: false, apiKey: '', model: 'deepseek-ai/deepseek-v4-flash-0731' },
   anthropic: { enabled: false, apiKey: '', model: 'claude-3-5-sonnet-latest' },
   groq: { enabled: false, apiKey: '', model: 'llama-3.3-70b-versatile' },
   huggingface: { enabled: false, apiKey: '', model: 'meta-llama/Llama-3.1-8B-Instruct:hf-inference' },
@@ -533,7 +533,7 @@ export default function AiSettingsPage() {
                 <TextInput type="password" value={settings.nvidia?.apiKey || ''} onChange={(event) => patchProvider('nvidia', 'apiKey', event.target.value)} placeholder="nvapi-..." />
               </Field>
               <Field label="Modelo padrao">
-                <TextInput value={settings.nvidia?.model || ''} onChange={(event) => patchProvider('nvidia', 'model', event.target.value)} placeholder="qwen/qwen3.5-122b-a10b" />
+                <TextInput value={settings.nvidia?.model || ''} onChange={(event) => patchProvider('nvidia', 'model', event.target.value)} placeholder="deepseek-ai/deepseek-v4-flash-0731" />
               </Field>
             </div>
             <div className="flex items-center justify-end">

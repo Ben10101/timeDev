@@ -13,11 +13,11 @@ function getRecoveryTargetStatus(task) {
   const hasRequirements = artifacts.some(
     (artifact) => artifact.isCurrent && artifact.artifactScope === 'refinement' && artifact.artifactType === 'requirements'
   );
-  const hasTestPlan = artifacts.some(
-    (artifact) => artifact.isCurrent && artifact.artifactScope === 'refinement' && artifact.artifactType === 'test_plan'
+  const hasValidationCases = artifacts.some(
+    (artifact) => artifact.isCurrent && artifact.artifactScope === 'refinement' && ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType)
   );
 
-  if (hasTestPlan) {
+  if (hasValidationCases) {
     return {
       status: 'done',
       assigneeType: 'agent',

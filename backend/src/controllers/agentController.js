@@ -83,6 +83,14 @@ function getRequirementsUserFacingError(error) {
   const detail = String(error?.message || '');
   const normalized = normalizeArtifactText(detail);
 
+  if (normalized.includes('revisao de evidencias indisponivel')) {
+    return {
+      status: 503,
+      code: 'REQUIREMENTS_EVIDENCE_REVIEW_UNAVAILABLE',
+      message: 'A revisao independente de evidencias nao foi concluida. Nenhum requisito foi publicado; tente novamente.',
+    };
+  }
+
   if (normalized.includes('historia nao esta apta para refinamento') || normalized.includes('acoes independentes que precisam ser separadas')) {
     return {
       status: 422,
@@ -108,10 +116,16 @@ function getRequirementsUserFacingError(error) {
   }
 
   if (normalized.includes('nenhum modelo do router concluiu') || normalized.includes('falha de provider')) {
+    const quotaExceeded = normalized.includes('resource_exhausted')
+      || normalized.includes('quota exceeded')
+      || normalized.includes('rate limit');
     return {
       status: 503,
       code: 'REQUIREMENTS_PROVIDER_UNAVAILABLE',
-      message: 'Nenhum provedor de IA disponível conseguiu concluir a geração. Verifique o Ollama ou a configuração dos provedores e tente novamente.',
+      retryable: true,
+      message: quotaExceeded
+        ? 'A geração não foi concluída porque os serviços de IA atingiram o limite temporário de uso. A task voltou para o backlog sem perder informações. Aguarde cerca de um minuto e tente novamente.'
+        : 'A geração não foi concluída porque os serviços de IA estão temporariamente indisponíveis. A task voltou para o backlog sem perder informações. Tente novamente em alguns minutos.',
     };
   }
 
@@ -178,14 +192,19 @@ function buildAgentRunDiagnostic(error, result, executionDiagnostic = null) {
 
 function buildQaRequirementSummary(requirementsContent = '') {
   const userStory = extractCompactRequirementSection(requirementsContent, 'User Story Refinada', 180)
-    || extractCompactRequirementSection(requirementsContent, 'User Story', 180);
+    || extractCompactRequirementSection(requirementsContent, 'User Story', 180)
+    || extractCompactRequirementSection(requirementsContent, 'Historia e objetivo', 180);
   const functional = extractCompactRequirementSection(requirementsContent, 'Requisitos Funcionais', 360)
-    || extractCompactRequirementSection(requirementsContent, 'Comportamento esperado', 360);
+    || extractCompactRequirementSection(requirementsContent, 'Comportamento esperado', 360)
+    || extractCompactRequirementSection(requirementsContent, 'Comportamento e regras confirmadas', 360);
   const mainFlow = extractCompactRequirementSection(requirementsContent, 'Fluxo Principal', 220)
-    || extractCompactRequirementSection(requirementsContent, 'Comportamento esperado', 220);
-  const rules = extractCompactRequirementSection(requirementsContent, 'Regras de Negocio', 220);
+    || extractCompactRequirementSection(requirementsContent, 'Comportamento esperado', 220)
+    || extractCompactRequirementSection(requirementsContent, 'Comportamento e regras confirmadas', 220);
+  const rules = extractCompactRequirementSection(requirementsContent, 'Regras de Negocio', 220)
+    || extractCompactRequirementSection(requirementsContent, 'Comportamento e regras confirmadas', 220);
   const acceptance = extractCompactRequirementSection(requirementsContent, 'Criterios de Aceite (BDD)', 260)
-    || extractCompactRequirementSection(requirementsContent, 'Cenarios de aceitacao', 260);
+    || extractCompactRequirementSection(requirementsContent, 'Cenarios de aceitacao', 260)
+    || extractCompactRequirementSection(requirementsContent, 'Cenarios de aceite', 260);
 
   return [
     userStory ? `User Story Refinada:\n${userStory}` : null,
@@ -247,7 +266,9 @@ function buildCompactRequirementProjectContext(task) {
   const currentStory = stories.find((story) => String(story?.title || '').trim() === String(task.title || '').trim()) || null;
   const relatedStories = stories
     .filter((story) => story && story.id !== currentStory?.id)
-    .slice(0, 6)
+    // All stories are compacted below. The analyst needs the backlog map to
+    // identify criteria that actually belong to a neighbouring journey.
+    .slice(0, 30)
     .map(compactRequirementStory)
     .filter(Boolean);
 
@@ -358,46 +379,27 @@ function assertArtifactCompleteness(agentName, content) {
   }
 
   if (agentName === 'qa_engineer') {
-    const requiredSections = [
-      'estrategia de testes',
-      'dados de teste',
-      'riscos e metricas',
-      'qualidade nao funcional',
-      'cenarios de teste',
-      'casos de teste funcionais',
-      'usabilidade e acessibilidade',
-    ];
+    const requiredSections = ['casos de validacao', 'cobertura dos criterios de aceite', 'lacunas de qualidade', 'decisao de preparacao'];
 
     for (const section of requiredSections) {
       if (!normalized.includes(section)) {
-        throw new Error(`O plano de testes foi retornado de forma incompleta: secao ausente (${section}).`);
+        throw new Error(`Os casos de validacao foram retornados de forma incompleta: secao ausente (${section}).`);
       }
     }
 
-    const functionalCasesSection = extractNormalizedArtifactSection(content, 'casos de teste funcionais', [
-      'usabilidade e acessibilidade',
-      'fim_do_plano_de_testes',
+    const functionalCasesSection = extractNormalizedArtifactSection(content, 'casos de validacao', [
+      'lacunas de qualidade',
+      'decisao de preparacao',
+      'fim_dos_casos_de_validacao',
     ]);
     const hasCt01 = /ct\s*0*1/i.test(functionalCasesSection);
     const numberedCases = countNumberedQaCases(functionalCasesSection);
     const actionCount = (functionalCasesSection.match(/\bacao\b/g) || []).length;
     const expectedResultCount = (functionalCasesSection.match(/resultado esperado/g) || []).length;
-    const hasStructuredFunctionalCases = numberedCases >= 3 && actionCount >= 3 && expectedResultCount >= 3;
-    const nonFunctionalSection = extractNormalizedArtifactSection(content, 'qualidade nao funcional', [
-      'cenarios de teste',
-      'casos de teste funcionais',
-    ]);
-    const nonFunctionalKeywords = ['performance', 'seguranca', 'confiabilidade', 'observabilidade'];
-    const coveredNonFunctionalTopics = nonFunctionalKeywords.filter((keyword) =>
-      nonFunctionalSection.includes(keyword)
-    ).length;
+    const hasStructuredFunctionalCases = numberedCases >= 1 && actionCount >= 1 && expectedResultCount >= 1;
 
     if (!hasCt01 && !hasStructuredFunctionalCases) {
-      throw new Error('O plano de testes foi retornado sem casos de teste funcionais completos.');
-    }
-
-    if (coveredNonFunctionalTopics < 3) {
-      throw new Error('O plano de testes foi retornado com cobertura nao funcional insuficiente.');
+      throw new Error('Os casos de validacao foram retornados sem casos completos.');
     }
   }
 
@@ -642,6 +644,7 @@ export async function runRequirementsForTaskController(req, res) {
     const userFacingError = getRequirementsUserFacingError(error);
     res.status(userFacingError.status).json({
       ...userFacingError,
+      scopeReview: error?.agentDiagnostic?.scope_review || null,
       requestId: req.requestId || null,
     });
   }
@@ -651,6 +654,7 @@ export async function runQaForTaskController(req, res) {
   let agentRun = null;
   let previousTaskState = null;
   let runLifecycle = null;
+  let qaResult = null;
 
   try {
     const { taskUuid } = req.params;
@@ -688,7 +692,7 @@ export async function runQaForTaskController(req, res) {
     }
 
     const latestTestPlan = task.artifacts.find(
-      (artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent
+      (artifact) => ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType) && artifact.isCurrent
     );
 
     if (latestTestPlan) {
@@ -715,7 +719,7 @@ export async function runQaForTaskController(req, res) {
     const payload = {
       project_id: task.project.uuid,
       task_uuid: task.uuid,
-      idea: `Crie o plano de testes apenas para esta tarefa: ${task.title}${
+      idea: `Prepare casos de validação apenas para esta tarefa: ${task.title}${
         task.description ? `\n\nContexto especifico da tarefa: ${task.description}` : ''
       }`,
       code_structure: requirementSummary,
@@ -737,13 +741,13 @@ export async function runQaForTaskController(req, res) {
     const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
     agentRun = await createAgentRunStart(task.project.uuid, 'qa_engineer', payloadWithRuntime);
     runLifecycle = createAgentRunLifecycle(req, res, agentRun, finishAgentRun);
-    const result = await runSingleAgent('qa_engineer', payloadWithRuntime, { envOverrides });
-    const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    qaResult = await runSingleAgent('qa_engineer', payloadWithRuntime, { envOverrides });
+    const content = typeof qaResult === 'string' ? qaResult : JSON.stringify(qaResult, null, 2);
     assertSharedArtifactCompleteness('qa_engineer', content);
 
     const finalized = await runLifecycle.finalizeSuccess({
-      result,
-      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+      result: qaResult,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, qaResult, envOverrides),
     });
 
     if (!finalized) {
@@ -751,7 +755,7 @@ export async function runQaForTaskController(req, res) {
     }
 
     await createQaArtifacts(task.uuid, {
-      title: `Plano de testes - ${task.title}`,
+      title: `Casos de validação - ${task.title}`,
       content,
       contentFormat: 'markdown',
       createdByAgentName: 'qa_engineer',
@@ -779,9 +783,9 @@ export async function runQaForTaskController(req, res) {
     }
 
     if (runLifecycle) {
-      await runLifecycle.finalizeFailure({ errorMessage: error.message }).catch(() => null);
+      await runLifecycle.finalizeFailure({ errorMessage: error.message, result: qaResult }).catch(() => null);
     } else if (agentRun?.id) {
-      await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message }).catch(() => null);
+      await finishAgentRun(agentRun.id, { status: 'failed', errorMessage: error.message, result: qaResult }).catch(() => null);
     }
 
     if (runLifecycle?.wasAborted()) {

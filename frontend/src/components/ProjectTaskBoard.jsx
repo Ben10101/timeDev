@@ -61,6 +61,14 @@ function hasCurrentArtifact(task, artifactType) {
   return (task?.artifacts || []).some((artifact) => artifact.artifactType === artifactType && artifact.isCurrent);
 }
 
+function hasCurrentQaValidation(task) {
+  return (task?.artifacts || []).some((artifact) => ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType) && artifact.isCurrent);
+}
+
+function hasApprovedQaValidation(task) {
+  return (task?.artifacts || []).some((artifact) => ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType) && artifact.isCurrent && artifact.isApproved);
+}
+
 function getLatestStatusHistoryNote(task, toStatus = null) {
   const history = task?.statusHistory || [];
   const entry = toStatus ? history.find((item) => item.toStatus === toStatus) : history[0];
@@ -84,8 +92,8 @@ function TaskCard({
 }) {
   const hasRequirements = hasCurrentArtifact(task, 'requirements');
   const hasApprovedRequirements = (task?.artifacts || []).some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent && artifact.isApproved);
-  const hasTestPlan = hasCurrentArtifact(task, 'test_plan');
-  const hasApprovedTestPlan = (task?.artifacts || []).some((artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent && artifact.isApproved);
+  const hasTestPlan = hasCurrentQaValidation(task);
+  const hasApprovedTestPlan = hasApprovedQaValidation(task);
   const isDone = task.status === 'done';
   const isBlocked = task.status === 'blocked';
   const processingError = task.processingError;
@@ -128,9 +136,9 @@ function TaskCard({
   const validationState = isBlocked
     ? { label: 'Bloqueada', detail: 'Resolva o bloqueio registrado para continuar.', tone: 'border-rose-200 bg-rose-50 text-rose-700' }
     : hasApprovedTestPlan
-      ? { label: 'QA aprovado', detail: 'O plano de testes foi aprovado. A proxima etapa e arquitetura.', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
+      ? { label: 'QA aprovado', detail: 'Os casos de validação foram aprovados. A próxima etapa é arquitetura.', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
       : hasTestPlan
-        ? { label: 'QA gerado', detail: 'Revise e aprove o plano de testes antes da arquitetura.', tone: 'border-amber-200 bg-amber-50 text-amber-700' }
+        ? { label: 'QA gerado', detail: 'Revise os casos de validação antes da arquitetura.', tone: 'border-amber-200 bg-amber-50 text-amber-700' }
       : hasRequirements && !hasApprovedRequirements
         ? { label: 'Aguardando aprovação', detail: 'Os requisitos foram gerados, mas precisam de validação humana.', tone: 'border-amber-200 bg-amber-50 text-amber-700' }
         : hasApprovedRequirements
@@ -318,6 +326,7 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
   const [saving, setSaving] = useState(false);
   const [generatingArchitecture, setGeneratingArchitecture] = useState(false);
   const [error, setError] = useState(null);
+  const [scopeReview, setScopeReview] = useState(null);
 
   useEffect(() => {
     setTasks(initialTasks);
@@ -392,6 +401,7 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
 
     setSaving(true);
     setError(null);
+    setScopeReview(null);
     try {
       await createTask(projectUuid, {
         ...taskForm,
@@ -410,10 +420,12 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
   async function handleRunRequirements(taskUuid) {
     setSaving(true);
     setError(null);
+    setScopeReview(null);
     try {
       await runTaskRequirements(taskUuid, { changedByUserUuid: null });
       await refreshBoard();
     } catch (submitError) {
+      setScopeReview(submitError?.response?.data?.scopeReview || null);
       setError(getApiErrorMessage(submitError, 'A analise de requisitos falhou.'));
     } finally {
       setSaving(false);
@@ -423,6 +435,7 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
   async function handleRunQa(taskUuid) {
     setSaving(true);
     setError(null);
+    setScopeReview(null);
     try {
       await runTaskQa(taskUuid, { changedByUserUuid: null });
       await refreshBoard();
@@ -487,6 +500,36 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
         </div>
+      )}
+
+      {scopeReview && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
+          <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-700">Análise de escopo necessária</p>
+          <h3 className="mt-2 text-base font-bold">Esta história precisa ser dividida antes do refinamento</h3>
+          <p className="mt-2 leading-6 text-amber-900">{scopeReview.reason}</p>
+
+          {scopeReview.independent_journeys?.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-amber-800">Jornadas identificadas</p>
+              <ul className="mt-2 space-y-1.5 pl-5 text-sm leading-5 text-amber-950">
+                {scopeReview.independent_journeys.map((journey) => <li key={journey}>{journey}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {scopeReview.suggested_stories?.length > 0 && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-white/70 p-3">
+              <p className="text-xs font-bold uppercase tracking-wider text-amber-800">Stories sugeridas</p>
+              <ul className="mt-2 space-y-2 text-sm leading-5 text-slate-700">
+                {scopeReview.suggested_stories.map((story) => <li key={story}>{story}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {scopeReview.questions?.length > 0 && (
+            <p className="mt-4 text-xs leading-5 text-amber-900">Próxima decisão: {scopeReview.questions[0]}</p>
+          )}
+        </section>
       )}
 
       <div className="dashboard-panel">

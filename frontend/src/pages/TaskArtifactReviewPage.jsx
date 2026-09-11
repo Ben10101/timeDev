@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { useNavigate, useParams } from 'react-router-dom';
 import AppShell from '../components/AppShell';
 import { createTaskArtifact, getApiErrorMessage, getTask, repairTaskArtifact, reviewTaskArtifact } from '../services/api';
+import { exportTaskArtifactsPdf } from '../utils/taskArtifactsExport';
 
 function diffLines(oldText = '', newText = '') {
   const oldLines = String(oldText).split('\n');
@@ -58,12 +59,14 @@ export default function TaskArtifactReviewPage() {
   const [decisionResponses, setDecisionResponses] = useState({});
   const [editing, setEditing] = useState(false);
   const [compare, setCompare] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => { getTask(taskUuid).then(setTask).catch((requestError) => setError(getApiErrorMessage(requestError, 'Não foi possível carregar os artefatos.'))); }, [taskUuid]);
-  const artifactType = tab === 'requirements' ? 'requirements' : 'test_plan';
-  const artifact = useMemo(() => (task?.artifacts || []).find((item) => item.isCurrent && item.artifactType === artifactType), [task, artifactType]);
-  const versions = useMemo(() => (task?.artifacts || []).filter((item) => item.artifactType === artifactType).sort((a, b) => Number(b.version || 0) - Number(a.version || 0)), [task, artifactType]);
+  const artifactType = tab === 'requirements' ? 'requirements' : 'qa_validation_cases';
+  const artifact = useMemo(() => (task?.artifacts || []).find((item) => item.isCurrent && (tab === 'requirements' ? item.artifactType === 'requirements' : ['qa_validation_cases', 'test_plan'].includes(item.artifactType))), [task, tab]);
+  const versions = useMemo(() => (task?.artifacts || []).filter((item) => tab === 'requirements' ? item.artifactType === 'requirements' : ['qa_validation_cases', 'test_plan'].includes(item.artifactType)).sort((a, b) => Number(b.version || 0) - Number(a.version || 0)), [task, tab]);
   const pendingDecisions = useMemo(() => extractPendingDecisions(artifact?.content), [artifact?.content]);
+  const isRequirementsArtifact = artifact?.artifactType === 'requirements';
   useEffect(() => { setContent(artifact?.content || ''); setEditing(false); setCompare(null); }, [artifact?.uuid]);
 
   async function review(approved) {
@@ -96,15 +99,28 @@ export default function TaskArtifactReviewPage() {
   async function saveManualVersion() {
     if (!artifact || !content.trim()) return;
     setSaving(true);
-    try { await createTaskArtifact(taskUuid, { artifactType, title: artifact.title, content, contentFormat: artifact.contentFormat || 'markdown' }); setTask(await getTask(taskUuid)); setEditing(false); }
+    try { await createTaskArtifact(taskUuid, { artifactType: artifact.artifactType, title: artifact.title, content, contentFormat: artifact.contentFormat || 'markdown' }); setTask(await getTask(taskUuid)); setEditing(false); }
     catch (requestError) { setError(getApiErrorMessage(requestError, 'Não foi possível salvar a nova versão.')); }
     finally { setSaving(false); }
   }
 
-  return <AppShell eyebrow="Revisão da task" title={task?.title || 'Artefatos da task'} description="Revise, edite manualmente ou peça uma correção ao agente antes da aprovação." actions={<button className="dashboard-button-secondary" onClick={() => navigate(`/projects/${task?.project?.uuid || ''}`)}>Voltar ao projeto</button>}>
+  function exportTaskArtifacts() {
+    if (!task) return;
+    setExporting(true);
+    setError(null);
+    try {
+      exportTaskArtifactsPdf(task);
+    } catch (exportError) {
+      setError(getApiErrorMessage(exportError, 'Não foi possível exportar os artefatos desta task.'));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return <AppShell eyebrow="Revisão da task" title={task?.title || 'Artefatos da task'} description="Revise, edite manualmente ou peça uma correção ao agente antes da aprovação." actions={<div className="flex flex-wrap gap-2"><button type="button" className="dashboard-button-secondary" disabled={!task || exporting} onClick={exportTaskArtifacts}>{exporting ? 'Preparando exportação...' : 'Exportar task em PDF'}</button><button className="dashboard-button-secondary" onClick={() => navigate(`/projects/${task?.project?.uuid || ''}`)}>Voltar ao projeto</button></div>}>
     <section className="dashboard-panel w-full">
       <div className="flex flex-wrap gap-2 border-b border-slate-200 p-4">
-        {[['requirements', 'Requisitos refinados'], ['qa', 'Plano de testes']].map(([value, label]) => <button key={value} type="button" onClick={() => setTab(value)} className={`rounded-xl px-4 py-2 text-sm font-semibold ${tab === value ? 'bg-[#102a72] text-white' : 'bg-slate-100 text-slate-600'}`}>{label}</button>)}
+        {[['requirements', 'Requisitos refinados'], ['qa', 'Casos de validação']].map(([value, label]) => <button key={value} type="button" onClick={() => setTab(value)} className={`rounded-xl px-4 py-2 text-sm font-semibold ${tab === value ? 'bg-[#102a72] text-white' : 'bg-slate-100 text-slate-600'}`}>{label}</button>)}
       </div>
       <div className="p-4">
         {!task && <div className="rounded-xl bg-slate-50 p-6 text-sm text-slate-500">Carregando artefatos...</div>}
@@ -117,15 +133,32 @@ export default function TaskArtifactReviewPage() {
         <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-center justify-between"><h2 className="text-sm font-bold text-slate-900">Histórico de versões</h2><span className="text-xs text-slate-500">{versions.length} versão(ões)</span></div><div className="mt-3 space-y-2">{versions.map((version) => <div key={version.uuid} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs"><span>v{version.version} · {version.isCurrent ? 'Atual' : 'Anterior'} · {version.isApproved ? 'Aprovada' : 'Pendente'}</span><button type="button" className="font-semibold text-[#102a72]" onClick={() => setCompare(compare?.uuid === version.uuid ? null : version)}>Comparar</button></div>)}</div>{compare && artifact && <pre className="mt-4 max-h-72 overflow-auto rounded-xl bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-200">{diffLines(compare.content, artifact.content).map((line) => `${line.type === 'added' ? '+ ' : line.type === 'removed' ? '- ' : line.type === 'changed' ? '~ ' : '  '}${line.type === 'removed' ? line.old : line.type === 'added' ? line.current : line.type === 'changed' ? `${line.old} → ${line.current}` : line.current}`).join('\n')}</pre>}</section>
       </div>
     </section>
-    {repairModal && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="repair-title">
-      <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
-        <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#102a72]">Revisão assistida</p>
-        <h2 id="repair-title" className="mt-1 text-xl font-bold text-slate-950">Iniciar correção com agente?</h2>
-        <p className="mt-3 text-sm leading-6 text-slate-600">O agente analisará o artefato atual, os achados do Quality Gate e a orientação abaixo. Uma nova versão ficará pendente de aprovação.</p>
+    {repairModal && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="repair-title" aria-busy={repairing}>
+      <div className="relative max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+        <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#102a72]">Correção assistida</p>
+        <h2 id="repair-title" className="mt-1 text-xl font-bold text-slate-950">Corrigir com agente?</h2>
+        <p className="mt-3 text-sm leading-6 text-slate-600">{isRequirementsArtifact ? 'O agente corrigirá o requisito com base no artefato atual, nos achados do Quality Gate e nas decisões já registradas. A nova versão ficará pendente da sua aprovação.' : 'O agente analisará o artefato atual, os achados do Quality Gate e a orientação abaixo. Uma nova versão ficará pendente de aprovação.'}</p>
+        {isRequirementsArtifact && <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+          <p className="text-sm font-bold text-[#102a72]">Regras aplicadas pelo agente</p>
+          <ul className="mt-2 space-y-1.5 text-sm leading-5 text-slate-700">
+            <li>Preserva fatos e decisões confirmadas.</li>
+            <li>Atualiza regras e cenários de aceite quando uma decisão muda o comportamento.</li>
+            <li>Reconstrói o contrato estruturado do requisito para manter a validação sincronizada.</li>
+            <li>Não inventa regras, mensagens, limites, permissões ou integrações sem evidência.</li>
+          </ul>
+        </div>}
         {pendingDecisions.length > 0 && <div className="mt-5 max-h-64 space-y-3 overflow-y-auto"><p className="text-sm font-semibold text-slate-800">Decisões pendentes</p>{pendingDecisions.map((question, index) => <div key={question} className="rounded-xl border border-slate-200 p-3"><p className="text-sm text-slate-700">{question}</p><textarea value={decisionResponses[index]?.answer || ''} disabled={decisionResponses[index]?.ignored} onChange={(event) => setDecisionResponses((current) => ({ ...current, [index]: { ...current[index], answer: event.target.value } }))} rows={2} className="dashboard-input mt-2 text-sm" placeholder="Informe a decisão ou marque para ignorar" /><label className="mt-2 flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={Boolean(decisionResponses[index]?.ignored)} onChange={(event) => setDecisionResponses((current) => ({ ...current, [index]: { ...current[index], ignored: event.target.checked } }))} />Ignorar esta pergunta</label></div>)}</div>}
-        <label className="mt-5 block text-sm font-semibold text-slate-800" htmlFor="repair-instruction">Orientação para o agente <span className="font-normal text-slate-500">(opcional)</span></label>
-        <textarea id="repair-instruction" value={comment} onChange={(event) => setComment(event.target.value)} rows={4} className="dashboard-input mt-2" placeholder="Ex.: melhorar os cenários de exceção sem criar regras novas." />
-        <div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" disabled={repairing} onClick={() => setRepairModal(false)} className="dashboard-button-secondary">Cancelar</button><button type="button" disabled={repairing} onClick={repair} className="dashboard-button-primary">{repairing ? 'Iniciando...' : 'Iniciar revisão'}</button></div>
+        <label className="mt-5 block text-sm font-semibold text-slate-800" htmlFor="repair-instruction">Orientação adicional <span className="font-normal text-slate-500">(opcional)</span></label>
+        <p className="mt-1 text-xs leading-5 text-slate-500">Use este campo apenas para priorizar o reparo. Não é preciso repetir decisões já registradas.</p>
+        <textarea id="repair-instruction" value={comment} onChange={(event) => setComment(event.target.value)} rows={4} className="dashboard-input mt-2" placeholder={isRequirementsArtifact ? 'Ex.: priorize a clareza da regra de duplicidade, sem criar novos comportamentos.' : 'Ex.: melhorar os cenários de exceção sem criar regras novas.'} />
+        <div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" disabled={repairing} onClick={() => setRepairModal(false)} className="dashboard-button-secondary">Cancelar</button><button type="button" disabled={repairing} onClick={repair} className="dashboard-button-primary">{repairing ? 'Corrigindo...' : isRequirementsArtifact ? 'Corrigir requisito' : 'Iniciar revisão'}</button></div>
+        {repairing && <div className="absolute inset-0 z-10 flex min-h-full items-center justify-center rounded-3xl bg-white/90 p-6 backdrop-blur-[1px]" role="status" aria-live="polite">
+          <div className="max-w-sm text-center">
+            <span className="mx-auto block h-10 w-10 animate-spin rounded-full border-4 border-blue-100 border-t-[#102a72]" aria-hidden="true" />
+            <p className="mt-4 text-base font-bold text-slate-900">O agente está corrigindo o artefato</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Estamos aplicando as regras e preparando uma nova versão para sua revisão.</p>
+          </div>
+        </div>}
       </div>
     </div>}
     {error && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="quality-error-title"><div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"><div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-lg text-rose-700">!</div><div><p className="text-[10px] font-bold uppercase tracking-[0.22em] text-rose-700">Ação não concluída</p><h2 id="quality-error-title" className="mt-1 text-lg font-bold text-slate-950">Não foi possível concluir a operação</h2></div></div><div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm leading-6 text-rose-900">{error}</div><p className="mt-4 text-sm text-slate-600">Se houver uma versão mais recente, ela já estará carregada nesta tela.</p><div className="mt-6 flex justify-end"><button type="button" onClick={() => setError(null)} className="dashboard-button-primary">Entendi</button></div></div></div>}

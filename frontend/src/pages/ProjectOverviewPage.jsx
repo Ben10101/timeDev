@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { PencilLine } from 'lucide-react';
+import { PencilLine, X } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import ConfirmDialog from '../components/ConfirmDialog';
 import ProjectTaskBoard from '../components/ProjectTaskBoard';
@@ -18,25 +18,6 @@ import {
 } from '../services/api';
 import { exportProjectDocumentationPdf } from '../utils/projectDocumentationExport';
 import { getProjectStatusConfirmationMessage, getProjectStatusWorkflow } from '../utils/projectStatus';
-
-const STORY_SHORTCUT_EXAMPLES = [
-  {
-    label: 'SaaS operacional',
-    idea: 'Plataforma para times operacionais registrarem solicitacoes, acompanharem status, anexarem evidencias e aprovarem excecoes com trilha de auditoria.',
-    objective: 'Reduzir retrabalho operacional e dar visibilidade do fluxo ponta a ponta.',
-    audience: 'Analistas de operacoes, lideres de equipe e gestores.',
-    mainFlows: 'Abrir solicitação, priorizar fila, aprovar exceção, acompanhar SLA e consultar histórico.',
-    constraints: 'Controle de acesso por perfil, histórico imutável e notificações de atraso.',
-  },
-  {
-    label: 'Portal do cliente',
-    idea: 'Portal para clientes acompanharem pedidos, documentos pendentes, mensagens e status de atendimento em uma timeline unica.',
-    objective: 'Diminuir volume de suporte e aumentar autonomia do cliente.',
-    audience: 'Clientes finais e equipe de atendimento.',
-    mainFlows: 'Consultar pedido, enviar documentos, responder pendencias e acompanhar timeline.',
-    constraints: 'Experiência mobile, notificações e integração com sistema interno.',
-  },
-];
 
 function TextAreaField({ label, value, onChange, placeholder, rows = 4, disabled = false }) {
   return (
@@ -108,7 +89,6 @@ export default function ProjectOverviewPage() {
   const pendingBacklogContract = project?.intakeConfig?.backlogContract;
   const backlogAwaitingApproval = Boolean(pendingBacklogContract?.stories?.length && pendingBacklogContract?.publicationStatus !== 'published');
   const ideaLength = form.idea.trim().length;
-  const shortcutReady = ideaLength >= 40;
   const riskCount = project?.intakeConfig?.riskRegister?.risks?.length || 0;
   const impedimentCount = project?.intakeConfig?.riskRegister?.impediments?.length || 0;
   const projectStatusMeta = useMemo(() => getProjectStatusWorkflow(project?.status || 'draft'), [project?.status]);
@@ -332,18 +312,6 @@ export default function ProjectOverviewPage() {
     });
   }
 
-  function applyShortcutExample(example) {
-    setForm({
-      idea: example.idea,
-      objective: example.objective,
-      audience: example.audience,
-      mainFlows: example.mainFlows,
-      constraints: example.constraints,
-    });
-    setError(null);
-    setSuccessMessage('');
-  }
-
   function openStoryEditor(task) {
     if (!task) return;
     setEditingStory(task);
@@ -473,7 +441,7 @@ export default function ProjectOverviewPage() {
                   : undefined
               }
             >
-              {exportingPdf ? 'Preparando PDF...' : 'Exportar PDF'}
+              {exportingPdf ? 'Preparando dossiê...' : 'Exportar dossiê em PDF'}
             </button>
             <button
               type={projectJourney.ctaType}
@@ -913,23 +881,24 @@ export default function ProjectOverviewPage() {
               onClick={(event) => event.stopPropagation()}
               className="w-full max-w-6xl max-h-[92vh] overflow-y-auto rounded-[32px] border border-slate-200 bg-white shadow-2xl"
             >
-              <div className="border-b border-slate-200 px-6 py-5">
+              <div className="border-b border-slate-800 bg-gradient-to-r from-slate-950 to-[#102a72] px-6 py-5 text-white">
                 <div className="flex items-start justify-between gap-4">
                   <div className="max-w-3xl">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Briefing do projeto</p>
-                    <h3 className="mt-2 text-3xl font-bold text-slate-900">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-blue-200">Briefing do projeto</p>
+                    <h3 className="mt-2 text-2xl font-bold tracking-tight">
                       {clarifications.length ? 'Descoberta · Validar decisões de maior impacto' : 'Descoberta · Analisar contexto e preparar o backlog'}
                     </h3>
-                    <p className="mt-3 text-sm leading-7 text-slate-600">
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
                       O PM usa os fatos informados, explicita lacunas e pergunta somente o que bloqueia uma decisão de produto antes de sintetizar as stories.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setShowBriefingModal(false)}
-                    className="dashboard-button-secondary px-3 py-2 text-xs"
+                    className="rounded-xl border border-white/20 p-2 text-white transition hover:bg-white/10"
+                    aria-label="Fechar briefing"
                   >
-                    Fechar
+                    <X size={20} />
                   </button>
                 </div>
               </div>
@@ -949,19 +918,6 @@ export default function ProjectOverviewPage() {
               )}
 
               <div className="grid gap-4 px-6 py-6 lg:grid-cols-2">
-                <div className="lg:col-span-2 grid gap-3 sm:grid-cols-3">
-                  {[
-                    ['1', 'Contexto', pmElicitation?.known_facts?.length ? 'Mapeado' : 'Em análise'],
-                    ['2', 'Decisões', clarifications.length ? 'Sua ação' : pmElicitation?.readiness?.decision === 'READY' ? 'Pronto' : 'Sem bloqueios'],
-                    ['3', 'Síntese', hasGeneratedStories ? 'Publicado' : 'Aguardando'],
-                  ].map(([step, label, state]) => (
-                    <div key={step} className={`rounded-2xl border p-4 ${label === 'Decisões' && clarifications.length ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Etapa {step}</p>
-                      <p className="mt-1 font-semibold text-slate-900">{label}</p>
-                      <p className="mt-1 text-xs text-slate-600">{state}</p>
-                    </div>
-                  ))}
-                </div>
                 {clarifications.length > 0 && (
                   <div className="lg:col-span-2 rounded-2xl border border-amber-200 bg-amber-50 p-5">
                     <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-amber-800">Esclarecimentos necessários</p>
@@ -992,50 +948,6 @@ export default function ProjectOverviewPage() {
                     </div>
                   </div>
                 )}
-                <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="max-w-3xl">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Antes de gerar</p>
-                      <h4 className="mt-2 text-xl font-bold text-slate-900">Dê contexto suficiente para nascer um backlog bom</h4>
-                      <p className="mt-2 text-sm leading-7 text-slate-600">
-                        O PM Agent responde melhor quando entende usuário, objetivo, fluxos e restrições logo nesta primeira etapa.
-                      </p>
-                      {hasGeneratedStories && (
-                        <p className="mt-3 text-sm leading-6 text-amber-700">
-                          Já existem user stories no projeto. Você pode ajustar o briefing e gerar novamente; o importador evita duplicar títulos iguais.
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {STORY_SHORTCUT_EXAMPLES.map((example) => (
-                        <button
-                          key={example.label}
-                          type="button"
-                          onClick={() => applyShortcutExample(example)}
-                          className="dashboard-button-secondary px-3 py-2 text-xs"
-                        >
-                          Usar exemplo {example.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid gap-3 md:grid-cols-3">
-                    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Entrada</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">{shortcutReady ? 'Boa para gerar' : 'Precisa de mais contexto'}</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Tamanho da ideia</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">{ideaLength} caracteres</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Saída</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">Stories prontas para o board</p>
-                    </div>
-                  </div>
-                </div>
-
                 <div className="lg:col-span-2">
                   <TextAreaField
                     label="Problema que resolve"

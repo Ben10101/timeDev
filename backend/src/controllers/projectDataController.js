@@ -9,6 +9,7 @@ import {
   createProject,
   createTask,
   createTaskArtifact,
+  refreshRequirementSpecArtifact,
   createTaskComment,
   ensurePipelineProject,
   finishAgentRun,
@@ -20,6 +21,8 @@ import {
   getWorkspaceTeamSummary,
   importBacklogTasks,
   publishBacklogTasks,
+  consolidateBacklogStories,
+  moveBacklogAcceptanceCriterion,
   updateBacklogStory,
   listProjects,
   listProjectTasks,
@@ -34,7 +37,7 @@ import {
   reviewTaskArtifact,
 } from '../services/projectDataService.js';
 import { createHash } from 'node:crypto';
-import { evaluateArtifactQuality } from '../services/artifactQualityGateService.js';
+import { assertArtifactQuality, evaluateArtifactQuality } from '../services/artifactQualityGateService.js';
 import { runSingleAgent } from '../services/orchestratorService.js';
 import { buildRuntimeAiEnvForUser } from '../services/aiSettingsService.js';
 import { createAgentRunLifecycle } from '../utils/agentRunLifecycle.js';
@@ -826,6 +829,49 @@ function enrichLoginAcceptanceScenarios(scenarios, sourceContent) {
 **ENTAO** o sistema nega o acesso e informa que o perfil nao possui permissao.`;
 }
 
+function normalizeAcceptanceScenario(value = '') {
+  return String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[*_`#\\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('pt-BR');
+}
+
+function extractBddScenarioBlocks(content = '') {
+  const text = String(content || '').trim();
+  const matches = [...text.matchAll(/^###\s+Cen[aá]rio\b[^\n]*\r?\n([\s\S]*?)(?=^###\s+Cen[aá]rio\b|(?![\s\S]))/gim)];
+  return matches
+    .map((match) => match[0].trim())
+    .filter((block) => {
+      const normalized = normalizeAcceptanceScenario(block);
+      return /\bdado\b/.test(normalized) && /\bquando\b/.test(normalized) && /\bentao\b/.test(normalized);
+    });
+}
+
+function mergeAcceptanceScenarioCoverage(existingContent, proposedContent) {
+  const existing = String(existingContent || '').trim();
+  const existingScenarios = extractBddScenarioBlocks(existing);
+  const proposedScenarios = extractBddScenarioBlocks(proposedContent);
+  if (!proposedScenarios.length) {
+    throw new Error('O reparo não retornou cenários BDD verificáveis para as decisões confirmadas. Nenhuma versão foi criada.');
+  }
+
+  // A versão atual pode já ter sido degradada por uma execução antiga. Nesse
+  // caso, um placeholder não é cobertura a preservar: a proposta BDD válida
+  // substitui somente esse conteúdo inválido.
+  if (!existingScenarios.length && /\ba validar durante a revis[aã]o\b|nenhum cen[aá]rio (?:de )?(?:sucesso|exce[cç][aã]o)/i.test(existing)) {
+    return String(proposedContent).trim();
+  }
+
+  const existingKeys = new Set(existingScenarios.map(normalizeAcceptanceScenario));
+  const additions = proposedScenarios.filter((scenario) => !existingKeys.has(normalizeAcceptanceScenario(scenario)));
+  // A patch de cobertura é incremental: o conteúdo existente é a fonte de
+  // verdade e nunca pode ser substituído por uma resposta parcial do modelo.
+  return additions.length ? `${existing}\n\n${additions.join('\n\n')}`.trim() : existing;
+}
+
 function restoreCompactRequirementStructure(content, storyTitle) {
   let normalized = removeLegacyRequirementSections(content);
   const story = String(storyTitle || '').trim();
@@ -879,6 +925,33 @@ export async function updateBacklogStoryController(req, res, next) {
     await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
     const story = await updateBacklogStory(req.params.projectUuid, req.params.storyId, req.body, req.authUser.uuid);
     res.status(200).json(serializeBigInts(story));
+  } catch (error) { next(error); }
+}
+
+export async function consolidateBacklogStoriesController(req, res, next) {
+  try {
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
+    const story = await consolidateBacklogStories(
+      req.params.projectUuid,
+      req.body?.sourceStoryId,
+      req.body?.targetStoryId,
+      req.authUser.uuid,
+    );
+    res.status(200).json(serializeBigInts({ success: true, story }));
+  } catch (error) { next(error); }
+}
+
+export async function moveBacklogAcceptanceCriterionController(req, res, next) {
+  try {
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
+    const result = await moveBacklogAcceptanceCriterion(
+      req.params.projectUuid,
+      req.body?.sourceStoryId,
+      req.body?.targetStoryId,
+      req.body?.criterionIndex,
+      req.authUser.uuid,
+    );
+    res.status(200).json(serializeBigInts({ success: true, ...result }));
   } catch (error) { next(error); }
 }
 
@@ -1027,6 +1100,8 @@ export async function applyBacklogStoryReviewController(req, res, next) {
       ...currentRefinementContext,
       acceptanceCriteria,
       acceptance_criteria: acceptanceCriteria,
+      openQuestions: [],
+      open_questions: [],
     };
     const hasBlockingGate = Array.isArray(assessment?.gates) && assessment.gates.some((gate) => gate?.blocking);
     if (assessment?.decision !== 'READY' || hasBlockingGate) {
@@ -1043,6 +1118,13 @@ export async function applyBacklogStoryReviewController(req, res, next) {
       benefit: normalizedProposal.benefit || current.benefit || null,
       refinementContext,
       refinement_context: refinementContext,
+      // A READY review with all answers applied closes the old review cycle.
+      // Leaving its questions/tags behind made completed stories look blocked
+      // and allowed stale context to leak into later reconciliation.
+      openQuestions: [],
+      open_questions: [],
+      reviewTags: (current.reviewTags || current.review_tags || []).filter((tag) => !/^(REVIEW_|PROPOSED_DEFAULT$)/.test(String(tag || ''))),
+      review_tags: (current.reviewTags || current.review_tags || []).filter((tag) => !/^(REVIEW_|PROPOSED_DEFAULT$)/.test(String(tag || ''))),
       reviewAnswers: answers,
       reviewStatus: current.reviewStatus,
       // Preserve the review snapshot after applying it. The story becomes the
@@ -1372,11 +1454,16 @@ export async function repairTaskArtifactController(req, res, next) {
     if (!task) return res.status(404).json({ message: 'Tarefa não encontrada.' });
     const artifact = (task.artifacts || []).find((item) => item.uuid === req.params.artifactUuid && item.isCurrent);
     if (!artifact) return res.status(404).json({ message: 'Artefato atual não encontrado.' });
-    const relatedRequirement = artifact.artifactType === 'test_plan'
+    const relatedRequirement = ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType)
       ? (task.artifacts || []).find((item) => item.artifactType === 'requirements' && item.isCurrent)?.content || `${task.title}\n${task.description || ''}`
       : `${task.title}\n${task.description || ''}`;
     const currentReport = evaluateArtifactQuality({ artifactType: artifact.artifactType, content: artifact.content, relatedRequirement });
     const instruction = String(req.body?.instruction || '').trim().slice(0, 2000);
+    const decisionResponses = Array.isArray(req.body?.decisionResponses)
+      ? req.body.decisionResponses
+        .filter((item) => item && typeof item.question === 'string' && (typeof item.answer === 'string' || item.ignored === true))
+        .map((item) => ({ question: item.question.trim(), answer: typeof item.answer === 'string' ? item.answer.trim() : null, ignored: item.ignored === true }))
+      : [];
     const persistedDecisionArtifacts = artifact.artifactType === 'requirements'
       ? await prisma.taskArtifact.findMany({
           where: { taskId: task.id, artifactScope: 'review_decisions' },
@@ -1384,7 +1471,7 @@ export async function repairTaskArtifactController(req, res, next) {
           select: { content: true },
         })
       : [];
-    const persistedDecisionInstructions = persistedDecisionArtifacts.flatMap(({ content }) => {
+    const persistedDecisionResponses = persistedDecisionArtifacts.flatMap(({ content }) => {
       try {
         const snapshot = JSON.parse(content);
         // Review decisions belong to the task requirements, not only to the
@@ -1393,11 +1480,18 @@ export async function repairTaskArtifactController(req, res, next) {
         if (!Array.isArray(snapshot?.decisions)) return [];
         return snapshot.decisions
           .filter((item) => item && !item.ignored && typeof item.question === 'string' && typeof item.answer === 'string' && item.answer.trim())
-          .map((item) => `Decisao: ${item.question.trim()}\nResposta: ${item.answer.trim()}`);
+          .map((item) => ({ question: item.question.trim(), answer: item.answer.trim(), ignored: false }));
       } catch {
         return [];
       }
     });
+    const confirmedDecisionResponses = [...decisionResponses, ...persistedDecisionResponses]
+      .filter((item) => item?.answer && !item.ignored)
+      .filter((item, index, values) => values.findIndex((candidate) =>
+        candidate.question === item.question && candidate.answer === item.answer
+      ) === index);
+    const persistedDecisionInstructions = persistedDecisionResponses
+      .map((item) => `Decisao: ${item.question}\nResposta: ${item.answer}`);
     const effectiveInstruction = [instruction, ...persistedDecisionInstructions]
       .filter(Boolean)
       .filter((value, index, values) => values.indexOf(value) === index)
@@ -1422,9 +1516,42 @@ export async function repairTaskArtifactController(req, res, next) {
       idea: `Reparar somente o artefato ${artifact.artifactType}`,
     }, { envOverrides });
     const sectionTitle = String(result.section || '').replace(/^#+\s*/, '').trim();
-    let patchedContent = replaceArtifactSection(artifact.content, sectionTitle, result.content, artifact.artifactType);
+    const isAcceptancePatch = artifact.artifactType === 'requirements' && /^cenarios de aceite$/i.test(sectionTitle);
+    const safeReplacement = isAcceptancePatch
+      ? mergeAcceptanceScenarioCoverage(extractLevelTwoSection(artifact.content, 'Cenarios de aceite'), result.content)
+      : result.content;
+    let patchedContent = replaceArtifactSection(artifact.content, sectionTitle, safeReplacement, artifact.artifactType);
     if (artifact.artifactType === 'requirements') {
       patchedContent = restoreCompactRequirementStructure(removeResolvedPendingDecisions(patchedContent, effectiveInstruction), task.title);
+    }
+    if (artifact.artifactType === 'requirements' && confirmedDecisionResponses.length) {
+      // A confirmed decision that changes a rule must also be demonstrable in
+      // acceptance criteria. Ask the repair agent for that single section
+      // after rules have been deterministically applied.
+      const coveragePatch = await runSingleAgent('artifact_repair', {
+        project_id: task.project.uuid,
+        task_uuid: task.uuid,
+        artifact_type: 'requirements',
+        current_artifact: patchedContent,
+        findings: [{
+          code: 'answered_decision_requires_acceptance_coverage',
+          severity: 'high',
+          message: 'Cada decisão respondida que altera comportamento deve estar coberta por cenário de aceite verificável.',
+        }],
+        source_context: `Task: ${task.title}\n\nDecisões confirmadas:\n${confirmedDecisionResponses.map((item) => `- ${item.answer}`).join('\n')}`,
+        instruction: 'Atualize somente a seção "Cenarios de aceite". Inclua cenários BDD apenas para decisões confirmadas ainda não cobertas. Não repita cenário já existente nem invente mensagens, persistência ou comportamento adicional.',
+        idea: 'Cobrir decisões confirmadas nos cenários de aceite',
+      }, { envOverrides });
+      const coverageSection = String(coveragePatch.section || '').replace(/^#+\s*/, '').trim();
+      if (!/^cenarios de aceite$/i.test(coverageSection) || !String(coveragePatch.content || '').trim()) {
+        throw new Error('O reparo não conseguiu produzir cenários de aceite para as decisões confirmadas.');
+      }
+      const existingScenarios = extractLevelTwoSection(patchedContent, 'Cenarios de aceite');
+      const mergedScenarios = mergeAcceptanceScenarioCoverage(existingScenarios, coveragePatch.content);
+      const coveredContent = replaceArtifactSection(patchedContent, coverageSection, mergedScenarios, 'requirements');
+      if (coveredContent.trim() !== patchedContent.trim()) {
+        patchedContent = restoreCompactRequirementStructure(coveredContent, task.title);
+      }
     }
     if (patchedContent.trim() === String(artifact.content || '').trim()) {
       return res.status(422).json({ message: 'O agente não propôs uma alteração efetiva para este artefato.', qualityReport: currentReport });
@@ -1441,6 +1568,7 @@ export async function repairTaskArtifactController(req, res, next) {
     if (currentReport.findings?.some((item) => item.code === 'contradictory_not_applicable')) {
       patchedContent = patchedContent.replace(/n[aã]o se aplica/gi, 'A validar com o responsável');
     }
+    const repairedReport = assertArtifactQuality({ artifactType: artifact.artifactType, content: patchedContent, relatedRequirement });
     const nextArtifact = await createTaskArtifact(task.uuid, {
       artifactType: artifact.artifactType,
       title: artifact.title,
@@ -1448,11 +1576,9 @@ export async function repairTaskArtifactController(req, res, next) {
       contentFormat: artifact.contentFormat,
       createdByAgentName: 'artifact_repair',
     });
-    const decisionResponses = Array.isArray(req.body?.decisionResponses)
-      ? req.body.decisionResponses
-        .filter((item) => item && typeof item.question === 'string' && (typeof item.answer === 'string' || item.ignored === true))
-        .map((item) => ({ question: item.question.trim(), answer: typeof item.answer === 'string' ? item.answer.trim() : null, ignored: item.ignored === true }))
-      : [];
+    const refreshedRequirementSpec = artifact.artifactType === 'requirements'
+      ? await refreshRequirementSpecArtifact(task.uuid, { content: patchedContent, createdByAgentName: 'artifact_repair' })
+      : null;
     if (decisionResponses.length) {
       await createTaskArtifact(task.uuid, {
         artifactType: 'custom',
@@ -1464,8 +1590,7 @@ export async function repairTaskArtifactController(req, res, next) {
         createdByAgentName: 'artifact_repair',
       });
     }
-    const repairedReport = evaluateArtifactQuality({ artifactType: artifact.artifactType, content: patchedContent, relatedRequirement });
-    res.status(201).json(serializeBigInts({ success: true, artifact: nextArtifact, patch: result, qualityReport: repairedReport }));
+    res.status(201).json(serializeBigInts({ success: true, artifact: nextArtifact, patch: result, qualityReport: repairedReport, requirementSpec: refreshedRequirementSpec?.artifact || null }));
   } catch (error) {
     next(error);
   }

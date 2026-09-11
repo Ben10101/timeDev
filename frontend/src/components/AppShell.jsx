@@ -5,7 +5,6 @@ import {
   Briefcase,
   ChevronRight,
   Compass,
-  Cpu,
   LayoutGrid,
   LogOut,
   Search,
@@ -26,10 +25,6 @@ const NAV_SECTIONS = [
   {
     label: 'Projeto',
     items: [{ label: 'Projetos', hint: 'Board operacional', to: '/projects', icon: Briefcase }],
-  },
-  {
-    label: 'Agentes',
-    items: [{ label: 'Bancada livre', hint: 'PM, REQ e QA sob demanda', to: '/agents-lab', icon: Cpu }],
   },
   {
     label: 'Governança',

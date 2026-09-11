@@ -227,7 +227,7 @@ export async function testDeepSeekConnection(settings) {
 
 export async function testNvidiaConnection(settings) {
   const apiKey = settings?.nvidia?.apiKey;
-  const model = settings?.nvidia?.model || 'qwen/qwen3.5-122b-a10b';
+  const model = settings?.nvidia?.model || 'deepseek-ai/deepseek-v4-flash-0731';
 
   if (!apiKey?.trim()) {
     return failResult('Informe uma API key da NVIDIA para testar.');

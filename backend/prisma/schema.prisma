@@ -98,6 +98,7 @@ enum ArtifactType {
   backlog
   requirements
   test_plan
+  qa_validation_cases
   test_case
   architecture
   code

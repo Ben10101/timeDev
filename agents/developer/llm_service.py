@@ -107,16 +107,20 @@ def validate_structured_response(result: str, options_override: dict | None = No
     if not options.get("require_json_object"):
         return None
 
+    # Accept an object framed by prose or a code fence, but only when the
+    # *first* JSON value is complete. Searching for any later ``{`` used to
+    # accept a complete nested release/story from a truncated root contract;
+    # the PM would then report a misleading missing-section error.
     decoder = json.JSONDecoder()
-    for index, char in enumerate(text.lstrip("\ufeff")):
-        if char != "{":
-            continue
-        try:
-            candidate, _ = decoder.raw_decode(text.lstrip("\ufeff")[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(candidate, dict):
-            return None
+    first_json_index = next((index for index, char in enumerate(text.lstrip("\ufeff")) if char in "[{"), -1)
+    if first_json_index < 0:
+        return "Resposta sem objeto JSON completo."
+    try:
+        candidate, _ = decoder.raw_decode(text.lstrip("\ufeff")[first_json_index:])
+    except json.JSONDecodeError:
+        return "Resposta JSON incompleta ou invalida."
+    if isinstance(candidate, dict):
+        return None
     return "Resposta sem objeto JSON completo."
 
 
@@ -201,6 +205,61 @@ def http_post_json(url, payload, headers=None, timeout=120):
         except Exception:
             parsed = {"raw": body}
         return error.code, parsed, dict(error.headers.items()) if error.headers else {}
+
+
+def http_get_json(url, headers=None, timeout=15):
+    request = urllib.request.Request(url, headers=headers or {}, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+            return response.status, json.loads(body) if body else {}, dict(response.headers.items())
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(body) if body else {}
+        except Exception:
+            parsed = {"raw": body}
+        return error.code, parsed, dict(error.headers.items()) if error.headers else {}
+
+
+def is_retired_nvidia_model_error(error):
+    message = str(error or "").lower()
+    return "410" in message and ("end of life" in message or "no longer available" in message)
+
+
+def select_nvidia_runtime_fallback(model_ids, excluded_model):
+    """Prefer current hosted text models returned for this exact NVIDIA key."""
+    available = [str(item).strip() for item in model_ids if str(item).strip()]
+    excluded = str(excluded_model or "").strip().lower()
+    preferred = (
+        "deepseek-ai/deepseek-v4-flash-0731",
+        "deepseek-ai/deepseek-v4-flash",
+        "deepseek-ai/deepseek-v4-pro-0813",
+        "deepseek-ai/deepseek-v4-pro",
+    )
+    by_normalized_id = {item.lower(): item for item in available}
+    for candidate in preferred:
+        if candidate != excluded and candidate in by_normalized_id:
+            return by_normalized_id[candidate]
+    return None
+
+
+def discover_nvidia_runtime_fallback(api_key, excluded_model):
+    """Read NVIDIA's model catalog only after a model-retirement response."""
+    try:
+        status, data, _headers = http_get_json(
+            "https://integrate.api.nvidia.com/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        if status >= 400:
+            return None
+        entries = data.get("data") if isinstance(data, dict) else []
+        model_ids = [item.get("id") for item in entries if isinstance(item, dict) and item.get("id")]
+        return select_nvidia_runtime_fallback(model_ids, excluded_model)
+    except Exception:
+        # Discovery is recovery-only; an unavailable catalog must not replace
+        # the original provider error or leak credentials in diagnostics.
+        return None
 
 
 def get_retry_after_seconds(headers):
@@ -530,11 +589,15 @@ def generate_text_with_openai_compatible(provider, prompt, model, api_key, optio
         payload["top_p"] = (options_override or {}).get("top_p", 1)
     else:
         payload["max_tokens"] = max_tokens
-    # Nemotron Lightning enables reasoning by default. On the NVIDIA
-    # OpenAI-compatible endpoint that can consume the token budget in an
-    # internal trace and leave an empty or non-contract final answer. Product
-    # backlog blocks need the final text, not a hidden chain of thought.
-    if provider == "nvidia" and str(model or "").strip().lower() == "nvidia/nemotron-3.5-lightning-30b-a3b":
+    # Nemotron reasoning models can consume the completion budget in an
+    # internal trace and leave an empty or incomplete final JSON object.
+    # Backlog generation needs the contract itself, not a hidden chain of
+    # thought. Keep thinking disabled for the models configured as PM routes.
+    nvidia_models_with_optional_thinking = {
+        "nvidia/nemotron-3.5-lightning-30b-a3b",
+        "nvidia/nemotron-3-super-120b-a12b",
+    }
+    if provider == "nvidia" and str(model or "").strip().lower() in nvidia_models_with_optional_thinking:
         payload["chat_template_kwargs"] = {"enable_thinking": False}
     # NVIDIA accepts OpenAI-style chat requests, but its endpoint can return
     # prose instead of the requested JSON when response_format=json_object is
@@ -629,7 +692,20 @@ def generate_text_from_provider(provider, prompt, options_override=None, model_o
         api_key = os.getenv("NVIDIA_API_KEY")
         if not api_key:
             raise RuntimeError("NVIDIA_API_KEY nao configurada.")
-        return generate_text_with_openai_compatible("nvidia", prompt, model_override or os.getenv("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b"), api_key, options_override)
+        model = model_override or os.getenv("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-flash-0731")
+        try:
+            return generate_text_with_openai_compatible("nvidia", prompt, model, api_key, options_override)
+        except Exception as error:
+            if not is_retired_nvidia_model_error(error):
+                raise
+            discovered_model = discover_nvidia_runtime_fallback(api_key, model)
+            if not discovered_model:
+                raise
+            print(
+                f"[LLM Service] NVIDIA trocando modelo aposentado por catalogo: {model} -> {discovered_model}",
+                file=sys.stderr,
+            )
+            return generate_text_with_openai_compatible("nvidia", prompt, discovered_model, api_key, options_override)
 
     if provider == "groq":
         api_key = os.getenv("GROQ_API_KEY")

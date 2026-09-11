@@ -31,7 +31,7 @@ class RequirementsAnalystCreditSimulationTests(unittest.TestCase):
     def test_credit_contract_is_json_and_contains_only_classification_and_sources(self):
         contract = self.agent._build_refinement_contract(self.STORY, "Backlog de credito", self.context)
 
-        self.assertEqual("credit", contract["domain"])
+        self.assertEqual("contextual", contract["domain"])
         self.assertEqual("simulation", contract["intent"])
         self.assertEqual([], contract["inputs"])
         self.assertEqual([], contract["open_questions"])
@@ -94,6 +94,62 @@ class RequirementsAnalystCreditSimulationTests(unittest.TestCase):
         self.assertEqual("needs_split", expected["scope_assessment"]["status"])
         self.assertEqual(["simular", "iniciar"], expected["scope_assessment"]["actions"])
         self.assertTrue(any(item["category"] == "escopo" for item in guarded["open_questions"]))
+
+    def test_story_benefit_does_not_become_an_independent_journey(self):
+        story = (
+            "Como equipe administrativa, eu quero cadastrar uma nova sala no sistema, "
+            "para que o espaco fique disponivel para consulta e reserva pelos professores."
+        )
+        semantic = {
+            "actions": [
+                {"text": "cadastrar sala", "role": "primary"},
+                {"text": "consultar disponibilidade", "role": "primary"},
+                {"text": "reservar sala", "role": "primary"},
+            ],
+            "goals": [],
+        }
+
+        scope = self.agent._assess_scope(story, semantic)
+
+        self.assertEqual("atomic", scope["status"])
+        self.assertEqual("explicit_action", scope["source"])
+        self.assertEqual(["cadastrar"], scope["actions"])
+
+    def test_public_document_groups_negative_bdd_scenarios_as_exceptions(self):
+        contract = {
+            "refined_story": {"text": "Como administradora, quero cadastrar uma sala."},
+            "main_flow": [], "alternative_flows": [], "exception_flows": [],
+            "interface_feedback": [], "confirmed_rules": [], "permissions_audit": [],
+            "open_questions": [], "assumptions": [],
+            "acceptance_criteria": [
+                {"given": "a administradora esta na tela", "when": "salva uma sala valida", "then": "a sala e cadastrada"},
+                {"given": "a administradora nao preenche a capacidade", "when": "tenta salvar", "then": "o sistema deve impedir o cadastro"},
+            ],
+        }
+
+        document = self.agent._render_public_requirements_document(contract)
+
+        self.assertLess(document.index("### Sucesso"), document.index("### Cenario 1"))
+        self.assertLess(document.index("### Excecoes"), document.index("### Cenario 2"))
+
+    def test_ready_upstream_review_cannot_override_deterministic_scope_evidence(self):
+        story = "Como administrador, quero acessar painel, cadastrar salas e gerenciar reservas."
+        contract = {
+            "scope_assessment": {
+                "status": "needs_split",
+                "source": "deterministic",
+                "actions": ["acessar o painel administrativo", "gerenciar salas", "gerenciar reservas"],
+            },
+            "upstream_review": {"tags": [], "assessment": {"decision": "READY"}},
+        }
+
+        with patch.object(self.agent, "_build_refinement_contract", return_value=contract):
+            with self.assertRaisesRegex(RuntimeError, "acoes independentes") as raised:
+                self.agent.process(story, "Backlog", project_context={})
+
+        diagnostic = raised.exception.rejected_draft["scope_review"]
+        self.assertEqual("needs_split", diagnostic["decision"])
+        self.assertEqual(contract["scope_assessment"]["actions"], diagnostic["independent_journeys"])
 
     def test_catalog_navigation_and_details_are_one_discovery_journey(self):
         story = "Como cliente, quero navegar pelo catalogo e visualizar os detalhes de cada item, para escolher o produto correto."
@@ -167,7 +223,7 @@ class RequirementsAnalystCreditSimulationTests(unittest.TestCase):
     def test_primary_contract_rejects_confirmed_content_without_a_source(self):
         expected = self.agent._build_refinement_contract(self.STORY, "Backlog de credito", self.context)
         contract = {
-            "domain": "credit", "intent": "simulation",
+            "domain": "contextual", "intent": "simulation",
             "refined_story": {"text": "Simular credito.", "source_ids": ["user_story"]},
             "actors": [],
             "inputs": [{"name": "valor solicitado", "source_ids": []}],
@@ -231,26 +287,26 @@ class RequirementsAnalystCreditSimulationTests(unittest.TestCase):
         self.assertIn("Avaliar viabilidade tecnica", document)
         self.assertIn("**PENDENTE DE VALIDACAO**", document)
 
-    def test_rejects_unsupported_installment_calculation(self):
+    def test_universal_semantic_validation_does_not_select_rules_by_domain(self):
         contract = self.agent._build_refinement_contract(self.STORY, "Backlog de credito", self.context)
         unsafe = "## Regras de Negocio\nA parcela e calculada pelo valor dividido pelo numero de parcelas."
 
-        semantic_ok, reason = self.agent._validate_credit_simulation_semantics(unsafe, contract)
-        self.assertFalse(semantic_ok)
-        self.assertIn("calculo", reason.lower())
+        semantic_ok, reason = self.agent._validate_evidence_semantics(unsafe, contract)
+        self.assertTrue(semantic_ok, reason)
 
-    def test_rejects_generic_credit_calculation_without_confirmed_policy(self):
+    def test_universal_semantic_validation_requires_visible_open_questions(self):
         contract = self.agent._build_refinement_contract(self.STORY, "Backlog de credito", self.context)
-        unsafe = "## Requisitos Funcionais\n- Processamento: aplicar a condicao de credito e calcular a parcela estimada.\n## Regras de Negocio\n- A simulacao nao representa aprovacao."
+        contract["open_questions"] = [{"id": "OQ-01", "text": "Definir a politica aplicavel."}]
+        unsafe = "## Requisitos Funcionais\n- Processamento: apresentar a estimativa."
 
-        semantic_ok, reason = self.agent._validate_credit_simulation_semantics(unsafe, contract)
+        semantic_ok, reason = self.agent._validate_evidence_semantics(unsafe, contract)
         self.assertFalse(semantic_ok)
-        self.assertIn("politica", reason.lower())
+        self.assertIn("Premissas", reason)
 
     def test_credit_simulation_guardrail_renders_non_approval_notice_when_ai_omits_it(self):
         expected = self.agent._build_refinement_contract(self.STORY, "Backlog de credito", self.context)
         generated = {
-            "domain": "credit", "intent": "simulation",
+            "domain": "contextual", "intent": "simulation",
             "refined_story": {"text": self.STORY, "source_ids": ["user_story"]},
             "actors": [{"name": "cliente", "source_ids": ["user_story"]}],
             "inputs": [{"name": "valor solicitado", "source_ids": ["user_story"]}],
@@ -266,9 +322,9 @@ class RequirementsAnalystCreditSimulationTests(unittest.TestCase):
         }
 
         markdown = self.agent._render_contract_markdown(self.agent._apply_contract_guardrails(generated, expected))
-        semantic_ok, reason = self.agent._validate_credit_simulation_semantics(markdown, expected)
+        semantic_ok, reason = self.agent._validate_evidence_semantics(markdown, expected)
 
-        self.assertIn("nao representa aprovacao", markdown)
+        self.assertNotIn("nao representa aprovacao", markdown)
         self.assertTrue(semantic_ok, reason)
 
     def test_parser_accepts_json_envelope_wrapped_in_prose_and_code_fence(self):
@@ -306,7 +362,7 @@ Simular credito.
         self.assertEqual("OQ-01", contract["open_questions"][0]["id"])
 
     def test_markdown_contract_reads_visible_review_tag(self):
-        expected = self.agent._build_refinement_contract(self.STORY, "", self.context)
+        expected = {"evidence_sources": []}
         contract = self.agent._contract_from_markdown(
             "## Premissas e Pontos a Validar\n- [REVISAR][RV-07][regra-de-negocio][alto] Definir a politica financeira.",
             expected,
@@ -334,7 +390,7 @@ Simular credito.
         })
 
         primary_contract = {
-            "domain": "credit", "intent": "simulation",
+            "domain": "contextual", "intent": "simulation",
             "refined_story": {"text": "Como cliente, quero simular credito para conhecer uma estimativa que nao representa aprovacao.", "source_ids": ["user_story"]},
             "actors": [{"name": "cliente", "source_ids": ["user_story"]}],
             "inputs": [
@@ -360,7 +416,7 @@ Simular credito.
 
         self.assertIn("## Premissas e Pontos a Validar", result)
         self.assertIn("FIM_DO_REFINAMENTO", result)
-        self.assertEqual("credit", self.agent.last_refinement_contract["domain"])
+        self.assertEqual("contextual", self.agent.last_refinement_contract["domain"])
         self.assertTrue(self.agent.last_refinement_contract["open_questions"])
 
     def test_evidence_reviewer_keeps_only_findings_with_literal_requirement_evidence(self):
@@ -368,8 +424,9 @@ Simular credito.
         response = json.dumps({"decision": "REVISE", "findings": [
             {"evidence": "A parcela sera sempre fixa.", "reason": "Sem fonte", "severity": "high", "question": "Qual politica?"},
             {"evidence": "texto inexistente", "reason": "Ignorar", "severity": "high", "question": ""},
+            {"evidence": "A parcela sera sempre fixa.", "reason": "O texto esta redundante.", "severity": "high", "question": ""},
         ]})
-        expected = self.agent._build_refinement_contract(self.STORY, "", self.context)
+        expected = {"evidence_sources": []}
         with patch("agents.requirements_analyst.agent.generate_text_from_llm", return_value=response):
             report = self.agent._review_with_evidence(markdown, expected)
 
@@ -392,6 +449,7 @@ Simular credito.
             report = self.agent._review_with_evidence("## Regras de Negocio\n- Exemplo", expected)
 
         self.assertEqual("unavailable", report["status"])
+        self.assertEqual("REVISE", report["decision"])
 
     def test_central_field_detail_can_be_an_open_question_without_rejection(self):
         document = self.agent._build_document({
@@ -504,7 +562,7 @@ Simular credito.
             "Linguagem do dominio: visitante, acesso",
             non_financial_context,
         )
-        self.assertEqual("generic", contract["domain"])
+        self.assertEqual("contextual", contract["domain"])
         self.assertEqual("register", contract["intent"])
         self.assertEqual([], contract["open_questions"])
 
@@ -515,7 +573,7 @@ Simular credito.
             self.context,
         )
 
-        self.assertEqual("credit", contract["domain"])
+        self.assertEqual("contextual", contract["domain"])
         self.assertEqual("record", contract["intent"])
 
 

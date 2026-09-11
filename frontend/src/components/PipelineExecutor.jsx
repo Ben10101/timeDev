@@ -92,7 +92,7 @@ export default function PipelineExecutor({ idea, answers }) {
         );
 
         const qaPending = qaEligibleTasks.filter(
-          (task) => !task.artifacts?.some((artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent)
+          (task) => !task.artifacts?.some((artifact) => ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType) && artifact.isCurrent)
         ).length;
 
         setStagePendingCounts({ requirements: requirementsPending, qa: qaPending });
@@ -161,7 +161,9 @@ export default function PipelineExecutor({ idea, answers }) {
 
     const completedTasks = relevantTasks.filter((task) =>
       task.artifacts?.some((artifact) =>
-        artifact.artifactType === (stageName === 'requirements' ?'requirements' : 'test_plan') && artifact.isCurrent && artifact.isApproved
+        (stageName === 'requirements'
+          ? artifact.artifactType === 'requirements'
+          : ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType)) && artifact.isCurrent && artifact.isApproved
       )
     );
 
@@ -182,12 +184,14 @@ export default function PipelineExecutor({ idea, answers }) {
       );
     }
 
-    const header = stageName === 'qa' ?'## Plano de testes para:' : '## Requisitos para:';
-    const artifactType = stageName === 'qa' ?'test_plan' : 'requirements';
+    const header = stageName === 'qa' ?'## Casos de validação para:' : '## Requisitos para:';
+    const artifactType = stageName === 'qa' ?'qa_validation_cases' : 'requirements';
 
     const combinedOutput = tasksToAdvance
       .map((task) => {
-        const artifact = task.artifacts?.find((item) => item.artifactType === artifactType && item.isCurrent);
+        const artifact = task.artifacts?.find((item) => (stageName === 'qa'
+          ? ['qa_validation_cases', 'test_plan'].includes(item.artifactType)
+          : item.artifactType === artifactType) && item.isCurrent);
         return artifact ?`${header} "${task.title}"\n\n${artifact.content}` : null;
       })
       .filter(Boolean)

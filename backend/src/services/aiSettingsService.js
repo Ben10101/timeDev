@@ -7,6 +7,7 @@ const ENCRYPTED_VALUE_PREFIX = 'enc::';
 const RETIRED_OPENROUTER_FALLBACK_MODELS = new Set(['openai/gpt-oss-120b:free']);
 const RETIRED_GEMINI_MODELS = new Set(['gemini-2.0-flash', 'models/gemini-2.0-flash']);
 const RETIRED_GROQ_MODELS = new Set(['llama-3.3-70b-versatile', 'qwen/qwen3.6-27b']);
+const RETIRED_NVIDIA_MODELS = new Set(['qwen/qwen3.5-122b-a10b', 'meta/llama-3.3-70b-instruct']);
 
 const DEFAULT_AI_SETTINGS = {
   providerPreference: 'auto',
@@ -39,7 +40,7 @@ const DEFAULT_AI_SETTINGS = {
   nvidia: {
     enabled: false,
     apiKey: '',
-    model: 'qwen/qwen3.5-122b-a10b',
+    model: 'deepseek-ai/deepseek-v4-flash-0731',
   },
   anthropic: {
     enabled: false,
@@ -108,6 +109,9 @@ function normalizeProviderSettings(current = {}, fallback = {}) {
   }
   if (RETIRED_GROQ_MODELS.has(String(normalized.model || '').trim().toLowerCase())) {
     normalized.model = DEFAULT_AI_SETTINGS.groq.model;
+  }
+  if (RETIRED_NVIDIA_MODELS.has(String(normalized.model || '').trim().toLowerCase())) {
+    normalized.model = DEFAULT_AI_SETTINGS.nvidia.model;
   }
   if (['openai/gpt-oss-120b:cerebras', 'qwen/qwen2.5-7b-instruct:hf-inference'].includes(String(normalized.model || '').trim().toLowerCase())) {
     normalized.model = DEFAULT_AI_SETTINGS.huggingface.model;

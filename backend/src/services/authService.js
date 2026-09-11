@@ -5,7 +5,14 @@ import { hashPassword, hashToken, signJwt, verifyJwt, verifyPassword } from '../
 import { parseCookies } from '../utils/cookies.js';
 
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 15;
-const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7;
+const DEFAULT_REFRESH_TOKEN_TTL_DAYS = 30;
+const MIN_REFRESH_TOKEN_TTL_DAYS = 1;
+const MAX_REFRESH_TOKEN_TTL_DAYS = 90;
+const configuredRefreshTokenTtlDays = Number(process.env.AUTH_REFRESH_TOKEN_TTL_DAYS);
+const REFRESH_TOKEN_TTL_DAYS = Number.isFinite(configuredRefreshTokenTtlDays)
+  ? Math.min(MAX_REFRESH_TOKEN_TTL_DAYS, Math.max(MIN_REFRESH_TOKEN_TTL_DAYS, Math.floor(configuredRefreshTokenTtlDays)))
+  : DEFAULT_REFRESH_TOKEN_TTL_DAYS;
+const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * REFRESH_TOKEN_TTL_DAYS;
 const REFRESH_COOKIE_NAME = 'factory_refresh_token';
 const CSRF_COOKIE_NAME = 'factory_csrf_token';
 
@@ -275,6 +282,10 @@ export function getRefreshCookieName() {
 
 export function getRefreshCookieOptions() {
   return buildRefreshCookieOptions();
+}
+
+export function getRefreshTokenTtlDays() {
+  return REFRESH_TOKEN_TTL_DAYS;
 }
 
 export function getCsrfCookieName() {

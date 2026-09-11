@@ -24,6 +24,14 @@ function section(content, title) {
   return String(content || '').slice(start, end).trim();
 }
 
+function countBddScenarios(content = '') {
+  const blocks = [...String(content || '').matchAll(/^###\s+Cen[aá]rio\b[^\n]*\r?\n([\s\S]*?)(?=^###\s+Cen[aá]rio\b|(?![\s\S]))/gim)];
+  return blocks.filter((match) => {
+    const normalized = normalize(match[0]).replace(/[*_`#]/g, ' ');
+    return /\bdado\b/.test(normalized) && /\bquando\b/.test(normalized) && /\bentao\b/.test(normalized);
+  }).length;
+}
+
 export function evaluateArtifactQuality({ artifactType, content, relatedRequirement = '' }) {
   const text = String(content || '');
   const findings = [];
@@ -45,11 +53,40 @@ export function evaluateArtifactQuality({ artifactType, content, relatedRequirem
     for (const required of requiredSections) {
       if (!section(text, required)) findings.push({ code: 'missing_section', severity: 'high', message: `Seção obrigatória ausente: ${required}.` });
     }
+    const acceptanceSection = compactFormat ? section(text, 'Cenarios de aceite') : section(text, 'Criterios de Aceite');
+    const bddScenarioCount = countBddScenarios(acceptanceSection);
+    // Os subtítulos editoriais ("Sucesso" e "Exceções") não definem a
+    // validade do aceite. Um cenário BDD pode estar em qualquer subseção;
+    // a contagem estrutural abaixo garante a cobertura. Só marcadores reais
+    // de rascunho devem bloquear a publicação.
+    if (/\ba validar durante a revis[aã]o\b/i.test(acceptanceSection)) {
+      findings.push({ code: 'acceptance_placeholder', severity: 'critical', message: 'Cenários de aceite contêm texto provisório e precisam de critérios verificáveis.' });
+    }
+    if (!bddScenarioCount) {
+      findings.push({ code: 'missing_bdd_acceptance_criteria', severity: 'critical', message: 'Requisito sem cenário BDD verificável nos critérios de aceite.' });
+    }
     if (hasAny(text, ['status inicial pendente', 'status previsto no requisito']) && !hasAny(requirementText, ['pendente', 'status'])) {
       findings.push({ code: 'unsupported_status', severity: 'critical', message: 'O requisito afirma um status não definido na fonte.' });
     }
     if (hasAny(text, ['nao se aplica']) && hasAny(text, ['somente gestores autorizados', 'campos obrigatorios', 'comprovante'])) {
       findings.push({ code: 'contradictory_not_applicable', severity: 'high', message: 'O artefato usa “Não se aplica” em uma área relacionada a uma regra explícita.' });
+    }
+  }
+  if (artifactType === 'qa_validation_cases') {
+    // The visible QA document is localized. Run traceability checks against
+    // the normalized text so "Critério" and "não executado" have the same
+    // meaning as their ASCII contract forms.
+    const normalizedQaText = normalize(text);
+    const caseCount = (text.match(/^###\s*CT[-\s]*\d+\b/gim) || []).length;
+    const criterionRefs = (normalizedQaText.match(/criterio\s+relacionado\s*:\s*ca[-\s]*\d+/g) || []).length;
+    if (!normalizedQaText.includes('cobertura dos criterios de aceite') || !normalizedQaText.includes('casos de validacao')) {
+      findings.push({ code: 'missing_validation_structure', severity: 'critical', message: 'Casos de validação sem cobertura explícita dos critérios de aceite.' });
+    }
+    if (!caseCount || caseCount !== criterionRefs) {
+      findings.push({ code: 'invalid_case_traceability', severity: 'critical', message: 'Todo caso de validação deve possuir um critério de aceite relacionado.' });
+    }
+    if (!normalizedQaText.includes('status: nao executado')) {
+      findings.push({ code: 'premature_execution_claim', severity: 'critical', message: 'O artefato de preparação não pode afirmar execução de testes.' });
     }
   }
   if (artifactType === 'test_plan') {

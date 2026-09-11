@@ -109,6 +109,18 @@ def _is_provider_unavailable_error(error):
     ))
 
 
+def _is_recoverable_review_generation_error(error):
+    """Identify a provider response failure that has a safe local fallback."""
+    if _is_provider_unavailable_error(error):
+        return True
+    message = str(error or '').casefold()
+    return any(marker in message for marker in (
+        'a resposta da llm nao contem proposta, perguntas ou evidencias de revisao',
+        'agente de revisao retornou json invalido',
+        'a resposta precisa conter um objeto json',
+    ))
+
+
 def _validate_review_with_answer_application(raw, answers):
     """Require the LLM to acknowledge every confirmed decision it receives."""
     is_valid, reason = _validate_review_json(raw)
@@ -296,6 +308,70 @@ def _answered_decision_ids(answers):
     }
 
 
+def _answer_is_relevant_to_story(answer, story):
+    """Do not force a decision from another capability into this story.
+
+    Review answers are persisted with the editable story, but older UI flows
+    can carry an answer forward after the target card changes. Reconciliation
+    must only require an application when the question is about this story.
+    """
+    if not isinstance(answer, dict) or not isinstance(story, dict):
+        return False
+    story_id = str(story.get('id') or '').strip().casefold()
+    scoped_id = str(answer.get('story_id') or answer.get('storyId') or '').strip().casefold()
+    if scoped_id:
+        return bool(story_id and scoped_id == story_id)
+
+    question = str(answer.get('question') or '').casefold()
+    story_text = ' '.join(str(story.get(field) or '') for field in ('title', 'goal', 'description', 'actor', 'benefit')).casefold()
+    context = story.get('refinement_context') or story.get('refinementContext') or {}
+    story_text = f"{story_text} {json.dumps(context, ensure_ascii=False)}".casefold()
+
+    # This question is specifically about the availability-search journey. It
+    # must never be injected into registration, audit or other room stories.
+    if str(answer.get('id') or '').strip().casefold() == 'rq-acceptance-coverage-consultation':
+        return bool(
+            re.search(r'\bconsult', story_text)
+            and re.search(r'\b(disponib|capacidade|horario|horário)\w*', story_text)
+        )
+
+    # Answers are stored per story. Unless a response explicitly carries a
+    # different story ID or is the known availability-search question above,
+    # retain it: a follow-up such as "no results after filters" can be valid
+    # even when the original title does not yet mention the filters.
+    return True
+
+
+def _relevant_review_answers(answers, story):
+    return [
+        answer for answer in answers if isinstance(answer, dict)
+        and (not _has_text(answer.get('answer')) or _answer_is_relevant_to_story(answer, story))
+    ]
+
+
+def _question_references_known_story(question, other_stories):
+    """Discard review notes that name a backlog story with a conflicting label."""
+    text = str(question.get('question') or question.get('why') or '')
+    references = re.findall(r'\b(?:story|us)[_\- ]?(\d+)\b(?:\s*\(([^)]+)\))?', text, re.IGNORECASE)
+    if not references:
+        return True
+    stories_by_number = {
+        re.search(r'(\d+)$', str(item.get('id') or '')) .group(1): item
+        for item in other_stories if isinstance(item, dict)
+        and re.search(r'(\d+)$', str(item.get('id') or ''))
+    }
+    for number, claimed_label in references:
+        referenced = stories_by_number.get(number)
+        if not referenced:
+            return False
+        if claimed_label:
+            label_terms = set(re.findall(r'[\wÀ-ÿ]{4,}', claimed_label.casefold()))
+            story_terms = set(re.findall(r'[\wÀ-ÿ]{4,}', f"{referenced.get('title') or ''} {referenced.get('goal') or ''}".casefold()))
+            if label_terms and not label_terms.intersection(story_terms):
+                return False
+    return True
+
+
 _ANSWERED_ACCEPTANCE_SCENARIO_PATTERN = re.compile(
     r'(?:^|\n)\s*(?:[-*]\s*)?(?:(?:sucesso|exce(?:cao|ção)(?:\s*[—-][^:\n]+)?):\s*)?'
     r'dado\s+que\s+(.+?),\s*quando\s+(.+?),\s*ent(?:ao|ão)\s+(.+?)'
@@ -435,7 +511,7 @@ DECISOES CONFIRMADAS:
             max_retries=1,
         )
     except Exception as error:
-        if not _is_provider_unavailable_error(error):
+        if not _is_recoverable_review_generation_error(error):
             raise
         # The review itself can still be completed deterministically. Keep the
         # editable proposal intact instead of performing a second long model
@@ -695,6 +771,8 @@ def _dimension_contextual_questions(story, proposal, assessment):
             'question': f'Na agenda, salas em manutencao ou com reserva sobreposta devem ser ocultadas ou exibidas como indisponiveis para {actor}?',
             'why': 'A story cita essas situacoes na agenda, mas ainda nao define como elas devem ser exibidas.',
             'blocking': True,
+            'decision_type': 'observable_outcome',
+            'behavioral_impact': 'Define o resultado verificável do cenário de aceite.',
         })
 
     if 'acceptance_testability' in dimensions and len(proposal.get('acceptance_criteria', [])) < 2 and re.search(r'\bconsult', f'{title} {goal}', re.IGNORECASE):
@@ -708,6 +786,39 @@ def _dimension_contextual_questions(story, proposal, assessment):
     return questions
 
 
+QUESTION_DECISION_TYPES = {
+    'business_rule', 'observable_outcome', 'required_data', 'authorization', 'external_commitment',
+}
+
+
+def _is_implementation_mechanism_question(question):
+    """Detect interaction-mechanism choices without naming any business domain."""
+    text = str(question.get('question') or '').casefold()
+    impact = str(question.get('behavioral_impact') or '').casefold()
+    mechanism = re.search(
+        r'\b(lista|campo|texto livre|dropdown|select|checkbox|radio|bot[aã]o|tela|layout|interface|api|endpoint|banco|tabela|persist|armazen|componente|formato)\b',
+        text,
+    )
+    consequence = re.search(
+        r'\b(quando|caso|tent|salv|imped|erro|mensagem|valid|permit|recus|retorn|resultado|comportamento|consequ)\b',
+        f'{text} {impact}',
+    )
+    return bool(mechanism and not consequence)
+
+
+def _is_valid_user_decision_question(question):
+    """Keep technical choices out of the user's blocking-decision queue."""
+    if not isinstance(question, dict) or not question.get('blocking'):
+        return True
+    decision_type = str(question.get('decision_type') or '').strip().casefold()
+    impact = str(question.get('behavioral_impact') or '').strip()
+    return (
+        decision_type in QUESTION_DECISION_TYPES
+        and len(impact) >= 12
+        and not _is_implementation_mechanism_question(question)
+    )
+
+
 def _ensure_questions_for_assessment(questions, assessment, criteria, story, proposal, review):
     """Keep concrete approval blockers and score-recovery decisions when omitted."""
     normalized = [
@@ -715,6 +826,7 @@ def _ensure_questions_for_assessment(questions, assessment, criteria, story, pro
         if (
             isinstance(item, dict)
             and _has_text(item.get('question'))
+            and _is_valid_user_decision_question(item)
             and not _is_generic_acceptance_question(item.get('question'))
             and not (
                 str(item.get('id') or '').strip().casefold() == 'rq-rules-display-unavailable-rooms'
@@ -725,7 +837,7 @@ def _ensure_questions_for_assessment(questions, assessment, criteria, story, pro
     existing = {str(item.get('question')).strip().lower() for item in normalized}
     def add_question(item):
         question = str(item.get('question') or '').strip()
-        if not question or question.lower() in existing or _question_has_answer(item, review):
+        if not question or not _is_valid_user_decision_question(item) or question.lower() in existing or _question_has_answer(item, review):
             return
         normalized.append(item)
         existing.add(question.lower())
@@ -742,6 +854,8 @@ def _ensure_questions_for_assessment(questions, assessment, criteria, story, pro
                 'question': question,
                 'why': gate.get('message', 'Esta decisao e necessaria para liberar a aprovacao.'),
                 'blocking': True,
+                'decision_type': 'observable_outcome',
+                'behavioral_impact': 'Define uma condição necessária para comprovar a entrega da story.',
             })
 
     for item in _dimension_contextual_questions(story, proposal, assessment):
@@ -760,11 +874,23 @@ class StoryReviewer:
         story = payload.get('story') or {}
         if not story.get('id') or not story.get('title'):
             raise ValueError('Revisao de story exige id e title.')
-        review_answers = payload.get('review_answers') if isinstance(payload.get('review_answers'), list) else []
+        submitted_answers = payload.get('review_answers') if isinstance(payload.get('review_answers'), list) else []
+        review_answers = _relevant_review_answers(submitted_answers, story)
+        ignored_answer_ids = sorted(
+            str(answer.get('id') or '').strip()
+            for answer in submitted_answers
+            if isinstance(answer, dict) and _has_text(answer.get('answer')) and answer not in review_answers
+        )
+        if ignored_answer_ids:
+            print(json.dumps({
+                'event': 'story_reviewer_irrelevant_answers_ignored',
+                'story_id': str(story.get('id') or ''),
+                'answer_ids': ignored_answer_ids,
+            }, ensure_ascii=False), file=sys.stderr)
         prompt = f'''
 Voce e o Story Review Agent, parte da governanca do PM. Analise UMA historia usando o briefing,
 DNA do produto, contrato do backlog e demais historias como contexto. Seu objetivo e fechar lacunas
-observaveis sem inventar regra de negocio. Tudo que nao tiver evidencia deve virar pergunta objetiva.
+observaveis sem inventar regra de negocio. Nao transforme toda ausencia de detalhe em pergunta.
 Nao altere lane, release, escopo ou regras sem fonte. Nao publique nada automaticamente.
 
 Retorne SOMENTE JSON valido com:
@@ -779,7 +905,7 @@ Retorne SOMENTE JSON valido com:
     "quality_risks": {{"status":"pass|partial|fail", "evidence":[]}},
     "dependencies": {{"status":"pass|partial|fail", "evidence":[]}}
   }},
-  "questions": [{{"id":"Q-01", "question":"...", "why":"...", "blocking":true}}],
+  "questions": [{{"id":"Q-01", "question":"...", "why":"...", "blocking":true, "decision_type":"business_rule|observable_outcome|required_data|authorization|external_commitment", "behavioral_impact":"qual comportamento verificável muda conforme a resposta"}}],
   "decision_application": [{{"answer_id":"Q-01", "applied_change":"mudanca concreta aplicada na proposta"}}],
   "proposed_story": {{"title":"...", "description":"...", "actor":"...", "benefit":"...", "acceptance_criteria": [{{"given":"...", "when":"...", "then":"...", "status":"proposed", "source_ids":[]}}]}},
   "source_ids": [],
@@ -799,6 +925,11 @@ resultado observavel. Perguntas devem ser especificas e respondiveis,
 nao genericas. Sempre retorne proposed_story completo, os seis objetos de quality_evidence e assessment;
 Se nao houver melhoria, copie a story alvo integralmente em proposed_story e retorne questions vazio.
 Nao omita proposed_story: ele e a proposta editavel que sera exibida ao usuario.
+Uma pergunta so pode ser bloqueante se respostas alternativas alterarem uma regra de negocio, dado
+obrigatorio, permissao, compromisso externo ou resultado observavel de um criterio de aceite. Declare
+isso em decision_type e behavioral_impact. Se a duvida for apenas sobre controle de tela, formato de
+entrada, persistencia, API, layout ou outra escolha de implementacao, nao pergunte: use uma premissa
+tecnica razoavel na proposta e retorne essa duvida fora de questions. Esta regra vale para qualquer dominio.
 REGRAS DE GERACAO DE TASKS PARA proposed_story:
 - title deve ser uma unica user story no formato exato "Como ..., eu quero ..., para ...".
 - description deve ter uma ou duas frases objetivas e acrescentar contexto, regra, excecao ou expectativa;
@@ -843,15 +974,16 @@ acceptance_criteria nao contradizem essas respostas.
             )
             review = _normalize_review_payload(parse_first_json_object(result))
         except Exception as error:
-            if not _is_provider_unavailable_error(error):
+            if not _is_recoverable_review_generation_error(error):
                 raise
             # Reviewing an already persisted story has a safe deterministic
-            # path. Keep the action usable during a temporary provider outage;
-            # do not fabricate model findings or discard saved user answers.
+            # path. Keep the action usable when a provider is unavailable or
+            # emits an incomplete structured response; do not fabricate model
+            # findings or discard saved user answers.
             print(json.dumps({
                 'event': 'story_reviewer_provider_fallback',
                 'story_id': str(story.get('id') or ''),
-                'reason': 'all_configured_providers_unavailable',
+                'reason': 'provider_unavailable' if _is_provider_unavailable_error(error) else 'invalid_structured_response',
             }, ensure_ascii=False), file=sys.stderr)
             review = {
                 'story_id': str(story.get('id') or ''),
@@ -905,7 +1037,12 @@ acceptance_criteria nao contradizem essas respostas.
             review['review_answers'],
         )
         review['questions'] = review.get('questions') if isinstance(review.get('questions'), list) else []
-        review['questions'] = [question for question in review['questions'] if not _question_has_answer(question, review)]
+        review['questions'] = [
+            question for question in review['questions']
+            if _answer_is_relevant_to_story({**question, 'answer': 'pending'}, story)
+            and not _question_has_answer(question, review)
+            and _question_references_known_story(question, payload.get('other_stories') or [])
+        ]
         initial_assessment = _readiness_assessment(story, review)
         review['questions'] = _ensure_questions_for_assessment(
             review['questions'],

@@ -27,7 +27,7 @@ class RequirementsAnalyst:
     # intentionally domain-neutral; regulated domains add their own semantic
     # guardrails elsewhere.
     SCOPE_ACTIONS = (
-        "simular", "iniciar", "enviar", "preencher", "informar", "cadastrar", "criar",
+        "acessar", "simular", "iniciar", "enviar", "preencher", "informar", "cadastrar", "criar",
         "registrar", "consultar", "acompanhar", "validar", "aprovar", "reprovar",
         "solicitar", "corrigir", "revisar", "decidir", "cancelar", "editar",
         "administrar", "gerenciar", "atualizar", "renovar", "alugar",
@@ -128,16 +128,9 @@ class RequirementsAnalyst:
         return "generic"
 
     def _classify_domain(self, idea, backlog, project_context=None):
-        source = self._normalize_text(f"{idea} {backlog} {project_context or ''}")
-        # Prefer the concrete product vocabulary of the current story over
-        # unrelated words that may appear in neighbouring backlog stories or
-        # generic project examples. This prevents video-rental stories from
-        # inheriting the credit domain guardrails.
-        if re.search(r"\b(locac(?:ao|oes)|video|catalogo|streaming|conteudo alugado)\b", source):
-            return "video_rental"
-        if re.search(r"\b(credito|emprestimo|financiamento|score|bureau)\b", source):
-            return "credit"
-        return "generic"
+        # Domain is descriptive metadata, not a switch for a special rule set.
+        # Every project is governed by the evidence in its own context.
+        return "contextual"
 
     def _classify_intent(self, idea):
         source = self._normalize_text(idea)
@@ -167,18 +160,32 @@ class RequirementsAnalyst:
                 "status": "atomic",
                 "actions": ["navegar e visualizar detalhes"],
                 "action_phrase": "navegar para visualizar detalhes",
+                "source": "journey_exception",
+            }
+        # The benefit clause ("para ...") may mention other capabilities that
+        # this story enables. It is not evidence that the actor requested those
+        # capabilities in the same delivery. Scope starts with the action in
+        # the "eu quero" clause; a semantic classifier cannot promote a
+        # downstream benefit into an independent journey.
+        action_match = re.search(r"\b(?:eu\s+)?quero\s+([^,.\n]+)", normalized)
+        action_phrase = action_match.group(1) if action_match else normalized
+        explicit_actions = [
+            action for action in self.SCOPE_ACTIONS
+            if re.search(rf"\b{re.escape(action)}\b", action_phrase)
+        ]
+        if len(explicit_actions) <= 1:
+            return {
+                "status": "atomic",
+                "actions": explicit_actions,
+                "action_phrase": action_phrase,
+                "source": "explicit_action",
             }
         semantic_actions = [str(item.get("text") or "").strip() for item in (semantic_context or {}).get("actions", []) if isinstance(item, dict) and str(item.get("text") or "").strip() and str(item.get("role") or "primary").strip().lower() == "primary"]
         semantic_goals = [str(item.get("text") or "").strip() for item in (semantic_context or {}).get("goals", []) if isinstance(item, dict) and str(item.get("text") or "").strip() and str(item.get("role") or "primary").strip().lower() == "primary"]
         if semantic_actions or semantic_goals:
             actions = semantic_goals or semantic_actions
-            return {"status": "needs_split" if len(actions) > 1 else "atomic", "actions": actions, "action_phrase": " | ".join(actions)}
-        action_match = re.search(r"\b(?:eu\s+)?quero\s+([^,.\n]+)", normalized)
-        action_phrase = action_match.group(1) if action_match else normalized
-        actions = []
-        for action in self.SCOPE_ACTIONS:
-            if re.search(rf"\b{re.escape(action)}\b", action_phrase) and action not in actions:
-                actions.append(action)
+            return {"status": "needs_split" if len(actions) > 1 else "atomic", "actions": actions, "action_phrase": " | ".join(actions), "source": "semantic"}
+        actions = explicit_actions.copy()
         # Administration stories commonly hide several independent journeys
         # behind one verb. Treat each explicitly named catalog concern as a
         # separate action so the PM/RA pipeline asks for a split decision.
@@ -192,6 +199,27 @@ class RequirementsAnalyst:
             "status": "needs_split" if len(actions) > 1 else "atomic",
             "actions": actions,
             "action_phrase": action_phrase,
+            "source": "deterministic",
+        }
+
+    def _scope_split_diagnostic(self, idea, scope):
+        actions = [str(action).strip() for action in scope.get("actions") or [] if str(action).strip()]
+        return {
+            "scope_review": {
+                "decision": "needs_split",
+                "reason": "A história reúne jornadas independentes que devem ser refinadas e entregues separadamente.",
+                "independent_journeys": actions,
+                "suggested_stories": [
+                    f"Como responsável autorizado, quero {action}, para concluir esta jornada sem acoplar outras capacidades."
+                    for action in actions
+                ],
+                "questions": [
+                    "Quais jornadas devem permanecer no MVP e em qual ordem devem ser entregues?",
+                    "Há regras, permissões ou efeitos entre essas jornadas que precisam ser definidos antes da implementação?",
+                ],
+                "story": str(idea or "").strip(),
+                "assessment_source": scope.get("source") or "unknown",
+            }
         }
 
     def _feature_profile(self, idea, project_context=None, semantic_context=None):
@@ -293,6 +321,7 @@ class RequirementsAnalyst:
         }
         current_story = ((project_context or {}).get("storyContext") or {}).get("currentStory") if isinstance(project_context, dict) else {}
         if isinstance(current_story, dict):
+            contract["upstream_story_id"] = current_story.get("id") or None
             contract["upstream_review"] = {
                 "status": current_story.get("status"),
                 "tags": current_story.get("reviewTags") or [],
@@ -459,14 +488,6 @@ class RequirementsAnalyst:
                     if not isinstance(item, dict) or not isinstance(item.get("source_ids"), list):
                         continue
                     item["source_ids"] = [source_id if source_id in valid_source_ids else "user_story" for source_id in item["source_ids"]]
-        # This is a product-safety notice, not a financial rule or an approval
-        # decision.  It is deterministic because the credit-simulation policy
-        # requires that no generated artifact can imply guaranteed approval.
-        if expected.get("domain") == "credit" and expected.get("intent") == "simulation":
-            notices = contract.setdefault("safety_notices", [])
-            notice = "A simulacao apresenta uma estimativa e nao representa aprovacao de credito."
-            if notice not in notices:
-                notices.append(notice)
         questions = contract.setdefault("open_questions", [])
         upstream_context = contract["upstream_context"] if isinstance(contract["upstream_context"], dict) else {}
         upstream_criteria_for_questions = upstream_context.get("acceptance_criteria") or upstream_context.get("acceptanceCriteria") or []
@@ -618,8 +639,14 @@ class RequirementsAnalyst:
         upstream_context = contract.get("upstream_context") if isinstance(contract.get("upstream_context"), dict) else {}
         upstream_criteria = upstream_context.get("acceptance_criteria") or upstream_context.get("acceptanceCriteria") or []
         upstream_story_source = next(
-            (source_id for source_id in valid_source_ids if str(source_id).startswith("backlog.")),
+            (
+                source_id for source_id in valid_source_ids
+                if source_id == f"backlog.{expected.get('upstream_story_id')}"
+            ),
+            next(
+                (source_id for source_id in valid_source_ids if str(source_id).startswith("backlog.")),
             "user_story" if "user_story" in valid_source_ids else next(iter(valid_source_ids), ""),
+            ),
         )
 
         def append_confirmed(key, text):
@@ -662,6 +689,16 @@ class RequirementsAnalyst:
             # parallel model-generated variant creates duplicate scenarios and
             # can reintroduce unsupported generic exceptions.
             contract["acceptance_criteria"] = canonical_upstream_criteria
+            # Upstream criteria are the canonical decisions. Model-generated
+            # flow lines often restate them imperfectly, which duplicates the
+            # public behavior or turns a BDD precondition into a sentence.
+            contract["main_flow"] = []
+            contract["exception_flows"] = []
+            for criterion in canonical_upstream_criteria:
+                fact = f"Quando {criterion['when']}, {criterion['then']}"
+                normalized_fact = self._normalize_text(f"{criterion['given']} {criterion['when']} {criterion['then']}")
+                is_exception = bool(re.search(r"\b(erro|falha|inval|ausent|recusa|nega|impede|bloqueia|nao disponibiliza|nao permit|sem acesso|indispon)\w*", normalized_fact))
+                append_confirmed("exception_flows" if is_exception else "main_flow", fact)
 
         criteria = contract.get("acceptance_criteria")
         if not isinstance(criteria, list):
@@ -696,18 +733,6 @@ class RequirementsAnalyst:
             f"{item.get('given', '')} {item.get('when', '')} {item.get('then', '')}"
             for item in criteria
         ).lower()
-        negative_pattern = r"\b(?:invalid\w*|ausent\w*|incomplet\w*|recus\w*|falh\w*|erro\w*)"
-        if profile.get("has_input") and expected.get("intent") not in {"view", "summary"} and default_source_ids and (
-            len(criteria) < 2 or not re.search(negative_pattern, bdd_text)
-        ):
-            criteria.append({
-                "id": f"AC-{len(criteria) + 1:02d}",
-                "given": "o usuario informa dados ausentes ou invalidos",
-                "when": "tenta confirmar a operacao",
-                "then": "o sistema recusa o envio e informa como corrigir os dados",
-                "source_ids": default_source_ids.copy(),
-                "status": "proposed",
-            })
         contract["acceptance_criteria"] = criteria
         return contract
 
@@ -859,78 +884,12 @@ class RequirementsAnalyst:
                 return False, "Regra confirmada usa fonte de evidencia invalida."
         return True, None
 
-    def _validate_credit_simulation_semantics(self, content, contract):
-        if contract.get("domain") != "credit" or contract.get("intent") != "simulation":
-            return True, None
-        sections = self._extract_sections(content)
-        asserted_content = "\n".join(
-            body for title, body in sections.items() if title != "Premissas e Pontos a Validar"
-        )
-        normalized = self._normalize_text(asserted_content)
-        source_evidence = self._normalize_text(" ".join(
-            str(item.get("text") or "") for item in contract.get("evidence_sources", []) if isinstance(item, dict)
-        ))
-        policy_is_confirmed = bool(re.search(r"\b(formula|taxa|juros|cet|tarifa|amortizacao|precificacao|metodo de calculo)\b", source_evidence))
-        forbidden_patterns = [
-            r"valor\s+(?:total\s+)?dividido\s+pel[oa]",
-            r"calcular\s+valor\s+por\s+parcela",
-            r"valor\s+por\s+parcela\s*[:=]",
-            r"parcela\s*[:=]\s*(?:r\$\s*)?\d",
-            r"(?:r\$\s*)?\d+[,.]\d{2}\s*(?:por\s+)?parcela",
-            r"(?:taxa|juros|cet|tarifa)\s*(?:de|:|=)?\s*\d+[,.]?\d*\s*%",
-            r"(?:valor|montante)\s*[/÷]\s*(?:numero de )?parcelas?",
-        ]
-        if any(re.search(pattern, normalized, re.IGNORECASE) for pattern in forbidden_patterns):
-            return False, "Simulacao de credito introduziu calculo ou valor financeiro sem politica confirmada."
-        action_lines = [line for line in asserted_content.splitlines() if not re.search(r"nao\s+(?:deve\s+)?calcul", line, re.IGNORECASE)]
-        if not policy_is_confirmed and re.search(r"\b(calcula|calcular|calculo|aplica(?:r)?\s+(?:a\s+)?condicao|aplica(?:r)?\s+politica)\b", self._normalize_text(" ".join(action_lines))):
-            return False, "Simulacao de credito atribuiu calculo ou politica financeira sem evidencia."
-        rf_section = self._normalize_text(sections.get("Requisitos Funcionais", ""))
-        inputs_match = re.search(r"entradas?\s*:\s*([^\n]+)", rf_section, re.IGNORECASE)
-        outputs_match = re.search(r"saidas?\s*:\s*([^\n]+)", rf_section, re.IGNORECASE)
-        role_assignment = (
-            inputs_match and outputs_match
-            and re.search(r"\b(valor|prazo)\b", inputs_match.group(1), re.IGNORECASE)
-            and re.search(r"\bparcela", outputs_match.group(1), re.IGNORECASE)
-        )
-        if not policy_is_confirmed and role_assignment:
-            return False, "Simulacao de credito definiu papéis de entrada/saida sem relacao financeira confirmada."
-        if contract.get("open_questions") and not sections.get("Premissas e Pontos a Validar"):
-            return False, "Markdown sem Premissas e Pontos a Validar para as lacunas do contrato."
-        rules = sections.get("Regras de Negocio", "").lower()
-        for rule_line in rules.splitlines():
-            if "nao deve calcular" in rule_line or "sem politica" in rule_line:
-                continue
-            if re.search(r"(?:taxa|juros|cet|tarifa|formula|fórmula).{0,80}(?:confirmad|definid|fix|obrigatori)", rule_line):
-                return False, "Regra financeira declarada como confirmada sem evidencia estruturada."
-        essential_inputs = [item for item in contract.get("inputs", []) if item in ("valor solicitado", "prazo", "numero de parcelas")]
-        searchable = " ".join([
-            sections.get("Requisitos Funcionais", ""), sections.get("Fluxo Principal", ""),
-            sections.get("Criterios de Aceite (BDD)", ""),
-        ]).lower()
-        for field in essential_inputs:
-            field_terms = {field, "valor" if field == "valor solicitado" else field}
-            if not any(term in searchable for term in field_terms):
-                return False, f"Campo de entrada obrigatorio sem uso no fluxo ou resultado: {field}."
-        validations = sections.get("Validacoes e Dados", "").lower()
-        if any(re.search(rf"{re.escape(field)}\s*:\s*ponto a validar", validations) for field in essential_inputs):
-            return False, "Ponto a validar nao pode ocultar o significado de um campo essencial da simulacao."
-        if "nao representa aprovacao" not in normalized:
-            return False, "A simulacao deve deixar claro que nao representa aprovacao."
-        bdd = sections.get("Criterios de Aceite (BDD)", "").lower()
-        if re.search(r"(?:entao|então)[^\n]*(?:r\$|\d+[,.]\d{2})", bdd):
-            return False, "BDD de simulacao introduz resultado financeiro nao comprovado."
-        combined_flow = " ".join([sections.get("Fluxo Principal", ""), bdd]).lower()
-        if re.search(r"(?:sem|ausencia de) condicao de credito.{0,100}(?:apresenta|calcula|exibe)", combined_flow):
-            return False, "Ha contradicao: o fluxo/BDD exibe resultado mesmo sem condicao de credito aplicavel."
-        return True, None
-
     def _review_with_evidence(self, markdown, expected_contract):
         """Ask a second model to challenge claims, never to manufacture missing facts.
 
-        Review availability must not turn an already valid AI refinement into a
-        deterministic document.  Its outcome is recorded for observability and
-        only a concrete, source-backed REVISE request triggers another AI pass.
+        A refinement is publishable only after this independent review
+        completes. An unavailable challenger is an operational failure, not
+        evidence that the generated claims are safe.
         """
         sources = expected_contract.get("evidence_sources", [])
         prompt = f"""
@@ -940,6 +899,7 @@ se estiver explicitamente dita ou for consequencia direta e inevitavel de uma fo
 Se uma lacuna virou RF, fluxo, excecao, validacao, permissao, estado de interface, regra ou ENTAO de BDD, marque REVISE.
 Uma lacuna explicitamente escrita em "Premissas e Pontos a Validar" nao e erro.
 Itens identificados como "[PROPOSTO - VALIDAR]" sao deliberadamente pendentes e tambem nao sao erro: nao os reporte como afirmacoes sem fonte.
+Nao reporte estilo, estrutura, redundancia, nomenclatura, formatacao ou sugestao editorial. Esses itens nao sao falta de evidencia e devem resultar em PASS.
 
 Retorne SOMENTE JSON neste formato:
 {{"decision":"PASS|REVISE","findings":[{{"evidence":"trecho literal do refinamento","reason":"...","severity":"low|medium|high","question":"...","source_id":"user_story|backlog|project_dna|backlog_contract|null","source_excerpt":"trecho literal da fonte ou null"}}]}}.
@@ -1004,9 +964,20 @@ REFINAMENTO:\n{markdown}
                             source_excerpt = ""
                     if source_is_verified:
                         continue
+                    reason = str(finding.get("reason") or "").strip()
+                    normalized_reason = self._normalize_text(reason)
+                    evidence_gap_markers = (
+                        "sem fonte", "sem evidencia", "nao esta presente", "nao esta nas fontes",
+                        "nao aparece nas fontes", "nao sustent", "nao comprov",
+                    )
+                    # The challenger is an evidence judge, not an editor. A
+                    # literal sentence alone is insufficient: the finding must
+                    # explicitly identify the lack of source support.
+                    if not any(marker in normalized_reason for marker in evidence_gap_markers):
+                        continue
                     accepted.append({
                         "evidence": evidence,
-                        "reason": str(finding.get("reason") or "").strip(),
+                        "reason": reason,
                         "severity": str(finding.get("severity") or "medium").lower(),
                         "question": str(finding.get("question") or "").strip(),
                         "source_id": source_id,
@@ -1015,7 +986,14 @@ REFINAMENTO:\n{markdown}
             decision = "REVISE" if accepted else "PASS"
             return {"status": "completed", "decision": decision, "findings": accepted}
         except Exception as error:
-            return {"status": "unavailable", "decision": "PASS", "findings": [], "reason": str(error)}
+            return {"status": "unavailable", "decision": "REVISE", "findings": [], "reason": str(error)}
+
+    def _validate_evidence_semantics(self, content, contract):
+        """Apply only validation rules that are meaningful in every domain."""
+        sections = self._extract_sections(content)
+        if contract.get("open_questions") and not sections.get("Premissas e Pontos a Validar"):
+            return False, "Markdown sem Premissas e Pontos a Validar para as lacunas do contrato."
+        return True, None
 
     def _build_evidence_revision_prompt(self, markdown, evidence_report, expected_contract):
         return f"""
@@ -1404,9 +1382,7 @@ Voce e um analista de requisitos orientado por evidencia. Produza APENAS um obje
 
 Regra principal: uma afirmacao de comportamento, dado, regra, fluxo, permissao, validacao ou criterio de aceite so pode aparecer como confirmada se contiver source_ids de uma fonte fornecida. Se a fonte nao sustentar o detalhe, registre-o em open_questions ou assumptions; nunca o complete com conhecimento geral.
 
-Classificacao obrigatoria: domain={expected_contract['domain']}; intent={expected_contract['intent']}.
-Para historias de credito, nao invente taxa, formula, parcela, CET, limite, politica ou aprovacao. Para simulacao sem politica fornecida, descreva lacunas, nao calculos.
-Quando domain=credit e intent=simulation, inclua literalmente que a simulacao apresenta uma estimativa e nao representa aprovacao de credito.
+Classificacao obrigatoria: domain={expected_contract['domain']}; intent={expected_contract['intent']}. Esses rotulos servem apenas para organizar o requisito: nao aplicam regras especiais por setor.
 
 Perfil da feature atual: {json.dumps(expected_contract.get('feature_profile') or {}, ensure_ascii=False)}.
 Analise de escopo da historia: {json.dumps(expected_contract.get('scope_assessment') or {}, ensure_ascii=False)}. Se status=needs_split, cubra cada acao em RF, fluxo e BDD quando a fonte permitir; caso contrario, mantenha uma pergunta de revisao de escopo. Nunca finja que uma acao foi coberta quando apenas outra foi detalhada.
@@ -1499,7 +1475,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                 f"{item.get('given', '')} {item.get('when', '')} {item.get('then', '')}"
                 for item in contract.get("acceptance_criteria", []) if isinstance(item, dict)
             ).lower()
-            if len(contract["acceptance_criteria"]) < 2 or not re.search(r"\b(?:invalid\w*|ausent\w*|incomplet\w*|recus\w*|falh\w*|erro\w*)", bdd_text):
+            if len(contract["acceptance_criteria"]) < 2 or not re.search(r"\b(?:invalid\w*|ausent\w*|incomplet\w*|recus\w*|falh\w*|erro\w*|sem\s+preench\w*)", bdd_text):
                 return False, "Feature com entrada precisa de BDD para dado invalido, ausente ou envio recusado."
         for key in ("assumptions", "open_questions"):
             if not isinstance(contract.get(key), list):
@@ -1711,7 +1687,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                     f"**ENTAO** {then}"
                 )
                 scenario_text = self._normalize_text(f"{given} {when} {then}")
-                if re.search(r"\b(erro|falha|inval|ausent|recusa|nega|impede|bloqueia|nao disponibiliza|indispon|sem acesso|nao permit)\w*", scenario_text):
+                if re.search(r"\b(erro|falha|inval|ausent|recusa|nega|imped\w*|bloqueia|nao disponibiliza|indispon|sem acesso|nao permit|sem\s+preench\w*)", scenario_text):
                     exception_criteria.append(scenario)
                 else:
                     success_criteria.append(scenario)
@@ -1814,12 +1790,12 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                     criteria.append({"id": str(criterion.get("id") or f"AC-{index:02d}"), "given": given, "when": when, "then": then, "source_ids": source_ids.copy()})
             if criteria:
                 contract["acceptance_criteria"] = criteria
-        if contract["domain"] == "credit" and contract["intent"] == "simulation":
-            contract["safety_notices"].append("A simulacao apresenta uma estimativa e nao representa aprovacao de credito.")
         return contract
 
     def _process_with_primary_contract(self, idea, backlog, project_context, expected_contract):
-        max_attempts = max(1, min(2, int(os.getenv("REQUIREMENTS_CONTRACT_MAX_RETRIES", "1"))))
+        # One initial generation plus one evidence-guided repair is the normal
+        # path. A single attempt converts a recoverable finding into a failure.
+        max_attempts = max(1, min(2, int(os.getenv("REQUIREMENTS_CONTRACT_MAX_RETRIES", "2"))))
         # Modelos remotos podem precisar de mais de 45s para montar o contrato
         # estruturado. O processo do agente tem limite global de 10 minutos, mas
         # este limite por chamada estava encerrando o fallback NVIDIA após 35s.
@@ -1870,7 +1846,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
             complete, last_reason = validate_requirements_output(markdown)
             if not complete:
                 continue
-            semantic_ok, last_reason = self._validate_credit_simulation_semantics(markdown, current_contract)
+            semantic_ok, last_reason = self._validate_evidence_semantics(markdown, current_contract)
             if not semantic_ok:
                 continue
             evidence_review = self._review_with_evidence(markdown, expected_contract)
@@ -1886,6 +1862,10 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                 "findings_count": len(evidence_review.get("findings", [])),
             }, ensure_ascii=False), file=sys.stderr)
             findings = evidence_review.get("findings", [])
+            if evidence_review.get("status") != "completed":
+                raise RuntimeError(
+                    "Revisao de evidencias indisponivel; nenhum requisito foi publicado. Tente novamente."
+                )
             needs_repair = evidence_review.get("status") == "completed" and evidence_review.get("decision") == "REVISE" and any(
                 finding.get("severity") in {"medium", "high"} for finding in findings if isinstance(finding, dict)
             )
@@ -1908,7 +1888,11 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
         blocking_tags = {str(tag).strip() for tag in upstream.get("tags") or []}
         upstream_assessment = upstream.get("assessment") if isinstance(upstream.get("assessment"), dict) else {}
         upstream_ready = str(upstream_assessment.get("decision") or "").strip().upper() == "READY"
-        if upstream_ready and expected_contract.get("scope_assessment", {}).get("status") == "needs_split":
+        if (
+            upstream_ready
+            and expected_contract.get("scope_assessment", {}).get("status") == "needs_split"
+            and expected_contract.get("scope_assessment", {}).get("source") == "semantic"
+        ):
             # A previously approved story review is stronger evidence than an
             # opportunistic semantic classification.  This avoids blocking a
             # single journey when the model mistakes its expected outcome
@@ -1917,6 +1901,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                 "status": "atomic",
                 "actions": ["jornada aprovada no backlog"],
                 "action_phrase": "jornada aprovada no backlog",
+                "source": "upstream_ready",
             }
         if expected_contract.get("scope_assessment", {}).get("status") == "needs_split" or blocking_tags.intersection({"REVIEW_ROLE", "REVIEW_BLOCKED"}):
             reasons = []
@@ -1926,10 +1911,13 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                 reasons.append("conflito entre ator e comportamento automatico")
             if "REVIEW_BLOCKED" in blocking_tags:
                 reasons.append("reparo do backlog pendente")
-            raise RuntimeError(
+            error = RuntimeError(
                 "A historia nao esta apta para refinamento de implementacao: " + "; ".join(reasons) + ". "
                 "Corrija o backlog pelo project_manager e mantenha as lacunas como pontos de revisao."
             )
+            if expected_contract.get("scope_assessment", {}).get("status") == "needs_split":
+                error.rejected_draft = self._scope_split_diagnostic(idea, expected_contract["scope_assessment"])
+            raise error
         return self._process_with_primary_contract(idea, backlog, project_context, expected_contract)
 
     def _process_legacy_markdown(self, idea, backlog, project_context=None):
@@ -1942,11 +1930,6 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
         # to return a complete structured answer. The prior 35–45s cap caused
         # NVIDIA fallbacks to fail before they could respond.
         request_timeout = min(180, max(120, int(os.getenv("REQUIREMENTS_LLM_REQUEST_TIMEOUT_SECONDS", "120"))))
-        # The refinement is still generated by AI and validated locally.  A
-        # second-model review improves confidence, but provider availability is
-        # operational state, not business evidence.  Strict installations can
-        # opt in to blocking on an unavailable review.
-        evidence_review_required = str(os.getenv("REQUIREMENTS_EVIDENCE_REVIEW_REQUIRED", "false")).lower() in {"1", "true", "yes"}
         last_reason = "sem detalhes"
 
         for attempt in range(1, max_retries + 1):
@@ -2011,7 +1994,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
             )
             is_complete, reason = validate_requirements_output(sanitized)
             if is_complete:
-                semantic_ok, semantic_reason = self._validate_credit_simulation_semantics(sanitized, generated_contract)
+                semantic_ok, semantic_reason = self._validate_evidence_semantics(sanitized, generated_contract)
                 if semantic_ok:
                     evidence_report = self._review_with_evidence(sanitized, expected_contract)
                     self.last_evidence_report = evidence_report
@@ -2025,9 +2008,10 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                         "findings_count": len(evidence_report.get("findings", [])),
                     }, ensure_ascii=False), file=sys.stderr)
                     generated_contract["evidence_review"] = evidence_report
-                    if evidence_report["status"] != "completed" and evidence_review_required:
-                        last_reason = "Revisao de evidencia indisponivel; o requisito nao pode ser aprovado sem rastreabilidade."
-                        continue
+                    if evidence_report["status"] != "completed":
+                        raise RuntimeError(
+                            "Revisao de evidencias indisponivel; nenhum requisito foi publicado. Tente novamente."
+                        )
                     should_revise = (
                         evidence_report["status"] == "completed"
                         and evidence_report["decision"] == "REVISE"
@@ -2052,7 +2036,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                             )
                             complete, revision_reason = validate_requirements_output(sanitized)
                             revised_contract = self._contract_from_markdown(sanitized, expected_contract)
-                            semantic_ok, semantic_reason = self._validate_credit_simulation_semantics(sanitized, revised_contract)
+                            semantic_ok, semantic_reason = self._validate_evidence_semantics(sanitized, revised_contract)
                             revised_evidence_report = self._review_with_evidence(sanitized, expected_contract) if complete and semantic_ok else None
                             if revised_evidence_report:
                                 revised_contract["evidence_review"] = revised_evidence_report
@@ -2157,14 +2141,6 @@ MATRIZ INTERNA OBRIGATORIA (nao a inclua no Markdown):
 2. Separe inferencias minimas e inevitaveis de decisoes de produto. Uma inferencia plausivel, mas opcional, e uma lacuna.
 3. Antes de escrever cada RF, passo de fluxo, alternativa, excecao, validacao, permissao, estado de interface, regra ou linha ENTAO, confirme que ela aparece nessa matriz.
 4. Se nao houver fonte, escreva apenas a pergunta em "Premissas e Pontos a Validar"; nao descreva comportamento provisoriamente.
-
-GUARDRAIL PARA SIMULACAO DE CREDITO:
-- Quando domain=credit e intent=simulation, use somente a historia e as fontes como limite do refinamento.
-- Nao calcule parcela, juros, CET, tarifa ou valor final, nem mostre exemplo monetario, sem formula/politica/taxa comprovada no contexto.
-- Se prazo e numero de parcelas existirem, nao os trate como equivalentes sem relacao explicita; registre a lacuna.
-- Sem politica comprovada, nao defina quais campos sao entradas, saidas ou derivados e nao diga que uma condicao e aplicada; registre essas decisoes como [REVISAR].
-- A estimativa nunca representa aprovacao garantida.
-- Os BDDs sem politica financeira comprovada devem cobrir dados validos, dados invalidos, ausencia de condicao aplicavel e condicao retornada pela politica configurada, sem numeros financeiros fixos.
 
 COMO LIDAR COM INFORMACAO FALTANTE:
 - Se faltar dado operacional ou regra de negocio, registre uma pergunta objetiva em "Premissas e Pontos a Validar"

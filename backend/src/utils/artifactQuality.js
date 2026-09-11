@@ -101,7 +101,7 @@ function assertRequirementsCompleteness(content) {
   }
 }
 
-function assertQaCompleteness(content) {
+function assertLegacyQaCompleteness(content) {
   const normalized = normalizeArtifactText(content);
 
   if (!normalized) {
@@ -205,6 +205,57 @@ function assertQaCompleteness(content) {
 
   if (hasBrokenEnding(content)) {
     throw new Error('O agente qa_engineer retornou um texto aparentemente truncado no final.');
+  }
+}
+
+// New QA contract: preparation cases tied to approved acceptance criteria.
+// This intentionally replaces the legacy quota-based test-plan checker above.
+function assertQaCompleteness(content) {
+  const normalized = normalizeArtifactText(content);
+  if (!normalized) throw new Error('O agente qa_engineer retornou um artefato vazio.');
+  for (const section of ['casos de validacao', 'cobertura dos criterios de aceite', 'lacunas de qualidade', 'decisao de preparacao']) {
+    if (!normalized.includes(section)) {
+      throw new Error(`Os casos de validação foram retornados de forma incompleta: seção ausente (${section}).`);
+    }
+  }
+  // JavaScript does not support Python's \Z anchor; there it matches a literal
+  // "Z" and can truncate a case whose title contains that letter (for example,
+  // "Validação"). Use an explicit end-of-input assertion instead.
+  const cases = String(content).match(/^###\s*CT[-\s]*\d+\b[\s\S]*?(?=^###\s*CT[-\s]*\d+\b|^##\s+|(?![\s\S]))/gim) || [];
+  if (!cases.length) throw new Error('Os casos de validação não possuem CT-xx.');
+  const requiredFields = [
+    { label: 'criterio relacionado:', aliases: ['criterio relacionado:', 'criterio de aceite:', 'criterio de aceite relacionado:', 'ca relacionado:'] },
+    { label: 'pre-condicao:', aliases: ['pre-condicao:', 'precondicao:'] },
+    { label: 'dados:', aliases: ['dados:', 'massa de dados:'] },
+    { label: 'acao:', aliases: ['acao:', 'passos:', 'procedimento:'] },
+    { label: 'resultado esperado:', aliases: ['resultado esperado:', 'resultado:', 'comportamento esperado:'] },
+    { label: 'tipo:', aliases: ['tipo:'] },
+    { label: 'status:', aliases: ['status:'] },
+    { label: 'evidencia:', aliases: ['evidencia:'] },
+  ];
+  for (const item of cases) {
+    const itemNormalized = normalizeArtifactText(item);
+    for (const field of requiredFields) {
+      const matchingAlias = field.aliases.find((alias) => {
+        const aliasName = alias.slice(0, -1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^\\s*${aliasName}\\s*:`, 'im').test(itemNormalized);
+      });
+      if (!matchingAlias) throw new Error(`Caso de validação sem campo obrigatório (${field.label}).`);
+      const fieldName = matchingAlias.slice(0, -1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (!new RegExp(`^\\s*${fieldName}\\s*:\\s*\\S+`, 'im').test(itemNormalized)) {
+        throw new Error(`Caso de validação possui campo obrigatório vazio (${field.label}).`);
+      }
+    }
+    const action = itemNormalized.match(/^\s*acao\s*:\s*(.+)$/im)?.[1] || '';
+    if (/\b(executar o comportamento|dados relacionados|aplicar a regra|selecionar dados)\b/i.test(action)) {
+      throw new Error('Caso de validação possui ação genérica; descreva a interação observável.');
+    }
+    if (!itemNormalized.includes('status: nao executado')) {
+      throw new Error('Casos de preparação devem permanecer como não executados.');
+    }
+  }
+  if (!normalized.includes('fim_dos_casos_de_validacao') || hasBrokenEnding(content)) {
+    throw new Error('O agente qa_engineer retornou casos de validação truncados.');
   }
 }
 

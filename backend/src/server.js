@@ -155,7 +155,11 @@ app.use((err, _req, res, _next) => {
   });
   const statusCode = err.statusCode || (err.message?.includes('nao encontrado') ? 404 : 500);
 
-  res.status(statusCode).json({ message: err.message || 'Erro interno do servidor' });
+  res.status(statusCode).json({
+    message: err.message || 'Erro interno do servidor',
+    ...(err.code ? { code: err.code } : {}),
+    ...(Array.isArray(err.findings) ? { findings: err.findings } : {}),
+  });
 });
 
 async function startServer() {

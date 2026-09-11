@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { AlertTriangle, Check, CheckCircle2, ChevronRight, FilePenLine, ListChecks, LoaderCircle, MessageSquareText, Plus, RefreshCw, ShieldAlert, Sparkles, Trash2, X } from 'lucide-react'
 import AppShell from '../components/AppShell'
-import { applyBacklogProposals, applyProjectBacklogStoryReview, decideBacklogProposal, getApiErrorMessage, getProject, publishProjectBacklog, reviewProjectBacklogStory, updateProjectBacklogStory } from '../services/api'
+import { applyBacklogProposals, applyProjectBacklogStoryReview, consolidateProjectBacklogStories, decideBacklogProposal, getApiErrorMessage, getProject, moveProjectBacklogAcceptanceCriterion, publishProjectBacklog, reviewProjectBacklogStory, updateProjectBacklogStory } from '../services/api'
 
-const labels = { approved: 'Aprovada', confirmed: 'Confirmada', proposed: 'Proposta', needs_review: 'Em revisão', rejected: 'Rejeitada' }
-const tones = { approved: 'bg-emerald-100 text-emerald-800', confirmed: 'bg-emerald-100 text-emerald-800', proposed: 'bg-blue-100 text-blue-800', needs_review: 'bg-amber-100 text-amber-800', rejected: 'bg-rose-100 text-rose-800' }
+const labels = { approved: 'Aprovada', confirmed: 'Confirmada · revisar', proposed: 'Proposta', needs_review: 'Em revisão', rejected: 'Rejeitada' }
+const tones = { approved: 'bg-emerald-100 text-emerald-800', confirmed: 'bg-amber-100 text-amber-800', proposed: 'bg-blue-100 text-blue-800', needs_review: 'bg-amber-100 text-amber-800', rejected: 'bg-rose-100 text-rose-800' }
 const readinessLabels = { READY: 'Pronta para aprovação', HUMAN_REVIEW: 'Revisão humana necessária', REFINE: 'Precisa de refinamento', BLOCKED: 'Bloqueada' }
 const readinessTones = { READY: 'bg-emerald-100 text-emerald-800', HUMAN_REVIEW: 'bg-amber-100 text-amber-800', REFINE: 'bg-amber-100 text-amber-800', BLOCKED: 'bg-rose-100 text-rose-800' }
 const gateQuestions = {
@@ -17,6 +17,11 @@ const gateQuestions = {
 }
 const hasUnansweredBlockingAnswers = (answers = []) => answers.some((item) => item.blocking && !String(item.answer || '').trim())
 const criterionIsComplete = (criterion = {}) => ['given', 'when', 'then'].every((field) => String(criterion[field] || '').trim())
+const storyDescription = (value) => String(value || '')
+  .split('\n')
+  .map((line) => line.replace(/\s*\[capacidades:\s*[^\]]*\]\s*$/i, '').trim())
+  .filter((line) => line && !/^revisao\s*:/i.test(line))
+  .join(' ')
 const formatDimensionScore = (dimension = {}) => {
   const score = Number(dimension.score || 0)
   const weight = Number(dimension.weight || 0)
@@ -34,18 +39,33 @@ export default function BacklogReviewPage() {
   const { projectUuid } = useParams()
   const [project, setProject] = useState(null)
   const [error, setError] = useState(null)
+  const [publicationBlocker, setPublicationBlocker] = useState(null)
+  const [consolidation, setConsolidation] = useState(null)
+  const [criterionMove, setCriterionMove] = useState(null)
   const [busy, setBusy] = useState(false)
   const [assist, setAssist] = useState(null)
   const [reviewRetryAfter, setReviewRetryAfter] = useState(0)
   const contract = project?.intakeConfig?.backlogContract || {}
   const qualityReview = contract.qualityReview || contract.quality_review || {}
   const stories = Array.isArray(contract.stories) ? contract.stories : []
-  const allStoriesApproved = stories.every((story) => ['approved', 'confirmed'].includes(String(story.reviewStatus || story.status || '').toLowerCase()))
-  const allStoriesReady = stories.every((story) => story.lastAgentReview?.assessment?.decision === 'READY')
+  const reconciliationFindings = Array.isArray(project?.backlogReconciliation?.findings) ? project.backlogReconciliation.findings : []
+  const duplicateStoryFor = (storyId) => {
+    const id = String(storyId || '').toLowerCase()
+    const finding = reconciliationFindings.find((item) => item?.code === 'duplicate_story_scope' && [item.storyId, item.relatedStoryId].some((value) => String(value || '').toLowerCase() === id))
+    if (!finding) return null
+    return String(finding.storyId || '').toLowerCase() === id ? finding.relatedStoryId : finding.storyId
+  }
+  const misplacedCriterionFor = (storyId) => reconciliationFindings.find((item) => item?.code === 'criterion_outside_story_scope' && String(item.storyId || '').toLowerCase() === String(storyId || '').toLowerCase()) || null
+  const storyIsReady = (story) => story.lastAgentReview?.assessment?.decision === 'READY'
+  const storyIsApproved = (story) => String(story.reviewStatus || '').toLowerCase() === 'approved'
+  const allStoriesApproved = stories.every(storyIsApproved)
+  const allStoriesReady = stories.every(storyIsReady)
   const legacyQualityGateSatisfied = !qualityReview.decision && stories.length > 0 && allStoriesApproved && allStoriesReady
   const qualityGatePassed = qualityReview.decision === 'PASS' || legacyQualityGateSatisfied
   const pendingProposals = (qualityReview.proposals || []).filter((item) => !['accepted', 'rejected'].includes(String(item?.status || 'proposed').toLowerCase()))
   const acceptedProposals = (qualityReview.proposals || []).filter((item) => String(item?.status || '').toLowerCase() === 'accepted')
+  const pendingReadinessCount = stories.filter((story) => !storyIsReady(story)).length
+  const pendingApprovalCount = stories.filter((story) => storyIsReady(story) && !storyIsApproved(story)).length
   const reload = async () => setProject(await getProject(projectUuid))
 
   useEffect(() => { reload().catch((requestError) => setError(getApiErrorMessage(requestError, 'Falha ao carregar o backlog.'))) }, [projectUuid])
@@ -138,8 +158,40 @@ export default function BacklogReviewPage() {
   }
 
   const publish = async () => {
+    setBusy(true); setError(null); setPublicationBlocker(null)
+    try { await publishProjectBacklog(projectUuid); await reload() } catch (requestError) {
+      const message = getApiErrorMessage(requestError, 'Falha ao publicar.')
+      if (requestError?.response?.data?.code === 'BACKLOG_FINAL_RECONCILIATION_FAILED') {
+        setPublicationBlocker(message)
+        setProject((current) => current ? { ...current, backlogReconciliation: { findings: requestError.response.data.findings || [] } } : current)
+      }
+      else setError(message)
+    } finally { setBusy(false) }
+  }
+
+  const openConsolidation = (sourceStory, targetStoryId) => {
+    setError(null)
+    setConsolidation({ sourceStory, targetStoryId })
+  }
+
+  const consolidateStories = async () => {
+    if (!consolidation?.targetStoryId) return
     setBusy(true); setError(null)
-    try { await publishProjectBacklog(projectUuid); await reload() } catch (requestError) { setError(getApiErrorMessage(requestError, 'Falha ao publicar.')) } finally { setBusy(false) }
+    try {
+      await consolidateProjectBacklogStories(projectUuid, { sourceStoryId: consolidation.sourceStory.id, targetStoryId: consolidation.targetStoryId })
+      await reload()
+      setConsolidation(null)
+    } catch (requestError) { setError(getApiErrorMessage(requestError, 'Falha ao consolidar as stories.')) } finally { setBusy(false) }
+  }
+
+  const moveCriterion = async () => {
+    if (!criterionMove) return
+    setBusy(true); setError(null)
+    try {
+      await moveProjectBacklogAcceptanceCriterion(projectUuid, criterionMove)
+      await reload()
+      setCriterionMove(null)
+    } catch (requestError) { setError(getApiErrorMessage(requestError, 'Falha ao mover o critério de aceite.')) } finally { setBusy(false) }
   }
 
   const assessment = assist?.review?.assessment || {}
@@ -154,12 +206,19 @@ export default function BacklogReviewPage() {
     <section className="dashboard-panel p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold">{project?.name || 'Projeto'}</h2><p className="text-sm text-slate-600">{stories.length} stories · Quality Gate: {qualityReview.decision || (legacyQualityGateSatisfied ? 'PASS' : 'pendente')}</p></div><button type="button" disabled={busy || !stories.length || !allStoriesApproved || !allStoriesReady || !qualityGatePassed || contract.publicationStatus === 'published'} onClick={publish} className="dashboard-button-primary">{contract.publicationStatus === 'published' ? 'Já publicado' : 'Aprovar e enviar ao board'}</button></div>
       {error && <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
-      {!allStoriesApproved && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">Aprove apenas stories com prontidão confirmada para liberar a publicação.</p>}
+      {pendingReadinessCount > 0 && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{pendingReadinessCount} {pendingReadinessCount === 1 ? 'story precisa' : 'stories precisam'} passar pela revisão do agente antes da aprovação.</p>}
+      {pendingReadinessCount === 0 && pendingApprovalCount > 0 && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{pendingApprovalCount} {pendingApprovalCount === 1 ? 'story está pronta' : 'stories estão prontas'} e aguardam sua aprovação.</p>}
       {qualityReview.decision === 'REVISE' && <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-5"><p className="text-[10px] font-bold uppercase tracking-widest text-amber-800">Decisões pendentes do Quality Gate</p><h3 className="mt-2 text-lg font-bold">Confirme a cobertura das capacidades</h3><div className="mt-4 space-y-3">{pendingProposals.map((proposal) => <article key={proposal.id || proposal.capability} className="rounded-xl border border-amber-200 bg-white p-4"><p className="font-semibold">{proposal.capability}</p><p className="mt-1 text-sm text-slate-600">{proposal.reason}</p><div className="mt-3 flex gap-2"><button disabled={busy} onClick={() => resolveProposal(proposal, 'rejected')} className="dashboard-button-primary px-3 py-1.5 text-xs">Já está coberta</button><button disabled={busy} onClick={() => resolveProposal(proposal, 'accepted')} className="dashboard-button-secondary px-3 py-1.5 text-xs">Incluir no backlog</button></div></article>)}</div>{acceptedProposals.length > 0 && <button disabled={busy} onClick={() => applyBacklogProposals(projectUuid).then(reload).catch((requestError) => setError(getApiErrorMessage(requestError, 'Falha ao incluir propostas.')))} className="dashboard-button-secondary mt-4">Adicionar propostas aceitas</button>}</section>}
       <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{stories.map((story, index) => {
-        const status = String(story.reviewStatus || story.status || 'proposed').toLowerCase(); const isReady = story.lastAgentReview?.assessment?.decision === 'READY'; const isApproved = ['approved', 'confirmed'].includes(status)
-        return <article key={story.id || index} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center justify-between gap-2"><span className="text-xs font-bold uppercase tracking-widest text-slate-500">{story.id || `US-${index + 1}`}</span><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tones[status] || tones.proposed}`}>{labels[status] || status}</span></div><h3 className="mt-3 font-semibold text-slate-900">{story.title || story.goal || 'Story sem título'}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{story.description || story.benefit || 'Sem descrição.'}</p>{story.lastAgentReview?.assessment && <p className="mt-3 text-xs text-slate-600">Prontidão: {story.lastAgentReview.assessment.score}/100 · {readinessLabels[story.lastAgentReview.assessment.decision] || 'Pendente'}</p>}<div className="mt-4 flex flex-wrap gap-2"><button disabled={busy || reviewRetryAfter > 0} title={reviewRetryAfter > 0 ? `Aguarde ${reviewRetryAfter}s para uma nova revisão.` : undefined} onClick={() => startReview(story)} className="dashboard-button-secondary px-3 py-1.5 text-xs">{reviewRetryAfter > 0 ? `Aguarde ${reviewRetryAfter}s` : 'Revisar com agente'}</button><button disabled={busy || !isReady || isApproved} title={isApproved ? 'Esta story já foi aprovada.' : isReady ? 'Aprovar story pronta' : 'Execute a revisão e resolva os bloqueios antes de aprovar'} onClick={() => decide(story, 'approved')} className="dashboard-button-primary px-3 py-1.5 text-xs">Aprovar</button><button disabled={busy} onClick={() => decide(story, 'rejected')} className="dashboard-button-secondary px-3 py-1.5 text-xs">Rejeitar</button></div></article>
+        const status = String(story.reviewStatus || story.status || 'proposed').toLowerCase(); const isReady = storyIsReady(story); const isApproved = storyIsApproved(story); const duplicateTargetStoryId = duplicateStoryFor(story.id); const misplacedCriterion = misplacedCriterionFor(story.id)
+        return <article key={story.id || index} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center justify-between gap-2"><span className="text-xs font-bold uppercase tracking-widest text-slate-500">{story.id || `US-${index + 1}`}</span><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tones[status] || tones.proposed}`}>{labels[status] || status}</span></div><h3 className="mt-3 font-semibold text-slate-900">{story.title || story.goal || 'Story sem título'}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{storyDescription(story.description) || story.benefit || 'Sem descrição.'}</p>{story.lastAgentReview?.assessment && <p className="mt-3 text-xs text-slate-600">Prontidão: {story.lastAgentReview.assessment.score}/100 · {readinessLabels[story.lastAgentReview.assessment.decision] || 'Pendente'}</p>}{duplicateTargetStoryId && <p className="mt-3 text-xs font-medium text-amber-800">Possível duplicidade com {duplicateTargetStoryId}.</p>}{misplacedCriterion && <p className="mt-3 text-xs font-medium text-amber-800">Um critério deve ser movido para {misplacedCriterion.relatedStoryId}.</p>}<div className="mt-4 flex flex-wrap gap-2"><button disabled={busy || reviewRetryAfter > 0} title={reviewRetryAfter > 0 ? `Aguarde ${reviewRetryAfter}s para uma nova revisão.` : undefined} onClick={() => startReview(story)} className="dashboard-button-secondary px-3 py-1.5 text-xs">{reviewRetryAfter > 0 ? `Aguarde ${reviewRetryAfter}s` : 'Revisar com agente'}</button>{duplicateTargetStoryId && <button disabled={busy} onClick={() => openConsolidation(story, duplicateTargetStoryId)} className="dashboard-button-secondary px-3 py-1.5 text-xs">Consolidar com {duplicateTargetStoryId}</button>}{misplacedCriterion && <button disabled={busy} onClick={() => setCriterionMove({ sourceStoryId: story.id, targetStoryId: misplacedCriterion.relatedStoryId, criterionIndex: misplacedCriterion.criterionIndex, criterion: misplacedCriterion.criterion })} className="dashboard-button-secondary px-3 py-1.5 text-xs">Mover critério para {misplacedCriterion.relatedStoryId}</button>}<button disabled={busy || !isReady || isApproved} title={isApproved ? 'Esta story já foi aprovada.' : isReady ? 'Aprovar story pronta' : 'Execute a revisão e resolva os bloqueios antes de aprovar'} onClick={() => decide(story, 'approved')} className="dashboard-button-primary px-3 py-1.5 text-xs">Aprovar</button><button disabled={busy} onClick={() => decide(story, 'rejected')} className="dashboard-button-secondary px-3 py-1.5 text-xs">Rejeitar</button></div></article>
       })}</div>
+
+      {publicationBlocker && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="publication-blocker-title"><div className="w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl"><header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-slate-950 to-[#102a72] px-5 py-5 text-white sm:px-6"><div className="flex gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-400/15 text-amber-200"><AlertTriangle size={21} /></span><div><h2 id="publication-blocker-title" className="text-lg font-bold">Publicação bloqueada</h2><p className="mt-1 text-sm text-slate-300">O backlog ainda precisa de ajustes antes de ser enviado ao board.</p></div></div><button type="button" onClick={() => setPublicationBlocker(null)} className="rounded-xl border border-white/20 p-2 transition hover:bg-white/10" aria-label="Fechar aviso de publicação"><X size={20} /></button></header><div className="p-5 sm:p-6"><div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">{publicationBlocker}</div><p className="mt-4 text-sm text-slate-600">Revise as stories indicadas, aplique as correções e tente publicar novamente.</p><div className="mt-6 flex justify-end"><button type="button" onClick={() => setPublicationBlocker(null)} className="dashboard-button-primary">Entendi, revisar backlog</button></div></div></div></div>}
+
+      {consolidation && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="consolidation-title"><div className="w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl"><header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-slate-950 to-[#102a72] px-5 py-5 text-white sm:px-6"><div className="flex gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-blue-400/15 text-blue-200"><FilePenLine size={21} /></span><div><h2 id="consolidation-title" className="text-lg font-bold">Consolidar stories duplicadas</h2><p className="mt-1 text-sm text-slate-300">Este par foi apontado pela revisão do backlog.</p></div></div><button type="button" onClick={() => setConsolidation(null)} className="rounded-xl border border-white/20 p-2 transition hover:bg-white/10" aria-label="Fechar consolidação"><X size={20} /></button></header><div className="p-5 sm:p-6"><p className="text-sm text-slate-600">A <strong className="text-slate-900">{consolidation.sourceStory.id}</strong> será removida e incorporada à story abaixo.</p><div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Story que permanece</p><p className="mt-2 text-sm font-semibold leading-6 text-slate-900">{consolidation.targetStoryId} · {stories.find((story) => story.id === consolidation.targetStoryId)?.title || stories.find((story) => story.id === consolidation.targetStoryId)?.goal}</p></div><div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950"><strong>Atenção:</strong> critérios, capacidades, dependências e referências serão incorporados. A story resultante voltará para revisão do agente antes de poder ser aprovada.</div><div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={() => setConsolidation(null)} className="dashboard-button-secondary">Cancelar</button><button type="button" disabled={busy || !consolidation.targetStoryId} onClick={consolidateStories} className="dashboard-button-primary">Confirmar consolidação</button></div></div></div></div>}
+
+      {criterionMove && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="criterion-move-title"><div className="w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl"><header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-slate-950 to-[#102a72] px-5 py-5 text-white sm:px-6"><div className="flex gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-400/15 text-amber-200"><AlertTriangle size={21} /></span><div><h2 id="criterion-move-title" className="text-lg font-bold">Mover critério de aceite</h2><p className="mt-1 text-sm text-slate-300">Este ajuste foi identificado pela reconciliação do backlog.</p></div></div><button type="button" onClick={() => setCriterionMove(null)} className="rounded-xl border border-white/20 p-2 transition hover:bg-white/10" aria-label="Fechar movimentação de critério"><X size={20} /></button></header><div className="p-5 sm:p-6"><p className="text-sm text-slate-600">O critério sairá da <strong className="text-slate-900">{criterionMove.sourceStoryId}</strong> e será incluído na <strong className="text-slate-900">{criterionMove.targetStoryId}</strong>.</p><div className="mt-5 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700"><p><strong className="text-slate-900">Dado:</strong> {criterionMove.criterion?.given || '—'}</p><p><strong className="text-slate-900">Quando:</strong> {criterionMove.criterion?.when || '—'}</p><p><strong className="text-slate-900">Então:</strong> {criterionMove.criterion?.then || '—'}</p></div><div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950"><strong>Atenção:</strong> as duas stories voltarão para revisão do agente antes de poderem ser aprovadas.</div><div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={() => setCriterionMove(null)} className="dashboard-button-secondary">Cancelar</button><button type="button" disabled={busy} onClick={moveCriterion} className="dashboard-button-primary">Confirmar movimento</button></div></div></div></div>}
 
       {assist && <div className="backlog-review-dialog fixed inset-0 z-50 bg-slate-950/60 p-0 backdrop-blur-[2px] sm:p-5" role="dialog" aria-modal="true" aria-labelledby="story-review-title"><div className="mx-auto flex h-full w-full max-w-[1500px] items-center sm:h-[calc(100vh-2.5rem)] sm:w-[calc(100vw-2.5rem)]"><div className="flex h-full w-full flex-col overflow-hidden bg-white shadow-2xl sm:rounded-3xl">
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-slate-950 to-[#102a72] px-5 py-5 text-white sm:px-7"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-blue-200"><Sparkles size={14} /> Revisão orientada a decisão</div><h2 id="story-review-title" className="mt-2 truncate text-base font-bold leading-tight sm:text-lg">{assist.story.id} · {assist.story.title || assist.story.goal}</h2><p className="mt-1 text-sm text-slate-300">Resolva lacunas concretas, revise a proposta e aplique quando ela estiver pronta.</p></div><button type="button" onClick={() => setAssist(null)} className="rounded-xl border border-white/20 p-2 text-white transition hover:bg-white/10" aria-label="Fechar revisão"><X size={20} /></button></header>

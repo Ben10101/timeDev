@@ -289,24 +289,12 @@ def validate_requirements_output(result):
         return False, "Validacoes e dados sem detalhe suficiente."
 
     validations_body = validations_section.group(1).strip() if validations_section else ""
-    permissions_body = permissions_section.group(1).strip() if permissions_section else ""
-
     if validations_body and not re.search(
         r"(formato|obrigator|limite|valor controlado|consist|tipo|tamanho|regex|ponto a validar|nao se aplica)",
         validations_body,
         re.IGNORECASE,
     ):
         return False, "Validacoes e dados sem detalhes operacionais suficientes."
-
-    if permissions_body and not re.search(
-        # A visible pending decision is valid when the story has no evidence
-        # for an access profile or audit mechanism.  Requiring the model to
-        # invent one would be worse than preserving the gap for review.
-        r"(execut|aprova|visualiz|edit|audit|trilha|acesso|autoriz|permiss|controle|ponto a validar|nao se aplica)",
-        permissions_body,
-        re.IGNORECASE,
-    ):
-        return False, "Permissoes e auditoria sem detalhes operacionais suficientes."
 
     if not _section_has_content_or_na(permissions_section):
         return False, "Permissoes e auditoria sem detalhe suficiente."
@@ -424,7 +412,7 @@ def validate_requirements_output(result):
     return True, None
 
 
-def validate_qa_output(result):
+def validate_legacy_qa_output(result):
     text, normalized = _normalize_text(result)
     section_aliases = {
         "Estrategia de testes": [
@@ -650,6 +638,61 @@ def validate_qa_output(result):
     if has_truncated_ending(text):
         return False, "Resposta aparenta ter sido cortada no final."
 
+    return True, None
+
+
+# QA now prepares validation cases, not a speculative test plan.  Keep this
+# definition after the legacy validator so existing imports use the evidence
+# driven contract below.
+def validate_qa_output(result, expected_criteria_ids=None):
+    text, normalized = _normalize_text(result)
+    if not text:
+        return False, "Casos de validacao vazios."
+
+    required_sections = [
+        "casos de validacao",
+        "cobertura dos criterios de aceite",
+        "lacunas de qualidade",
+        "decisao de preparacao",
+    ]
+    missing = [title for title in required_sections if title not in normalized]
+    if missing:
+        return False, f"Secoes ausentes: {', '.join(missing)}"
+
+    case_blocks = re.findall(r"^###\s*(CT[-\s]*\d+)\b([\s\S]*?)(?=^###\s*CT[-\s]*\d+\b|^##\s+|\Z)", text, re.IGNORECASE | re.MULTILINE)
+    if not case_blocks:
+        return False, "Nenhum caso de validacao CT-xx foi gerado."
+
+    criterion_refs = set()
+    for case_id, body in case_blocks:
+        lowered = _normalize_text(body)[1]
+        for field in ("criterio relacionado:", "pre-condicao:", "dados:", "acao:", "resultado esperado:", "tipo:", "status:", "evidencia:"):
+            if field not in lowered:
+                return False, f"{case_id.upper()} sem campo obrigatorio: {field.rstrip(':')}."
+            field_name = field.rstrip(':')
+            if not re.search(rf"^\s*{re.escape(field_name)}\s*:\s*\S+", lowered, re.IGNORECASE | re.MULTILINE):
+                return False, f"{case_id.upper()} possui campo obrigatorio vazio: {field_name}."
+        action_match = re.search(r"^\s*acao\s*:\s*(.+)$", lowered, re.IGNORECASE | re.MULTILINE)
+        if action_match and re.search(r"\b(executar o comportamento|dados relacionados|aplicar a regra|selecionar dados)\b", action_match.group(1), re.IGNORECASE):
+            return False, f"{case_id.upper()} usa uma acao generica; descreva a interacao observavel."
+        match = re.search(r"criterio\s+relacionado\s*:\s*(CA[-\s]*\d+)", lowered, re.IGNORECASE)
+        if not match:
+            return False, f"{case_id.upper()} sem criterio de aceite rastreavel."
+        criterion_refs.add(re.sub(r"\s+", "", match.group(1)).upper())
+        if not re.search(r"status\s*:\s*nao executado", lowered, re.IGNORECASE):
+            return False, f"{case_id.upper()} nao pode afirmar execucao nesta etapa."
+
+    expected = {re.sub(r"\s+", "", str(item)).upper() for item in (expected_criteria_ids or []) if str(item).strip()}
+    unknown = criterion_refs - expected if expected else set()
+    uncovered = expected - criterion_refs
+    if unknown:
+        return False, f"Casos referenciam criterios inexistentes: {', '.join(sorted(unknown))}."
+    if uncovered:
+        return False, f"Criterios sem caso de validacao: {', '.join(sorted(uncovered))}."
+    if "fim_dos_casos_de_validacao" not in normalized:
+        return False, "Marcador final dos casos de validacao nao foi encontrado."
+    if has_truncated_ending(text):
+        return False, "Resposta aparenta ter sido cortada no final."
     return True, None
 
 

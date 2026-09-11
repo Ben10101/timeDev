@@ -2,6 +2,7 @@
 import sys
 import json
 import os
+import traceback
 
 # Adicionar o diretório raiz ao path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -132,6 +133,16 @@ def main():
 
     except Exception as e:
         diagnostic = getattr(e, "rejected_draft", None)
+        # Keep stdout machine-readable for the Node caller, while exposing the
+        # Python location on stderr for operational diagnosis. The previous
+        # generic error text hid the failing contract field and encouraged
+        # blind retries against provider-shaped payloads.
+        print(json.dumps({
+            "event": "agent_unhandled_exception",
+            "agent": locals().get("agent_name", "unknown"),
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }, ensure_ascii=False), file=sys.stderr)
         print(json.dumps({"success": False, "error": str(e), "diagnostic": diagnostic}, ensure_ascii=False), file=sys.stdout)
         sys.exit(1)
 

@@ -14,10 +14,12 @@ import { assertArtifactQuality } from './artifactQualityGateService.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const GENERATED_PROJECTS_ROOT = path.join(REPO_ROOT, 'generated-projects');
+const QA_VALIDATION_ARTIFACT_TYPE = 'qa_validation_cases';
+const QA_ARTIFACT_TYPES = [QA_VALIDATION_ARTIFACT_TYPE, 'test_plan']; // test_plan is legacy only
 
 export function resolveArtifactReviewTransition(artifactType, approved) {
   if (approved && artifactType === 'requirements') return { status: 'qa', assigneeAgentName: 'qa_engineer', assigneeType: 'agent', releasedStage: 'qa' };
-  if (approved && artifactType === 'test_plan') return { status: 'done', assigneeAgentName: 'architect', assigneeType: 'agent', releasedStage: 'architecture' };
+  if (approved && QA_ARTIFACT_TYPES.includes(artifactType)) return { status: 'done', assigneeAgentName: 'architect', assigneeType: 'agent', releasedStage: 'architecture' };
   if (approved && artifactType === 'architecture') return { status: 'todo', assigneeAgentName: 'developer', assigneeType: 'agent', releasedStage: 'implementation' };
   if (!approved && artifactType === 'architecture') return { status: 'in_review', assigneeAgentName: 'architect', assigneeType: 'agent', releasedStage: null };
   if (!approved) return { status: 'backlog', assigneeAgentName: 'requirements_analyst', assigneeType: 'agent', releasedStage: null };
@@ -189,6 +191,11 @@ function validateTaskStatusTransition(existingTask, nextStatus) {
   if (!nextStatus || nextStatus === existingTask.status) return;
 
   if (nextStatus === 'blocked' || nextStatus === 'archived') return;
+
+  // QA is an execution state. Once the QA agent creates its artifact, the
+  // normal next state is human review, even though the board order displays
+  // `in_review` before `qa`.
+  if (existingTask.status === 'qa' && nextStatus === 'in_review') return;
 
   const currentIndex = workflowOrder.indexOf(existingTask.status);
   const nextIndex = workflowOrder.indexOf(nextStatus);
@@ -471,7 +478,15 @@ export async function assertProjectPermission(projectUuid, userUuid, minimumRole
     throw new Error('VocÃª nÃ£o tem permissÃ£o para executar esta aÃ§Ã£o neste projeto.');
   }
 
-  return enrichProjectAccess(project, userUuid);
+  const enrichedProject = enrichProjectAccess(project, userUuid);
+  if (!enrichedProject) return enrichedProject;
+  const stories = enrichedProject.intakeConfig?.backlogContract?.stories;
+  return {
+    ...enrichedProject,
+    backlogReconciliation: {
+      findings: validateBacklogFinalReconciliation(stories),
+    },
+  };
 }
 
 export async function getDefaultWorkspaceForUserUuid(userUuid) {
@@ -1323,7 +1338,7 @@ export async function listProjectTasks(projectUuid, { status, parentTaskUuid } =
       projectId: project.id,
       status: 'in_review',
       assigneeAgentName: 'architect',
-      artifacts: { some: { isCurrent: true, artifactScope: 'refinement', artifactType: 'test_plan', isApproved: true } },
+      artifacts: { some: { isCurrent: true, artifactScope: 'refinement', artifactType: { in: QA_ARTIFACT_TYPES }, isApproved: true } },
     },
     select: { id: true },
   });
@@ -1336,7 +1351,7 @@ export async function listProjectTasks(projectUuid, { status, parentTaskUuid } =
       status: { in: ['backlog', 'in_review'] },
       AND: [
         { artifacts: { some: { isCurrent: true, artifactScope: 'refinement', artifactType: 'requirements', isApproved: true } } },
-        { artifacts: { none: { isCurrent: true, artifactScope: 'refinement', artifactType: 'test_plan' } } },
+        { artifacts: { none: { isCurrent: true, artifactScope: 'refinement', artifactType: { in: QA_ARTIFACT_TYPES } } } },
       ],
     },
     select: { id: true },
@@ -1426,7 +1441,7 @@ export async function getTaskByUuid(taskUuid, userUuid = null) {
   // the `todo` state. This keeps legacy records consistent on the next read.
   if (task?.status === 'in_review' && task.assigneeAgentName === 'architect') {
     const approvedQa = (task.artifacts || []).some(
-      (artifact) => artifact.isCurrent && artifact.artifactType === 'test_plan' && artifact.isApproved
+      (artifact) => artifact.isCurrent && QA_ARTIFACT_TYPES.includes(artifact.artifactType) && artifact.isApproved
     );
     if (approvedQa) {
       await prisma.task.update({ where: { id: task.id }, data: { status: 'done' } });
@@ -1796,6 +1811,10 @@ function parseStoryTitle(line) {
 function normalizeStoryDetailLine(line) {
   return String(line || '')
     .replace(/^(?:descricao|contexto|detalhe)\s*[:\-]\s*/i, '')
+    // Rendering metadata is useful in the source Markdown but is not story
+    // content. Keeping it here leaked internal tags to the review cards.
+    .replace(/\s*\[capacidades:\s*[^\]]*\]\s*$/i, '')
+    .replace(/^revisao\s*:\s*\[[^\]]*\]\s*$/i, '')
     .trim();
 }
 
@@ -1892,18 +1911,21 @@ function extractMarkdownSection(content, sectionTitle) {
   const targetHeading = normalizeHeading(sectionTitle);
   const lines = text.split('\n');
   let capture = false;
+  let captureLevel = null;
   const captured = [];
 
   for (const rawLine of lines) {
     const line = String(rawLine || '').replace(/\r/g, '');
-    const headingMatch = line.match(/^\s*##\s+(.+?)\s*$/);
+    const headingMatch = line.match(/^\s*(#{2,6})\s+(.+?)\s*$/);
     if (headingMatch) {
-      const currentHeading = normalizeHeading(headingMatch[1]);
-      if (capture) {
+      const level = headingMatch[1].length;
+      const currentHeading = normalizeHeading(headingMatch[2]);
+      if (capture && level <= captureLevel) {
         break;
       }
       if (currentHeading === targetHeading) {
         capture = true;
+        captureLevel = level;
       }
       continue;
     }
@@ -2058,6 +2080,71 @@ function extractAcceptanceCriteria(sectionContent) {
 }
 
 function extractAcceptanceCriteriaRobust(sectionContent) {
+  const compactSource = String(sectionContent || '').replace(/\r/g, '').replace(/\\\s*$/gm, '');
+  const bddBlocks = [...compactSource.matchAll(
+    /\*\*DADO\*\*\s*([\s\S]*?)\s*\*\*QUANDO\*\*\s*([\s\S]*?)\s*\*\*ENTAO\*\*\s*([\s\S]*?)(?=\s*\*\*DADO\*\*|(?![\s\S]))/gim
+  )]
+    .map((match) => `DADO ${match[1]} QUANDO ${match[2]} ENTAO ${match[3]}`.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (bddBlocks.length) return normalizeBacklogContractList(bddBlocks);
+
+  const headingScenarios = [];
+  let currentHeadingScenario = [];
+  const flushHeadingScenario = () => {
+    const scenario = currentHeadingScenario
+      .map((line) => cleanMarkdownListLine(line).trim())
+      .filter((line) => line && !/^nenhum cenario de excecao confirmado/i.test(line))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (/\bDADO\b/i.test(scenario) && /\bQUANDO\b/i.test(scenario) && /\bENTAO\b/i.test(scenario)) {
+      headingScenarios.push(scenario);
+    }
+    currentHeadingScenario = [];
+  };
+  for (const line of compactSource.split('\n')) {
+    if (/^\s*#{3,6}\s+cenario\s+\d+\b/i.test(line)) {
+      flushHeadingScenario();
+      continue;
+    }
+    if (currentHeadingScenario.length || /\b(?:DADO|QUANDO|ENTAO)\b/i.test(line)) {
+      currentHeadingScenario.push(line);
+    }
+  }
+  flushHeadingScenario();
+  if (headingScenarios.length) return normalizeBacklogContractList(headingScenarios);
+
+  const directScenarios = [...compactSource.matchAll(
+    /^\s*#{3,6}\s+cenario\s+\d+(?:\s*[-–—:]\s*[^\n]+)?\s*\n([\s\S]*?)(?=^\s*#{3,6}\s+cenario\s+\d+\b|^##\s+|(?![\s\S]))/gim
+  )]
+    .map((match) => match[1]
+      .split('\n')
+      .map((line) => cleanMarkdownListLine(line).trim())
+      .filter((line) => line && !/^nenhum cenario de excecao confirmado/i.test(line))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim())
+    .filter((scenario) => /\bDADO\b/i.test(scenario) && /\bQUANDO\b/i.test(scenario) && /\bENTAO\b/i.test(scenario));
+  if (directScenarios.length) return normalizeBacklogContractList(directScenarios);
+
+  const modernScenarios = String(sectionContent || '')
+    .replace(/\r/g, '')
+    .replace(/^\s*#{3,6}\s+(?:sucesso|exce[cç][oõ]es)\s*$/gim, '')
+    // Keep compact BDD scenarios separate even when lines use Markdown
+    // explicit-break escapes (\\). The older look-ahead required an exact
+    // heading line and merged all criteria into one record in that format.
+    .replace(/\\\s*$/gm, '')
+    .split(/(?=^\s*#{3,6}\s+cenario\s+\d+(?:\s*[-–—:]\s*[^\n]+)?\s*$)/gim)
+    .map((chunk) => chunk
+      .split('\n')
+      .map((line) => cleanMarkdownListLine(line).trim())
+      .filter((line) => line && !/^nenhum cenario de excecao confirmado/i.test(line))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim())
+    .filter((scenario) => /\bDADO\b/i.test(scenario) && /\bQUANDO\b/i.test(scenario) && /\bENTAO\b/i.test(scenario));
+  if (modernScenarios.length) return modernScenarios;
+
   const lines = String(sectionContent || '')
     .replace(/\r/g, '')
     .split('\n')
@@ -2149,6 +2236,21 @@ function buildBacklogContract(backlogMarkdown, projectDna = null, generatedContr
   );
   const releaseSlices = parseReleaseSlices(extractMarkdownSection(backlogMarkdown, 'Fatias de Release'));
   const { stories } = extractBacklogItems(backlogMarkdown);
+  const generatedCapabilities = Array.isArray(generatedContract?.capabilities)
+    ? generatedContract.capabilities
+    : [];
+  const persistedCapabilities = generatedCapabilities.length
+    ? generatedCapabilities.map((capability, index) => ({
+      // Keep the PM's IDs (for example, CAP-01) because stories reference
+      // them in capabilityIds. Re-numbering them here broke traceability and
+      // made the quality gate report capabilities as uncovered.
+      id: String(capability?.id || `cap_${index + 1}`),
+      name: String(capability?.name || capability?.text || capabilities[index] || `Capacidade ${index + 1}`),
+    }))
+    : capabilities.map((name, index) => ({
+      id: `cap_${index + 1}`,
+      name,
+    }));
 
   const baseContract = {
     version: 1,
@@ -2156,10 +2258,7 @@ function buildBacklogContract(backlogMarkdown, projectDna = null, generatedContr
     source: 'project_manager',
     projectDnaSnapshot: projectDna || null,
     overview: overview || null,
-    capabilities: capabilities.map((name, index) => ({
-      id: `cap_${index + 1}`,
-      name,
-    })),
+    capabilities: persistedCapabilities,
     epics: epics.map((name, index) => ({
       id: `epic_${index + 1}`,
       name,
@@ -2265,20 +2364,31 @@ async function persistBacklogContractArtifact(projectUuid, projectRecord, backlo
   });
 }
 
-function buildRequirementSpec(requirementsMarkdown, context = {}) {
+export function buildRequirementSpec(requirementsMarkdown, context = {}) {
   const getSection = (title) => extractMarkdownSection(requirementsMarkdown, title);
+  const firstNonEmptyList = (...lists) => lists.find((list) => Array.isArray(list) && list.length) || [];
+  const modernStory = String(getSection('Historia e objetivo') || '')
+    .split(/\n\s*-\s*Objetivo\s*:/i)[0]
+    .trim();
 
-  const userStory = extractPlainSectionText(getSection('User Story Refinada'));
-  const functionalRequirements = extractSectionLines(getSection('Requisitos Funcionais'));
-  const mainFlow = extractRequirementFlowLines(getSection('Fluxo Principal'));
+  const userStory = extractPlainSectionText(getSection('User Story Refinada')) || extractPlainSectionText(modernStory);
+  const functionalRequirements = firstNonEmptyList(extractSectionLines(getSection('Requisitos Funcionais')), extractSectionLines(getSection('Comportamento')));
+  const mainFlow = firstNonEmptyList(extractRequirementFlowLines(getSection('Fluxo Principal')), extractRequirementFlowLines(getSection('Comportamento')));
   const alternativeFlows = extractRequirementFlowLines(getSection('Fluxos Alternativos'));
   const exceptionFlows = extractRequirementFlowLines(getSection('Fluxos de Excecao'));
-  const businessRules = extractSectionLines(getSection('Regras de Negocio'), { stripNumbering: true });
+  const businessRules = firstNonEmptyList(extractSectionLines(getSection('Regras de Negocio'), { stripNumbering: true }), extractSectionLines(getSection('Regras'), { stripNumbering: true }));
   const uiStates = extractSectionLines(getSection('Estados da Interface e Feedback'));
   const validationsAndData = extractSectionLines(getSection('Validacoes e Dados'));
   const permissionsAndAudit = extractSectionLines(getSection('Permissoes e Auditoria'));
-  const acceptanceCriteria = extractAcceptanceCriteriaRobust(getSection('Criterios de Aceite (BDD)'));
-  const assumptions = extractSectionLines(getSection('Premissas e Pontos a Validar'));
+  const acceptanceCriteriaText = firstNonEmptyList(extractAcceptanceCriteriaRobust(getSection('Criterios de Aceite (BDD)')), extractAcceptanceCriteriaRobust(getSection('Cenarios de aceite')));
+  // IDs are persisted in the Requirement Spec and become the stable QA
+  // traceability key. The QA agent must not recreate them from markdown order.
+  const acceptanceCriteria = acceptanceCriteriaText.map((text, index) => ({
+    id: `CA-${String(index + 1).padStart(2, '0')}`,
+    text,
+  }));
+  const assumptions = firstNonEmptyList(extractSectionLines(getSection('Premissas e Pontos a Validar')), extractSectionLines(getSection('Decisoes pendentes')))
+    .filter((item) => !/^nenhuma decis[aã]o pendente\.?$/i.test(String(item || '').trim()));
 
   return {
     version: 1,
@@ -2303,6 +2413,7 @@ function buildRequirementSpec(requirementsMarkdown, context = {}) {
     validationsAndData,
     permissionsAndAudit,
     acceptanceCriteria,
+    acceptanceCriteriaText,
     assumptions,
     traceability: context.requirementContract ? {
       contractVersion: 1,
@@ -2387,8 +2498,12 @@ function buildTestSpec(testPlanMarkdown, context = {}) {
         .filter(Boolean)
     );
 
+  const validationCases = [...String(testPlanMarkdown || '').matchAll(/^###\s*(CT[-\s]*\d+)\s*[—-]?\s*(.*)$([\s\S]*?)(?=^###\s*CT[-\s]*\d+|^##\s+|(?![\s\S]))/gim)]
+    .map((match) => ({ id: match[1].replace(/\s+/g, '').toUpperCase(), title: match[2].trim(), content: match[3].trim() }));
+  const acceptanceCoverage = asLines('Cobertura dos criterios de aceite');
+
   return {
-    version: 1,
+    version: 2,
     generatedAt: new Date().toISOString(),
     source: 'qa_engineer',
     task: {
@@ -2399,15 +2514,15 @@ function buildTestSpec(testPlanMarkdown, context = {}) {
     },
     projectDnaSnapshot: context.projectDna || null,
     requirementSpecSnapshot: context.requirementSpec || null,
-    strategy: asLines('Estrategia de testes'),
-    testData: asBulletList('Dados de teste'),
-    risksAndMetrics: asBulletList('Riscos e metricas'),
-    nonFunctionalQuality: asBulletList('Qualidade nao funcional'),
-    acceptanceTraceability: asLines('Rastreabilidade dos Criterios de Aceite'),
-    minimumSmoke: asLines('Smoke Minimo da Feature'),
-    scenarios: asLines('Cenarios de teste'),
-    functionalCases: asLines('Casos de teste funcionais'),
-    usabilityAndAccessibility: asBulletList('Usabilidade e acessibilidade'),
+    artifactKind: 'qa_validation_cases',
+    acceptanceCoverage,
+    validationCases,
+    qualityGaps: asBulletList('Lacunas de qualidade'),
+    preparationDecision: getSection('Decisao de preparacao') || null,
+    // Compatibility fields for existing observability readers.
+    acceptanceTraceability: acceptanceCoverage,
+    functionalCases: validationCases.map((item) => item.content),
+    scenarios: [],
   };
 }
 
@@ -2509,9 +2624,9 @@ export async function createQaArtifacts(taskUuid, metadata = {}) {
     throw new Error('Tarefa não encontrada.');
   }
 
-  const testPlanArtifact = await createTaskArtifact(taskUuid, {
-    artifactType: 'test_plan',
-    title: metadata.title || `Plano de testes - ${task.title}`,
+  const validationCasesArtifact = await createTaskArtifact(taskUuid, {
+    artifactType: QA_VALIDATION_ARTIFACT_TYPE,
+    title: metadata.title || `Casos de validação - ${task.title}`,
     content: metadata.content || '',
     contentFormat: metadata.contentFormat || 'markdown',
     createdByAgentName: metadata.createdByAgentName || 'qa_engineer',
@@ -2525,7 +2640,7 @@ export async function createQaArtifacts(taskUuid, metadata = {}) {
     requirementSpec = null;
   }
 
-  const testSpec = buildTestSpec(metadata.content || '', {
+  const validationSpec = buildTestSpec(metadata.content || '', {
     taskUuid: task.uuid,
     taskTitle: task.title,
     projectUuid: task.project?.uuid || null,
@@ -2534,19 +2649,19 @@ export async function createQaArtifacts(taskUuid, metadata = {}) {
     requirementSpec,
   });
 
-  const testSpecArtifact = await createSystemTaskArtifact(taskUuid, {
+  const validationSpecArtifact = await createSystemTaskArtifact(taskUuid, {
     artifactType: 'custom',
-    title: '[SYSTEM] Test Spec',
-    content: JSON.stringify(testSpec, null, 2),
+    title: '[SYSTEM] QA Validation Spec',
+    content: JSON.stringify(validationSpec, null, 2),
     contentFormat: 'json',
     createdByAgentName: 'system',
     agentRunId: metadata.agentRunId || null,
   });
 
   return {
-    testPlanArtifact,
-    testSpecArtifact,
-    testSpec,
+    validationCasesArtifact,
+    validationSpecArtifact,
+    validationSpec,
   };
 }
 
@@ -2619,16 +2734,194 @@ export async function importBacklogTasks(projectUuid, backlogMarkdown) {
   return listProjectTasks(projectUuid);
 }
 
+// A repaired requirement is a new source of truth. Keep its structured
+// companion in lockstep so downstream QA never reads an obsolete contract.
+export async function refreshRequirementSpecArtifact(taskUuid, metadata = {}) {
+  const task = await prisma.task.findUnique({
+    where: { uuid: taskUuid },
+    select: {
+      uuid: true,
+      title: true,
+      project: { select: { uuid: true, name: true, intakeConfig: true } },
+      artifacts: {
+        where: { isCurrent: true, artifactScope: 'refinement', title: '[SYSTEM] Requirement Spec' },
+        select: { content: true },
+        take: 1,
+      },
+    },
+  });
+  if (!task) throw new Error('Tarefa não encontrada.');
+
+  let previousSpec = null;
+  try { previousSpec = task.artifacts?.[0]?.content ? JSON.parse(task.artifacts[0].content) : null; } catch { previousSpec = null; }
+  const previousTraceability = previousSpec?.traceability || null;
+  const previousElements = previousTraceability?.elements || {};
+  const requirementContract = previousTraceability ? {
+    domain: previousTraceability.domain || null,
+    intent: previousTraceability.intent || null,
+    evidence_sources: previousTraceability.evidenceSources || [],
+    upstream_review: previousTraceability.upstreamReview || null,
+    refined_story: previousElements.refinedStory || null,
+    inputs: previousElements.inputs || [],
+    outputs: previousElements.outputs || [],
+    confirmed_rules: previousElements.confirmedRules || [],
+    dependencies: previousElements.dependencies || [],
+    acceptance_criteria: previousElements.acceptanceCriteria || [],
+  } : null;
+  const requirementSpec = buildRequirementSpec(metadata.content || '', {
+    taskUuid: task.uuid,
+    taskTitle: task.title,
+    projectUuid: task.project?.uuid || null,
+    projectName: task.project?.name || null,
+    projectDna: task.project?.intakeConfig?.projectDna || null,
+    requirementContract,
+  });
+
+  const artifact = await createSystemTaskArtifact(taskUuid, {
+    artifactType: 'custom',
+    title: '[SYSTEM] Requirement Spec',
+    content: JSON.stringify(requirementSpec, null, 2),
+    contentFormat: 'json',
+    createdByAgentName: metadata.createdByAgentName || 'system',
+    agentRunId: metadata.agentRunId || null,
+  });
+  return { artifact, requirementSpec };
+}
+
+const BACKLOG_RECONCILIATION_STOPWORDS = new Set([
+  'como', 'quero', 'para', 'com', 'sem', 'uma', 'umas', 'um', 'uns', 'que', 'por', 'dos', 'das',
+  'de', 'da', 'do', 'e', 'ou', 'a', 'o', 'os', 'as', 'no', 'na', 'nos', 'nas', 'sistema',
+]);
+const BACKLOG_ACTION_VERBS = new Set([
+  // Read-only verbs do not distinguish a capability's business object.
+  // Other verbs (export, cancel, reserve...) are part of its scope.
+  'consult', 'visuali', 'listar', 'exibir',
+]);
+
+function backlogTerms(value) {
+  return new Set(
+    String(value || '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+      .match(/[a-z0-9]{4,}/g)?.map((term) => term.replace(/s$/, '').slice(0, 7))
+      .filter((term) => !BACKLOG_RECONCILIATION_STOPWORDS.has(term)) || []
+  );
+}
+
+function sharedBacklogTerms(left, right) {
+  return [...left].filter((term) => right.has(term)).length;
+}
+
+function storyScopeText(story) {
+  return [story?.title, story?.actor, story?.goal, story?.benefit, story?.description].filter(Boolean).join(' ');
+}
+
+function storyPrimaryActionText(story) {
+  const title = String(story?.title || '').trim();
+  const matchedAction = title.match(/\b(?:eu\s+quero|quero)\s+(.+?)(?:,\s*para\b|\s+para\b|$)/i);
+  return matchedAction?.[1] || String(story?.goal || title);
+}
+
+function storyPrimaryScopeTerms(story) {
+  return new Set([...backlogTerms(storyPrimaryActionText(story))].filter((term) => !BACKLOG_ACTION_VERBS.has(term)));
+}
+
+function storyAcceptanceCriteria(story) {
+  const context = story?.refinementContext || story?.refinement_context || {};
+  const criteria = story?.acceptanceCriteria || story?.acceptance_criteria || context.acceptanceCriteria || context.acceptance_criteria;
+  return Array.isArray(criteria) ? criteria : [];
+}
+
+export function validateBacklogFinalReconciliation(stories = []) {
+  const normalizedStories = Array.isArray(stories) ? stories.filter((story) => story && typeof story === 'object') : [];
+  const scopes = normalizedStories.map((story) => ({
+    story,
+    terms: backlogTerms(storyScopeText(story)),
+    primaryActionTerms: backlogTerms(storyPrimaryActionText(story)),
+    primaryScopeTerms: storyPrimaryScopeTerms(story),
+  }));
+  const findings = [];
+
+  for (const { story, primaryActionTerms } of scopes) {
+    for (const [criterionIndex, criterion] of storyAcceptanceCriteria(story).entries()) {
+      if (!criterion || typeof criterion !== 'object') continue;
+      const criterionTerms = backlogTerms([criterion.given, criterion.when, criterion.then].filter(Boolean).join(' '));
+      if (criterionTerms.size < 3) continue;
+      const ownScore = sharedBacklogTerms(criterionTerms, primaryActionTerms);
+      const bestMatch = scopes
+        .filter((candidate) => candidate.story !== story)
+        .map((candidate) => ({ story: candidate.story, score: sharedBacklogTerms(criterionTerms, candidate.primaryActionTerms) }))
+        .sort((left, right) => right.score - left.score)[0];
+      // Exception criteria naturally share vocabulary with adjacent journeys
+      // (for example, reserve and change a reservation). Block only when the
+      // criterion has virtually no link to its own primary action and is a
+      // strong match for another primary action.
+      if (bestMatch && ownScore <= 1 && bestMatch.score >= 3 && bestMatch.score >= ownScore + 2) {
+        findings.push({
+          code: 'criterion_outside_story_scope',
+          storyId: story.id || null,
+          relatedStoryId: bestMatch.story.id || null,
+          criterionIndex,
+          criterion,
+          message: `O critério de aceite parece pertencer mais à ${bestMatch.story.id || 'outra story'} do que à ${story.id || 'story atual'}.`,
+        });
+      }
+    }
+  }
+
+  for (let index = 0; index < scopes.length; index += 1) {
+    for (let comparedIndex = index + 1; comparedIndex < scopes.length; comparedIndex += 1) {
+      const left = scopes[index];
+      const right = scopes[comparedIndex];
+      const shared = sharedBacklogTerms(left.primaryScopeTerms, right.primaryScopeTerms);
+      const union = new Set([...left.primaryScopeTerms, ...right.primaryScopeTerms]).size;
+      if (shared >= 3 && union && shared / union >= 0.75) {
+        findings.push({
+          code: 'duplicate_story_scope',
+          storyId: left.story.id || null,
+          relatedStoryId: right.story.id || null,
+          message: `${left.story.id || 'Uma story'} e ${right.story.id || 'outra story'} possuem escopo muito semelhante e precisam ser consolidadas ou delimitadas.`,
+        });
+      }
+    }
+  }
+
+  return findings;
+}
+
+function formatBacklogReconciliationMessage(findings) {
+  const instructions = findings.map((finding) => {
+    if (finding.code === 'criterion_outside_story_scope') {
+      return `A ${finding.storyId} possui um critério de aceite que descreve melhor o fluxo da ${finding.relatedStoryId}. Mova esse critério para a story correta ou reescreva-o para o objetivo da ${finding.storyId}.`;
+    }
+    if (finding.code === 'duplicate_story_scope') {
+      return `As stories ${finding.storyId} e ${finding.relatedStoryId} têm o mesmo objetivo de negócio. Consolide-as em uma única story ou deixe claro o que cada uma cobre.`;
+    }
+    return finding.message;
+  });
+  return `Não foi possível publicar o backlog. Revise antes de tentar novamente: ${instructions.join(' ')}`;
+}
+
 export async function publishBacklogTasks(projectUuid) {
   const project = await prisma.project.findUnique({ where: { uuid: projectUuid }, include: { creator: { select: { id: true } }, tasks: { select: { title: true, taskType: true } } } });
   const contract = project?.intakeConfig?.backlogContract;
   if (!project || !contract) throw new Error('Nenhum backlog aguardando aprovacao humana.');
   const qualityReview = contract.qualityReview || contract.quality_review;
   const stories = Array.isArray(contract.stories) ? contract.stories : [];
-  const hasUnapprovedStory = stories.some((story) => !['approved', 'confirmed'].includes(String(story.reviewStatus || story.status || '').toLowerCase()));
+  // `confirmed` is generated backlog metadata, not the human approval that
+  // authorizes publication. Every story must be explicitly approved after a
+  // READY assessment; this matches the action shown in the review screen.
+  const hasUnapprovedStory = stories.some((story) => String(story?.reviewStatus || '').toLowerCase() !== 'approved');
   if (hasUnapprovedStory) throw new Error('Aprove todas as stories antes de publicar o backlog.');
   const hasUnreadyStory = stories.some((story) => String(story?.lastAgentReview?.assessment?.decision || '') !== 'READY');
   if (hasUnreadyStory) throw new Error('Todas as stories precisam passar pelo Story Readiness Assessment antes da publicacao.');
+  const reconciliationFindings = validateBacklogFinalReconciliation(stories);
+  if (reconciliationFindings.length) {
+    const error = new Error(formatBacklogReconciliationMessage(reconciliationFindings));
+    error.statusCode = 409;
+    error.code = 'BACKLOG_FINAL_RECONCILIATION_FAILED';
+    error.findings = reconciliationFindings;
+    throw error;
+  }
   const legacyQualityGateSatisfied = !qualityReview && stories.length > 0;
   if (qualityReview?.decision !== 'PASS' && !legacyQualityGateSatisfied) {
     throw new Error('O backlog precisa passar pela validacao de qualidade antes da publicacao.');
@@ -2653,7 +2946,21 @@ export async function publishBacklogTasks(projectUuid) {
   const synthesizedQualityReview = legacyQualityGateSatisfied
     ? { decision: 'PASS', source: 'story_readiness', completedAt: publishedAt }
     : qualityReview;
-  await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, ...(legacyQualityGateSatisfied ? { qualityReview: synthesizedQualityReview, quality_review: synthesizedQualityReview } : {}), publicationStatus: 'published', publishedAt } } } });
+  await prisma.project.update({
+    where: { id: project.id },
+    data: {
+      ...(project.status === 'draft' ? { status: 'active' } : {}),
+      intakeConfig: {
+        ...(project.intakeConfig || {}),
+        backlogContract: {
+          ...contract,
+          ...(legacyQualityGateSatisfied ? { qualityReview: synthesizedQualityReview, quality_review: synthesizedQualityReview } : {}),
+          publicationStatus: 'published',
+          publishedAt,
+        },
+      },
+    },
+  });
   return listProjectTasks(projectUuid);
 }
 
@@ -2690,6 +2997,183 @@ export async function updateBacklogStory(projectUuid, storyId, input = {}, actor
   }
   await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, stories } } } });
   return story;
+}
+
+function uniqueBacklogItems(items = []) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const normalized = typeof item === 'string'
+      ? item.trim().toLocaleLowerCase('pt-BR')
+      : JSON.stringify(item || {}).toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function consolidationAcceptanceCriteria(story = {}) {
+  const context = story.refinementContext || story.refinement_context || {};
+  const criteria = context.acceptanceCriteria || context.acceptance_criteria || [];
+  return Array.isArray(criteria) ? criteria : [];
+}
+
+/**
+ * Keeps the target story as the canonical one, incorporates its source's
+ * verifiable context, and invalidates readiness because the scope changed.
+ */
+export async function consolidateBacklogStories(projectUuid, sourceStoryId, targetStoryId, actorUserUuid = null) {
+  const project = await prisma.project.findUnique({ where: { uuid: projectUuid }, select: { id: true, intakeConfig: true } });
+  const contract = project?.intakeConfig?.backlogContract;
+  const stories = Array.isArray(contract?.stories) ? contract.stories : [];
+  const sourceId = String(sourceStoryId || '').trim();
+  const targetId = String(targetStoryId || '').trim();
+  if (!project || !contract) throw new Error('Backlog pendente nao encontrado.');
+  if (!sourceId || !targetId || sourceId.toLowerCase() === targetId.toLowerCase()) {
+    const error = new Error('Selecione duas stories diferentes para consolidar.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (contract.publicationStatus === 'published') {
+    const error = new Error('O backlog ja foi publicado e suas user stories estao bloqueadas para edicao.');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const source = stories.find((item) => String(item?.id || '').toLowerCase() === sourceId.toLowerCase());
+  const target = stories.find((item) => String(item?.id || '').toLowerCase() === targetId.toLowerCase());
+  if (!source || !target) {
+    const error = new Error('Uma das stories selecionadas nao foi encontrada. Atualize a pagina e tente novamente.');
+    error.statusCode = 404;
+    throw error;
+  }
+  const sourceAndTargetIds = new Set([sourceId.toLowerCase(), targetId.toLowerCase()]);
+  const isDetectedDuplicatePair = validateBacklogFinalReconciliation(stories).some((finding) => (
+    finding.code === 'duplicate_story_scope'
+    && sourceAndTargetIds.has(String(finding.storyId || '').toLowerCase())
+    && sourceAndTargetIds.has(String(finding.relatedStoryId || '').toLowerCase())
+  ));
+  if (!isDetectedDuplicatePair) {
+    const error = new Error('Estas stories não foram identificadas como duplicadas. A consolidação só pode ser feita no par indicado pela revisão do backlog.');
+    error.statusCode = 409;
+    error.code = 'BACKLOG_CONSOLIDATION_PAIR_INVALID';
+    throw error;
+  }
+
+  const targetContext = target.refinementContext || target.refinement_context || {};
+  const acceptanceCriteria = uniqueBacklogItems([...consolidationAcceptanceCriteria(target), ...consolidationAcceptanceCriteria(source)]);
+  const refinementContext = {
+    ...targetContext,
+    acceptanceCriteria,
+    acceptance_criteria: acceptanceCriteria,
+    openQuestions: [],
+    open_questions: [],
+  };
+  const consolidatedFrom = uniqueBacklogItems([...(target.consolidatedFrom || []), {
+    id: source.id,
+    title: source.title || source.goal || null,
+    consolidatedAt: new Date().toISOString(),
+    consolidatedBy: actorUserUuid,
+  }]);
+  const reviewHistory = Array.isArray(target.reviewHistory) ? [...target.reviewHistory] : [];
+  reviewHistory.push({
+    status: 'needs_review',
+    comment: `Consolidada com ${source.id}. Execute uma nova revisao antes de aprovar.`,
+    userUuid: actorUserUuid,
+    at: new Date().toISOString(),
+  });
+  const consolidatedTarget = {
+    ...target,
+    refinementContext,
+    refinement_context: refinementContext,
+    capabilities: uniqueBacklogItems([...(target.capabilities || []), ...(source.capabilities || [])]),
+    dependencies: uniqueBacklogItems([...(target.dependencies || []), ...(source.dependencies || [])]),
+    source_ids: uniqueBacklogItems([...(target.source_ids || []), ...(source.source_ids || [])]),
+    sourceIds: uniqueBacklogItems([...(target.sourceIds || []), ...(source.sourceIds || [])]),
+    consolidatedFrom,
+    reviewStatus: 'needs_review',
+    reviewComment: `Conteúdo consolidado de ${source.id}; requer nova revisão do agente.`,
+    reviewHistory,
+    reviewAnswers: [],
+    openQuestions: [],
+    open_questions: [],
+    pendingAgentReview: null,
+    lastAgentReview: null,
+    reviewTags: [],
+    review_tags: [],
+  };
+  const updatedStories = stories
+    .filter((item) => String(item?.id || '').toLowerCase() !== sourceId.toLowerCase())
+    .map((item) => String(item?.id || '').toLowerCase() === targetId.toLowerCase() ? consolidatedTarget : item);
+  await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, stories: updatedStories } } } });
+  return consolidatedTarget;
+}
+
+export async function moveBacklogAcceptanceCriterion(projectUuid, sourceStoryId, targetStoryId, criterionIndex, actorUserUuid = null) {
+  const project = await prisma.project.findUnique({ where: { uuid: projectUuid }, select: { id: true, intakeConfig: true } });
+  const contract = project?.intakeConfig?.backlogContract;
+  const stories = Array.isArray(contract?.stories) ? contract.stories : [];
+  const sourceId = String(sourceStoryId || '').trim();
+  const targetId = String(targetStoryId || '').trim();
+  const index = Number(criterionIndex);
+  if (!project || !contract) throw new Error('Backlog pendente nao encontrado.');
+  if (!sourceId || !targetId || sourceId.toLowerCase() === targetId.toLowerCase() || !Number.isInteger(index) || index < 0) {
+    const error = new Error('A origem, o destino e o critério a mover são obrigatórios.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (contract.publicationStatus === 'published') {
+    const error = new Error('O backlog ja foi publicado e suas user stories estao bloqueadas para edicao.');
+    error.statusCode = 409;
+    throw error;
+  }
+  const source = stories.find((story) => String(story?.id || '').toLowerCase() === sourceId.toLowerCase());
+  const target = stories.find((story) => String(story?.id || '').toLowerCase() === targetId.toLowerCase());
+  const finding = validateBacklogFinalReconciliation(stories).find((item) => (
+    item.code === 'criterion_outside_story_scope'
+    && String(item.storyId || '').toLowerCase() === sourceId.toLowerCase()
+    && String(item.relatedStoryId || '').toLowerCase() === targetId.toLowerCase()
+    && Number(item.criterionIndex) === index
+  ));
+  if (!source || !target || !finding) {
+    const error = new Error('Este critério não está mais indicado para movimentação. Atualize a página e revise as stories antes de tentar novamente.');
+    error.statusCode = 409;
+    error.code = 'BACKLOG_CRITERION_MOVE_INVALID';
+    throw error;
+  }
+  const sourceCriteria = consolidationAcceptanceCriteria(source);
+  const criterion = sourceCriteria[index];
+  if (!criterion || typeof criterion !== 'object') {
+    const error = new Error('O critério indicado não foi encontrado na story de origem.');
+    error.statusCode = 409;
+    throw error;
+  }
+  const targetCriteria = uniqueBacklogItems([...consolidationAcceptanceCriteria(target), criterion]);
+  const updateStoryCriteria = (story, criteria, note) => {
+    const context = story.refinementContext || story.refinement_context || {};
+    const refinementContext = { ...context, acceptanceCriteria: criteria, acceptance_criteria: criteria, openQuestions: [], open_questions: [] };
+    return {
+      ...story,
+      refinementContext,
+      refinement_context: refinementContext,
+      reviewStatus: 'needs_review',
+      reviewComment: note,
+      reviewAnswers: [],
+      openQuestions: [],
+      open_questions: [],
+      pendingAgentReview: null,
+      lastAgentReview: null,
+      reviewTags: [],
+      review_tags: [],
+      reviewHistory: [...(Array.isArray(story.reviewHistory) ? story.reviewHistory : []), { status: 'needs_review', comment: note, userUuid: actorUserUuid, at: new Date().toISOString() }],
+    };
+  };
+  const updatedStories = stories.map((story) => {
+    if (story === source) return updateStoryCriteria(source, sourceCriteria.filter((_, currentIndex) => currentIndex !== index), `Critério movido para ${target.id}; requer nova revisão.`);
+    if (story === target) return updateStoryCriteria(target, targetCriteria, `Critério recebido de ${source.id}; requer nova revisão.`);
+    return story;
+  });
+  await prisma.project.update({ where: { id: project.id }, data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: { ...contract, stories: updatedStories } } } });
+  return { sourceStoryId: source.id, targetStoryId: target.id, criterion };
 }
 
 export async function createTaskArtifact(taskUuid, input) {
@@ -2811,8 +3295,8 @@ export async function reviewTaskArtifact(taskUuid, artifactUuid, { approved, com
   }
   if (!approved && !String(comment).trim()) throw new Error('Informe um comentário ao rejeitar o artefato.');
   let qualityReport = null;
-  if (approved && ['requirements', 'test_plan'].includes(artifact.artifactType)) {
-    const relatedRequirement = artifact.artifactType === 'test_plan'
+  if (approved && ['requirements', ...QA_ARTIFACT_TYPES].includes(artifact.artifactType)) {
+    const relatedRequirement = QA_ARTIFACT_TYPES.includes(artifact.artifactType)
       ? task.artifacts.find((item) => item.artifactType === 'requirements' && item.isCurrent)?.content || `${task.title}\n${task.description || ''}`
       : `${task.title}\n${task.description || ''}`;
     qualityReport = assertArtifactQuality({ artifactType: artifact.artifactType, content: artifact.content, relatedRequirement });
@@ -2990,7 +3474,7 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
               isCurrent: true,
               artifactScope: 'refinement',
               artifactType: {
-                in: ['requirements', 'test_plan'],
+                in: ['requirements', ...QA_ARTIFACT_TYPES],
               },
             },
             select: {
@@ -3051,7 +3535,7 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
   );
   const refinedStories = refinedTasks.length;
   const qaApprovedStories = project.tasks.filter((task) =>
-    task.artifacts.some((artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent && artifact.isApproved)
+    task.artifacts.some((artifact) => QA_ARTIFACT_TYPES.includes(artifact.artifactType) && artifact.isCurrent && artifact.isApproved)
   ).length;
   const pendingTasks = project.tasks.filter(
     (task) => !task.artifacts.some((artifact) => artifact.artifactType === 'requirements' && artifact.isCurrent)
@@ -3238,7 +3722,7 @@ export async function getProjectDocumentationBundle(projectUuid, userUuid = null
       totalTechnicalTasks: tasks.filter((task) => task.taskType === 'task').length,
       refinedStories: architectureStatus.refinedStories || 0,
       storiesWithTestPlan: tasks.filter((task) =>
-        (task.artifacts || []).some((artifact) => artifact.artifactType === 'test_plan' && artifact.isCurrent)
+        (task.artifacts || []).some((artifact) => QA_ARTIFACT_TYPES.includes(artifact.artifactType) && artifact.isCurrent)
       ).length,
       hasBacklog: Boolean(backlogArtifact),
       hasArchitecture: Boolean(architectureStatus.architectureArtifact),

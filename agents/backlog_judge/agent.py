@@ -4,7 +4,13 @@
 class BacklogJudge:
     """Makes the final deterministic gate decision for backlog findings."""
 
-    BLOCKING_CODES = {"unknown_dependency"}
+    BLOCKING_CODES = {
+        "unknown_dependency",
+        "contaminated_story_content",
+        "generic_actor",
+        "malformed_story_goal",
+        "missing_acceptance_criteria",
+    }
     # Only low-impact duplication is advisory. Scope, observability and
     # confirmed-integration gaps must be repaired before publication.
     ADVISORY_CODES = {

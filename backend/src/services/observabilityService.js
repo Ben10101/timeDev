@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { getAuditLogPath, readRecentAuditEntries } from './auditLogService.js';
-import { getRefreshCookieOptions } from './authService.js';
+import { getRefreshCookieOptions, getRefreshTokenTtlDays } from './authService.js';
 import { getRateLimitConfig } from '../middleware/securityMiddleware.js';
 import { buildBudgetConfig, estimateTokenCount, extractRuntimeMetaFromPayload } from '../utils/aiRunMetrics.js';
 import { getRuntimeTelemetrySnapshot } from './runtimeTelemetryService.js';
@@ -989,7 +989,7 @@ export async function getProductionReadiness(userUuid, projectUuid = null) {
       aiSettingsSecretConfigured: Boolean(process.env.AI_SETTINGS_SECRET || process.env.AUTH_ACCESS_SECRET || process.env.JWT_SECRET),
       csrfProtectionEnabled: true,
       accessTokenTtlMinutes: 15,
-      refreshTokenTtlDays: 7,
+      refreshTokenTtlDays: getRefreshTokenTtlDays(),
       rateLimitDefault: defaultRateLimit,
       rateLimitSensitive: sensitiveRateLimit,
     },

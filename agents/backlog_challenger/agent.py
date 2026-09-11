@@ -24,6 +24,36 @@ class BacklogChallenger:
                 continue
             story_id = str(story.get("id") or "").upper()
             context = story.get("refinement_context") if isinstance(story.get("refinement_context"), dict) else {}
+            raw_story = " ".join(str(story.get(field) or "") for field in ("actor", "goal", "description"))
+            if re.search(r"</?think>|```|^\s*##\s*(?:historias|user\s+stories)\b", raw_story, re.IGNORECASE | re.MULTILINE):
+                findings.append({
+                    "story_id": story_id,
+                    "code": "contaminated_story_content",
+                    "reason": "A historia contem marcadores internos ou secoes vazadas da resposta do modelo.",
+                    "severity": "high",
+                })
+            actor = self._normalize(story.get("actor"))
+            if not actor or actor in {"usuario autorizado", "usuario", "user", "persona"}:
+                findings.append({
+                    "story_id": story_id,
+                    "code": "generic_actor",
+                    "reason": "A historia precisa de uma persona de negocio especifica.",
+                    "severity": "high",
+                })
+            if re.search(r"^\s*como\s+.+?\b(?:eu\s+quero|quero)\b", str(story.get("goal") or ""), re.IGNORECASE):
+                findings.append({
+                    "story_id": story_id,
+                    "code": "malformed_story_goal",
+                    "reason": "O goal contem a frase completa da user story em vez da acao principal.",
+                    "severity": "high",
+                })
+            if not context.get("acceptance_criteria"):
+                findings.append({
+                    "story_id": story_id,
+                    "code": "missing_acceptance_criteria",
+                    "reason": "A historia nao possui criterios de aceite verificaveis.",
+                    "severity": "high",
+                })
             question_collections = (story.get("open_questions") or [], context.get("open_questions") or [])
             has_duplicates = any(
                 len(normalized) != len(set(normalized))
@@ -100,11 +130,23 @@ class BacklogChallenger:
             terms = [term for term in re.findall(r"[a-z0-9]{4,}", key) if term not in stopwords]
             if not terms:
                 continue
+            # The PM has already linked every generated story to a planned
+            # capability. That explicit trace is stronger than a loose
+            # word-overlap heuristic ("Gestao de Infraestrutura" versus
+            # "Cadastrar sala") and avoids false uncovered-capability flags.
+            explicitly_covered = bool(capability_id) and any(
+                capability_id.lower() in {
+                    str(story_capability_id).strip().lower()
+                    for story_capability_id in (story.get("capability_ids") or [])
+                }
+                for story in stories if isinstance(story, dict)
+            )
             covered = any(
                 sum(1 for term in terms if term in self._normalize(f"{story.get('goal', '')} {story.get('description', '')}"))
                 >= max(1, (len(terms) + 1) // 2)
                 for story in stories if isinstance(story, dict)
             )
+            covered = explicitly_covered or covered
             if not covered:
                 proposals.append({
                     "type": "story",
@@ -126,7 +168,6 @@ class BacklogChallenger:
         critical = sum(1 for item in findings if item.get("severity") == "critical")
         high = sum(1 for item in findings if item.get("severity") == "high")
         medium = sum(1 for item in findings if item.get("severity") == "medium")
-        score = max(0, 100 - critical * 30 - high * 15 - medium * 8 - len(proposals) * 5)
         dimensions = {
             "domain_coverage": 25 if not proposals else max(0, 25 - len(proposals) * 6),
             "traceability": 20 if all(story.get("source_ids") for story in stories if isinstance(story, dict)) else 0,
@@ -134,7 +175,8 @@ class BacklogChallenger:
             "testability": 15 if all((story.get("refinement_context") or {}).get("acceptance_criteria") for story in stories if isinstance(story, dict)) else 0,
             "coherence": 15 if not any(item.get("code") in {"needs_split_or_scope", "release_dependency_conflict"} for item in findings) else 0,
         }
-        decision = "BLOCK" if critical else ("REVISE" if findings or proposals or questions else "PASS")
+        score = max(0, sum(dimensions.values()) - critical * 30 - high * 15 - medium * 8 - len(proposals) * 5)
+        decision = "BLOCK" if critical else ("REVISE" if findings or proposals or questions or score < 80 else "PASS")
         return {
             "decision": decision,
             "domain": domain,

@@ -48,18 +48,20 @@ DEFAULT_PROVIDER_MODELS = {
     "openai": ("OPENAI_MODEL", "gpt-4.1-mini"),
     "anthropic": ("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
     "deepseek": ("DEEPSEEK_MODEL", "deepseek-chat"),
-    "nvidia": ("NVIDIA_MODEL", "qwen/qwen3.5-122b-a10b"),
+    "nvidia": ("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-flash-0731"),
     "groq": ("GROQ_MODEL", "openai/gpt-oss-120b"),
     "huggingface": ("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct:hf-inference"),
     "openrouter": ("OPENROUTER_MODEL", "openrouter/free"),
     "ollama": ("OLLAMA_MODEL", "gemma3:4b"),
 }
 
-# A second Gemini model is useful when a newly released Flash endpoint is
-# temporarily saturated. This remains within the provider selected by the user
-# and can be overridden through GEMINI_MODEL_FALLBACK.
+# A fallback stays within the provider selected by the user and can be
+# overridden per deployment. NVIDIA's default model is deliberately a distinct
+# fallback for users that select Nemotron; a read timeout from one hosted model
+# must not leave a single-provider installation with only a same-model retry.
 DEFAULT_PROVIDER_MODEL_FALLBACKS = {
     "gemini": ("GEMINI_MODEL_FALLBACK", "gemini-3.6-flash"),
+    "nvidia": ("NVIDIA_MODEL_FALLBACK", "deepseek-ai/deepseek-v4-flash-0731"),
 }
 
 _LAST_EXECUTION_METADATA = None
@@ -80,16 +82,19 @@ def _positive_int_env(name: str, default: int) -> int:
         return default
 
 
-def _transient_retry_delay(error: Exception, retry_number: int) -> float | None:
+def _transient_retry_delay(error: Exception, retry_number: int, *, allow_timeout_retry: bool = False) -> float | None:
     """Return a bounded delay for a provider failure that may recover shortly."""
-    # A request timeout means the provider already consumed its full request
-    # budget. Retrying the same model immediately doubles latency and almost
-    # never changes the outcome; continue to the next candidate instead.
-    if isinstance(error, TimeoutError):
+    message = str(error or "").lower()
+    # ``urllib`` surfaces a socket read timeout as ``TimeoutError``. It can be
+    # a short upstream connection stall, so use the bounded retry policy only
+    # when there is no alternative candidate. With a fallback model/provider,
+    # move to it immediately instead of doubling the request latency.
+    if isinstance(error, TimeoutError) and not allow_timeout_retry:
         return None
 
-    message = str(error or "").lower()
     is_transient = (
+        isinstance(error, TimeoutError)
+        or
         getattr(error, "retry_after_seconds", None) is not None
         or bool(re.search(
             r"\b429\b|\b5(?:00|02|03|04)\b|too many requests|rate.?limit|"
@@ -214,6 +219,12 @@ def build_default_registry(env: dict[str, str] | None = None) -> list[ModelDefin
             # when an older .env still pins it.
             "gemini": {"gemini-2.0-flash", "models/gemini-2.0-flash"},
             "groq": {"qwen/qwen3.6-27b"},
+            # NVIDIA retired this Qwen route on 2026-07-20. Keep an old
+            # environment variable or user setting from poisoning the router.
+            "nvidia": {
+                "qwen/qwen3.5-122b-a10b",
+                "meta/llama-3.3-70b-instruct",
+            },
         }
         if model.lower() in {item.lower() for item in invalid_models.get(provider, set())}:
             model = fallback_model
@@ -222,6 +233,8 @@ def build_default_registry(env: dict[str, str] | None = None) -> list[ModelDefin
         if fallback_config:
             fallback_env_key, fallback_default = fallback_config
             fallback_model = str(source.get(fallback_env_key) or fallback_default).strip()
+            if fallback_model.lower() in {item.lower() for item in invalid_models.get(provider, set())}:
+                fallback_model = fallback_default
             if fallback_model and fallback_model.lower() != model.lower():
                 candidate_models.append(fallback_model)
 
@@ -299,6 +312,7 @@ class ModelRouter:
         candidates = self.select_candidates(request)
         task = str(request.get("task") or "general_text")
         for index, candidate in enumerate(candidates):
+            has_alternative_candidate = index < len(candidates) - 1
             provider_retry = 0
             while True:
                 started_at = time.perf_counter()
@@ -314,7 +328,11 @@ class ModelRouter:
                     _log_event(metadata)
                     return result, metadata
                 except Exception as error:
-                    delay = _transient_retry_delay(error, provider_retry + 1)
+                    delay = _transient_retry_delay(
+                        error,
+                        provider_retry + 1,
+                        allow_timeout_retry=not has_alternative_candidate,
+                    )
                     can_retry = delay is not None and provider_retry < self.transient_retries
                     failure = {
                         "task": task, "provider": candidate.provider, "model": candidate.model,
