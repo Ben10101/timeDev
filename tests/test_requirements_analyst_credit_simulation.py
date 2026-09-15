@@ -451,6 +451,23 @@ Simular credito.
         self.assertEqual("unavailable", report["status"])
         self.assertEqual("REVISE", report["decision"])
 
+    def test_evidence_reviewer_uses_primary_request_timeout_floor(self):
+        expected = {"evidence_sources": []}
+        captured = {}
+
+        def respond(_prompt, options_override=None, **_kwargs):
+            captured.update(options_override or {})
+            return json.dumps({"decision": "PASS", "findings": []})
+
+        with patch.dict(os.environ, {"REQUIREMENTS_REVIEW_TIMEOUT_SECONDS": "30"}, clear=False):
+            with patch("agents.requirements_analyst.agent.generate_text_from_llm", side_effect=respond):
+                report = self.agent._review_with_evidence("## Regras de Negocio\n- Exemplo", expected)
+
+        self.assertEqual("completed", report["status"])
+        self.assertEqual(120, captured["request_timeout_seconds"])
+        self.assertTrue(captured["json_mode"])
+        self.assertTrue(captured["require_json_object"])
+
     def test_central_field_detail_can_be_an_open_question_without_rejection(self):
         document = self.agent._build_document({
             "User Story Refinada": "Como cliente, quero informar meu contato para seguir com a solicitacao.",

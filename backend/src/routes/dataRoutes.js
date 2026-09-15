@@ -20,6 +20,7 @@ import {
   getTaskController,
   importBacklogTasksController,
   publishBacklogTasksController,
+  revalidateBacklogController,
   consolidateBacklogStoriesController,
   moveBacklogAcceptanceCriterionController,
   updateBacklogStoryController,
@@ -63,6 +64,7 @@ router.post('/projects/:projectUuid/generate-backlog', generateProjectBacklogCon
 router.post('/projects/:projectUuid/generate-architecture', generateProjectArchitectureController);
 router.post('/projects/:projectUuid/import-backlog', importBacklogTasksController);
 router.post('/projects/:projectUuid/publish-backlog', publishBacklogTasksController);
+router.post('/projects/:projectUuid/revalidate-backlog', revalidateBacklogController);
 router.post('/projects/:projectUuid/backlog-stories/consolidate', consolidateBacklogStoriesController);
 router.post('/projects/:projectUuid/backlog-stories/move-criterion', moveBacklogAcceptanceCriterionController);
 router.patch('/projects/:projectUuid/backlog-stories/:storyId', updateBacklogStoryController);

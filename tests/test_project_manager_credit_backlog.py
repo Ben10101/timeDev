@@ -77,6 +77,74 @@ class ProjectManagerCreditBacklogTests(unittest.TestCase):
         self.assertIn(("US-01", "needs_split_or_scope"), {(item["story_id"], item["code"]) for item in findings})
         self.assertIn(("US-03", "duplicate_story"), {(item["story_id"], item["code"]) for item in findings})
 
+    def test_pm_handoff_keeps_only_evidence_backed_policies_and_related_scope(self):
+        manager = ProjectManager("pm-handoff-test")
+        contract = {
+            "stories": [
+                {
+                    "id": "US-01", "goal": "selecionar ingressos", "description": "Exibe a disponibilidade por setor.",
+                    "source_ids": ["briefing.1"], "capability_ids": ["CAP-01"],
+                    "refinement_context": {"dependencies": []},
+                },
+                {
+                    "id": "US-02", "goal": "concluir o pagamento", "description": "Confirma a compra selecionada.",
+                    "source_ids": ["briefing.1", "briefing.2"], "capability_ids": ["CAP-01"],
+                    "refinement_context": {"dependencies": ["US-01"]},
+                },
+            ],
+        }
+        evidence = {"facts": [
+            {"id": "briefing.1", "text": "A disponibilidade e a capacidade dos assentos devem evitar venda duplicada."},
+            {"id": "briefing.2", "text": "O pagamento deve respeitar privacidade dos dados pessoais."},
+        ]}
+
+        enriched = manager._enrich_backlog_handoff(contract, evidence)
+
+        self.assertEqual("pm-handoff/v1", enriched["handoff"]["version"])
+        self.assertTrue(enriched["policy_registry"])
+        self.assertIn("availability_and_capacity", {item["area"] for item in enriched["policy_registry"]})
+        self.assertIn("payment_and_financial", {item["area"] for item in enriched["policy_registry"]})
+        handoff = enriched["stories"][0]["refinement_context"]["pm_handoff"]
+        self.assertEqual(["briefing.1"], handoff["source_ids"])
+        self.assertIn("US-02", {item["story_id"] for item in handoff["related_stories"]})
+
+    def test_incremental_checkpoint_resumes_only_complete_bdd_batches(self):
+        manager = ProjectManager("checkpoint-test")
+        idea = "Plataforma de compra de ingressos para shows."
+        complete_batch = [
+            {
+                "id": f"US-{index:02d}", "goal": f"executar jornada {index}",
+                "refinement_context": {"acceptance_criteria": [{
+                    "given": "contexto valido", "when": "realizar a acao", "then": "resultado verificavel",
+                }]},
+            }
+            for index in range(1, 5)
+        ]
+        plan = {"overview": "Compra de ingressos"}
+        coverage = [{"batch_index": 1, "capability": {"id": "CAP-01"}}]
+
+        checkpoint = manager._save_incremental_checkpoint(idea, plan, coverage, [complete_batch])
+        manager._incremental_checkpoint = checkpoint
+
+        restored = manager._load_incremental_checkpoint(idea)
+
+        self.assertEqual(plan, restored["plan"])
+        self.assertEqual(complete_batch, restored["batches"][0])
+        self.assertIsNone(manager._load_incremental_checkpoint("Briefing diferente"))
+
+    def test_renderer_keeps_multiline_model_description_from_becoming_a_story(self):
+        manager = ProjectManager("renderer-inline-test")
+        manager.STORY_RANGE = (8, 8)
+        contract = self.backlog_contract()
+        contract["stories"][0]["description"] = "Mostra eventos disponiveis.\nComo contexto adicional, mantem a jornada de compra clara."
+        contract["epics"][0] = "Como organizador, planejamento do evento e das vendas."
+
+        rendered = manager._render_backlog_contract(manager._validate_backlog_contract(contract))
+        valid, reason = validate_backlog_output(rendered)
+
+        self.assertTrue(valid, reason)
+        self.assertIn("Mostra eventos disponiveis. Como contexto adicional", rendered)
+
     def test_epic_blocks_remove_semantic_duplicate_before_contract_review(self):
         manager = ProjectManager("epic-dedup-test")
         blocks = [
@@ -812,6 +880,21 @@ class ProjectManagerCreditBacklogTests(unittest.TestCase):
         validated = manager._validate_backlog_contract(contract)
 
         self.assertEqual("Fase 2", validated["stories"][0]["release"])
+
+    def test_validation_derives_mvp_slice_from_completed_stories_when_plan_omits_it(self):
+        manager = ProjectManager("credit-backlog-test")
+        contract = self.backlog_contract(story_count=15)
+        contract["releases"] = [release for release in contract["releases"] if release["name"] != "MVP"]
+        for story in contract["stories"]:
+            story["release"] = "Fase 2"
+
+        validated = manager._validate_backlog_contract(contract)
+
+        self.assertIn("mvp", {release["name"].lower() for release in validated["releases"]})
+        self.assertGreaterEqual(
+            sum(1 for story in validated["stories"] if story["release"] == "MVP"),
+            2,
+        )
 
     def test_repair_accepts_a_complete_story_list_from_the_model(self):
         manager = ProjectManager("credit-backlog-test")

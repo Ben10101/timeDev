@@ -456,6 +456,10 @@ export const publishProjectBacklog = async (projectUuid) => {
   const response = await apiClient.post(`/projects/${projectUuid}/publish-backlog`)
   return response.data
 }
+export const revalidateProjectBacklog = async (projectUuid) => {
+  const response = await apiClient.post(`/projects/${projectUuid}/revalidate-backlog`)
+  return response.data
+}
 export const decideBacklogProposal = async (projectUuid, proposalId, payload) => {
   const response = await apiClient.patch(`/projects/${projectUuid}/backlog-proposals/${proposalId}`, payload)
   return response.data

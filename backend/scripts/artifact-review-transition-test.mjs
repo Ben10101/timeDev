@@ -6,7 +6,7 @@ const cases = [
   ['test_plan', true, 'done', 'architect'],
   ['architecture', true, 'todo', 'developer'],
   ['requirements', false, 'backlog', 'requirements_analyst'],
-  ['test_plan', false, 'backlog', 'requirements_analyst'],
+  ['test_plan', false, 'qa', 'qa_engineer'],
   ['architecture', false, 'in_review', 'architect'],
 ];
 for (const [type, approved, status, assignee] of cases) {

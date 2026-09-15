@@ -11,6 +11,7 @@ import authRoutes from './routes/authRoutes.js';
 import observabilityRoutes from './routes/observabilityRoutes.js';
 import alignmentRoutes from './routes/alignmentRoutes.js';
 import { recoverStaleAgentRuns } from './services/agentRunRecoveryService.js';
+import { resumeProjectManagerRetryQueue } from './controllers/projectDataController.js';
 import { attachAuthUser } from './middleware/authMiddleware.js';
 import { apiAuditLogger } from './middleware/auditMiddleware.js';
 import { apiRateLimiter, applySecurityHeaders, attachRequestContext } from './middleware/securityMiddleware.js';
@@ -196,6 +197,11 @@ async function startServer() {
         recoveryWindowSeconds: startupRecoveryWindowSeconds,
       });
     }
+
+    // Retry jobs are represented in the project's persisted recovery state.
+    // Re-register their timers after a backend restart so an unavailable
+    // provider never requires the user to manually recreate the request.
+    await resumeProjectManagerRetryQueue();
 
     recoveryIntervalHandle = setInterval(async () => {
       try {

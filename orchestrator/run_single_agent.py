@@ -15,6 +15,8 @@ from agents.requirement_engine.agent import RequirementEngineAgent
 from agents.requirement_challenger.agent import RequirementChallenger
 from agents.visual_requirement_analyst.agent import VisualRequirementAnalyst
 from agents.artifact_repair.agent import ArtifactRepairAgent
+from agents.requirements_reviewer.agent import RequirementsReviewer
+from agents.qa_reviewer.agent import QAReviewer
 from agents.backlog_challenger.agent import BacklogChallenger
 from agents.backlog_judge.agent import BacklogJudge
 from agents.story_reviewer.agent import StoryReviewer
@@ -42,6 +44,7 @@ def main():
                 idea,
                 elicitation_state=payload.get("elicitation"),
                 elicitation_answers=payload.get("elicitation_answers"),
+                incremental_checkpoint=payload.get("incremental_checkpoint"),
             )
         
         elif agent_name == "requirements_analyst":
@@ -58,6 +61,14 @@ def main():
 
         elif agent_name == "artifact_repair":
             agent = ArtifactRepairAgent(project_id)
+            result = agent.process(payload)
+
+        elif agent_name == "requirements_reviewer":
+            agent = RequirementsReviewer(project_id)
+            result = agent.process(payload)
+
+        elif agent_name == "qa_reviewer":
+            agent = QAReviewer(project_id)
             result = agent.process(payload)
 
         elif agent_name == "qa_engineer":

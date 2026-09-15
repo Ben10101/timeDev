@@ -107,7 +107,9 @@ function App() {
               path="/projects/:projectUuid/tasks/:taskUuid"
               element={<ProtectedRoute><Navigate to="../../" replace /></ProtectedRoute>}
             />
-            <Route path="/tasks/:taskUuid/artifacts" element={<ProtectedRoute><TaskArtifactReviewPage /></ProtectedRoute>} />
+            <Route path="/tasks/:taskUuid/artifacts" element={<ProtectedRoute><TaskArtifactReviewPage stage="requirements" /></ProtectedRoute>} />
+            <Route path="/tasks/:taskUuid/requirements/review" element={<ProtectedRoute><TaskArtifactReviewPage stage="requirements" /></ProtectedRoute>} />
+            <Route path="/tasks/:taskUuid/qa/review" element={<ProtectedRoute><TaskArtifactReviewPage stage="qa" /></ProtectedRoute>} />
             <Route path="/projects/:projectUuid/backlog-review" element={<ProtectedRoute><BacklogReviewPage /></ProtectedRoute>} />
             <Route
               path="/agents-lab"

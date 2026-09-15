@@ -106,6 +106,7 @@ function TaskCard({
   const taskHasActiveRun = requirementsRunning || qaRunning;
   const canRunRequirements = isStory && !isBlocked && (!hasRequirements || !hasApprovedRequirements) && !requirementsRunning;
   const canRunQa = isStory && !isBlocked && hasApprovedRequirements && !hasTestPlan && !qaRunning;
+  const activeReviewLabel = hasTestPlan ? 'Abrir revisão de QA' : 'Abrir revisão de requisitos';
 
   const priorityColors = {
     high: 'bg-rose-50 text-rose-700',
@@ -180,7 +181,9 @@ function TaskCard({
             <h3 className="mt-3 text-sm font-semibold leading-6 text-slate-900">{task.title}</h3>
           </div>
           <button
-            onClick={() => onOpenDetail(task.uuid)}
+            onClick={() => onOpenDetail(task)}
+            aria-label={activeReviewLabel}
+            title={activeReviewLabel}
             className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-500 transition hover:bg-[#102a72]/10 hover:text-[#102a72]"
           >
             <ExternalLink className="h-4 w-4" />
@@ -193,12 +196,12 @@ function TaskCard({
           <p className="text-[10px] font-bold uppercase tracking-[0.2em]">{validationState.label}</p>
           <p className="mt-1 text-xs font-medium">{validationState.detail}</p>
           {hasRequirements && !hasApprovedRequirements && (
-            <button type="button" onClick={() => onReview(task.uuid)} className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-100">
-              Revisar agora
+            <button type="button" onClick={() => onReview(task, 'requirements')} className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-100">
+              Revisar requisitos
             </button>
           )}
           {hasTestPlan && !hasApprovedTestPlan && (
-            <button type="button" onClick={() => onReview(task.uuid)} className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-100">
+            <button type="button" onClick={() => onReview(task, 'qa')} className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-100">
               Revisar QA
             </button>
           )}
@@ -281,7 +284,7 @@ function TaskCard({
             ) : (
               <>
                 <button
-                  onClick={() => onOpenDetail(task.uuid)}
+                  onClick={() => onOpenDetail(task)}
                   className="dashboard-button-secondary flex-1"
                 >
                   <FileText className="h-4 w-4" />
@@ -296,11 +299,11 @@ function TaskCard({
         ) : (
           <>
             <button
-              onClick={() => onOpenDetail(task.uuid)}
+              onClick={() => onOpenDetail(task)}
               className="dashboard-button-primary flex-1"
             >
               <FileText className="h-4 w-4" />
-              Ver artefatos
+              {hasTestPlan ? 'Revisar QA' : 'Revisar requisitos'}
             </button>
             <button
               onClick={() => onExportArtifacts(task)}
@@ -446,8 +449,14 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
     }
   }
 
-  function handleOpenDetail(taskUuid) {
-    navigate(`/tasks/${taskUuid}/artifacts`);
+  function reviewRoute(task, stage = null) {
+    const hasCurrentQa = hasCurrentQaValidation(task);
+    const reviewStage = stage || (hasCurrentQa ? 'qa' : 'requirements');
+    return `/tasks/${task.uuid}/${reviewStage}/review`;
+  }
+
+  function handleOpenDetail(task) {
+    navigate(reviewRoute(task));
   }
 
   function handleExportArtifacts(task) {
@@ -625,7 +634,7 @@ export default function ProjectTaskBoard({ projectUuid, tasks: initialTasks = []
                               onQa={handleRunQa}
                               onExportArtifacts={handleExportArtifacts}
                               onOpenDetail={handleOpenDetail}
-                              onReview={(taskUuid) => navigate(`/tasks/${taskUuid}/artifacts`)}
+                              onReview={(reviewTask, stage) => navigate(reviewRoute(reviewTask, stage))}
                             />
                           </motion.div>
                         ))}

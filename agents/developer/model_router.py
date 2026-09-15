@@ -292,6 +292,12 @@ class ModelRouter:
         # bounded retry leaves room for a configured model fallback instead of
         # keeping the request on an overloaded endpoint for too long.
         self.transient_retries = _positive_int_env("MODEL_ROUTER_TRANSIENT_RETRIES", 1) if transient_retries is None else max(0, transient_retries)
+        # Background recovery is deliberately a single, bounded provider call.
+        # Retrying a provider inside the same job obscures cost and can turn one
+        # recoverable failure into several expensive calls before the queue has
+        # a chance to apply its backoff/rotation policy.
+        if str(os.getenv("MODEL_ROUTER_SINGLE_ATTEMPT", "")).lower() in {"1", "true", "yes"}:
+            self.transient_retries = 0
 
     def select_candidates(self, request: dict[str, Any]) -> list[ModelDefinition]:
         required = required_capabilities(request)
@@ -302,7 +308,13 @@ class ModelRouter:
             if not available:
                 raise ModelRouterSelectionError("Nenhum provider disponível para o Model Router.")
             raise ModelRouterSelectionError(f"Nenhum modelo disponível atende às capabilities: {', '.join(sorted(required))}.")
-        return sorted(compatible, key=lambda model: (provider_rank.get(model.provider, len(provider_rank)), model.priority, model.id))
+        selected = sorted(compatible, key=lambda model: (provider_rank.get(model.provider, len(provider_rank)), model.priority, model.id))
+        # Normally every compatible model is a useful fallback. A queued
+        # recovery can opt into one candidate so a single execution remains a
+        # single provider/model attempt; the next queued execution rotates the
+        # provider instead of fanning out within one run.
+        max_candidates = _positive_int_env("MODEL_ROUTER_MAX_CANDIDATES", 0)
+        return selected[:max_candidates] if max_candidates else selected
 
     def select(self, request: dict[str, Any]) -> ModelDefinition:
         return self.select_candidates(request)[0]

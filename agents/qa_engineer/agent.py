@@ -64,6 +64,44 @@ class QAEngineer:
             raw = [raw]
         return [cls._clean(item) for item in raw if cls._clean(item)][:5]
 
+    @classmethod
+    def _critical_rule_gaps(cls, requirement_spec, criteria):
+        """Flag confirmed privacy rules that lack a verifiable BDD criterion.
+
+        The QA agent must not invent tests for an unmodeled product rule. It
+        must instead keep the preparation decision in review until RA adds the
+        missing criterion.
+        """
+        spec = cls._parse_spec(requirement_spec)
+        rules = spec.get("businessRules") or spec.get("business_rules") or []
+        if not isinstance(rules, list):
+            rules = [rules]
+        normalized_rules = " ".join(cls._clean(rule).lower() for rule in rules)
+        normalized_criteria = " ".join(cls._clean(item.get("text")) for item in criteria).lower()
+        gaps = []
+
+        if any(term in normalized_rules for term in ("retenc", "anonimiz", "descarte seguro")) and not any(
+            term in normalized_criteria for term in ("retenc", "anonimiz", "exclu", "descarte", "prazo legal")
+        ):
+            gaps.append("Regra confirmada de retenção, anonimização/exclusão ou descarte sem critério BDD verificável.")
+        if ("dados de cartão" in normalized_rules or "dados de cartao" in normalized_rules) and not any(
+            term in normalized_criteria for term in ("cartão", "cartao", "dados financeiros")
+        ):
+            gaps.append("Regra confirmada de não armazenamento de dados de cartão sem critério BDD verificável.")
+        if "tentativa de acesso negado" in normalized_rules and not (
+            "acesso negado" in normalized_criteria and "log" in normalized_criteria
+        ):
+            gaps.append("Tentativa de acesso negado deve ser auditada, mas não possui critério BDD que comprove esse registro.")
+        if ("imut" in normalized_rules or ("logs de auditoria" in normalized_rules and "alter" in normalized_rules)) and not any(
+            term in normalized_criteria for term in ("imut", "sem possibilidade de alteração", "sem possibilidade de alteracao")
+        ):
+            gaps.append("Imutabilidade dos logs de auditoria sem critério BDD verificável.")
+        if ("suporte" in normalized_rules and "tempor" in normalized_rules) and not (
+            "suporte" in normalized_criteria and "tempor" in normalized_criteria
+        ):
+            gaps.append("Acesso temporário e mínimo do suporte sem critério BDD verificável.")
+        return list(dict.fromkeys(gaps))
+
     @staticmethod
     def _is_unusable_response(value):
         return not value or is_error_text_response(value) or str(value).strip().lower().startswith("# documentacao gerada")
@@ -168,12 +206,14 @@ class QAEngineer:
             lines.extend(["", f"### {case_id} - {title}"])
             lines.extend(f"{label}: {fields[key]}" for label, key in labels)
 
-        gaps = cls._extract_section(text, "Lacunas de qualidade")
+        generated_gaps = cls._extract_section(text, "Lacunas de qualidade")
+        gaps = list(dict.fromkeys(
+            [cls._clean(item) for item in generated_gaps.splitlines() if cls._clean(item)]
+            + [cls._clean(item) for item in lacunas if cls._clean(item)]
+        ))
         lines.extend(["", "## Lacunas de qualidade"])
         if gaps:
-            lines.extend(gaps.splitlines())
-        elif lacunas:
-            lines.extend(f"- {item}" for item in lacunas)
+            lines.extend(f"- {item.lstrip('- ').strip()}" for item in gaps)
         else:
             lines.append("- Nenhuma lacuna bloqueante identificada a partir dos requisitos aprovados.")
 
@@ -182,7 +222,12 @@ class QAEngineer:
         decision = re.sub(r"(?im)^\s*status\s*:\s*pronto para implementacao\s*$", "Status: pronto para implementação", decision)
         decision = re.sub(r"(?im)^\s*status\s*:\s*precisa de revisao\s*$", "Status: precisa de revisão", decision)
         lines.extend(["", "## Decisão de preparação"])
-        if decision:
+        if lacunas:
+            lines.extend([
+                "Status: precisa de revisÃ£o",
+                "Justificativa: existem regras confirmadas sem critério BDD verificável; o requisito deve ser complementado antes da preparação final de QA.",
+            ])
+        elif decision:
             lines.extend(decision.splitlines())
         else:
             lines.extend([
@@ -227,7 +272,7 @@ class QAEngineer:
     @classmethod
     def _case_type(cls, action, expected):
         text = unicodedata.normalize("NFD", f"{action} {expected}").encode("ascii", "ignore").decode("ascii").lower()
-        return "excecao" if re.search(r"\b(impedir|erro|inval|duplic|sem preench|nao permit|recusar|bloquear)\b", text) else "funcional"
+        return "excecao" if re.search(r"\b(impedir|erro|inval|duplic|sem preench|nao permit|recusar|bloque\w*)\b", text) else "funcional"
 
     @classmethod
     def _selection_rule_cases(cls, criterion_id, given, expected):
@@ -407,6 +452,7 @@ Regras obrigatorias:
 - Nao invente endpoints, autenticacao, auditoria, persistencia, limites, falhas de backend, integracoes ou requisitos nao confirmados.
 - Cenario de excecao, limite ou integracao so pode existir quando o CA ou uma regra confirmada o sustentar.
 - Resultado esperado deve repetir ou parafrasear somente o comportamento comprovavel no CA.
+- Se houver lacuna registrada, nao invente um CT para supri-la. Registre a lacuna e use "Status: precisa de revisao" na decisao de preparacao.
 """.strip()
 
     @classmethod
@@ -447,7 +493,10 @@ Rascunho:\n{draft}
         criteria = self._criteria(requirement_spec, requirement_summary)
         if not criteria:
             raise RuntimeError("O QA nao pode preparar casos de validacao sem criterios de aceite aprovados.")
-        lacunas = self._extract_lacunas(requirement_spec)
+        lacunas = list(dict.fromkeys(
+            self._extract_lacunas(requirement_spec)
+            + self._critical_rule_gaps(requirement_spec, criteria)
+        ))
         model = os.getenv("QA_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL", "gemma3:4b")
         previous_timeout = os.environ.get("OLLAMA_REQUEST_TIMEOUT_SECONDS")
         os.environ["OLLAMA_REQUEST_TIMEOUT_SECONDS"] = os.getenv("QA_OLLAMA_TIMEOUT_SECONDS", previous_timeout or "45")

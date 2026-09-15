@@ -70,6 +70,21 @@ def _extract_backlog_story_blocks(text):
     return [story for story in stories if story]
 
 
+def _backlog_stories_section(text):
+    """Return only the user-story section of a rendered backlog.
+
+    Epics and release descriptions can legitimately mention a persona using
+    "Como ...". They are not user stories and must not be fed to the story
+    structure validator.
+    """
+    match = re.search(
+        r"^\s*##\s+historias\s+de\s+usuario\s*$([\s\S]*)",
+        str(text or ""),
+        re.IGNORECASE | re.MULTILINE,
+    )
+    return match.group(1) if match else ""
+
+
 def _backlog_story_has_complete_structure(story_block):
     lines = [line.strip() for line in (story_block or "").splitlines() if line.strip()]
     if len(lines) < 1:
@@ -127,7 +142,10 @@ def parse_bullets_from_section(section_text):
         for line in (section_text or "").splitlines()
         if re.match(r"^\s*(?:[-*]\s+|\d+[\.\)]\s+).+", line.strip())
     ]
-    if len(bullet_items) >= 3:
+    # A release plan may legitimately contain only MVP. Do not discard a
+    # well-formed bullet merely because the old roadmap template expected
+    # three phases.
+    if bullet_items:
         return bullet_items
 
     slices = []
@@ -673,11 +691,13 @@ def validate_qa_output(result, expected_criteria_ids=None):
             if not re.search(rf"^\s*{re.escape(field_name)}\s*:\s*\S+", lowered, re.IGNORECASE | re.MULTILINE):
                 return False, f"{case_id.upper()} possui campo obrigatorio vazio: {field_name}."
         action_match = re.search(r"^\s*acao\s*:\s*(.+)$", lowered, re.IGNORECASE | re.MULTILINE)
-        if action_match and re.search(r"\b(executar o comportamento|dados relacionados|aplicar a regra|selecionar dados)\b", action_match.group(1), re.IGNORECASE):
+        if action_match and re.search(r"\b(executar o comportamento|dados relacionados|aplicar a regra|selecionar dados|acao definida nessa decisao|acao indicada na decisao|acao e processada)\b", action_match.group(1), re.IGNORECASE):
             return False, f"{case_id.upper()} usa uma acao generica; descreva a interacao observavel."
-        match = re.search(r"criterio\s+relacionado\s*:\s*(CA[-\s]*\d+)", lowered, re.IGNORECASE)
+        if re.search(r"#{1,6}\s+cenario\b", body, re.IGNORECASE):
+            return False, f"{case_id.upper()} contém heading de cenário dentro de um campo de caso."
+        match = re.search(r"criterio\s+relacionado\s*:\s*((?:CA|DQ)[-\s]*\d+)", lowered, re.IGNORECASE)
         if not match:
-            return False, f"{case_id.upper()} sem criterio de aceite rastreavel."
+            return False, f"{case_id.upper()} sem critério ou decisão rastreável."
         criterion_refs.add(re.sub(r"\s+", "", match.group(1)).upper())
         if not re.search(r"status\s*:\s*nao executado", lowered, re.IGNORECASE):
             return False, f"{case_id.upper()} nao pode afirmar execucao nesta etapa."
@@ -711,9 +731,10 @@ def validate_backlog_output(result):
     if missing:
         return False, f"Secoes ausentes: {', '.join(missing)}"
 
+    stories_section = _backlog_stories_section(text)
     story_lines = [
         line.strip()
-        for line in text.splitlines()
+        for line in stories_section.splitlines()
         if re.search(r"^(?:[-*]\s*)?(?:(?:us|story)-\d+\s*\|\s*|\d+[\.\)]\s*)?como\b", line.strip(), re.IGNORECASE)
     ]
 
@@ -742,7 +763,7 @@ def validate_backlog_output(result):
     if invalid_titles:
         return False, "Existe historia com estrutura incompleta ou aparencia de truncamento."
 
-    story_blocks = _extract_backlog_story_blocks(text)
+    story_blocks = _extract_backlog_story_blocks(stories_section)
     if len(story_blocks) < len(story_lines):
         return False, "Historias com bloco estrutural incompleto."
 
@@ -831,14 +852,14 @@ def validate_backlog_output(result):
     release_text = release_section.group(1) if release_section else ""
     release_items = parse_bullets_from_section(release_text)
     release_joined = " ".join(release_items)
-    if "mvp" not in release_joined or "fase 2" not in release_joined or "fase 3" not in release_joined:
-        return False, "Fatias de release sem MVP, Fase 2 e Fase 3 explicitos."
+    if "mvp" not in release_joined:
+        return False, "Fatias de release sem MVP explicito."
 
-    if len(release_items) < 3:
+    if len(release_items) < 1:
         return False, "Fatias de release insuficientes."
 
     meaningful_release_items = _count_meaningful_bullets(release_section, min_words=4)
-    if meaningful_release_items < 3:
+    if meaningful_release_items < 1:
         return False, "Fatias de release com itens curtos ou genericos demais."
 
     release_bodies = [item.lower() for item in release_items]

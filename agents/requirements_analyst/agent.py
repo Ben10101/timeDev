@@ -901,8 +901,9 @@ Uma lacuna explicitamente escrita em "Premissas e Pontos a Validar" nao e erro.
 Itens identificados como "[PROPOSTO - VALIDAR]" sao deliberadamente pendentes e tambem nao sao erro: nao os reporte como afirmacoes sem fonte.
 Nao reporte estilo, estrutura, redundancia, nomenclatura, formatacao ou sugestao editorial. Esses itens nao sao falta de evidencia e devem resultar em PASS.
 
-Retorne SOMENTE JSON neste formato:
+Retorne exclusivamente um único objeto JSON válido, sem Markdown, sem crases e sem texto antes ou depois. Use exatamente este formato:
 {{"decision":"PASS|REVISE","findings":[{{"evidence":"trecho literal do refinamento","reason":"...","severity":"low|medium|high","question":"...","source_id":"user_story|backlog|project_dna|backlog_contract|null","source_excerpt":"trecho literal da fonte ou null"}}]}}.
+Quando não houver achados, responda exatamente: {{"decision":"PASS","findings":[]}}.
 Para cada finding, evidence deve estar no refinamento. Se a afirmacao nao tiver fonte, use source_id e source_excerpt como null.
 
 FONTES:\n{json.dumps(sources, ensure_ascii=False)}
@@ -915,8 +916,18 @@ REFINAMENTO:\n{markdown}
                 options_override={
                     "temperature": 0.0,
                     "num_predict": 900,
-                    "request_timeout_seconds": max(30, int(os.getenv("REQUIREMENTS_REVIEW_TIMEOUT_SECONDS", "45"))),
+                    # The challenger is a second full model invocation.  Its
+                    # former 45-second default expired while remote fallback
+                    # providers were still producing a valid review, turning
+                    # a healthy refinement into an unavailable-review error.
+                    # Keep its minimum aligned with the primary contract call.
+                    "request_timeout_seconds": min(180, max(120, int(os.getenv("REQUIREMENTS_REVIEW_TIMEOUT_SECONDS", "120")))),
                     "transient_retries": 0,
+                    # Make malformed prose a provider-level failure, so the
+                    # router can try the next structured-output provider.
+                    "json_mode": True,
+                    "require_json_object": True,
+                    "min_response_chars": 28,
                 },
                 use_cache=False,
                 task="requirements_judge",
@@ -1860,6 +1871,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                 "status": evidence_review.get("status"),
                 "decision": evidence_review.get("decision"),
                 "findings_count": len(evidence_review.get("findings", [])),
+                "reason": evidence_review.get("reason") if evidence_review.get("status") != "completed" else None,
             }, ensure_ascii=False), file=sys.stderr)
             findings = evidence_review.get("findings", [])
             if evidence_review.get("status") != "completed":
@@ -2006,6 +2018,7 @@ Contrato JSON esperado (use exatamente estas chaves; listas podem ficar vazias q
                         "status": evidence_report.get("status"),
                         "decision": evidence_report.get("decision"),
                         "findings_count": len(evidence_report.get("findings", [])),
+                        "reason": evidence_report.get("reason") if evidence_report.get("status") != "completed" else None,
                     }, ensure_ascii=False), file=sys.stderr)
                     generated_contract["evidence_review"] = evidence_report
                     if evidence_report["status"] != "completed":

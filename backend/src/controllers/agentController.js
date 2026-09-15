@@ -254,6 +254,7 @@ function compactRequirementStory(story) {
       dependencies: Array.isArray(refinement.dependencies) ? refinement.dependencies.slice(0, 5) : [],
       open_questions: Array.isArray(refinement.open_questions) ? refinement.open_questions.slice(0, 4) : [],
       acceptance_criteria: Array.isArray(refinement.acceptance_criteria) ? refinement.acceptance_criteria.slice(0, 4) : [],
+      pm_handoff: refinement.pmHandoff || refinement.pm_handoff || null,
     },
   };
 }
@@ -298,8 +299,20 @@ function buildCompactRequirementProjectContext(task) {
       releaseSlices: Array.isArray(backlogContract.releaseSlices)
         ? backlogContract.releaseSlices.slice(0, 5).map((item) => ({ id: item?.id || null, name: compactText(item?.name, 100) || null, goal: compactText(item?.goal, 160) || null }))
         : [],
+      policyRegistry: Array.isArray(backlogContract.policyRegistry)
+        ? backlogContract.policyRegistry.slice(0, 12).map((policy) => ({
+          id: policy?.id || null,
+          area: policy?.area || null,
+          statement: compactText(policy?.statement, 220) || null,
+          status: policy?.status || null,
+          sourceIds: Array.isArray(policy?.source_ids) ? policy.source_ids.slice(0, 4) : [],
+        }))
+        : [],
       stories: [currentStory, ...relatedStories].filter(Boolean).map((story) => compactRequirementStory(story)).filter(Boolean),
     },
+    policies: Array.isArray(backlogContract.policyRegistry)
+      ? backlogContract.policyRegistry.map((policy) => compactText(policy?.statement, 220)).filter(Boolean).slice(0, 12)
+      : [],
     storyContext: {
       currentStory: compactRequirementStory(currentStory),
       relatedStories,

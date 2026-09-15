@@ -22,6 +22,7 @@ export function resolveArtifactReviewTransition(artifactType, approved) {
   if (approved && QA_ARTIFACT_TYPES.includes(artifactType)) return { status: 'done', assigneeAgentName: 'architect', assigneeType: 'agent', releasedStage: 'architecture' };
   if (approved && artifactType === 'architecture') return { status: 'todo', assigneeAgentName: 'developer', assigneeType: 'agent', releasedStage: 'implementation' };
   if (!approved && artifactType === 'architecture') return { status: 'in_review', assigneeAgentName: 'architect', assigneeType: 'agent', releasedStage: null };
+  if (!approved && QA_ARTIFACT_TYPES.includes(artifactType)) return { status: 'qa', assigneeAgentName: 'qa_engineer', assigneeType: 'agent', releasedStage: null };
   if (!approved) return { status: 'backlog', assigneeAgentName: 'requirements_analyst', assigneeType: 'agent', releasedStage: null };
   return null;
 }
@@ -1926,6 +1927,10 @@ function extractMarkdownSection(content, sectionTitle) {
       if (currentHeading === targetHeading) {
         capture = true;
         captureLevel = level;
+      } else if (capture) {
+        // Nested headings delimit BDD scenarios and must remain available to
+        // the contract parser. Dropping them merged every scenario into CA-01.
+        captured.push(line);
       }
       continue;
     }
@@ -2082,7 +2087,7 @@ function extractAcceptanceCriteria(sectionContent) {
 function extractAcceptanceCriteriaRobust(sectionContent) {
   const compactSource = String(sectionContent || '').replace(/\r/g, '').replace(/\\\s*$/gm, '');
   const bddBlocks = [...compactSource.matchAll(
-    /\*\*DADO\*\*\s*([\s\S]*?)\s*\*\*QUANDO\*\*\s*([\s\S]*?)\s*\*\*ENTAO\*\*\s*([\s\S]*?)(?=\s*\*\*DADO\*\*|(?![\s\S]))/gim
+    /\*\*DADO\*\*\s*([\s\S]*?)\s*\*\*QUANDO\*\*\s*([\s\S]*?)\s*\*\*ENTAO\*\*\s*([\s\S]*?)(?=\s*\*\*DADO\*\*|\r?\n\s*#{3,6}\s+cenario\s+\d+\b|(?![\s\S]))/gim
   )]
     .map((match) => `DADO ${match[1]} QUANDO ${match[2]} ENTAO ${match[3]}`.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
@@ -2269,7 +2274,10 @@ function buildBacklogContract(backlogMarkdown, projectDna = null, generatedContr
       goal: slice.goal,
     })),
     stories: stories.map((story, index) => ({
-      id: `story_${index + 1}`,
+      // The PM contract owns the canonical story ID. Persisting a positional
+      // `story_N` alias made BDD, dependencies and Quality Gate findings
+      // point at a different identifier than the story shown to the user.
+      id: String(generatedContract?.stories?.[index]?.id || `US-${String(index + 1).padStart(2, '0')}`).toUpperCase(),
       title: story.title,
       description: story.description || null,
       order: index + 1,
@@ -2280,10 +2288,10 @@ function buildBacklogContract(backlogMarkdown, projectDna = null, generatedContr
   const generatedStories = Array.isArray(generatedContract.stories) ? generatedContract.stories : [];
   const storyMetadataById = new Map(generatedStories.map((story) => [String(story?.id || '').toUpperCase(), story]));
   const persistedIdByGeneratedId = new Map(
-    baseContract.stories.map((story, index) => [`US-${String(index + 1).padStart(2, '0')}`, story.id])
+    baseContract.stories.map((story) => [String(story.id).toUpperCase(), story.id])
   );
   const persistedStories = baseContract.stories.map((story, index) => {
-    const metadata = storyMetadataById.get(`US-${String(index + 1).padStart(2, '0')}`) || {};
+    const metadata = storyMetadataById.get(String(story.id).toUpperCase()) || generatedStories[index] || {};
     const sourceContext = metadata.refinement_context && typeof metadata.refinement_context === 'object'
       ? metadata.refinement_context
       : { inputs: [], outputs: [], confirmed_rules: [], constraints: [], dependencies: [], open_questions: [], acceptance_hints: [], acceptance_criteria: [] };
@@ -2301,6 +2309,20 @@ function buildBacklogContract(backlogMarkdown, projectDna = null, generatedContr
             ...item,
             text: persistedIdByGeneratedId.get(String(item?.text || '').toUpperCase()) || item?.text,
           }))
+          : [],
+      };
+    }
+    const rawPmHandoff = sourceContext.pm_handoff || sourceContext.pmHandoff;
+    if (rawPmHandoff && typeof rawPmHandoff === 'object') {
+      const { related_stories: _relatedStoriesSnake, relatedStories: _relatedStoriesCamel, ...pmHandoffBase } = rawPmHandoff;
+      refinementContext.pmHandoff = {
+        ...pmHandoffBase,
+        relatedStories: Array.isArray(_relatedStoriesSnake || _relatedStoriesCamel)
+          ? (_relatedStoriesSnake || _relatedStoriesCamel).map((item) => ({
+            ...item,
+            story_id: persistedIdByGeneratedId.get(String(item?.story_id || item?.storyId || '').toUpperCase())
+              || item?.story_id || item?.storyId || null,
+          })).filter((item) => item.story_id)
           : [],
       };
     }
@@ -2334,6 +2356,17 @@ function buildBacklogContract(backlogMarkdown, projectDna = null, generatedContr
     evidence: generatedContract.evidence || { facts: [] },
     requirementsContract: generatedContract.requirements_contract || null,
     qualityReview: generatedContract.quality_review || null,
+    handoff: generatedContract.handoff || null,
+    policyRegistry: Array.isArray(generatedContract.policy_registry)
+      ? generatedContract.policy_registry.map((policy) => ({
+        ...policy,
+        applies_to_story_ids: Array.isArray(policy?.applies_to_story_ids)
+          ? policy.applies_to_story_ids
+            .map((id) => persistedIdByGeneratedId.get(String(id).toUpperCase()))
+            .filter(Boolean)
+          : [],
+      }))
+      : [],
     coverage,
     stories: persistedStories,
   };
@@ -2391,9 +2424,17 @@ export function buildRequirementSpec(requirementsMarkdown, context = {}) {
     .filter((item) => !/^nenhuma decis[aã]o pendente\.?$/i.test(String(item || '').trim()));
 
   return {
-    version: 1,
+    // Schema version. The version of the reviewed human artifact is stored
+    // in sourceArtifact to avoid conflating the two contracts.
+    version: 2,
     generatedAt: new Date().toISOString(),
-    source: 'requirements_analyst',
+    source: context.sourceAgentName || 'requirements_analyst',
+    sourceArtifact: {
+      uuid: context.sourceArtifactUuid || null,
+      version: context.sourceArtifactVersion || null,
+      title: context.sourceArtifactTitle || null,
+      agentName: context.sourceAgentName || 'requirements_analyst',
+    },
     task: {
       uuid: context.taskUuid || null,
       title: context.taskTitle || null,
@@ -2469,6 +2510,10 @@ export async function createRequirementsArtifacts(taskUuid, metadata = {}) {
     projectName: task.project?.name || null,
     projectDna: task.project?.intakeConfig?.projectDna || null,
     requirementContract: metadata.requirementContract || null,
+    sourceArtifactUuid: requirementsArtifact.uuid,
+    sourceArtifactVersion: requirementsArtifact.version,
+    sourceArtifactTitle: requirementsArtifact.title,
+    sourceAgentName: requirementsArtifact.createdByAgentName || metadata.createdByAgentName || 'requirements_analyst',
   });
 
   const requirementSpecArtifact = await createSystemTaskArtifact(taskUuid, {
@@ -2499,8 +2544,35 @@ function buildTestSpec(testPlanMarkdown, context = {}) {
     );
 
   const validationCases = [...String(testPlanMarkdown || '').matchAll(/^###\s*(CT[-\s]*\d+)\s*[—-]?\s*(.*)$([\s\S]*?)(?=^###\s*CT[-\s]*\d+|^##\s+|(?![\s\S]))/gim)]
-    .map((match) => ({ id: match[1].replace(/\s+/g, '').toUpperCase(), title: match[2].trim(), content: match[3].trim() }));
-  const acceptanceCoverage = asLines('Cobertura dos criterios de aceite');
+    .map((match) => {
+      const content = match[3].trim();
+      const criterionMatch = content.match(/^\s*Crit[eé]rio relacionado\s*:\s*((?:CA|DQ)[-\s]*\d+)\b/im);
+      return {
+        id: match[1].replace(/\s+/g, '').toUpperCase(),
+        title: match[2].trim(),
+        content,
+        criterionId: criterionMatch?.[1]?.replace(/\s+/g, '').toUpperCase() || null,
+      };
+    });
+  const expectedCriteria = Array.isArray(context.requirementSpec?.acceptanceCriteria)
+    ? context.requirementSpec.acceptanceCriteria
+      .map((item) => String(item?.id || '').trim().toUpperCase())
+      .filter(Boolean)
+    : [];
+  const reportedCriteria = validationCases.map((item) => item.criterionId).filter(Boolean);
+  const legacySingleCriterionMapping = expectedCriteria.length > 1
+    && validationCases.length === expectedCriteria.length
+    && new Set(reportedCriteria).size === 1
+    && reportedCriteria.length === validationCases.length;
+  const normalizedCases = legacySingleCriterionMapping
+    ? validationCases.map((item, index) => ({ ...item, criterionId: expectedCriteria[index] }))
+    : validationCases;
+  const acceptanceCoverage = normalizedCases.length && normalizedCases.every((item) => item.criterionId)
+    ? expectedCriteria.map((criterionId) => {
+      const caseIds = normalizedCases.filter((item) => item.criterionId === criterionId).map((item) => item.id);
+      return caseIds.length ? `${criterionId} -> ${caseIds.join(', ')}` : null;
+    }).filter(Boolean)
+    : asLines('Cobertura dos criterios de aceite');
 
   return {
     version: 2,
@@ -2516,12 +2588,13 @@ function buildTestSpec(testPlanMarkdown, context = {}) {
     requirementSpecSnapshot: context.requirementSpec || null,
     artifactKind: 'qa_validation_cases',
     acceptanceCoverage,
-    validationCases,
+    validationCases: normalizedCases,
+    coverageRepairedDeterministically: legacySingleCriterionMapping,
     qualityGaps: asBulletList('Lacunas de qualidade'),
     preparationDecision: getSection('Decisao de preparacao') || null,
     // Compatibility fields for existing observability readers.
     acceptanceTraceability: acceptanceCoverage,
-    functionalCases: validationCases.map((item) => item.content),
+    functionalCases: normalizedCases.map((item) => item.content),
     scenarios: [],
   };
 }
@@ -2665,6 +2738,49 @@ export async function createQaArtifacts(taskUuid, metadata = {}) {
   };
 }
 
+// Rebuild only the derived QA contract. This is used after a Requirement Spec
+// migration and deliberately leaves the reviewed QA Markdown untouched.
+export async function refreshQaValidationSpecArtifact(taskUuid) {
+  const task = await prisma.task.findUnique({
+    where: { uuid: taskUuid },
+    select: {
+      uuid: true,
+      title: true,
+      project: { select: { uuid: true, name: true, intakeConfig: true } },
+      artifacts: {
+        where: { isCurrent: true, artifactScope: 'refinement' },
+        select: { artifactType: true, title: true, content: true },
+      },
+    },
+  });
+  if (!task) throw new Error('Tarefa nÃ£o encontrada.');
+
+  const requirementArtifact = task.artifacts.find((artifact) => artifact.title === '[SYSTEM] Requirement Spec');
+  const validationArtifact = task.artifacts.find((artifact) => QA_ARTIFACT_TYPES.includes(artifact.artifactType));
+  if (!requirementArtifact || !validationArtifact) {
+    throw new Error('Requirement Spec e casos de validaÃ§Ã£o atuais sÃ£o obrigatÃ³rios para atualizar o contrato de QA.');
+  }
+
+  let requirementSpec = null;
+  try { requirementSpec = JSON.parse(requirementArtifact.content); } catch { requirementSpec = null; }
+  const validationSpec = buildTestSpec(validationArtifact.content || '', {
+    taskUuid: task.uuid,
+    taskTitle: task.title,
+    projectUuid: task.project?.uuid || null,
+    projectName: task.project?.name || null,
+    projectDna: task.project?.intakeConfig?.projectDna || null,
+    requirementSpec,
+  });
+  const artifact = await createSystemTaskArtifact(taskUuid, {
+    artifactType: 'custom',
+    title: '[SYSTEM] QA Validation Spec',
+    content: JSON.stringify(validationSpec, null, 2),
+    contentFormat: 'json',
+    createdByAgentName: 'system',
+  });
+  return { artifact, validationSpec };
+}
+
 export async function importBacklogTasks(projectUuid, backlogMarkdown) {
   const project = await prisma.project.findUnique({
     where: { uuid: projectUuid },
@@ -2683,6 +2799,14 @@ export async function importBacklogTasks(projectUuid, backlogMarkdown) {
   const backlogStories = Array.isArray(project.intakeConfig?.backlogContract?.stories)
     ? project.intakeConfig.backlogContract.stories
     : [];
+  const publicationFindings = validateBacklogPublicationReadiness(backlogStories);
+  if (publicationFindings.length) {
+    const error = new Error(formatBacklogPublicationReadinessMessage(publicationFindings));
+    error.statusCode = 409;
+    error.code = 'BACKLOG_REVIEW_REQUIRED';
+    error.findings = publicationFindings;
+    throw error;
+  }
 
   const itemsToCreate = [
     ...stories.map((story, index) => {
@@ -2775,6 +2899,10 @@ export async function refreshRequirementSpecArtifact(taskUuid, metadata = {}) {
     projectName: task.project?.name || null,
     projectDna: task.project?.intakeConfig?.projectDna || null,
     requirementContract,
+    sourceArtifactUuid: metadata.sourceArtifactUuid || null,
+    sourceArtifactVersion: metadata.sourceArtifactVersion || null,
+    sourceArtifactTitle: metadata.sourceArtifactTitle || null,
+    sourceAgentName: metadata.sourceAgentName || metadata.createdByAgentName || 'requirements_reviewer',
   });
 
   const artifact = await createSystemTaskArtifact(taskUuid, {
@@ -2901,12 +3029,114 @@ function formatBacklogReconciliationMessage(findings) {
   return `Não foi possível publicar o backlog. Revise antes de tentar novamente: ${instructions.join(' ')}`;
 }
 
+export function validateBacklogPublicationReadiness(stories = []) {
+  return (Array.isArray(stories) ? stories : [])
+    .filter((story) => story && typeof story === 'object')
+    .flatMap((story) => {
+      const tags = story.reviewTags || story.review_tags || [];
+      const blockingTags = (Array.isArray(tags) ? tags : [])
+        .map((tag) => String(tag || ''))
+        .filter((tag) => /^(REVIEW_|PROPOSED_DEFAULT$)/.test(tag));
+      return blockingTags.length ? [{
+        code: 'story_review_required',
+        storyId: story.id || null,
+        tags: blockingTags,
+        questions: story.openQuestions || story.open_questions || [],
+      }] : [];
+    });
+}
+
+function finalRevalidationFindings(contract = {}, stories = []) {
+  const findings = [];
+  const normalizedStories = Array.isArray(stories) ? stories : [];
+  const qualityReview = contract.qualityReview || contract.quality_review || {};
+
+  if (!normalizedStories.length) {
+    findings.push({ code: 'backlog_empty', message: 'O backlog não possui stories para ser revalidado.' });
+  }
+  findings.push(...validateBacklogPublicationReadiness(normalizedStories).map((finding) => ({
+    ...finding,
+    message: `A ${finding.storyId || 'story'} ainda possui uma revisão pendente.`,
+  })));
+  normalizedStories.forEach((story) => {
+    if (String(story?.reviewStatus || '').toLowerCase() !== 'approved') {
+      findings.push({ code: 'story_not_approved', storyId: story?.id || null, message: `A ${story?.id || 'story'} ainda aguarda aprovação humana.` });
+    }
+    if (String(story?.lastAgentReview?.assessment?.decision || '') !== 'READY') {
+      findings.push({ code: 'story_not_ready', storyId: story?.id || null, message: `A ${story?.id || 'story'} não passou no Story Readiness Assessment.` });
+    }
+  });
+  (qualityReview.proposals || []).forEach((proposal, index) => {
+    if (!['accepted', 'rejected'].includes(String(proposal?.status || 'proposed').toLowerCase())) {
+      findings.push({
+        code: 'quality_proposal_pending',
+        proposalId: proposal?.id || `PROP-${String(index + 1).padStart(3, '0')}`,
+        message: `A decisão sobre "${proposal?.capability || 'capacidade proposta'}" ainda está pendente.`,
+      });
+    }
+  });
+  (qualityReview.questions || []).forEach((question, index) => {
+    if (question?.requires_confirmation && String(question?.status || '').toLowerCase() !== 'answered') {
+      findings.push({
+        code: 'quality_question_pending',
+        questionId: question?.id || `CQ-${String(index + 1).padStart(3, '0')}`,
+        message: question?.question || 'Existe uma decisão de Quality Gate ainda sem resposta.',
+      });
+    }
+  });
+  return [...findings, ...validateBacklogFinalReconciliation(normalizedStories)];
+}
+
+export async function revalidateBacklogForPublication(projectUuid, actorUserUuid = null) {
+  const project = await prisma.project.findUnique({ where: { uuid: projectUuid }, select: { id: true, intakeConfig: true } });
+  const contract = project?.intakeConfig?.backlogContract;
+  if (!project || !contract) throw new Error('Nenhum backlog aguardando revalidação.');
+  if (contract.publicationStatus === 'published') throw new Error('O backlog já foi publicado.');
+
+  const stories = Array.isArray(contract.stories) ? contract.stories : [];
+  const findings = finalRevalidationFindings(contract, stories);
+  const previousReview = contract.qualityReview || contract.quality_review || {};
+  const revalidatedAt = new Date().toISOString();
+  const qualityReview = {
+    ...previousReview,
+    decision: findings.length ? 'REVISE' : 'PASS',
+    findings,
+    finalRevalidation: {
+      status: findings.length ? 'REVISE' : 'PASS',
+      findingsCount: findings.length,
+      revalidatedAt,
+      revalidatedBy: actorUserUuid,
+      source: 'deterministic_final_reconciliation',
+    },
+    resolvedAt: findings.length ? null : revalidatedAt,
+  };
+  const nextContract = { ...contract, qualityReview, quality_review: qualityReview };
+  await prisma.project.update({
+    where: { id: project.id },
+    data: { intakeConfig: { ...(project.intakeConfig || {}), backlogContract: nextContract } },
+  });
+  return { qualityReview, findings };
+}
+
+function formatBacklogPublicationReadinessMessage(findings) {
+  const ids = findings.map((item) => item.storyId || 'story sem ID').join(', ');
+  return `Não é possível publicar o backlog enquanto houver stories com revisão pendente: ${ids}. Resolva as pendências e execute o Story Readiness Assessment.`;
+}
+
 export async function publishBacklogTasks(projectUuid) {
   const project = await prisma.project.findUnique({ where: { uuid: projectUuid }, include: { creator: { select: { id: true } }, tasks: { select: { title: true, taskType: true } } } });
   const contract = project?.intakeConfig?.backlogContract;
   if (!project || !contract) throw new Error('Nenhum backlog aguardando aprovacao humana.');
   const qualityReview = contract.qualityReview || contract.quality_review;
   const stories = Array.isArray(contract.stories) ? contract.stories : [];
+  const publicationFindings = validateBacklogPublicationReadiness(stories);
+  if (publicationFindings.length) {
+    const error = new Error(formatBacklogPublicationReadinessMessage(publicationFindings));
+    error.statusCode = 409;
+    error.code = 'BACKLOG_REVIEW_REQUIRED';
+    error.findings = publicationFindings;
+    throw error;
+  }
   // `confirmed` is generated backlog metadata, not the human approval that
   // authorizes publication. Every story must be explicitly approved after a
   // READY assessment; this matches the action shown in the review screen.
@@ -3292,6 +3522,17 @@ export async function reviewTaskArtifact(taskUuid, artifactUuid, { approved, com
     error.statusCode = 409;
     error.code = 'ARTIFACT_VERSION_STALE';
     throw error;
+  }
+  if (QA_ARTIFACT_TYPES.includes(artifact.artifactType)) {
+    const approvedRequirements = task.artifacts.some(
+      (item) => item.isCurrent && item.artifactType === 'requirements' && item.isApproved
+    );
+    if (!approvedRequirements) {
+      const error = new Error('A revisão de QA exige requisitos aprovados na versão atual.');
+      error.statusCode = 409;
+      error.code = 'QA_REQUIRES_APPROVED_REQUIREMENTS';
+      throw error;
+    }
   }
   if (!approved && !String(comment).trim()) throw new Error('Informe um comentário ao rejeitar o artefato.');
   let qualityReport = null;

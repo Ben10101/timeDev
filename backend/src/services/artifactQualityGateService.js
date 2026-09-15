@@ -78,12 +78,15 @@ export function evaluateArtifactQuality({ artifactType, content, relatedRequirem
     // meaning as their ASCII contract forms.
     const normalizedQaText = normalize(text);
     const caseCount = (text.match(/^###\s*CT[-\s]*\d+\b/gim) || []).length;
-    const criterionRefs = (normalizedQaText.match(/criterio\s+relacionado\s*:\s*ca[-\s]*\d+/g) || []).length;
+    const criterionRefs = (normalizedQaText.match(/criterio\s+relacionado\s*:\s*(?:ca|dq)[-\s]*\d+/g) || []).length;
     if (!normalizedQaText.includes('cobertura dos criterios de aceite') || !normalizedQaText.includes('casos de validacao')) {
       findings.push({ code: 'missing_validation_structure', severity: 'critical', message: 'Casos de validação sem cobertura explícita dos critérios de aceite.' });
     }
     if (!caseCount || caseCount !== criterionRefs) {
-      findings.push({ code: 'invalid_case_traceability', severity: 'critical', message: 'Todo caso de validação deve possuir um critério de aceite relacionado.' });
+      findings.push({ code: 'invalid_case_traceability', severity: 'critical', message: 'Todo caso de validação deve possuir um critério de aceite ou decisão de QA relacionada.' });
+    }
+    if (/#{3,6}\s+(?!CT[-\s]*\d+\b)/gi.test(text)) {
+      findings.push({ code: 'invalid_case_field_heading', severity: 'critical', message: 'Um caso de QA contém um heading inesperado; regenere o Requirement Spec e os casos para evitar cenário anexado em campo.' });
     }
     if (!normalizedQaText.includes('status: nao executado')) {
       findings.push({ code: 'premature_execution_claim', severity: 'critical', message: 'O artefato de preparação não pode afirmar execução de testes.' });

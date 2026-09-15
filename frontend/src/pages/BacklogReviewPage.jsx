@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { AlertTriangle, Check, CheckCircle2, ChevronRight, FilePenLine, ListChecks, LoaderCircle, MessageSquareText, Plus, RefreshCw, ShieldAlert, Sparkles, Trash2, X } from 'lucide-react'
 import AppShell from '../components/AppShell'
-import { applyBacklogProposals, applyProjectBacklogStoryReview, consolidateProjectBacklogStories, decideBacklogProposal, getApiErrorMessage, getProject, moveProjectBacklogAcceptanceCriterion, publishProjectBacklog, reviewProjectBacklogStory, updateProjectBacklogStory } from '../services/api'
+import { applyBacklogProposals, applyProjectBacklogStoryReview, consolidateProjectBacklogStories, decideBacklogProposal, getApiErrorMessage, getProject, moveProjectBacklogAcceptanceCriterion, publishProjectBacklog, revalidateProjectBacklog, reviewProjectBacklogStory, updateProjectBacklogStory } from '../services/api'
 
 const labels = { approved: 'Aprovada', confirmed: 'Confirmada · revisar', proposed: 'Proposta', needs_review: 'Em revisão', rejected: 'Rejeitada' }
 const tones = { approved: 'bg-emerald-100 text-emerald-800', confirmed: 'bg-amber-100 text-amber-800', proposed: 'bg-blue-100 text-blue-800', needs_review: 'bg-amber-100 text-amber-800', rejected: 'bg-rose-100 text-rose-800' }
@@ -43,6 +43,7 @@ export default function BacklogReviewPage() {
   const [consolidation, setConsolidation] = useState(null)
   const [criterionMove, setCriterionMove] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [revalidating, setRevalidating] = useState(false)
   const [assist, setAssist] = useState(null)
   const [reviewRetryAfter, setReviewRetryAfter] = useState(0)
   const contract = project?.intakeConfig?.backlogContract || {}
@@ -64,6 +65,12 @@ export default function BacklogReviewPage() {
   const qualityGatePassed = qualityReview.decision === 'PASS' || legacyQualityGateSatisfied
   const pendingProposals = (qualityReview.proposals || []).filter((item) => !['accepted', 'rejected'].includes(String(item?.status || 'proposed').toLowerCase()))
   const acceptedProposals = (qualityReview.proposals || []).filter((item) => String(item?.status || '').toLowerCase() === 'accepted')
+  const qualityReadiness = qualityReview.readiness || {}
+  const qualityFindings = Array.isArray(qualityReview.findings) ? qualityReview.findings : []
+  const structuralScore = Number(qualityReadiness.structural_score ?? qualityReview.score)
+  const hasStructuralScore = Number.isFinite(structuralScore)
+  const qualityThreshold = Number(qualityReview.threshold || 80)
+  const qualityMaximum = 100
   const pendingReadinessCount = stories.filter((story) => !storyIsReady(story)).length
   const pendingApprovalCount = stories.filter((story) => storyIsReady(story) && !storyIsApproved(story)).length
   const reload = async () => setProject(await getProject(projectUuid))
@@ -169,6 +176,17 @@ export default function BacklogReviewPage() {
     } finally { setBusy(false) }
   }
 
+  const revalidate = async () => {
+    setRevalidating(true); setError(null); setPublicationBlocker(null)
+    try {
+      const result = await revalidateProjectBacklog(projectUuid)
+      await reload()
+      if (result?.qualityReview?.decision !== 'PASS') {
+        setPublicationBlocker('A revalidação encontrou pontos que ainda impedem a publicação. Somente as stories indicadas precisam ser revisadas novamente.')
+      }
+    } catch (requestError) { setError(getApiErrorMessage(requestError, 'Falha ao revalidar o backlog.')) } finally { setRevalidating(false) }
+  }
+
   const openConsolidation = (sourceStory, targetStoryId) => {
     setError(null)
     setConsolidation({ sourceStory, targetStoryId })
@@ -204,11 +222,14 @@ export default function BacklogReviewPage() {
 
   return <AppShell eyebrow="Revisão do backlog" title="Validação humana das tasks" description="Revise, responda lacunas e aprove o backlog antes da publicação.">
     <section className="dashboard-panel p-4 sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold">{project?.name || 'Projeto'}</h2><p className="text-sm text-slate-600">{stories.length} stories · Quality Gate: {qualityReview.decision || (legacyQualityGateSatisfied ? 'PASS' : 'pendente')}</p></div><button type="button" disabled={busy || !stories.length || !allStoriesApproved || !allStoriesReady || !qualityGatePassed || contract.publicationStatus === 'published'} onClick={publish} className="dashboard-button-primary">{contract.publicationStatus === 'published' ? 'Já publicado' : 'Aprovar e enviar ao board'}</button></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold">{project?.name || 'Projeto'}</h2><p className="text-sm text-slate-600">{stories.length} stories · Quality Gate: {qualityReview.decision || (legacyQualityGateSatisfied ? 'PASS' : 'pendente')}</p></div><div className="flex flex-wrap gap-2"><button type="button" disabled={busy || revalidating || !stories.length || !allStoriesApproved || !allStoriesReady || contract.publicationStatus === 'published'} onClick={revalidate} className="dashboard-button-secondary inline-flex items-center gap-2">{revalidating ? <LoaderCircle size={16} className="animate-spin" /> : <RefreshCw size={16} />}{revalidating ? 'Revalidando...' : 'Revalidar backlog'}</button><button type="button" disabled={busy || revalidating || !stories.length || !allStoriesApproved || !allStoriesReady || !qualityGatePassed || contract.publicationStatus === 'published'} onClick={publish} className="dashboard-button-primary">{contract.publicationStatus === 'published' ? 'Já publicado' : 'Aprovar e enviar ao board'}</button></div></div>
+      {hasStructuralScore && <p className="mt-3 text-xs text-slate-500">Qualidade estrutural: {structuralScore}/{qualityMaximum}. Limiar mínimo: {qualityThreshold}/{qualityMaximum}. {qualityReview.decision === 'PASS' ? 'Sem bloqueios de decisao.' : 'Este score nao representa aprovacao para publicacao.'}</p>}
       {error && <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
       {pendingReadinessCount > 0 && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{pendingReadinessCount} {pendingReadinessCount === 1 ? 'story precisa' : 'stories precisam'} passar pela revisão do agente antes da aprovação.</p>}
       {pendingReadinessCount === 0 && pendingApprovalCount > 0 && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{pendingApprovalCount} {pendingApprovalCount === 1 ? 'story está pronta' : 'stories estão prontas'} e aguardam sua aprovação.</p>}
+      {allStoriesApproved && allStoriesReady && !qualityGatePassed && <p className="mt-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-900">Todas as stories estão aprovadas. Revalide o backlog para verificar somente a coerência entre elas e liberar a publicação.</p>}
       {qualityReview.decision === 'REVISE' && <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-5"><p className="text-[10px] font-bold uppercase tracking-widest text-amber-800">Decisões pendentes do Quality Gate</p><h3 className="mt-2 text-lg font-bold">Confirme a cobertura das capacidades</h3><div className="mt-4 space-y-3">{pendingProposals.map((proposal) => <article key={proposal.id || proposal.capability} className="rounded-xl border border-amber-200 bg-white p-4"><p className="font-semibold">{proposal.capability}</p><p className="mt-1 text-sm text-slate-600">{proposal.reason}</p><div className="mt-3 flex gap-2"><button disabled={busy} onClick={() => resolveProposal(proposal, 'rejected')} className="dashboard-button-primary px-3 py-1.5 text-xs">Já está coberta</button><button disabled={busy} onClick={() => resolveProposal(proposal, 'accepted')} className="dashboard-button-secondary px-3 py-1.5 text-xs">Incluir no backlog</button></div></article>)}</div>{acceptedProposals.length > 0 && <button disabled={busy} onClick={() => applyBacklogProposals(projectUuid).then(reload).catch((requestError) => setError(getApiErrorMessage(requestError, 'Falha ao incluir propostas.')))} className="dashboard-button-secondary mt-4">Adicionar propostas aceitas</button>}</section>}
+      {qualityReview.decision === 'REVISE' && qualityFindings.length > 0 && <section className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-[10px] font-bold uppercase tracking-widest text-amber-800">Motivos do bloqueio</p><p className="mt-1 text-sm text-amber-900">O backlog so pode ser publicado depois que as lacunas abaixo forem resolvidas e revisadas.</p><div className="mt-3 space-y-2">{qualityFindings.map((finding, index) => <p key={`${finding.code || 'finding'}-${finding.story_id || 'backlog'}-${index}`} className="rounded-xl border border-amber-200 bg-white p-3 text-sm text-slate-700"><strong>{finding.story_id || 'Backlog'}:</strong> {finding.reason || finding.message || finding.code}</p>)}</div></section>}
       <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{stories.map((story, index) => {
         const status = String(story.reviewStatus || story.status || 'proposed').toLowerCase(); const isReady = storyIsReady(story); const isApproved = storyIsApproved(story); const duplicateTargetStoryId = duplicateStoryFor(story.id); const misplacedCriterion = misplacedCriterionFor(story.id)
         return <article key={story.id || index} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center justify-between gap-2"><span className="text-xs font-bold uppercase tracking-widest text-slate-500">{story.id || `US-${index + 1}`}</span><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tones[status] || tones.proposed}`}>{labels[status] || status}</span></div><h3 className="mt-3 font-semibold text-slate-900">{story.title || story.goal || 'Story sem título'}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{storyDescription(story.description) || story.benefit || 'Sem descrição.'}</p>{story.lastAgentReview?.assessment && <p className="mt-3 text-xs text-slate-600">Prontidão: {story.lastAgentReview.assessment.score}/100 · {readinessLabels[story.lastAgentReview.assessment.decision] || 'Pendente'}</p>}{duplicateTargetStoryId && <p className="mt-3 text-xs font-medium text-amber-800">Possível duplicidade com {duplicateTargetStoryId}.</p>}{misplacedCriterion && <p className="mt-3 text-xs font-medium text-amber-800">Um critério deve ser movido para {misplacedCriterion.relatedStoryId}.</p>}<div className="mt-4 flex flex-wrap gap-2"><button disabled={busy || reviewRetryAfter > 0} title={reviewRetryAfter > 0 ? `Aguarde ${reviewRetryAfter}s para uma nova revisão.` : undefined} onClick={() => startReview(story)} className="dashboard-button-secondary px-3 py-1.5 text-xs">{reviewRetryAfter > 0 ? `Aguarde ${reviewRetryAfter}s` : 'Revisar com agente'}</button>{duplicateTargetStoryId && <button disabled={busy} onClick={() => openConsolidation(story, duplicateTargetStoryId)} className="dashboard-button-secondary px-3 py-1.5 text-xs">Consolidar com {duplicateTargetStoryId}</button>}{misplacedCriterion && <button disabled={busy} onClick={() => setCriterionMove({ sourceStoryId: story.id, targetStoryId: misplacedCriterion.relatedStoryId, criterionIndex: misplacedCriterion.criterionIndex, criterion: misplacedCriterion.criterion })} className="dashboard-button-secondary px-3 py-1.5 text-xs">Mover critério para {misplacedCriterion.relatedStoryId}</button>}<button disabled={busy || !isReady || isApproved} title={isApproved ? 'Esta story já foi aprovada.' : isReady ? 'Aprovar story pronta' : 'Execute a revisão e resolva os bloqueios antes de aprovar'} onClick={() => decide(story, 'approved')} className="dashboard-button-primary px-3 py-1.5 text-xs">Aprovar</button><button disabled={busy} onClick={() => decide(story, 'rejected')} className="dashboard-button-secondary px-3 py-1.5 text-xs">Rejeitar</button></div></article>

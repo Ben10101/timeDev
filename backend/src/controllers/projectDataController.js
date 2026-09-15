@@ -10,6 +10,7 @@ import {
   createTask,
   createTaskArtifact,
   refreshRequirementSpecArtifact,
+  refreshQaValidationSpecArtifact,
   createTaskComment,
   ensurePipelineProject,
   finishAgentRun,
@@ -21,6 +22,7 @@ import {
   getWorkspaceTeamSummary,
   importBacklogTasks,
   publishBacklogTasks,
+  revalidateBacklogForPublication,
   consolidateBacklogStories,
   moveBacklogAcceptanceCriterion,
   updateBacklogStory,
@@ -46,6 +48,261 @@ import { serializeBigInts } from '../utils/serialize.js';
 import { buildAgentRunUsage, withAiRuntimeMeta } from '../utils/aiRunMetrics.js';
 import { inferProjectTemplateKey } from '../templates/projects/index.js';
 import { prisma } from '../lib/prisma.js';
+
+const PM_RETRY_BASE_DELAY_MS = Math.max(5_000, Number(process.env.PROJECT_MANAGER_RETRY_BASE_DELAY_MS || 20_000));
+const PM_RETRY_MAX_DELAY_MS = Math.max(PM_RETRY_BASE_DELAY_MS, Number(process.env.PROJECT_MANAGER_RETRY_MAX_DELAY_MS || 5 * 60_000));
+// A background retry is a recovery convenience, not another full generation
+// budget. Further retries remain an explicit user action.
+const PM_RETRY_MAX_ATTEMPTS = Math.max(1, Number(process.env.PROJECT_MANAGER_RETRY_MAX_ATTEMPTS || 1));
+const PM_BACKGROUND_RETRY_PROVIDERS = String(process.env.PROJECT_MANAGER_BACKGROUND_RETRY_PROVIDERS || 'nvidia,gemini')
+  .split(',')
+  .map((provider) => provider.trim().toLowerCase())
+  .filter(Boolean);
+const projectManagerRetryTimers = new Map();
+
+function projectManagerRetryDelay(attempt) {
+  return Math.min(PM_RETRY_MAX_DELAY_MS, PM_RETRY_BASE_DELAY_MS * (2 ** Math.max(0, attempt - 1)));
+}
+
+function projectManagerRetryProvider(index) {
+  if (!PM_BACKGROUND_RETRY_PROVIDERS.length) return 'nvidia';
+  return PM_BACKGROUND_RETRY_PROVIDERS[Math.max(0, Number(index) || 0) % PM_BACKGROUND_RETRY_PROVIDERS.length];
+}
+
+function projectManagerNextProviderIndex(recovery = {}) {
+  const persistedIndex = Number(recovery?.nextProviderIndex);
+  if (Number.isInteger(persistedIndex) && persistedIndex >= 0) {
+    return PM_BACKGROUND_RETRY_PROVIDERS.length ? persistedIndex % PM_BACKGROUND_RETRY_PROVIDERS.length : 0;
+  }
+  // Compatibility with recovery records created before the rotation cursor.
+  // A record that already tried NVIDIA must continue with Gemini, not restart
+  // at NVIDIA whenever the user presses Generate again.
+  const legacyHistory = Array.isArray(recovery?.attemptHistory) ? recovery.attemptHistory : [];
+  const lastExecutedAttempt = [...legacyHistory].reverse().find((item) => (
+    item?.scheduled === true
+    || (item?.scheduled === undefined && Number(item?.attempt) <= Number(recovery?.maxAutomaticRetryAttempts || 0))
+  ));
+  const lastProvider = String(lastExecutedAttempt?.provider || recovery?.provider || '').toLowerCase();
+  const lastProviderIndex = PM_BACKGROUND_RETRY_PROVIDERS.indexOf(lastProvider);
+  return lastProviderIndex >= 0 ? (lastProviderIndex + 1) % PM_BACKGROUND_RETRY_PROVIDERS.length : 0;
+}
+
+function providerSuggestedRetryDelayMs(detail) {
+  const text = String(detail || '');
+  const matches = [
+    ...text.matchAll(/(?:please\s+)?retry\s*(?:in|after)?\s*(\d+(?:[.,]\d+)?)\s*(?:s|sec(?:ond)?s?)/gi),
+    ...text.matchAll(/retry[_\s-]*delay[^\d]*(\d+(?:[.,]\d+)?)\s*(?:s|sec(?:ond)?s?)/gi),
+  ];
+  const seconds = matches
+    .map((match) => Number(String(match[1]).replace(',', '.')))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return seconds.length ? Math.min(PM_RETRY_MAX_DELAY_MS, Math.max(...seconds) * 1_000) : 0;
+}
+
+function isRecoverableProviderFailure(error) {
+  const detail = String(error?.message || '').toLowerCase();
+  return /nenhum modelo do router concluiu|falha recuperavel de provider|\btimeout\b|\b503\b|\b429\b|resource_exhausted|temporarily overloaded|read operation timed out/.test(detail);
+}
+
+function clearProjectManagerRetryTimer(projectUuid) {
+  const timer = projectManagerRetryTimers.get(projectUuid);
+  if (timer) clearTimeout(timer);
+  projectManagerRetryTimers.delete(projectUuid);
+}
+
+function scheduleProjectManagerRetry(projectUuid, nextRetryAt) {
+  clearProjectManagerRetryTimer(projectUuid);
+  const delay = Math.max(0, new Date(nextRetryAt).getTime() - Date.now());
+  const timer = setTimeout(() => {
+    projectManagerRetryTimers.delete(projectUuid);
+    void runQueuedProjectManagerRetry(projectUuid);
+  }, delay);
+  timer.unref?.();
+  projectManagerRetryTimers.set(projectUuid, timer);
+}
+
+async function queueProjectManagerRetry(projectUuid, diagnostic, fallbackReason, requestedByUserUuid) {
+  const project = await prisma.project.findUnique({
+    where: { uuid: projectUuid },
+    select: { intakeConfig: true },
+  });
+  const current = project?.intakeConfig?.backlogGenerationRecovery || {};
+  const checkpoint = diagnostic?.backlog_checkpoint || project?.intakeConfig?.pmBacklogCheckpoint || null;
+  const priorAttempts = Number(current?.automaticRetryAttempt || 0);
+  const attempt = priorAttempts + 1;
+  const exhausted = attempt > PM_RETRY_MAX_ATTEMPTS;
+  const reason = String(diagnostic?.cause || fallbackReason || '').slice(0, 800);
+  const backoffMs = projectManagerRetryDelay(attempt);
+  // Provider quotas sometimes tell us exactly when another call is welcome.
+  // Never schedule earlier than either our backoff or that advice.
+  const delayMs = Math.max(backoffMs, providerSuggestedRetryDelayMs(reason));
+  const nextRetryAt = exhausted ? null : new Date(Date.now() + delayMs).toISOString();
+  const providerIndex = projectManagerNextProviderIndex(current);
+  const provider = projectManagerRetryProvider(providerIndex);
+  // Advance the cursor only when this provider is actually scheduled. If the
+  // automatic budget is exhausted, retain the upcoming provider for the next
+  // user-initiated cycle instead of silently skipping it.
+  const nextProviderIndex = exhausted
+    ? providerIndex
+    : (providerIndex + 1) % Math.max(1, PM_BACKGROUND_RETRY_PROVIDERS.length);
+  const providerAttempts = Array.isArray(diagnostic?.providerAttempts) ? diagnostic.providerAttempts.slice(-12) : [];
+  const recovery = {
+    ...current,
+    status: exhausted ? 'retryable' : 'queued',
+    completedBatches: Array.isArray(checkpoint?.batches) ? checkpoint.batches.length : (current?.completedBatches || 0),
+    totalBatches: Array.isArray(checkpoint?.coverage_plan) ? checkpoint.coverage_plan.length : (current?.totalBatches || null),
+    automaticRetryAttempt: attempt,
+    maxAutomaticRetryAttempts: PM_RETRY_MAX_ATTEMPTS,
+    nextRetryAt,
+    provider: exhausted ? (current?.provider || null) : provider,
+    nextProvider: provider,
+    nextProviderIndex,
+    providerPolicy: 'single-provider-single-model-no-internal-retry',
+    scheduledDelayMs: exhausted ? null : delayMs,
+    requestedByUserUuid: requestedByUserUuid || current?.requestedByUserUuid || null,
+    interruptedAt: new Date().toISOString(),
+    reason,
+    providerAttempts,
+    attemptHistory: [
+      ...(Array.isArray(current?.attemptHistory) ? current.attemptHistory : []),
+      { attempt, provider, queuedAt: new Date().toISOString(), delayMs, providerAttempts, scheduled: !exhausted },
+    ].slice(-5),
+  };
+  await updateProjectBrief(projectUuid, {
+    intakeConfig: {
+      ...(checkpoint ? { pmBacklogCheckpoint: checkpoint } : {}),
+      backlogGenerationRecovery: recovery,
+    },
+  });
+  if (nextRetryAt) scheduleProjectManagerRetry(projectUuid, nextRetryAt);
+  return recovery;
+}
+
+async function runQueuedProjectManagerRetry(projectUuid) {
+  const projectRecord = await prisma.project.findUnique({
+    where: { uuid: projectUuid },
+    select: {
+      uuid: true,
+      intakeConfig: true,
+      creator: { select: { uuid: true } },
+    },
+  });
+  const recovery = projectRecord?.intakeConfig?.backlogGenerationRecovery;
+  if (!projectRecord || recovery?.status !== 'queued' || !recovery?.nextRetryAt || new Date(recovery.nextRetryAt).getTime() > Date.now()) {
+    return;
+  }
+  const userUuid = recovery.requestedByUserUuid || projectRecord.creator?.uuid;
+  if (!userUuid) return;
+
+  await updateProjectBrief(projectUuid, {
+    intakeConfig: { backlogGenerationRecovery: { ...recovery, status: 'running', startedAt: new Date().toISOString() } },
+  });
+
+  let agentRun = null;
+  try {
+    const project = await getProjectByUuid(projectUuid, userUuid);
+    const intake = project?.intakeConfig || {};
+    const idea = String(intake.idea || '').trim();
+    if (!idea) throw new Error('Retry do backlog sem briefing salvo.');
+    const payload = {
+      project_id: projectUuid,
+      idea: [compactBacklogInput(idea, intake.answers || {}), compactProjectDnaForAgent(project?.projectDna || null)].filter(Boolean).join('\n\n'),
+      answers: {},
+      elicitation: intake.pmElicitation || null,
+      elicitation_answers: intake.answers?.elicitationAnswers || {},
+      incremental_checkpoint: intake.pmBacklogCheckpoint || null,
+    };
+    const userEnvOverrides = await buildRuntimeAiEnvForUser(userUuid, { agentName: 'project_manager' });
+    const provider = String(recovery.provider || projectManagerRetryProvider(projectManagerNextProviderIndex(recovery))).trim().toLowerCase();
+    // Keep one queued execution to one provider/model call. If it fails, the
+    // queue persists the checkpoint and rotates provider only on a later run.
+    const envOverrides = {
+      ...userEnvOverrides,
+      AI_PROVIDER_ORDER: provider,
+      AI_PROVIDER_ORDER_PROJECT_MANAGER: provider,
+      AI_PROVIDER_ORDER_APPEND_DEFAULTS: '0',
+      MODEL_ROUTER_MAX_CANDIDATES: '1',
+      MODEL_ROUTER_SINGLE_ATTEMPT: '1',
+      MODEL_ROUTER_TRANSIENT_RETRIES: '0',
+      PROJECT_MANAGER_BACKGROUND_RETRY: '1',
+    };
+    const payloadWithRuntime = withAiRuntimeMeta(payload, envOverrides);
+    agentRun = await createAgentRunStart(projectUuid, 'project_manager', payloadWithRuntime);
+    const result = await runSingleAgent('project_manager', payloadWithRuntime, { envOverrides });
+    await finishAgentRun(agentRun.id, {
+      status: 'completed',
+      result,
+      usageMeta: buildAgentRunUsage(payloadWithRuntime, result, envOverrides),
+    });
+    if (result?.clarification_required || result?.elicitation_required) {
+      await updateProjectBrief(projectUuid, {
+        intakeConfig: {
+          requirementsContract: result.requirements_contract || null,
+          backlogClarifications: result.clarifications || [],
+          pmElicitation: result.elicitation || null,
+          backlogGenerationRecovery: { ...recovery, status: 'awaiting_user', nextRetryAt: null },
+        },
+      });
+      return;
+    }
+    await persistAgentResult(projectUuid, 'project_manager', payloadWithRuntime, result);
+    await updateProjectBrief(projectUuid, {
+      intakeConfig: {
+        pmElicitation: result?.backlog_contract?.elicitation || null,
+        backlogClarifications: [],
+        pmBacklogCheckpoint: null,
+        backlogGenerationRecovery: null,
+      },
+    });
+  } catch (error) {
+    await finishAgentRun(agentRun?.id, {
+      status: 'failed',
+      errorMessage: error.message,
+      diagnostic: error.agentDiagnostic || null,
+    }).catch(() => null);
+    await queueProjectManagerRetry(projectUuid, error?.agentDiagnostic, error.message, userUuid).catch(() => null);
+  }
+}
+
+export async function resumeProjectManagerRetryQueue() {
+  const projects = await prisma.project.findMany({
+    select: { id: true, uuid: true, intakeConfig: true },
+  });
+  for (const project of projects) {
+    const recovery = project.intakeConfig?.backlogGenerationRecovery;
+    if (recovery?.status === 'queued' && recovery?.nextRetryAt) {
+      scheduleProjectManagerRetry(project.uuid, recovery.nextRetryAt);
+    } else if (recovery?.status === 'running') {
+      // A local Python child cannot survive a backend restart. The AgentRun
+      // watchdog marks that run as stale first, but recovery state lives on
+      // the project and must be reconciled separately or the UI remains
+      // permanently disabled. Keep the checkpoint and require an explicit
+      // retry instead of silently spending another generation budget.
+      const activeRun = await prisma.agentRun.findFirst({
+        where: { projectId: project.id, agentName: 'project_manager', status: 'running' },
+        select: { id: true },
+      });
+      if (!activeRun) {
+        await updateProjectBrief(project.uuid, {
+          intakeConfig: {
+            backlogGenerationRecovery: {
+              ...recovery,
+              status: 'retryable',
+              nextRetryAt: null,
+              reconciledAt: new Date().toISOString(),
+              reason: 'Execução em segundo plano interrompida; o checkpoint foi preservado para uma nova tentativa.',
+            },
+          },
+        });
+      }
+    } else if (recovery?.status === 'retryable' && recovery?.automaticRetryAttempt === undefined) {
+      // Compatibility for checkpoints persisted before the retry queue was
+      // introduced. They were already explicitly marked retryable, so they
+      // are safe to enqueue once rather than asking the user to recreate it.
+      await queueProjectManagerRetry(project.uuid, null, recovery.reason, recovery.requestedByUserUuid);
+    }
+  }
+}
 
 function isAgentRunConflictError(error) {
   return error?.statusCode === 409 || error?.code === 'AGENT_RUN_CONFLICT';
@@ -583,6 +840,16 @@ export async function generateProjectBacklogController(req, res, next) {
     }
 
     await assertProjectPermission(projectUuid, req.authUser.uuid, 'manager');
+    // A deliberate user retry supersedes any timer left by an older failed
+    // request. Its retry budget starts fresh; the saved checkpoint and the
+    // provider rotation cursor remain, so a temporarily overloaded provider
+    // is not selected again at the start of every manual cycle.
+    clearProjectManagerRetryTimer(projectUuid);
+    const existingProject = await getProjectByUuid(projectUuid, req.authUser.uuid);
+    const priorRecovery = existingProject?.intakeConfig?.backlogGenerationRecovery || null;
+    const providerRotation = priorRecovery
+      ? { nextProviderIndex: projectManagerNextProviderIndex(priorRecovery) }
+      : null;
 
     await updateProjectBrief(projectUuid, {
       description,
@@ -599,6 +866,7 @@ export async function generateProjectBacklogController(req, res, next) {
         audience: answers?.audience || '',
         answers: answers || {},
         ...(elicitation ? { pmElicitation: elicitation } : {}),
+        backlogGenerationRecovery: providerRotation,
         lastGeneratedAt: new Date().toISOString(),
       },
     });
@@ -612,6 +880,7 @@ export async function generateProjectBacklogController(req, res, next) {
       answers: {},
       elicitation: elicitation || refreshedProject?.intakeConfig?.pmElicitation || null,
       elicitation_answers: answers?.elicitationAnswers || {},
+      incremental_checkpoint: refreshedProject?.intakeConfig?.pmBacklogCheckpoint || null,
     };
 
     const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'project_manager' });
@@ -654,6 +923,8 @@ export async function generateProjectBacklogController(req, res, next) {
       intakeConfig: {
         pmElicitation: result?.backlog_contract?.elicitation || null,
         backlogClarifications: [],
+        pmBacklogCheckpoint: null,
+        backlogGenerationRecovery: null,
       },
     });
 
@@ -694,6 +965,37 @@ export async function generateProjectBacklogController(req, res, next) {
       return res.status(409).json({
         message: error.message,
         existingRunUuid: error.existingRunUuid || null,
+      });
+    }
+
+    // The PM emits a checkpoint only after a full batch has BDD criteria.
+    // Persist it separately from the published backlog: it is recovery state,
+    // never a partially approved product artifact.
+    const checkpoint = error?.agentDiagnostic?.backlog_checkpoint;
+    if ((checkpoint && typeof checkpoint === 'object') || isRecoverableProviderFailure(error)) {
+      const recoveryKind = String(error?.agentDiagnostic?.recovery_kind || 'provider');
+      const isQualityRepair = recoveryKind === 'quality_repair';
+      const recovery = await queueProjectManagerRetry(
+        req.params.projectUuid,
+        error.agentDiagnostic,
+        error.message,
+        req.authUser.uuid,
+      ).catch(() => null);
+      return res.status(recovery?.nextRetryAt ? 202 : 503).json({
+        code: recovery?.nextRetryAt
+          ? 'PROJECT_BACKLOG_RETRY_QUEUED'
+          : (isQualityRepair ? 'PROJECT_BACKLOG_QUALITY_REPAIR_RETRYABLE' : 'PROJECT_BACKLOG_GENERATION_RETRYABLE'),
+        retryable: Boolean(recovery?.nextRetryAt),
+        message: isQualityRepair
+          ? 'O Quality Gate solicitou um reparo focalizado. Os lotes validados foram preservados; tente novamente sem regenerar o backlog.'
+          : 'A geração foi interrompida por um provedor de IA. Os lotes já validados foram preservados; tente novamente para retomar do próximo lote.',
+        recovery: {
+          completedBatches: Array.isArray(checkpoint?.batches) ? checkpoint.batches.length : 0,
+          totalBatches: Array.isArray(checkpoint?.coverage_plan) ? checkpoint.coverage_plan.length : null,
+          nextRetryAt: recovery?.nextRetryAt || null,
+          automaticRetryAttempt: recovery?.automaticRetryAttempt || null,
+          maxAutomaticRetryAttempts: recovery?.maxAutomaticRetryAttempts || null,
+        },
       });
     }
 
@@ -925,6 +1227,14 @@ export async function updateBacklogStoryController(req, res, next) {
     await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'manager');
     const story = await updateBacklogStory(req.params.projectUuid, req.params.storyId, req.body, req.authUser.uuid);
     res.status(200).json(serializeBigInts(story));
+  } catch (error) { next(error); }
+}
+
+export async function revalidateBacklogController(req, res, next) {
+  try {
+    await assertProjectPermission(req.params.projectUuid, req.authUser.uuid, 'editor');
+    const result = await revalidateBacklogForPublication(req.params.projectUuid, req.authUser.uuid);
+    res.json(serializeBigInts({ success: true, ...result }));
   } catch (error) { next(error); }
 }
 
@@ -1454,6 +1764,13 @@ export async function repairTaskArtifactController(req, res, next) {
     if (!task) return res.status(404).json({ message: 'Tarefa não encontrada.' });
     const artifact = (task.artifacts || []).find((item) => item.uuid === req.params.artifactUuid && item.isCurrent);
     if (!artifact) return res.status(404).json({ message: 'Artefato atual não encontrado.' });
+    const reviewingQa = ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType);
+    const approvedRequirements = (task.artifacts || []).some(
+      (item) => item.isCurrent && item.artifactType === 'requirements' && item.isApproved
+    );
+    if (reviewingQa && !approvedRequirements) {
+      return res.status(409).json({ message: 'A revisão de QA exige requisitos aprovados na versão atual.' });
+    }
     const relatedRequirement = ['qa_validation_cases', 'test_plan'].includes(artifact.artifactType)
       ? (task.artifacts || []).find((item) => item.artifactType === 'requirements' && item.isCurrent)?.content || `${task.title}\n${task.description || ''}`
       : `${task.title}\n${task.description || ''}`;
@@ -1464,9 +1781,16 @@ export async function repairTaskArtifactController(req, res, next) {
         .filter((item) => item && typeof item.question === 'string' && (typeof item.answer === 'string' || item.ignored === true))
         .map((item) => ({ question: item.question.trim(), answer: typeof item.answer === 'string' ? item.answer.trim() : null, ignored: item.ignored === true }))
       : [];
-    const persistedDecisionArtifacts = artifact.artifactType === 'requirements'
+    // Decisions must stay in the artifact lane where they were made. Reusing
+    // every review_decisions artifact on the task lets a QA answer become a
+    // requirement rule (or the inverse) on a later retry.
+    const persistedDecisionArtifacts = ['requirements', 'qa_validation_cases', 'test_plan'].includes(artifact.artifactType)
       ? await prisma.taskArtifact.findMany({
-          where: { taskId: task.id, artifactScope: 'review_decisions' },
+          where: {
+            taskId: task.id,
+            artifactScope: 'review_decisions',
+            title: `Decisões da revisão - ${artifact.title}`.slice(0, 255),
+          },
           orderBy: { createdAt: 'desc' },
           select: { content: true },
         })
@@ -1504,8 +1828,20 @@ export async function repairTaskArtifactController(req, res, next) {
           severity: 'medium',
           message: instruction || 'Revise a clareza e a testabilidade da seção mais relevante, sem inventar regras de negócio.',
         }];
-    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: 'artifact_repair' });
-    const result = await runSingleAgent('artifact_repair', {
+    const usesRequirementsRegeneration = artifact.artifactType === 'requirements' && confirmedDecisionResponses.length > 0;
+    const usesQaRegeneration = reviewingQa;
+    const repairAgentName = usesRequirementsRegeneration
+      ? 'requirements_reviewer'
+      : (usesQaRegeneration ? 'qa_reviewer' : 'artifact_repair');
+    let requirementSpec = null;
+    if (usesQaRegeneration) {
+      const requirementSpecArtifact = (task.artifacts || []).find(
+        (item) => item.isCurrent && item.title === '[SYSTEM] Requirement Spec'
+      );
+      try { requirementSpec = requirementSpecArtifact?.content ? JSON.parse(requirementSpecArtifact.content) : null; } catch { requirementSpec = null; }
+    }
+    const envOverrides = await buildRuntimeAiEnvForUser(req.authUser.uuid, { agentName: repairAgentName });
+    const result = await runSingleAgent(repairAgentName, {
       project_id: task.project.uuid,
       task_uuid: task.uuid,
       artifact_type: artifact.artifactType,
@@ -1513,18 +1849,28 @@ export async function repairTaskArtifactController(req, res, next) {
       findings,
       source_context: `Task: ${task.title}\nDescricao: ${task.description || ''}\n\nRequisito relacionado:\n${relatedRequirement}`,
       instruction: effectiveInstruction,
-      idea: `Reparar somente o artefato ${artifact.artifactType}`,
+      decisions: confirmedDecisionResponses,
+      requirement_summary: relatedRequirement,
+      requirement_spec: requirementSpec,
+      idea: usesRequirementsRegeneration ? 'Regenerar o requisito com decisões humanas confirmadas' : `Reparar somente o artefato ${artifact.artifactType}`,
     }, { envOverrides });
-    const sectionTitle = String(result.section || '').replace(/^#+\s*/, '').trim();
-    const isAcceptancePatch = artifact.artifactType === 'requirements' && /^cenarios de aceite$/i.test(sectionTitle);
-    const safeReplacement = isAcceptancePatch
-      ? mergeAcceptanceScenarioCoverage(extractLevelTwoSection(artifact.content, 'Cenarios de aceite'), result.content)
-      : result.content;
-    let patchedContent = replaceArtifactSection(artifact.content, sectionTitle, safeReplacement, artifact.artifactType);
-    if (artifact.artifactType === 'requirements') {
+    let patchedContent;
+    if (usesRequirementsRegeneration || usesQaRegeneration) {
+      patchedContent = String(result.markdown || '').trim();
+      if (!patchedContent) throw new Error(`O revisor de ${usesQaRegeneration ? 'QA' : 'requisitos'} não retornou um documento completo.`);
+      if (usesRequirementsRegeneration) patchedContent = restoreCompactRequirementStructure(patchedContent, task.title);
+    } else {
+      const sectionTitle = String(result.section || '').replace(/^#+\s*/, '').trim();
+      const isAcceptancePatch = artifact.artifactType === 'requirements' && /^cenarios de aceite$/i.test(sectionTitle);
+      const safeReplacement = isAcceptancePatch
+        ? mergeAcceptanceScenarioCoverage(extractLevelTwoSection(artifact.content, 'Cenarios de aceite'), result.content)
+        : result.content;
+      patchedContent = replaceArtifactSection(artifact.content, sectionTitle, safeReplacement, artifact.artifactType);
+    }
+    if (artifact.artifactType === 'requirements' && !usesRequirementsRegeneration) {
       patchedContent = restoreCompactRequirementStructure(removeResolvedPendingDecisions(patchedContent, effectiveInstruction), task.title);
     }
-    if (artifact.artifactType === 'requirements' && confirmedDecisionResponses.length) {
+    if (artifact.artifactType === 'requirements' && confirmedDecisionResponses.length && !usesRequirementsRegeneration) {
       // A confirmed decision that changes a rule must also be demonstrable in
       // acceptance criteria. Ask the repair agent for that single section
       // after rules have been deterministically applied.
@@ -1554,6 +1900,36 @@ export async function repairTaskArtifactController(req, res, next) {
       }
     }
     if (patchedContent.trim() === String(artifact.content || '').trim()) {
+      // A QA decision can legitimately clarify a rule that has no approved
+      // BDD criterion yet. In that case QA must not invent a CT merely to
+      // manufacture a new version. Preserve the human decision as audit
+      // evidence and let the UI explain that RA needs to complement the
+      // requirement before QA can change.
+      if (usesQaRegeneration && confirmedDecisionResponses.length) {
+        const decisionArtifact = await createTaskArtifact(task.uuid, {
+          artifactType: 'custom',
+          artifactScope: 'review_decisions',
+          title: `Decisões da revisão - ${artifact.title}`.slice(0, 255),
+          content: JSON.stringify({
+            sourceArtifactUuid: artifact.uuid,
+            resultArtifactUuid: null,
+            decisions: decisionResponses,
+            outcome: 'requires_requirements_revision',
+            decidedAt: new Date().toISOString(),
+            decidedByUserUuid: req.authUser.uuid,
+          }),
+          contentFormat: 'json',
+          createdByUserId: req.authUser.id,
+          createdByAgentName: repairAgentName,
+        });
+        return res.status(200).json(serializeBigInts({
+          success: true,
+          noArtifactChange: true,
+          decisionArtifact,
+          qualityReport: currentReport,
+          message: 'A decisão foi registrada, mas ela não pode gerar um caso de QA sem critério BDD aprovado. Atualize o requisito no RA e gere o QA novamente.',
+        }));
+      }
       return res.status(422).json({ message: 'O agente não propôs uma alteração efetiva para este artefato.', qualityReport: currentReport });
     }
     // Garantia determinística: um reparo não pode continuar sem a seção que
@@ -1574,10 +1950,20 @@ export async function repairTaskArtifactController(req, res, next) {
       title: artifact.title,
       content: patchedContent,
       contentFormat: artifact.contentFormat,
-      createdByAgentName: 'artifact_repair',
+      createdByAgentName: repairAgentName,
     });
     const refreshedRequirementSpec = artifact.artifactType === 'requirements'
-      ? await refreshRequirementSpecArtifact(task.uuid, { content: patchedContent, createdByAgentName: 'artifact_repair' })
+      ? await refreshRequirementSpecArtifact(task.uuid, {
+        content: patchedContent,
+        createdByAgentName: repairAgentName,
+        sourceArtifactUuid: nextArtifact.uuid,
+        sourceArtifactVersion: nextArtifact.version,
+        sourceArtifactTitle: nextArtifact.title,
+        sourceAgentName: nextArtifact.createdByAgentName || repairAgentName,
+      })
+      : null;
+    const refreshedQaValidationSpec = usesQaRegeneration
+      ? await refreshQaValidationSpecArtifact(task.uuid)
       : null;
     if (decisionResponses.length) {
       await createTaskArtifact(task.uuid, {
@@ -1587,10 +1973,10 @@ export async function repairTaskArtifactController(req, res, next) {
         content: JSON.stringify({ sourceArtifactUuid: artifact.uuid, resultArtifactUuid: nextArtifact.uuid, decisions: decisionResponses, decidedAt: new Date().toISOString(), decidedByUserUuid: req.authUser.uuid }),
         contentFormat: 'json',
         createdByUserId: req.authUser.id,
-        createdByAgentName: 'artifact_repair',
+        createdByAgentName: repairAgentName,
       });
     }
-    res.status(201).json(serializeBigInts({ success: true, artifact: nextArtifact, patch: result, qualityReport: repairedReport, requirementSpec: refreshedRequirementSpec?.artifact || null }));
+    res.status(201).json(serializeBigInts({ success: true, artifact: nextArtifact, patch: result, qualityReport: repairedReport, requirementSpec: refreshedRequirementSpec?.artifact || null, qaValidationSpec: refreshedQaValidationSpec?.artifact || null }));
   } catch (error) {
     next(error);
   }

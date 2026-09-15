@@ -12,7 +12,6 @@ import {
   updateProjectBacklogStory,
   getApiErrorMessage,
   getProject,
-  getProjectArchitectureStatus,
   listProjectTasks,
   updateProjectStatus,
 } from '../services/api';
@@ -40,7 +39,6 @@ export default function ProjectOverviewPage() {
   const { projectUuid } = useParams();
   const [project, setProject] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [architectureStatus, setArchitectureStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [publishingBacklog, setPublishingBacklog] = useState(false);
@@ -64,15 +62,6 @@ export default function ProjectOverviewPage() {
     mainFlows: '',
     constraints: '',
   });
-  const groupedStats = useMemo(
-    () => ({
-      total: tasks.length,
-      backlog: tasks.filter((task) => task.status === 'backlog').length,
-      qa: tasks.filter((task) => task.status === 'qa').length,
-      done: tasks.filter((task) => task.status === 'done').length,
-    }),
-    [tasks]
-  );
   const hasGeneratedStories = useMemo(
     () => tasks.some((task) => task.taskType === 'story') || Boolean(project?.intakeConfig?.backlogContract?.stories?.length),
     [project?.intakeConfig?.backlogContract?.stories?.length, tasks]
@@ -88,11 +77,42 @@ export default function ProjectOverviewPage() {
   const pmElicitation = project?.intakeConfig?.pmElicitation || project?.intakeConfig?.backlogContract?.elicitation || null;
   const pendingBacklogContract = project?.intakeConfig?.backlogContract;
   const backlogAwaitingApproval = Boolean(pendingBacklogContract?.stories?.length && pendingBacklogContract?.publicationStatus !== 'published');
-  const ideaLength = form.idea.trim().length;
-  const riskCount = project?.intakeConfig?.riskRegister?.risks?.length || 0;
-  const impedimentCount = project?.intakeConfig?.riskRegister?.impediments?.length || 0;
+  const backlogGenerationRecovery = project?.intakeConfig?.backlogGenerationRecovery || null;
+  const isBacklogGenerationActive = ['queued', 'running'].includes(String(backlogGenerationRecovery?.status || '').toLowerCase());
   const projectStatusMeta = useMemo(() => getProjectStatusWorkflow(project?.status || 'draft'), [project?.status]);
+  const backlogStories = pendingBacklogContract?.stories || [];
+  const approvedStoryCount = backlogStories.filter((story) => String(story?.reviewStatus || '').toLowerCase() === 'approved').length;
+  const qualityGateDecision = backlogQualityReview?.decision || (hasPublishedStories ? 'PASS' : 'PENDENTE');
+  const qualityGateTone = qualityGateDecision === 'PASS'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    : qualityGateDecision === 'REVISE'
+      ? 'border-amber-200 bg-amber-50 text-amber-800'
+      : 'border-slate-200 bg-slate-50 text-slate-600';
   const projectJourney = useMemo(() => {
+    if (isBacklogGenerationActive) {
+      return {
+        stage: 'Backlog',
+        title: 'Gerando o backlog do projeto',
+        message: 'O PM Agent está consolidando o briefing. Esta página será atualizada quando as stories estiverem prontas para revisão.',
+        tone: 'border-blue-200 bg-blue-50 text-[#102a72]',
+        ctaLabel: 'Geração em andamento',
+        ctaAction: null,
+        ctaDisabled: true,
+        ctaType: 'button',
+      };
+    }
+    if (backlogAwaitingApproval) {
+      return {
+        stage: 'Revisão',
+        title: 'Validar as stories antes da publicação',
+        message: 'O backlog foi gerado. Revise as stories e execute a revalidação final antes de enviá-las ao board.',
+        tone: 'border-amber-200 bg-amber-50 text-amber-950',
+        ctaLabel: 'Revisar backlog',
+        ctaAction: () => navigate(`/projects/${projectUuid}/backlog-review`),
+        ctaDisabled: loading,
+        ctaType: 'button',
+      };
+    }
     if (!hasPublishedStories) {
       return {
         stage: 'Briefing',
@@ -118,16 +138,11 @@ export default function ProjectOverviewPage() {
     };
   }, [
     hasPublishedStories,
-    hasGeneratedStories,
-    generating,
+    backlogAwaitingApproval,
+    isBacklogGenerationActive,
     loading,
     navigate,
     projectUuid,
-    project?.name,
-    project?.description,
-    project?.intakeConfig?.idea,
-    project?.intakeConfig?.answers,
-    form,
   ]);
 
   function clampStoryText(value, maxLength = 110) {
@@ -140,20 +155,28 @@ export default function ProjectOverviewPage() {
     loadOverview();
   }, [projectUuid]);
 
-  async function loadOverview() {
-    setLoading(true);
-    setError(null);
+  useEffect(() => {
+    if (!isBacklogGenerationActive) return undefined;
+    const pollId = window.setInterval(() => {
+      void loadOverview({ background: true });
+    }, 5000);
+    return () => window.clearInterval(pollId);
+  }, [projectUuid, isBacklogGenerationActive]);
+
+  async function loadOverview({ background = false } = {}) {
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
-      const [projectData, taskList, nextArchitectureStatus] = await Promise.all([
+      const [projectData, taskList] = await Promise.all([
         getProject(projectUuid),
         listProjectTasks(projectUuid),
-        getProjectArchitectureStatus(projectUuid),
       ]);
 
       setProject(projectData);
       setTasks(taskList);
-      setArchitectureStatus(nextArchitectureStatus);
       const pendingRequirements = projectData?.intakeConfig?.requirementsContract || null;
       const persistedElicitation = projectData?.intakeConfig?.pmElicitation || null;
       const persistedClarifications = persistedElicitation?.open_questions || projectData?.intakeConfig?.backlogClarifications || pendingRequirements?.blocking_questions || [];
@@ -171,7 +194,6 @@ export default function ProjectOverviewPage() {
           answersByQuestion[item.question] || '',
         ])
       ));
-      setArchitectureStatus(nextArchitectureStatus);
       setForm({
         idea: projectData?.intakeConfig?.idea || projectData?.description || '',
         objective: projectData?.intakeConfig?.objective || projectData?.intakeConfig?.answers?.objective || '',
@@ -179,6 +201,9 @@ export default function ProjectOverviewPage() {
         mainFlows: projectData?.intakeConfig?.answers?.mainFlows || '',
         constraints: projectData?.intakeConfig?.answers?.constraints || '',
       });
+      if (background && !projectData?.intakeConfig?.backlogGenerationRecovery && projectData?.intakeConfig?.backlogContract?.stories?.length) {
+        setSuccessMessage('Backlog concluído. As user stories estão prontas para sua revisão.');
+      }
     } catch (loadError) {
       if (loadError.response?.status === 404) {
         navigate('/projects', { replace: true });
@@ -186,7 +211,7 @@ export default function ProjectOverviewPage() {
       }
       setError(getApiErrorMessage(loadError, 'Não foi possível carregar o overview do projeto.'));
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }
 
@@ -223,6 +248,22 @@ export default function ProjectOverviewPage() {
         elicitation: project?.intakeConfig?.pmElicitation || null,
       });
 
+      if (response?.code === 'PROJECT_BACKLOG_RETRY_QUEUED') {
+        setProject((current) => ({
+          ...(response.project || current || {}),
+          intakeConfig: {
+            ...(current?.intakeConfig || {}),
+            backlogGenerationRecovery: {
+              status: 'queued',
+              ...(response.recovery || {}),
+            },
+          },
+        }));
+        setShowBriefingModal(false);
+        setSuccessMessage('A geração continua em segundo plano. Esta página será atualizada automaticamente quando o backlog estiver pronto.');
+        return;
+      }
+
       if (response.result?.clarification_required || response.result?.elicitation_required) {
         const questions = response.result.clarifications || [];
         setClarifications(questions);
@@ -239,8 +280,6 @@ export default function ProjectOverviewPage() {
       setProject(response.project);
       setTasks(response.tasks || []);
       setRequirementsContract(response.project?.intakeConfig?.backlogContract?.requirementsContract || response.result?.backlog_contract?.requirements_contract || null);
-      const nextArchitectureStatus = await getProjectArchitectureStatus(projectUuid);
-      setArchitectureStatus(nextArchitectureStatus);
       setForm({
         idea: response.project?.intakeConfig?.idea || form.idea,
         objective: response.project?.intakeConfig?.objective || response.project?.intakeConfig?.answers?.objective || form.objective,
@@ -431,19 +470,6 @@ export default function ProjectOverviewPage() {
               Voltar para projetos
             </button>
             <button
-              type="button"
-              onClick={handleExportPdf}
-              disabled={loading || exportingPdf || (architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved)}
-              className="dashboard-button-secondary w-full sm:w-auto"
-              title={
-                architectureStatus?.hasArchitecture && !architectureStatus?.architectureApproved
-                  ? 'A exportação final depende da aprovação humana da arquitetura.'
-                  : undefined
-              }
-            >
-              {exportingPdf ? 'Preparando dossiê...' : 'Exportar dossiê em PDF'}
-            </button>
-            <button
               type={projectJourney.ctaType}
               onClick={projectJourney.ctaType === 'button' ? projectJourney.ctaAction : undefined}
               disabled={projectJourney.ctaDisabled}
@@ -451,28 +477,49 @@ export default function ProjectOverviewPage() {
             >
               {projectJourney.ctaLabel}
             </button>
-            <button
-              type="button"
-              onClick={() => requestProjectStatusChange(projectStatusMeta.primaryTarget)}
-              disabled={loading || updatingStatus}
-              className="dashboard-button-secondary w-full sm:w-auto"
-            >
-              {updatingStatus ? 'Atualizando...' : projectStatusMeta.primaryAction}
-            </button>
+            <details className="relative w-full sm:w-auto">
+              <summary className="dashboard-button-secondary cursor-pointer list-none text-center">Mais ações</summary>
+              <div className="absolute right-0 z-20 mt-2 flex min-w-56 flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                <button type="button" onClick={handleExportPdf} disabled={loading || exportingPdf} className="dashboard-button-secondary text-left">
+                  {exportingPdf ? 'Preparando dossiê...' : 'Exportar dossiê em PDF'}
+                </button>
+                <button type="button" onClick={() => requestProjectStatusChange(projectStatusMeta.primaryTarget)} disabled={loading || updatingStatus} className="dashboard-button-secondary text-left">
+                  {updatingStatus ? 'Atualizando...' : projectStatusMeta.primaryAction}
+                </button>
+              </div>
+            </details>
           </div>
         }
       >
       <section className="space-y-6">
         <ProjectStageNav
           projectUuid={projectUuid}
-          active={backlogAwaitingApproval ? 'review' : hasPublishedStories ? 'tasks' : 'briefing'}
+          active={backlogAwaitingApproval ? 'review' : hasPublishedStories ? 'tasks' : isBacklogGenerationActive ? 'backlog' : 'briefing'}
           completed={[
-            ...(hasGeneratedStories ? ['briefing', 'requirements', 'backlog'] : []),
+            ...(hasGeneratedStories ? ['briefing', 'backlog'] : []),
             ...(hasPublishedStories ? ['review'] : []),
           ]}
         />
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
         {successMessage && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{successMessage}</div>}
+        {isBacklogGenerationActive && (
+          <section className="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-[#102a72] shadow-sm" aria-live="polite">
+            <div className="flex items-start gap-3">
+              <span className="mt-1.5 h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-[#102a72]" />
+              <div>
+                <p className="text-sm font-semibold">{backlogGenerationRecovery?.status === 'running' ? 'PM Agent gerando o backlog' : 'Geração do backlog na fila'}</p>
+                <p className="mt-1 text-sm leading-6 text-blue-900/80">
+                  {backlogGenerationRecovery?.nextRetryAt
+                    ? `Nova tentativa prevista para ${new Date(backlogGenerationRecovery.nextRetryAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.`
+                    : 'O agente está processando as stories e esta página será atualizada automaticamente.'}
+                  {backlogGenerationRecovery?.automaticRetryAttempt
+                    ? ` Tentativa automática ${backlogGenerationRecovery.automaticRetryAttempt}${backlogGenerationRecovery?.maxAutomaticRetryAttempts ? ` de ${backlogGenerationRecovery.maxAutomaticRetryAttempts}` : ''}.`
+                    : ''}
+                </p>
+              </div>
+            </div>
+          </section>
+        )}
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
           <div className="grid gap-4 px-6 py-6 lg:grid-cols-[1.2fr_0.8fr]">
             <div>
@@ -483,42 +530,22 @@ export default function ProjectOverviewPage() {
             <div className={`rounded-2xl border px-5 py-4 ${projectJourney.tone}`}>
               <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">Etapa atual</p>
               <p className="mt-2 text-base font-semibold text-slate-900">{projectJourney.stage}</p>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {tasks.length} tasks · {groupedStats.done} concluídas · {architectureStatus?.hasArchitecture ?'arquitetura gerada' : 'arquitetura pendente'}
-              </p>
-              <div className={`mt-4 inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${projectStatusMeta.tone}`}>
-                Status do projeto: {projectStatusMeta.label}
+              <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-xl border border-slate-200 bg-white/70 px-3 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Stories</p>
+                  <p className="mt-1 font-bold text-slate-900">{backlogStories.length || tasks.length}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white/70 px-3 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Aprovadas</p>
+                  <p className="mt-1 font-bold text-slate-900">{approvedStoryCount}</p>
+                </div>
+              </div>
+              <div className={`mt-4 inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${qualityGateTone}`}>
+                Quality Gate: {qualityGateDecision}
               </div>
             </div>
           </div>
         </section>
-        {(activeRequirementsContract || backlogQualityReview) && (
-          <section className="hidden">
-            <div className={`rounded-2xl border p-5 ${activeRequirementsContract?.decision === 'BLOCK' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50'}`}>
-              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#102a72]">Contrato de requisitos</p>
-              <h3 className="mt-2 text-lg font-bold text-slate-900">
-                {activeRequirementsContract?.decision === 'BLOCK' ? 'Aguardando decisões de produto' : 'Requisitos prontos para o backlog'}
-              </h3>
-              <p className="mt-2 text-sm leading-6 text-slate-700">
-                {activeRequirementsContract?.requirements?.length || 0} evidências mapeadas · {activeRequirementsContract?.assumptions?.length || 0} premissas · {activeRequirementsContract?.questions?.length || 0} perguntas registradas
-              </p>
-              {activeRequirementsContract?.blocking_questions?.length > 0 && (
-                <p className="mt-3 text-sm font-semibold text-amber-800">Há decisões bloqueantes pendentes. Abra o briefing para respondê-las.</p>
-              )}
-            </div>
-            <div className={`rounded-2xl border p-5 ${backlogQualityReview?.decision === 'PASS' ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
-              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-600">Qualidade do backlog</p>
-              <h3 className="mt-2 text-lg font-bold text-slate-900">
-                {backlogQualityReview?.decision === 'PASS' ? 'Backlog validado antes da publicação' : 'Backlog ainda não foi publicado'}
-              </h3>
-              <p className="mt-2 text-sm leading-6 text-slate-700">
-                {backlogQualityReview
-                  ? `${backlogQualityReview.repair_attempts || 0} rodada(s) de autocorreção executada(s).`
-                  : 'O PM ainda não concluiu a validação do contrato de backlog.'}
-              </p>
-            </div>
-          </section>
-        )}
         {backlogAwaitingApproval && (
           <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -535,101 +562,11 @@ export default function ProjectOverviewPage() {
             </div>
           </section>
         )}
-        <section className="hidden dashboard-panel" id="project-briefing-form">
+        {hasPublishedStories && <section className="dashboard-panel" id="project-refinement-board">
           <div className="dashboard-panel-header">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Contexto inicial</p>
-                <h3 className="mt-2 text-2xl font-bold text-slate-900">Briefing do projeto</h3>
-                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                  O resumo do projeto fica visível aqui. Quando quiser detalhar ou gerar novas stories, abra o briefing em modal.
-                </p>
-              </div>
-              <button type="button" onClick={() => setShowBriefingModal(true)} className="dashboard-button-primary">
-                {hasGeneratedStories ? 'Revisar briefing' : 'Abrir briefing'}
-              </button>
-            </div>
-          </div>
-          <div className="grid gap-4 p-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-              <h2 className="text-3xl font-bold tracking-tight text-slate-900">{project?.name || 'Carregando projeto...'}</h2>
-              <p className="mt-3 text-sm leading-7 text-slate-600">
-                {project?.description || 'Este projeto ainda não tem um briefing consolidado.'}
-              </p>
-              <p className="mt-4 text-sm leading-7 text-slate-600">
-                {project?.vision || 'Defina o objetivo do projeto e use o PM Agent para abrir o backlog com contexto.'}
-              </p>
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Estado</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{hasGeneratedStories ? 'Briefing consolidado' : 'Pode editar'}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Entrada</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{ideaLength} caracteres</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Saída</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">User stories</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Leitura rápida</p>
-              <div className="mt-4 grid gap-3">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Onde estamos</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{projectJourney.stage}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Próxima entrega</p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900">{projectJourney.title}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  <p><strong>Workspace:</strong> {project?.workspace?.name || '-'}</p>
-                  <p><strong>Status:</strong> {project?.status || '-'}</p>
-                  <p><strong>Template:</strong> {project?.templateKey || 'Sem template'}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="dashboard-panel">
-          <div className="dashboard-panel-header">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Etapa 2</p>
-                <h3 className="mt-2 text-2xl font-bold text-slate-900">Estado do projeto</h3>
-                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                  O fluxo ativo continua focado em briefing, backlog e revisão de qualidade. A arquitetura e a implementação automatizadas foram removidas do produto principal.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid gap-3 border-t border-slate-100 px-6 py-4 sm:grid-cols-2">
-            <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Histórias refinadas</p>
-              <p className="mt-3 text-3xl font-bold text-slate-900">
-                {architectureStatus?.refinedStories || 0}/{architectureStatus?.totalStories || 0}
-              </p>
-            </div>
-            <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Qualidade do backlog</p>
-              <p className="mt-3 text-lg font-bold text-slate-900">
-                {architectureStatus?.refinedStories === architectureStatus?.totalStories && architectureStatus?.totalStories > 0 ? 'Concluída' : 'Em andamento'}
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <details className="dashboard-panel group" id="project-refinement-board">
-          <summary className="dashboard-panel-header cursor-pointer list-none">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Etapa 3</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Tasks publicadas</p>
                 <h3 className="mt-2 text-xl font-bold text-slate-900">Board do projeto</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
                   Aqui você acompanha as tasks dentro do contexto deste projeto, com as raias operacionais do fluxo atual.
@@ -639,7 +576,7 @@ export default function ProjectOverviewPage() {
                 {tasks.length} tasks
               </span>
             </div>
-          </summary>
+          </div>
 
           <div className="p-6">
             {loading ? (
@@ -651,7 +588,7 @@ export default function ProjectOverviewPage() {
               />
             )}
           </div>
-        </details>
+        </section>}
       </section>
       </AppShell>
       <AnimatePresence>
@@ -998,8 +935,10 @@ export default function ProjectOverviewPage() {
                     <button type="button" onClick={() => setShowBriefingModal(false)} className="dashboard-button-secondary w-full sm:w-auto">
                       Cancelar
                     </button>
-                  <button disabled={generating || loading} className="dashboard-button-primary w-full sm:w-auto">
-                    {hasGeneratedStories
+                  <button disabled={generating || loading || isBacklogGenerationActive} className="dashboard-button-primary w-full sm:w-auto">
+                    {isBacklogGenerationActive
+                      ? 'Geração em andamento'
+                      : hasGeneratedStories
                       ? 'Regerar user stories'
                       : generating
                         ? 'PM Agent gerando...'

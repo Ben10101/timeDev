@@ -3,13 +3,9 @@ import { useNavigate } from 'react-router-dom';
 
 const STEPS = [
   ['briefing', 'Briefing', ''],
-  ['requirements', 'Requisitos', ''],
   ['backlog', 'Backlog', ''],
   ['review', 'Revisão humana', '/backlog-review'],
   ['tasks', 'Tasks', ''],
-  ['qa', 'QA', ''],
-  ['architecture', 'Arquitetura', ''],
-  ['board', 'Board', ''],
 ];
 
 export default function ProjectStageNav({ projectUuid, active = 'review', completed = [] }) {
