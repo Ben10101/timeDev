@@ -5,7 +5,6 @@ import {
   Briefcase,
   ChevronRight,
   Compass,
-  LayoutGrid,
   LogOut,
   Search,
   Settings,
@@ -15,13 +14,6 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 
 const NAV_SECTIONS = [
-  {
-    label: 'Workspace',
-    items: [
-      { label: 'Visão geral', hint: 'Portfólio multi-projetos', to: '/workspace', icon: LayoutGrid, exact: true },
-      { label: 'Equipe', hint: 'Pessoas e papéis', to: '/workspace/team', icon: User, exact: true },
-    ],
-  },
   {
     label: 'Projeto',
     items: [{ label: 'Projetos', hint: 'Board operacional', to: '/projects', icon: Briefcase }],

@@ -8,11 +8,11 @@ export function getProjectStatusMeta(status) {
   }
 
   if (status === 'completed') {
-    return { label: 'Concluído', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200', action: 'Arquivar', nextStatus: 'archived' };
+    return { label: 'Concluído', tone: 'bg-blue-50 text-[#102a72] border-blue-200', action: 'Arquivar', nextStatus: 'archived' };
   }
 
   if (status === 'active') {
-    return { label: 'Ativo', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200', action: 'Pausar', nextStatus: 'on_hold' };
+    return { label: 'Ativo', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200', action: 'Concluir', nextStatus: 'completed' };
   }
 
   return { label: 'Rascunho', tone: 'bg-blue-50 text-[#102a72] border-blue-200', action: 'Ativar', nextStatus: 'active' };
@@ -52,6 +52,7 @@ export function getProjectStatusWorkflow(status) {
       primaryAction: 'Reativar projeto',
       primaryTarget: 'active',
       secondaryAction: 'Arquivar projeto',
+      secondaryTarget: 'archived',
     };
   }
 
@@ -60,16 +61,18 @@ export function getProjectStatusWorkflow(status) {
       ...meta,
       primaryAction: 'Arquivar projeto',
       primaryTarget: 'archived',
-      secondaryAction: 'Colocar em pausa',
+      secondaryAction: 'Reabrir projeto',
+      secondaryTarget: 'active',
     };
   }
 
   if (status === 'active') {
     return {
       ...meta,
-      primaryAction: 'Colocar em pausa',
-      primaryTarget: 'on_hold',
-      secondaryAction: 'Arquivar projeto',
+      primaryAction: 'Concluir projeto',
+      primaryTarget: 'completed',
+      secondaryAction: 'Colocar em pausa',
+      secondaryTarget: 'on_hold',
     };
   }
 
@@ -78,5 +81,6 @@ export function getProjectStatusWorkflow(status) {
     primaryAction: 'Ativar projeto',
     primaryTarget: 'active',
     secondaryAction: 'Arquivar projeto',
+    secondaryTarget: 'archived',
   };
 }

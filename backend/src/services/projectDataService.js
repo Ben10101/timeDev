@@ -761,6 +761,8 @@ export async function listProjects(userUuid = null) {
       slug: true,
       description: true,
       vision: true,
+      createdAt: true,
+      updatedAt: true,
       startMode: true,
       templateKey: true,
       intakeConfig: true,

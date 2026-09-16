@@ -685,10 +685,26 @@ class RequirementsAnalyst:
                 append_confirmed("confirmed_rules", then)
 
         if canonical_upstream_criteria:
-            # The upstream review is the canonical decision record. Keeping a
-            # parallel model-generated variant creates duplicate scenarios and
-            # can reintroduce unsupported generic exceptions.
-            contract["acceptance_criteria"] = canonical_upstream_criteria
+            # Preserve upstream decisions while retaining any additional
+            # evidence-backed scenarios generated for the current story.
+            # Replacing the list here made a one-item upstream review fail the
+            # consultation contract's two-scenario quality gate on every retry.
+            existing_criteria = contract.get("acceptance_criteria")
+            generated_criteria = existing_criteria if isinstance(existing_criteria, list) else []
+            canonical_keys = {
+                self._normalize_text(
+                    f"{item['given']} {item['when']} {item['then']}"
+                )
+                for item in canonical_upstream_criteria
+            }
+            supplemental_criteria = [
+                item for item in generated_criteria
+                if isinstance(item, dict)
+                and self._normalize_text(
+                    f"{item.get('given', '')} {item.get('when', '')} {item.get('then', '')}"
+                ) not in canonical_keys
+            ]
+            contract["acceptance_criteria"] = canonical_upstream_criteria + supplemental_criteria
             # Upstream criteria are the canonical decisions. Model-generated
             # flow lines often restate them imperfectly, which duplicates the
             # public behavior or turns a BDD precondition into a sentence.
@@ -1401,7 +1417,7 @@ Contexto estruturado produzido pelo PM para esta story: {json.dumps(expected_con
 Descoberta semantica da LLM: {json.dumps(expected_contract.get('semantic_context') or {}, ensure_ascii=False)}. Use-a para organizar o requisito, mas confirme cada afirmacao contra a evidencia original; itens com baixa confianca ou sem fonte devem permanecer como perguntas.
 Se has_input=true e a intencao nao for view/summary, produza ao menos dois criterios BDD: um para o caminho suportado pela fonte e outro para dado ausente, invalido, incompleto ou envio recusado. Para consultas com filtros, nao crie cenario negativo de entrada; pergunte apenas regras de filtro e resultado vazio. Nao invente formato, limite ou mensagem; quando a fonte nao os definir, descreva o comportamento pendente em open_questions.
 Se has_document=true ou has_form=true, nao use "nao se aplica" para validacao, feedback ou excecao como forma de ocultar a lacuna: deixe a lista confirmada vazia e registre a definicao pendente em open_questions. Se has_sensitive_data=true, registre tambem a pendencia de acesso, finalidade, retencao e rastreabilidade.
-Para intent=view ou intent=summary, descreva somente os dados de consulta explicitamente presentes nas fontes. Se a fonte nao listar campos, classificacao de status, ordenacao, filtros, paginacao ou comportamento de lista vazia, mantenha esses itens fora das listas confirmadas e crie perguntas objetivas em open_questions. Nao invente autenticacao, titularidade, login, permissao ou auditoria; esses itens so podem ser confirmados se aparecerem literalmente em uma fonte.
+Para intent=view ou intent=summary, descreva somente os dados de consulta explicitamente presentes nas fontes e gere pelo menos dois criterios de aceite BDD observaveis, cada um respaldado por source_ids. Se a fonte nao listar campos, classificacao de status, ordenacao, filtros, paginacao ou comportamento de lista vazia, mantenha esses itens fora das listas confirmadas e crie perguntas objetivas em open_questions. Nao invente autenticacao, titularidade, login, permissao ou auditoria; esses itens so podem ser confirmados se aparecerem literalmente em uma fonte.
 Revisao recebida da historia do backlog: {json.dumps(expected_contract.get('upstream_review') or {}, ensure_ascii=False)}. Perguntas de revisao upstream permanecem abertas; nunca as transforme em regra confirmada.
 Quando as fontes nao definirem prioridade, dependencia externa, requisito nao funcional, metrica, viabilidade, responsavel pela validacao ou impacto em historias relacionadas, mantenha esses assuntos como perguntas objetivas em open_questions. Nao invente valores, SLAs, integracoes, responsaveis ou decisoes tecnicas.
 

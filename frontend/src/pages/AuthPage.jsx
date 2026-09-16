@@ -315,7 +315,7 @@ export default function AuthPage() {
             transition={{ delay: 0.6, duration: 0.8 }}
             className="mt-12 flex flex-wrap gap-3"
           >
-            {['Engenharia', 'Qualidade', 'Entregas', 'DevOps'].map((badge) => (
+            {['Engenharia', 'Qualidade', 'Entregas'].map((badge) => (
               <div
                 key={badge}
                 className="cursor-pointer rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold tracking-wider text-white shadow-xl shadow-black/10 transition-all hover:bg-white/10"

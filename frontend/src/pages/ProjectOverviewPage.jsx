@@ -10,6 +10,7 @@ import {
   generateProjectBacklog,
   publishProjectBacklog,
   updateProjectBacklogStory,
+  updateTask,
   getApiErrorMessage,
   getProject,
   listProjectTasks,
@@ -436,7 +437,9 @@ export default function ProjectOverviewPage() {
       setSuccessMessage(
         nextStatus === 'archived'
           ? 'Projeto arquivado com sucesso.'
-          : nextStatus === 'on_hold'
+          : nextStatus === 'completed'
+            ? 'Projeto concluído com sucesso.'
+            : nextStatus === 'on_hold'
             ? 'Projeto colocado em pausa.'
             : 'Projeto reativado com sucesso.'
       );
@@ -486,6 +489,11 @@ export default function ProjectOverviewPage() {
                 <button type="button" onClick={() => requestProjectStatusChange(projectStatusMeta.primaryTarget)} disabled={loading || updatingStatus} className="dashboard-button-secondary text-left">
                   {updatingStatus ? 'Atualizando...' : projectStatusMeta.primaryAction}
                 </button>
+                {projectStatusMeta.secondaryTarget ? (
+                  <button type="button" onClick={() => requestProjectStatusChange(projectStatusMeta.secondaryTarget)} disabled={loading || updatingStatus} className="dashboard-button-secondary text-left">
+                    {updatingStatus ? 'Atualizando...' : projectStatusMeta.secondaryAction}
+                  </button>
+                ) : null}
               </div>
             </details>
           </div>
@@ -499,8 +507,22 @@ export default function ProjectOverviewPage() {
             ...(hasGeneratedStories ? ['briefing', 'backlog'] : []),
             ...(hasPublishedStories ? ['review'] : []),
           ]}
+          onSelectStage={{
+            briefing: isBacklogGenerationActive ? undefined : () => setShowBriefingModal(true),
+            backlog: backlogAwaitingApproval
+              ? () => navigate(`/projects/${projectUuid}/backlog-review`)
+              : isBacklogGenerationActive ? undefined : () => setShowBriefingModal(true),
+            tasks: hasPublishedStories ? scrollToRefinementBoard : undefined,
+          }}
         />
-        {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
+        {error && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            <span>{error}</span>
+            <button type="button" onClick={loadOverview} disabled={loading} className="dashboard-button-secondary px-3 py-2 text-xs">
+              Tentar novamente
+            </button>
+          </div>
+        )}
         {successMessage && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{successMessage}</div>}
         {isBacklogGenerationActive && (
           <section className="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-[#102a72] shadow-sm" aria-live="polite">

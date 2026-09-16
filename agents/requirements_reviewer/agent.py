@@ -86,13 +86,18 @@ def _restore_missing_history(markdown, current):
     return f'{before}\n\n{restored}\n\n{after}'.strip()
 
 
-def _validate_scope_preservation(current, source, markdown):
+def _validate_scope_preservation_base(current, source, markdown):
     """Reject independent journeys that were not part of the reviewed story."""
     established_scope = _normalized(f'{current}\n{source}')
     proposed_scope = _normalized(markdown)
     independent_journeys = {
         'exportação ou download de dados': ('export', 'csv', 'pdf', 'download'),
         'integração externa': ('webhook', 'api externa', 'integracao externa'),
+    }
+    # PDF is a document format; it does not, by itself, imply exporting or downloading data.
+    independent_journeys = {
+        label: tuple(cue for cue in cues if cue != 'pdf')
+        for label, cues in independent_journeys.items()
     }
     introduced = [
         label
@@ -105,6 +110,28 @@ def _validate_scope_preservation(current, source, markdown):
             'A revisão introduz uma jornada independente fora do escopo da task '
             f'({", ".join(introduced)}). Registre essa decisão para o PM/backlog.'
         )
+
+
+def _validate_scope_preservation(current, source, markdown, decisions=None):
+    """Add the triggering decision to scope-guard failures when available."""
+    try:
+        _validate_scope_preservation_base(current, source, markdown)
+    except ValueError as error:
+        established_scope = _normalized(f'{current}\n{source}')
+        proposed_scope = _normalized(markdown)
+        cues = ('export', 'csv', 'pdf', 'download', 'webhook', 'api externa', 'integracao externa')
+        detected = next((cue for cue in cues if cue in proposed_scope and cue not in established_scope), None)
+        if not detected:
+            raise
+        question = next((
+            str(item.get('question') or '').strip()
+            for item in (decisions or [])
+            if detected in _normalized(f"{item.get('question', '')}\n{item.get('answer', '')}")
+        ), None)
+        detail = f' Termo detectado: "{detected}".'
+        if question:
+            detail += f' Pergunta relacionada: "{question}".'
+        raise ValueError(f'{error}{detail}') from error
 
 
 def _count_structured_bdd_scenarios(markdown):
@@ -139,7 +166,11 @@ def _validate_markdown(markdown, decisions):
     for decision in decisions:
         answer = str(decision.get('answer') or '').strip()
         if answer and re.search(rf'^\s*[-*]\s*{re.escape(answer)}\s*\.?\s*$', markdown, re.IGNORECASE | re.MULTILINE):
-            raise ValueError('Uma resposta de decisão foi copiada como regra sem contexto.')
+            question = str(decision.get('question') or '').strip()
+            raise ValueError(
+                'Uma resposta de decisão foi copiada como regra sem contexto.'
+                f' Pergunta relacionada: "{question}". Resposta copiada: "{answer}".'
+            )
 
 
 class RequirementsReviewer:
@@ -169,6 +200,7 @@ Regras prioritárias:
 3. Para cada decisão que altera comportamento, crie ou atualize um cenário BDD concreto. Todo cenário DEVE ter um subtítulo no formato exato "### Cenario N - titulo" e, logo abaixo, conter DADO, QUANDO e ENTAO.
 4. Não invente mensagens, permissões, limites, integrações ou fatos ausentes.
 5. Se uma decisão pedir uma jornada independente do objetivo atual, como exportação, download, integração ou novo fluxo, NÃO a incorpore. Registre-a em scope_escalations para o PM/backlog.
+Um PDF enviado pelo comprador como anexo é um formato de documento, não uma jornada de exportação ou download.
 6. Use exatamente as seções: Historia e objetivo; Comportamento e regras confirmadas; Cenarios de aceite; Decisoes pendentes; Status.
 7. Não retorne respostas cruas como "90 dias", "não" ou "somente essas informações". Contextualize-as.
 
@@ -197,11 +229,20 @@ Documento atual:
         scope_escalations = parsed.get('scope_escalations')
         if isinstance(scope_escalations, list) and scope_escalations:
             reason = str((scope_escalations[0] or {}).get('reason') or '').strip()
-            raise ValueError(
-                'Uma decisão amplia o escopo da task e precisa seguir para o PM/backlog.'
-                + (f' Motivo informado: {reason}' if reason else '')
+            decisions_text = _normalized('\n'.join(
+                f"{item.get('question', '')}\n{item.get('answer', '')}" for item in decisions
+            ))
+            reason_text = _normalized(reason)
+            is_pdf_format_false_positive = (
+                'pdf' in reason_text
+                and not any(cue in decisions_text for cue in ('export', 'download', 'csv'))
             )
-        _validate_scope_preservation(current, source, markdown)
+            if not is_pdf_format_false_positive:
+                raise ValueError(
+                    'Uma decisão amplia o escopo da task e precisa seguir para o PM/backlog.'
+                    + (f' Motivo informado: {reason}' if reason else '')
+                )
+        _validate_scope_preservation(current, source, markdown, decisions)
         _validate_markdown(markdown, decisions)
         return {
             'markdown': markdown,
