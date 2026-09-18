@@ -54,13 +54,20 @@ except Exception as e:
     CACHE = None
     CACHE_ENABLED = False
 
-# The backend passes per-user provider settings to each agent process. Load
-# repository defaults only for variables that were not supplied at runtime;
-# otherwise an old .env model (for example gemma3:4b) overrides the model
-# selected in the Aligna UI.
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=False)
-
+# Do not read repository secrets while importing the module. Unit tests and
+# deterministic agents import validation helpers without provider settings.
+# Runtime defaults are loaded only when an LLM request is actually made.
+_repository_env_loaded = False
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+
+def ensure_repository_env_loaded():
+    global _repository_env_loaded, GEMINI_API_KEY
+    if _repository_env_loaded:
+        return
+    _repository_env_loaded = True
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=False)
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 _gemini_client = None
 
 SUPPORTED_PROVIDERS = ("gemini", "openai", "deepseek", "nvidia", "anthropic", "groq", "huggingface", "openrouter", "ollama")
@@ -822,6 +829,7 @@ def get_attributes_from_llm(idea: str) -> list:
 
 
 def generate_text_from_llm(prompt: str, model: str = None, options_override: dict | None = None, use_cache: bool = True, task: str = None) -> str:
+    ensure_repository_env_loaded()
     provider_key = get_cache_provider_key()
 
     if CACHE_ENABLED and use_cache:

@@ -7,10 +7,32 @@ import unicodedata
 class BacklogChallenger:
     """Reports concrete backlog defects without generating replacement stories."""
 
+    # These are not a catalogue of mandatory features. They become relevant
+    # only when the briefing explicitly describes a ticketing journey.
+    TICKETING_SIGNALS = ("ingresso", "ingressos", "ticket", "tickets", "qr code", "portaria")
+    TICKETING_GUARDRAILS = (
+        ("inventory_concurrency", ("assento", "setor", "disponibil", "capacidade", "reserva"), ("duplic", "concorr", "bloque", "expir", "libera"), "Quando duas compras disputarem a mesma disponibilidade, qual e a regra de bloqueio, expiracao e liberacao?"),
+        ("payment_idempotency", ("pagamento", "checkout", "cobranca", "emitir ingresso"), ("idempot", "retent", "duplic", "webhook", "confirm"), "Como a confirmacao ou retentativa de pagamento evita cobranca ou emissao duplicada?"),
+        ("offline_entry_reconciliation", ("qr code", "portaria", "entrada", "validar ingresso"), ("offline", "sem conex", "sincron", "conflito"), "A portaria pode operar sem conexao? Se puder, como validacoes concorrentes sao sincronizadas e resolvidas?"),
+        ("personal_data_lifecycle", ("dados pessoais", "privacidade", "lgpd", "comprador"), ("retenc", "anonim", "exclus", "auditoria", "acesso"), "Qual e a politica verificavel de acesso, retencao e eliminacao/anonimizacao dos dados do comprador?"),
+    )
+
     @staticmethod
     def _normalize(value):
         text = unicodedata.normalize("NFKD", str(value or ""))
         return "".join(char for char in text if not unicodedata.combining(char)).lower()
+
+    @classmethod
+    def _ticketing_guardrail_questions(cls, evidence_text, backlog_text):
+        combined = f"{evidence_text} {backlog_text}"
+        if not any(signal in combined for signal in cls.TICKETING_SIGNALS):
+            return []
+        questions = []
+        for code, triggers, safeguards, question in cls.TICKETING_GUARDRAILS:
+            if any(trigger in combined for trigger in triggers) and not any(safeguard in combined for safeguard in safeguards):
+                questions.append({"code": code, "question": question, "requires_confirmation": True,
+                                  "reason": "Invariante operacional de ticketing sem decisao rastreavel; nao foi inferida pelo agente."})
+        return questions
 
     def process(self, contract, evidence_contract=None):
         stories = contract.get("stories", []) if isinstance(contract, dict) else []
@@ -104,6 +126,11 @@ class BacklogChallenger:
             self._normalize(f"{story.get('goal', '')} {story.get('description', '')}")
             for story in stories if isinstance(story, dict)
         )
+
+        ticketing_questions = self._ticketing_guardrail_questions(evidence_text, backlog_text)
+        questions.extend(ticketing_questions)
+        proposals.extend({"type": "domain_decision", "status": "proposed", "requires_confirmation": True,
+                          "code": item["code"], "reason": item["reason"]} for item in ticketing_questions)
 
         # Domain coverage is derived from the current contract, never from a
         # fixed catalogue of product types. A capability is covered only when

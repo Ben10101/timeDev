@@ -1605,6 +1605,14 @@ export async function generateProjectArchitectureController(req, res, next) {
     const { projectUuid } = req.params;
     await assertProjectPermission(projectUuid, req.authUser.uuid, 'manager');
 
+    // The architecture agent was deliberately removed from the active
+    // pipeline. Keep the legacy endpoint explicit instead of creating a run
+    // that can only fail as an unknown Python agent.
+    return res.status(410).json({
+      message: 'A etapa de arquitetura automatizada foi removida. Requisitos e QA aprovados liberam a implementacao diretamente.',
+      projectUuid,
+    });
+
     const [project, tasks, architectureStatus] = await Promise.all([
       getProjectByUuid(projectUuid, req.authUser.uuid),
       listProjectTasks(projectUuid, {}, req.authUser.uuid),

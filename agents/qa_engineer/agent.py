@@ -102,6 +102,24 @@ class QAEngineer:
             gaps.append("Acesso temporário e mínimo do suporte sem critério BDD verificável.")
         return list(dict.fromkeys(gaps))
 
+    @classmethod
+    def _ticketing_risk_gaps(cls, requirement_spec, criteria, requirement_summary=""):
+        """Expose, but never invent, ticketing safeguards absent from BDD."""
+        spec = cls._parse_spec(requirement_spec)
+        rules = spec.get("businessRules") or spec.get("business_rules") or []
+        if not isinstance(rules, list):
+            rules = [rules]
+        source = " ".join([requirement_summary, " ".join(cls._clean(item.get("text")) for item in criteria if isinstance(item, dict)), " ".join(cls._clean(item) for item in rules)])
+        normalized = unicodedata.normalize("NFD", source).encode("ascii", "ignore").decode("ascii").lower()
+        gaps = []
+        if any(term in normalized for term in ("assento", "setor", "capacidade", "reserva")) and not any(term in normalized for term in ("concorr", "duplic", "bloque", "expir", "libera")):
+            gaps.append("Disponibilidade/reserva de ingressos sem comportamento verificavel para disputa concorrente, expiracao ou liberacao.")
+        if any(term in normalized for term in ("pagamento", "checkout", "cobranca")) and not any(term in normalized for term in ("idempot", "retent", "duplic", "confirm")):
+            gaps.append("Pagamento/checkout sem criterio verificavel de idempotencia, retentativa ou confirmacao unica.")
+        if any(term in normalized for term in ("qr code", "portaria", "entrada")) and not any(term in normalized for term in ("reutil", "duplic", "offline", "conex", "sincron")):
+            gaps.append("Validacao de entrada por QR Code sem criterio de reutilizacao, indisponibilidade de conexao ou reconciliacao.")
+        return gaps
+
     @staticmethod
     def _is_unusable_response(value):
         return not value or is_error_text_response(value) or str(value).strip().lower().startswith("# documentacao gerada")
@@ -504,6 +522,7 @@ Rascunho:\n{draft}
         lacunas = list(dict.fromkeys(
             self._extract_lacunas(requirement_spec)
             + self._critical_rule_gaps(requirement_spec, criteria)
+            + self._ticketing_risk_gaps(requirement_spec, criteria, requirement_summary)
         ))
         model = os.getenv("QA_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL", "gemma3:4b")
         previous_timeout = os.environ.get("OLLAMA_REQUEST_TIMEOUT_SECONDS")

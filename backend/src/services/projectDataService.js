@@ -19,7 +19,9 @@ const QA_ARTIFACT_TYPES = [QA_VALIDATION_ARTIFACT_TYPE, 'test_plan']; // test_pl
 
 export function resolveArtifactReviewTransition(artifactType, approved) {
   if (approved && artifactType === 'requirements') return { status: 'qa', assigneeAgentName: 'qa_engineer', assigneeType: 'agent', releasedStage: 'qa' };
-  if (approved && QA_ARTIFACT_TYPES.includes(artifactType)) return { status: 'done', assigneeAgentName: 'architect', assigneeType: 'agent', releasedStage: 'architecture' };
+  // Architecture is no longer an active agent. QA approval releases a story
+  // to implementation; it must never be reported as completed at this point.
+  if (approved && QA_ARTIFACT_TYPES.includes(artifactType)) return { status: 'todo', assigneeAgentName: 'developer', assigneeType: 'agent', releasedStage: 'implementation' };
   if (approved && artifactType === 'architecture') return { status: 'todo', assigneeAgentName: 'developer', assigneeType: 'agent', releasedStage: 'implementation' };
   if (!approved && artifactType === 'architecture') return { status: 'in_review', assigneeAgentName: 'architect', assigneeType: 'agent', releasedStage: null };
   if (!approved && QA_ARTIFACT_TYPES.includes(artifactType)) return { status: 'qa', assigneeAgentName: 'qa_engineer', assigneeType: 'agent', releasedStage: null };
@@ -3656,9 +3658,6 @@ const stageTaskConfig = {
 function buildArchitectureBlockers({
   totalStories,
   pendingStories,
-  hasArchitecture,
-  architectureNeedsRefresh,
-  architectureApproved,
 }) {
   const blockers = [];
 
@@ -3666,24 +3665,8 @@ function buildArchitectureBlockers({
     blockers.push('Crie e refine pelo menos uma historia antes de gerar a arquitetura.');
   }
 
-  if (hasArchitecture) {
-    blockers.push('A arquitetura deste projeto ja foi gerada. Para preservar a trilha tecnica, essa etapa nao pode ser executada novamente.');
-  }
-
   if (pendingStories > 0) {
     blockers.push(`Ainda faltam ${pendingStories} historias com requisitos refinados.`);
-  }
-
-  if (!hasArchitecture) {
-    blockers.push('A arquitetura do projeto ainda nao foi gerada.');
-  }
-
-  if (!hasArchitecture && architectureNeedsRefresh) {
-    blockers.push('A arquitetura atual ficou desatualizada depois de novos refinamentos.');
-  }
-
-  if (hasArchitecture && !architectureNeedsRefresh && !architectureApproved) {
-    blockers.push('A arquitetura atual precisa de aprovacao humana antes de liberar implementacao ou exportacao final.');
   }
 
   return blockers;
@@ -3791,8 +3774,8 @@ export async function getProjectArchitectureStatus(projectUuid, userUuid = null)
   const architectureApproved = Boolean(architectureArtifact?.isApproved);
   const architectureNeedsRefresh = false;
   const allStoriesQaApproved = totalStories > 0 && qaApprovedStories === totalStories;
-  const canGenerateArchitecture = allStoriesRefined && allStoriesQaApproved && !hasArchitecture;
-  const canGenerateCode = allStoriesRefined && hasArchitecture && architectureApproved;
+  const canGenerateArchitecture = false;
+  const canGenerateCode = allStoriesRefined && allStoriesQaApproved;
   const blockers = buildArchitectureBlockers({
     totalStories,
     pendingStories,

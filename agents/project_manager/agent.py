@@ -3082,6 +3082,14 @@ Para ator generico ou Sistema, use uma persona humana/organizacional confirmada
 nas evidencias; comportamento automatico fica na descricao ou no BDD. Cada goal
 deve representar uma unica acao verificavel. Preserve campos e dependencias que
 continuem validos; remova apenas dependencias sem fundamento.
+Se o achado for needs_split_or_scope, REESCREVA a historia como UMA unica
+jornada: escolha apenas uma acao principal sustentada pelas evidencias e use um
+goal curto com um unico verbo de negocio. Nao una acoes por "e", "ou", virgula,
+barra ou enumeracao no goal. Nao use goals como "cadastrar e aprovar", "buscar,
+doar e acompanhar" ou "gerenciar campanhas". Resultados automaticos e contexto
+podem ficar na descricao ou no criterio BDD, mas nao introduza uma segunda acao
+independente. Mantenha o mesmo ID; nao tente resolver esse achado criando uma
+segunda story neste protocolo de patch isolado.
 Para unsupported_product_scope ou excluded_product_scope, remova do goal, descricao, regras e BDD o detalhe
 que nao esta presente nas evidencias citadas (por exemplo filtro, categoria,
 comunicacao pos-compra ou lote com preco diferenciado). Mantenha somente a
