@@ -1,4 +1,4 @@
-﻿import axios from 'axios'
+import axios from 'axios'
 
 function normalizeApiBaseUrl(rawUrl) {
   const fallback = 'http://localhost:3001/api'
@@ -166,7 +166,8 @@ apiClient.interceptors.response.use(
       return apiClient(originalRequest)
     } catch (refreshError) {
       clearApiAccessToken()
-      if (refreshError?.response?.status === 401) {
+      const status = refreshError?.response?.status
+      if (status === 401 || status === 403 || status === 429) {
         window.dispatchEvent(new Event('factory:session-invalid'))
       }
       return Promise.reject(refreshError)

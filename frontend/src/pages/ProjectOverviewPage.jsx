@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { PencilLine, X } from 'lucide-react';
@@ -654,7 +654,7 @@ export default function ProjectOverviewPage() {
                     </div>
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                       <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Próximo passo</p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">Abrir arquitetura</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">Exportar Dossiê de Requisitos & QA</p>
                     </div>
                   </div>
                 </div>

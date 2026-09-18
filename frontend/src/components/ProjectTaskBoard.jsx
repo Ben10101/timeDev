@@ -137,9 +137,9 @@ function TaskCard({
   const validationState = isBlocked
     ? { label: 'Bloqueada', detail: 'Resolva o bloqueio registrado para continuar.', tone: 'border-rose-200 bg-rose-50 text-rose-700' }
     : hasApprovedTestPlan
-      ? { label: 'QA aprovado', detail: 'Os casos de validação foram aprovados. A próxima etapa é arquitetura.', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
+      ? { label: 'QA aprovado', detail: 'Os casos de validação foram aprovados. A especificação BDD e QA está pronta para transferência.', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
       : hasTestPlan
-        ? { label: 'QA gerado', detail: 'Revise os casos de validação antes da arquitetura.', tone: 'border-amber-200 bg-amber-50 text-amber-700' }
+        ? { label: 'QA gerado', detail: 'Revise os casos de validação de QA para finalizar a especificação.', tone: 'border-amber-200 bg-amber-50 text-amber-700' }
       : hasRequirements && !hasApprovedRequirements
         ? { label: 'Aguardando aprovação', detail: 'Os requisitos foram gerados, mas precisam de validação humana.', tone: 'border-amber-200 bg-amber-50 text-amber-700' }
         : hasApprovedRequirements

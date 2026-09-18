@@ -168,6 +168,10 @@ class QAEngineer:
                 "criterio relacionado", "pre-condicao", "dados", "acao",
                 "resultado esperado", "tipo", "status", "evidencia",
             )}
+            for key in fields:
+                fields[key] = re.sub(r"#{1,6}\s+", "", fields[key])
+            title = re.sub(r"#{1,6}\s+", "", title)
+
             if not all(fields.values()):
                 return ""
             # QA prepares cases; it never records an executed result or real
@@ -380,11 +384,15 @@ class QAEngineer:
         lines.extend(["", "## Casos de validação"])
         for index, item in enumerate(cases, start=1):
             item["id"] = item["criterion"]
+            precondition = re.sub(r"#{1,6}\s+", "", str(item['precondition']))
+            data = re.sub(r"#{1,6}\s+", "", str(item['data']))
+            action = re.sub(r"#{1,6}\s+", "", str(item['action']))
+            expected = re.sub(r"#{1,6}\s+", "", str(item['expected']))
             lines.extend([
                 "", f"### CT-{index:02d} — Validar {item['id']}", f"Critério relacionado: {item['id']}",
-                f"Pré-condição: {item['precondition']}", f"Dados: {item['data']}",
-                f"Ação: {item['action']}",
-                f"Resultado esperado: {item['expected']}", f"Tipo: {item['type']}", "Status: não executado", "Evidência: não disponível",
+                f"Pré-condição: {precondition}", f"Dados: {data}",
+                f"Ação: {action}",
+                f"Resultado esperado: {expected}", f"Tipo: {item['type']}", "Status: não executado", "Evidência: não disponível",
             ])
         lines.extend(["", "## Lacunas de qualidade"])
         if fallback_lacunas:
@@ -550,11 +558,14 @@ Rascunho:\n{draft}
                         valid = False
                     if not valid or not result:
                         raise RuntimeError("A revisao de QA nao produziu casos no formato de persistencia.")
-            except RuntimeError:
-                raise
+            except RuntimeError as error:
+                print(f"[QA Engineer] repair_failed: {error}", file=sys.stderr)
+                valid = False
             except Exception as error:
                 print(f"[QA Engineer] semantic_review_unavailable: {error}", file=sys.stderr)
-            return result.strip()
+            
+            if valid:
+                return result.strip()
         fallback = self._fallback(criteria, lacunas)
         valid, reason = validate_qa_output(fallback, expected_criteria_ids=expected_ids)
         if not valid:

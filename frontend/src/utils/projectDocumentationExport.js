@@ -160,7 +160,7 @@ function buildDocumentationHtml(bundle) {
     <body>
       <div class="container">
         <div class="hero">
-          <p class="eyebrow">Documentação do projeto</p>
+          <p class="eyebrow">Dossiê de Engenharia de Requisitos & QA</p>
           <h1>${escapeHtml(bundle.project.name)}</h1>
           <p>${escapeHtml(bundle.project.description || 'Sem descrição consolidada.')}</p>
           <p><strong>Visão:</strong> ${escapeHtml(bundle.project.vision || 'Não informada.')}</p>

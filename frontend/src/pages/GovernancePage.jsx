@@ -20,6 +20,7 @@ import {
   getOperationalHistory,
   getPipelineQualityOverview,
   getProductionReadiness,
+  listProjects,
 } from '../services/api';
 
 const fade = (delay = 0) => ({
@@ -127,6 +128,32 @@ export default function GovernancePage() {
   const [alerts, setAlerts] = useState([]);
   const [auditTrail, setAuditTrail] = useState([]);
   const [pipelineQuality, setPipelineQuality] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectUuid, setSelectedProjectUuid] = useState('');
+
+  function handleExportAuditCsv() {
+    if (!auditTrail || !auditTrail.length) return;
+    const headers = ['Timestamp', 'Método', 'Caminho', 'Ação', 'Usuário', 'Duração (ms)', 'Status'];
+    const rows = auditTrail.map((entry) => [
+      new Date(entry.timestamp || Date.now()).toLocaleString('pt-BR'),
+      entry.method || 'GET',
+      `"${(entry.path || '').replace(/"/g, '""')}"`,
+      `"${(entry.actionType || '').replace(/"/g, '""')}"`,
+      `"${(entry.userEmail || 'Desconhecido').replace(/"/g, '""')}"`,
+      entry.durationMs || 0,
+      entry.success ? 'Sucesso' : 'Falha',
+    ]);
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `trilha-auditoria-governanca-${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
 
   async function refreshGovernanceDashboard({ silent = false } = {}) {
     try {
@@ -281,7 +308,23 @@ export default function GovernancePage() {
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
                 Esta área concentra saúde da API, estabilidade dos agentes, custos, trilha de auditoria e alertas ativos.
               </p>
-              <div className="mt-6 flex flex-wrap gap-3">
+              <div className="mt-6 flex flex-wrap items-center gap-3">
+                <select
+                  value={selectedProjectUuid}
+                  onChange={(e) => {
+                    const projectUuid = e.target.value;
+                    setSelectedProjectUuid(projectUuid);
+                    refreshGovernanceDashboard({ projectUuid, silent: true });
+                  }}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+                >
+                  <option value="">Visão Consolidada (Todos os Projetos)</option>
+                  {projects.map((p) => (
+                    <option key={p.uuid} value={p.uuid}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   onClick={() => window.location.reload()}
@@ -691,9 +734,10 @@ export default function GovernancePage() {
           </motion.section>
 
           <motion.section {...fade(0.32)} className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-6 py-5">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#102a72]">Auditoria</p>
               <h2 className="mt-2 text-xl font-bold text-slate-900">Ações recentes</h2>
+              <button type="button" onClick={handleExportAuditCsv} disabled={!auditTrail.length} className="dashboard-button-secondary px-3 py-1.5 text-xs">Exportar CSV</button>
             </div>
             <div className="space-y-3 p-6">
               {auditTrail.length ?(

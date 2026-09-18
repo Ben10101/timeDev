@@ -43,7 +43,8 @@ function getAccessTokenExpiry(token) {
 }
 
 function isInvalidSessionError(error) {
-  return error?.response?.status === 401
+  const status = error?.response?.status
+  return status === 401 || status === 403 || status === 429
 }
 
 function persistBootstrapContext(session) {
@@ -294,10 +295,15 @@ export function AuthProvider({ children }) {
         return result
       },
       async logout() {
-        await logoutAuth()
-        clearApiAccessToken()
-        setSession(null)
-        persistBootstrapContext(null)
+        try {
+          await logoutAuth()
+        } catch (e) {
+          console.warn('Logout API failed, clearing session locally')
+        } finally {
+          clearApiAccessToken()
+          setSession(null)
+          persistBootstrapContext(null)
+        }
       },
     }),
     [loading, session]

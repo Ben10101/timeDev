@@ -1,5 +1,15 @@
 const buckets = new Map();
 
+// Limpeza de memória a cada 1 minuto para evitar Memory Leak (OOM)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of buckets.entries()) {
+    if (now > bucket.resetAt) {
+      buckets.delete(key);
+    }
+  }
+}, 60_000).unref();
+
 function getClientKey(req) {
   return req.ip || req.socket?.remoteAddress || 'unknown';
 }

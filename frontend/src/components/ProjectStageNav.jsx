@@ -2,10 +2,10 @@ import { Check, Circle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const STEPS = [
-  ['briefing', 'Briefing', ''],
-  ['backlog', 'Backlog', ''],
-  ['review', 'Revisão humana', '/backlog-review'],
-  ['tasks', 'Tasks', ''],
+  ['briefing', 'Briefing & Escopo', ''],
+  ['backlog', 'Backlog (PM)', ''],
+  ['review', 'Revisão do Backlog', '/backlog-review'],
+  ['tasks', 'Requisitos & QA Board', ''],
 ];
 
 export default function ProjectStageNav({ projectUuid, active = 'review', completed = [], onSelectStage = {} }) {
